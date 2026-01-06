@@ -2,6 +2,21 @@ import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { Account, AccountWithChildren } from '@/lib/types';
 
+/**
+ * @openapi
+ * /api/accounts:
+ *   get:
+ *     description: Returns the account hierarchy with total and period balances.
+ *     responses:
+ *       200:
+ *         description: A hierarchical list of accounts.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Account'
+ */
 export async function GET() {
     try {
         const periodStartDate = '2026-01-01';
@@ -40,7 +55,21 @@ export async function GET() {
             }
         });
 
-        return NextResponse.json(roots);
+        // The user wants to display accounts starting 1 level under "Root Account"
+        // and hide "Template Root" accounts.
+        const rootNode = roots.find(r => r.name === 'Root Account' || r.account_type === 'ROOT' && !r.name.toLowerCase().includes('template'));
+
+        if (rootNode) {
+            return NextResponse.json(rootNode.children);
+        }
+
+        // Fallback: if no clear root is found, return roots that aren't system roots
+        const filteredRoots = roots.filter(r =>
+            r.account_type !== 'ROOT' &&
+            !r.name.toLowerCase().includes('template root')
+        );
+
+        return NextResponse.json(filteredRoots);
     } catch (error) {
         console.error('Error fetching accounts:', error);
         return NextResponse.json({ error: 'Failed to fetch accounts' }, { status: 500 });

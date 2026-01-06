@@ -1,3 +1,51 @@
+/**
+ * @openapi
+ * components:
+ *   schemas:
+ *     Account:
+ *       type: object
+ *       properties:
+ *         guid:
+ *           type: string
+ *         name:
+ *           type: string
+ *         account_type:
+ *           type: string
+ *         parent_guid:
+ *           type: string
+ *           nullable: true
+ *         hidden:
+ *           type: integer
+ *         total_balance:
+ *           type: string
+ *         period_balance:
+ *           type: string
+ *     Transaction:
+ *       type: object
+ *       properties:
+ *         guid:
+ *           type: string
+ *         description:
+ *           type: string
+ *         post_date:
+ *           type: string
+ *           format: date-time
+ *         splits:
+ *           type: array
+ *           items:
+ *             $ref: '#/components/schemas/Split'
+ *     Split:
+ *       type: object
+ *       properties:
+ *         guid:
+ *           type: string
+ *         account_guid:
+ *           type: string
+ *         account_name:
+ *           type: string
+ *         value_decimal:
+ *           type: string
+ */
 export interface Account {
     guid: string;
     name: string;

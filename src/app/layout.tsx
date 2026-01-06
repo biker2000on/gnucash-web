@@ -12,8 +12,6 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-import Layout from "@/components/Layout";
-
 export const metadata: Metadata = {
   title: "GnuCash Web PWA",
   description: "Modern web interface for GnuCash",
@@ -29,7 +27,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Layout>{children}</Layout>
+        {children}
       </body>
     </html>
   );

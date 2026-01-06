@@ -2,6 +2,34 @@ import { NextResponse } from 'next/server';
 import { query, toDecimal } from '@/lib/db';
 import { Transaction, Split } from '@/lib/types';
 
+/**
+ * @openapi
+ * /api/transactions:
+ *   get:
+ *     description: Returns a paginated list of transactions with their splits.
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 100
+ *         description: Number of transactions to return.
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Number of transactions to skip.
+ *     responses:
+ *       200:
+ *         description: A list of transactions.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/Transaction'
+ */
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
