@@ -8,14 +8,47 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(true);
     const [loading, setLoading] = useState(false);
+    const [filterText, setFilterText] = useState('');
+    const [debouncedFilter, setDebouncedFilter] = useState('');
     const loader = useRef<HTMLDivElement>(null);
+
+    // Debounce filter input
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedFilter(filterText);
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [filterText]);
+
+    // Reset and fetch when filter changes
+    useEffect(() => {
+        const resetAndFetch = async () => {
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/transactions?limit=100&offset=0&search=${encodeURIComponent(debouncedFilter)}`);
+                if (!res.ok) throw new Error('Failed to fetch');
+                const data: Transaction[] = await res.json();
+                setTransactions(data);
+                setOffset(data.length);
+                setHasMore(data.length >= 100);
+            } catch (error) {
+                console.error('Error filtering transactions:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        if (debouncedFilter !== undefined) {
+            resetAndFetch();
+        }
+    }, [debouncedFilter]);
 
     const fetchMoreTransactions = useCallback(async () => {
         if (loading || !hasMore) return;
         setLoading(true);
 
         try {
-            const res = await fetch(`/api/transactions?limit=100&offset=${offset}`);
+            const res = await fetch(`/api/transactions?limit=100&offset=${offset}&search=${encodeURIComponent(debouncedFilter)}`);
             if (!res.ok) throw new Error('Failed to fetch');
             const data: Transaction[] = await res.json();
 
@@ -30,12 +63,12 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
         } finally {
             setLoading(false);
         }
-    }, [offset, loading, hasMore]);
+    }, [offset, loading, hasMore, debouncedFilter]);
 
     useEffect(() => {
         const observer = new IntersectionObserver((entries) => {
             const target = entries[0];
-            if (target.isIntersecting && hasMore) {
+            if (target.isIntersecting && hasMore && !loading) {
                 fetchMoreTransactions();
             }
         }, { threshold: 0.1 });
@@ -45,18 +78,41 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
         }
 
         return () => observer.disconnect();
-    }, [fetchMoreTransactions, hasMore]);
+    }, [fetchMoreTransactions, hasMore, loading]);
 
     return (
         <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl overflow-hidden shadow-2xl">
-            <div className="p-6 border-b border-neutral-800 flex justify-between items-center">
-                <h2 className="text-xl font-semibold text-neutral-100 flex items-center gap-2">
-                    <span className="w-2 h-6 bg-cyan-500 rounded-full" />
-                    Transaction Journal
-                </h2>
-                <span className="text-xs text-neutral-500 uppercase tracking-widest">
-                    {transactions.length} Transactions Loaded
-                </span>
+            <div className="p-6 border-b border-neutral-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="flex items-center gap-3">
+                    <h2 className="text-xl font-semibold text-neutral-100 flex items-center gap-2">
+                        <span className="w-2 h-6 bg-cyan-500 rounded-full" />
+                        General Ledger
+                    </h2>
+                    <span className="text-xs text-neutral-500 uppercase tracking-widest pt-1">
+                        {transactions.length} Loaded
+                    </span>
+                </div>
+
+                <div className="relative w-full md:w-64">
+                    <input
+                        type="text"
+                        placeholder="Search description, # or account..."
+                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
+                        value={filterText}
+                        onChange={(e) => setFilterText(e.target.value)}
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-lg">
+                        🔍
+                    </span>
+                    {filterText && (
+                        <button
+                            onClick={() => setFilterText('')}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                        >
+                            ✕
+                        </button>
+                    )}
+                </div>
             </div>
             <div className="overflow-x-auto">
                 <table className="w-full text-left">
@@ -83,8 +139,8 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
                                             <div key={split.guid} className="flex justify-between gap-4">
                                                 <span className="text-neutral-400 truncate max-w-[200px]">{split.account_name}</span>
                                                 <span className={`font-mono ${parseFloat(split.value_decimal || '0') < 0
-                                                        ? 'text-rose-400'
-                                                        : 'text-emerald-400'
+                                                    ? 'text-rose-400'
+                                                    : 'text-emerald-400'
                                                     }`}>
                                                     {split.value_decimal}
                                                 </span>

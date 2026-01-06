@@ -14,8 +14,8 @@ export default async function JournalPage() {
     return (
         <div className="space-y-6">
             <header>
-                <h1 className="text-3xl font-bold text-neutral-100">Journal</h1>
-                <p className="text-neutral-500">View recent transactions and their splits.</p>
+                <h1 className="text-3xl font-bold text-neutral-100">General Ledger</h1>
+                <p className="text-neutral-500">View transactions and their splits across all accounts.</p>
             </header>
             <TransactionJournal initialTransactions={initialTransactions} />
         </div>

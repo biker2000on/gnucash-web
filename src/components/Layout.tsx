@@ -9,7 +9,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     const navItems = [
         { name: 'Account Hierarchy', href: '/accounts' },
-        { name: 'Transaction Journal', href: '/journal' },
+        { name: 'General Ledger', href: '/ledger' },
     ];
 
     return (
@@ -29,8 +29,8 @@ export default function Layout({ children }: { children: ReactNode }) {
                                 key={item.href}
                                 href={item.href}
                                 className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200 group ${isActive
-                                        ? 'bg-neutral-800 text-emerald-400 shadow-lg shadow-emerald-500/10'
-                                        : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
+                                    ? 'bg-neutral-800 text-emerald-400 shadow-lg shadow-emerald-500/10'
+                                    : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
                                     }`}
                             >
                                 <span className="font-medium">{item.name}</span>
