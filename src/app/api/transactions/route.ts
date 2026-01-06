@@ -66,9 +66,10 @@ export async function GET(request: Request) {
       LIMIT $1 OFFSET $2
     `;
         const splitQuery = `
-      SELECT s.*, a.name as account_name 
+      SELECT s.*, a.name as account_name, c.mnemonic as commodity_mnemonic 
       FROM splits s
       JOIN accounts a ON s.account_guid = a.guid
+      JOIN commodities c ON a.commodity_guid = c.guid
       WHERE s.tx_guid = ANY($1)
     `;
 
@@ -87,9 +88,11 @@ export async function GET(request: Request) {
         splits.forEach(split => {
             if (txMap[split.tx_guid]) {
                 const valueDecimal = toDecimal(split.value_num, split.value_denom);
+                const quantityDecimal = toDecimal(split.quantity_num, split.quantity_denom);
                 txMap[split.tx_guid].splits!.push({
                     ...split,
-                    value_decimal: valueDecimal
+                    value_decimal: valueDecimal,
+                    quantity_decimal: quantityDecimal
                 });
             }
         });

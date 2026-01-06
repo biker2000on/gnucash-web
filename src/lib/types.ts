@@ -61,6 +61,7 @@ export interface Account {
     fullname?: string;
     total_balance?: string;
     period_balance?: string;
+    commodity_mnemonic?: string;
 }
 
 export interface Transaction {
@@ -88,6 +89,8 @@ export interface Split {
     lot_guid: string | null;
     account_name?: string;
     value_decimal?: string;
+    quantity_decimal?: string;
+    commodity_mnemonic?: string;
 }
 
 export interface AccountWithChildren extends Account {

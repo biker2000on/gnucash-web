@@ -2,6 +2,7 @@
 
 import { Transaction } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { formatCurrency } from '@/lib/format';
 
 export default function TransactionJournal({ initialTransactions }: { initialTransactions: Transaction[] }) {
     const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
@@ -138,11 +139,11 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
                                         {tx.splits?.map(split => (
                                             <div key={split.guid} className="flex justify-between gap-4">
                                                 <span className="text-neutral-400 truncate max-w-[200px]">{split.account_name}</span>
-                                                <span className={`font-mono ${parseFloat(split.value_decimal || '0') < 0
+                                                <span className={`font-mono ${parseFloat(split.quantity_decimal || '0') < 0
                                                     ? 'text-rose-400'
                                                     : 'text-emerald-400'
                                                     }`}>
-                                                    {split.value_decimal}
+                                                    {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
                                                 </span>
                                             </div>
                                         ))}

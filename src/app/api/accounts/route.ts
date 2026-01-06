@@ -24,12 +24,14 @@ export async function GET() {
         const accountQuery = `
       SELECT 
         a.*,
-        COALESCE(SUM(CAST(s.value_num AS NUMERIC) / CAST(s.value_denom AS NUMERIC)), 0) as total_balance,
-        COALESCE(SUM(CASE WHEN t.post_date >= $1 THEN CAST(s.value_num AS NUMERIC) / CAST(s.value_denom AS NUMERIC) ELSE 0 END), 0) as period_balance
+        c.mnemonic as commodity_mnemonic,
+        COALESCE(SUM(CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC)), 0) as total_balance,
+        COALESCE(SUM(CASE WHEN t.post_date >= $1 THEN CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC) ELSE 0 END), 0) as period_balance
       FROM accounts a
+      JOIN commodities c ON a.commodity_guid = c.guid
       LEFT JOIN splits s ON a.guid = s.account_guid
       LEFT JOIN transactions t ON s.tx_guid = t.guid
-      GROUP BY a.guid
+      GROUP BY a.guid, c.mnemonic
     `;
 
         const { rows } = await query(accountQuery, [periodStartDate]);

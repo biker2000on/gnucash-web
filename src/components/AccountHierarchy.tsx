@@ -2,6 +2,8 @@
 
 import { AccountWithChildren } from '@/lib/types';
 import { useState, useMemo, useEffect } from 'react';
+import Link from 'next/link';
+import { formatCurrency } from '@/lib/format';
 
 type SortKey = 'name' | 'total_balance' | 'period_balance';
 
@@ -59,11 +61,25 @@ function AccountNode({ account, showHidden, filterText }: { account: AccountWith
                             ▶
                         </span>
                     )}
-                    <span className={`text-neutral-300 font-medium truncate ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}>
+                    <Link
+                        href={`/accounts/${account.guid}`}
+                        className={`text-neutral-300 font-medium truncate hover:text-emerald-400 transition-colors ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         {account.name}
-                    </span>
+                    </Link>
+                    <Link
+                        href={`/accounts/${account.guid}`}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-neutral-700 rounded text-neutral-500 hover:text-emerald-400 ml-1"
+                        title="View Ledger"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                        </svg>
+                    </Link>
                     {account.hidden === 1 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500 border border-neutral-700">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500 border border-neutral-700 ml-2">
                             HIDDEN
                         </span>
                     )}
@@ -73,13 +89,13 @@ function AccountNode({ account, showHidden, filterText }: { account: AccountWith
                     <div className="flex flex-col">
                         <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Period</span>
                         <span className={`font-mono text-sm ${aggPeriod < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                            {aggPeriod.toFixed(2)}
+                            {formatCurrency(aggPeriod, account.commodity_mnemonic)}
                         </span>
                     </div>
                     <div className="flex flex-col">
                         <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Total</span>
                         <span className={`font-mono text-sm font-bold ${aggTotal < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                            {aggTotal.toFixed(2)}
+                            {formatCurrency(aggTotal, account.commodity_mnemonic)}
                         </span>
                     </div>
                 </div>
