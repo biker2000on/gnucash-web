@@ -7,8 +7,29 @@ import { formatCurrency } from '@/lib/format';
 
 type SortKey = 'name' | 'total_balance' | 'period_balance';
 
-function AccountNode({ account, showHidden, filterText }: { account: AccountWithChildren, showHidden: boolean, filterText: string }) {
-    const [isExpanded, setIsExpanded] = useState(true);
+function AccountNode({
+    account,
+    showHidden,
+    filterText,
+    depth = 0,
+    expandToDepth = Infinity,
+    expandedNodes,
+    setExpandedNodes
+}: {
+    account: AccountWithChildren;
+    showHidden: boolean;
+    filterText: string;
+    depth?: number;
+    expandToDepth?: number;
+    expandedNodes: Set<string>;
+    setExpandedNodes: (updater: (prev: Set<string>) => Set<string>) => void;
+}) {
+    // Determine initial expansion state
+    // Priority: 1) User manually expanded/collapsed, 2) Global depth setting
+    const hasUserPreference = expandedNodes.has(account.guid);
+    const initialExpanded = hasUserPreference ? expandedNodes.has(account.guid) : (depth < expandToDepth);
+    const [isExpanded, setIsExpanded] = useState(initialExpanded);
+    const [hasManualToggle, setHasManualToggle] = useState(hasUserPreference);
 
     // Recursive search check: does this node or any child match the filter?
     const hasMatch = (acc: AccountWithChildren): boolean => {
@@ -24,6 +45,14 @@ function AccountNode({ account, showHidden, filterText }: { account: AccountWith
             setIsExpanded(true);
         }
     }, [filterText, matches]);
+
+    // Update expansion state when global expandToDepth changes
+    // But only if the user hasn't manually toggled this node
+    useEffect(() => {
+        if (!hasManualToggle) {
+            setIsExpanded(depth < expandToDepth);
+        }
+    }, [expandToDepth, depth, hasManualToggle]);
 
     if (!matches) return null;
     if (account.hidden && !showHidden) return null;
@@ -48,12 +77,27 @@ function AccountNode({ account, showHidden, filterText }: { account: AccountWith
 
     const { total: aggTotal, period: aggPeriod } = getAggregatedBalances(account);
 
+    const handleToggle = () => {
+        const newExpanded = !isExpanded;
+        setIsExpanded(newExpanded);
+        setHasManualToggle(true); // Mark that user has manually toggled this node
+        setExpandedNodes(prev => {
+            const next = new Set(prev);
+            if (newExpanded) {
+                next.add(account.guid);
+            } else {
+                next.delete(account.guid);
+            }
+            return next;
+        });
+    };
+
     return (
         <div className="ml-4">
             <div
                 className={`flex items-center gap-4 py-2 px-3 rounded-lg transition-colors cursor-pointer ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'
                     } ${account.hidden ? 'opacity-50 grayscale' : ''}`}
-                onClick={() => setIsExpanded(!isExpanded)}
+                onClick={handleToggle}
             >
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                     {hasChildren && (
@@ -103,7 +147,16 @@ function AccountNode({ account, showHidden, filterText }: { account: AccountWith
             {isExpanded && hasChildren && (
                 <div className="border-l border-neutral-800/50 ml-5 mt-1">
                     {account.children.map(child => (
-                        <AccountNode key={child.guid} account={child} showHidden={showHidden} filterText={filterText} />
+                        <AccountNode
+                            key={child.guid}
+                            account={child}
+                            showHidden={showHidden}
+                            filterText={filterText}
+                            depth={depth + 1}
+                            expandToDepth={expandToDepth}
+                            expandedNodes={expandedNodes}
+                            setExpandedNodes={setExpandedNodes}
+                        />
                     ))}
                 </div>
             )}
@@ -112,9 +165,57 @@ function AccountNode({ account, showHidden, filterText }: { account: AccountWith
 }
 
 export default function AccountHierarchy({ accounts }: { accounts: AccountWithChildren[] }) {
-    const [showHidden, setShowHidden] = useState(false);
+    // Initialize state from localStorage with fallback defaults
+    const [showHidden, setShowHidden] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('accountHierarchy.showHidden');
+            return saved ? JSON.parse(saved) : false;
+        }
+        return false;
+    });
+
     const [filterText, setFilterText] = useState('');
-    const [sortKey, setSortKey] = useState<SortKey>('name');
+
+    const [sortKey, setSortKey] = useState<SortKey>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('accountHierarchy.sortKey');
+            return (saved as SortKey) || 'name';
+        }
+        return 'name';
+    });
+
+    const [expandToDepth, setExpandToDepth] = useState<number>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('accountHierarchy.expandToDepth');
+            return saved ? (saved === 'Infinity' ? Infinity : parseInt(saved)) : Infinity;
+        }
+        return Infinity;
+    });
+
+    const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('accountHierarchy.expandedNodes');
+            return saved ? new Set(JSON.parse(saved)) : new Set();
+        }
+        return new Set();
+    });
+
+    // Persist state changes to localStorage
+    useEffect(() => {
+        localStorage.setItem('accountHierarchy.showHidden', JSON.stringify(showHidden));
+    }, [showHidden]);
+
+    useEffect(() => {
+        localStorage.setItem('accountHierarchy.sortKey', sortKey);
+    }, [sortKey]);
+
+    useEffect(() => {
+        localStorage.setItem('accountHierarchy.expandToDepth', expandToDepth === Infinity ? 'Infinity' : expandToDepth.toString());
+    }, [expandToDepth]);
+
+    useEffect(() => {
+        localStorage.setItem('accountHierarchy.expandedNodes', JSON.stringify(Array.from(expandedNodes)));
+    }, [expandedNodes]);
 
     const sortTree = (accs: AccountWithChildren[]): AccountWithChildren[] => {
         return [...accs].sort((a, b) => {
@@ -169,6 +270,51 @@ export default function AccountHierarchy({ accounts }: { accounts: AccountWithCh
                             </button>
                         )}
                     </div>
+
+                    {/* Tree Expansion Controls */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-neutral-500 uppercase tracking-widest font-bold">Expand</span>
+                        <div className="flex gap-1">
+                            <button
+                                onClick={() => {
+                                    setExpandToDepth(0);
+                                    setExpandedNodes(new Set()); // Clear manual toggles
+                                }}
+                                className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800 hover:border-emerald-500/50 transition-all"
+                                title="Collapse All"
+                            >
+                                Collapse All
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setExpandToDepth(Infinity);
+                                    setExpandedNodes(new Set()); // Clear manual toggles
+                                }}
+                                className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800 hover:border-emerald-500/50 transition-all"
+                                title="Expand All"
+                            >
+                                Expand All
+                            </button>
+                        </div>
+                        <select
+                            className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                            value={expandToDepth === Infinity ? 'all' : expandToDepth}
+                            onChange={(e) => {
+                                setExpandToDepth(e.target.value === 'all' ? Infinity : parseInt(e.target.value));
+                                setExpandedNodes(new Set()); // Clear manual toggles
+                            }}
+                            title="Expand to Depth"
+                        >
+                            <option value="0">Level 0</option>
+                            <option value="1">Level 1</option>
+                            <option value="2">Level 2</option>
+                            <option value="3">Level 3</option>
+                            <option value="4">Level 4</option>
+                            <option value="5">Level 5</option>
+                            <option value="all">All Levels</option>
+                        </select>
+                    </div>
+
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-neutral-500 uppercase tracking-widest font-bold">Sort By</span>
                         <select
@@ -191,6 +337,10 @@ export default function AccountHierarchy({ accounts }: { accounts: AccountWithCh
                         account={acc}
                         showHidden={showHidden}
                         filterText={filterText}
+                        depth={0}
+                        expandToDepth={expandToDepth}
+                        expandedNodes={expandedNodes}
+                        setExpandedNodes={setExpandedNodes}
                     />
                 ))}
             </div>
