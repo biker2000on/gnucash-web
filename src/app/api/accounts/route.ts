@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { Account, AccountWithChildren } from '@/lib/types';
 
@@ -7,6 +7,19 @@ import { Account, AccountWithChildren } from '@/lib/types';
  * /api/accounts:
  *   get:
  *     description: Returns the account hierarchy with total and period balances.
+ *     parameters:
+ *       - name: startDate
+ *         in: query
+ *         description: Start date for period balance calculation (ISO 8601)
+ *         schema:
+ *           type: string
+ *           format: date
+ *       - name: endDate
+ *         in: query
+ *         description: End date for period balance calculation (ISO 8601)
+ *         schema:
+ *           type: string
+ *           format: date
  *     responses:
  *       200:
  *         description: A hierarchical list of accounts.
@@ -17,16 +30,35 @@ import { Account, AccountWithChildren } from '@/lib/types';
  *               items:
  *                 $ref: '#/components/schemas/Account'
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        const periodStartDate = '2026-01-01';
+        const searchParams = request.nextUrl.searchParams;
+        const startDate = searchParams.get('startDate');
+        const endDate = searchParams.get('endDate');
+
+        // Build dynamic query based on date filters
+        const queryParams: (string | null)[] = [];
+        let dateCondition = '';
+
+        if (startDate || endDate) {
+            if (startDate && endDate) {
+                dateCondition = 't.post_date >= $1 AND t.post_date <= $2';
+                queryParams.push(startDate, endDate);
+            } else if (startDate) {
+                dateCondition = 't.post_date >= $1';
+                queryParams.push(startDate);
+            } else if (endDate) {
+                dateCondition = 't.post_date <= $1';
+                queryParams.push(endDate);
+            }
+        }
 
         const accountQuery = `
-      SELECT 
+      SELECT
         a.*,
         c.mnemonic as commodity_mnemonic,
         COALESCE(SUM(CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC)), 0) as total_balance,
-        COALESCE(SUM(CASE WHEN t.post_date >= $1 THEN CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC) ELSE 0 END), 0) as period_balance
+        COALESCE(SUM(CASE WHEN ${dateCondition || '1=1'} THEN CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC) ELSE 0 END), 0) as period_balance
       FROM accounts a
       JOIN commodities c ON a.commodity_guid = c.guid
       LEFT JOIN splits s ON a.guid = s.account_guid
@@ -34,7 +66,7 @@ export async function GET() {
       GROUP BY a.guid, c.mnemonic
     `;
 
-        const { rows } = await query(accountQuery, [periodStartDate]);
+        const { rows } = await query(accountQuery, queryParams);
         const accounts: Account[] = rows.map(row => ({
             ...row,
             total_balance: parseFloat(row.total_balance).toFixed(2),

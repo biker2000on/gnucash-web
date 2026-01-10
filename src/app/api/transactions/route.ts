@@ -25,6 +25,18 @@ import { Transaction, Split } from '@/lib/types';
  *         schema:
  *           type: string
  *         description: Search query to filter transactions by description, number, or account name.
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter transactions on or after this date (ISO 8601).
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter transactions on or before this date (ISO 8601).
  *     responses:
  *       200:
  *         description: A list of transactions.
@@ -41,28 +53,51 @@ export async function GET(request: Request) {
         const limit = parseInt(searchParams.get('limit') || '100');
         const offset = parseInt(searchParams.get('offset') || '0');
         const search = searchParams.get('search') || '';
+        const startDate = searchParams.get('startDate');
+        const endDate = searchParams.get('endDate');
+
+        const conditions: string[] = [];
+        const queryParams: any[] = [limit, offset];
+        let paramIndex = 3;
+
+        // Date filters
+        if (startDate) {
+            conditions.push(`t.post_date >= $${paramIndex}`);
+            queryParams.push(startDate);
+            paramIndex++;
+        }
+        if (endDate) {
+            conditions.push(`t.post_date <= $${paramIndex}`);
+            queryParams.push(endDate);
+            paramIndex++;
+        }
+
+        // Search filter
+        if (search) {
+            conditions.push(`(
+                t.description ILIKE $${paramIndex}
+                OR t.num ILIKE $${paramIndex}
+                OR EXISTS (
+                    SELECT 1 FROM splits s
+                    JOIN accounts a ON s.account_guid = a.guid
+                    WHERE s.tx_guid = t.guid AND a.name ILIKE $${paramIndex}
+                )
+            )`);
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
 
         let txQuery = `
-      SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description 
+      SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description
       FROM transactions t
     `;
-        const queryParams: any[] = [limit, offset];
 
-        if (search) {
-            txQuery += `
-        WHERE t.description ILIKE $3 
-           OR t.num ILIKE $3 
-           OR EXISTS (
-             SELECT 1 FROM splits s 
-             JOIN accounts a ON s.account_guid = a.guid 
-             WHERE s.tx_guid = t.guid AND a.name ILIKE $3
-           )
-      `;
-            queryParams.push(`%${search}%`);
+        if (conditions.length > 0) {
+            txQuery += ` WHERE ${conditions.join(' AND ')}`;
         }
 
         txQuery += `
-      ORDER BY t.post_date DESC 
+      ORDER BY t.post_date DESC
       LIMIT $1 OFFSET $2
     `;
         const splitQuery = `

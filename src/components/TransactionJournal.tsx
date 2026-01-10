@@ -4,14 +4,27 @@ import { Transaction } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 
-export default function TransactionJournal({ initialTransactions }: { initialTransactions: Transaction[] }) {
+interface TransactionJournalProps {
+    initialTransactions: Transaction[];
+    startDate?: string | null;
+    endDate?: string | null;
+}
+
+export default function TransactionJournal({ initialTransactions, startDate, endDate }: TransactionJournalProps) {
     const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
-    const [hasMore, setHasMore] = useState(true);
+    const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
     const [filterText, setFilterText] = useState('');
     const [debouncedFilter, setDebouncedFilter] = useState('');
     const loader = useRef<HTMLDivElement>(null);
+
+    // Reset when initialTransactions change (e.g., date filter changed)
+    useEffect(() => {
+        setTransactions(initialTransactions);
+        setOffset(initialTransactions.length);
+        setHasMore(initialTransactions.length >= 100);
+    }, [initialTransactions]);
 
     // Debounce filter input
     useEffect(() => {
@@ -21,12 +34,25 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
         return () => clearTimeout(timer);
     }, [filterText]);
 
+    // Build URL params helper
+    const buildUrlParams = useCallback((extraParams: Record<string, string | number> = {}) => {
+        const params = new URLSearchParams();
+        params.set('limit', '100');
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        Object.entries(extraParams).forEach(([key, value]) => {
+            params.set(key, String(value));
+        });
+        return params.toString();
+    }, [startDate, endDate]);
+
     // Reset and fetch when filter changes
     useEffect(() => {
         const resetAndFetch = async () => {
             setLoading(true);
             try {
-                const res = await fetch(`/api/transactions?limit=100&offset=0&search=${encodeURIComponent(debouncedFilter)}`);
+                const params = buildUrlParams({ offset: 0, search: debouncedFilter });
+                const res = await fetch(`/api/transactions?${params}`);
                 if (!res.ok) throw new Error('Failed to fetch');
                 const data: Transaction[] = await res.json();
                 setTransactions(data);
@@ -39,17 +65,19 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
             }
         };
 
-        if (debouncedFilter !== undefined) {
+        // Only run if filter text has been set (not on initial mount)
+        if (debouncedFilter) {
             resetAndFetch();
         }
-    }, [debouncedFilter]);
+    }, [debouncedFilter, buildUrlParams]);
 
     const fetchMoreTransactions = useCallback(async () => {
         if (loading || !hasMore) return;
         setLoading(true);
 
         try {
-            const res = await fetch(`/api/transactions?limit=100&offset=${offset}&search=${encodeURIComponent(debouncedFilter)}`);
+            const params = buildUrlParams({ offset, search: debouncedFilter });
+            const res = await fetch(`/api/transactions?${params}`);
             if (!res.ok) throw new Error('Failed to fetch');
             const data: Transaction[] = await res.json();
 
@@ -64,7 +92,7 @@ export default function TransactionJournal({ initialTransactions }: { initialTra
         } finally {
             setLoading(false);
         }
-    }, [offset, loading, hasMore, debouncedFilter]);
+    }, [offset, loading, hasMore, debouncedFilter, buildUrlParams]);
 
     useEffect(() => {
         const observer = new IntersectionObserver((entries) => {

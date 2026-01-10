@@ -10,19 +10,49 @@ export async function GET(
         const { searchParams } = new URL(request.url);
         const limit = parseInt(searchParams.get('limit') || '100');
         const offset = parseInt(searchParams.get('offset') || '0');
+        const startDate = searchParams.get('startDate');
+        const endDate = searchParams.get('endDate');
         const { guid: accountGuid } = await params;
 
-        // 1. Get the current total balance of the account
-        const balanceQuery = `
-            SELECT COALESCE(SUM(CAST(quantity_num AS NUMERIC) / CAST(quantity_denom AS NUMERIC)), 0) as balance
-            FROM splits
-            WHERE account_guid = $1
-        `;
-        const { rows: balanceRows } = await query(balanceQuery, [accountGuid]);
+        // Build date conditions
+        const dateConditions: string[] = [];
+        const dateParams: string[] = [];
+        if (startDate) {
+            dateConditions.push(`t.post_date >= $${dateParams.length + 2}`);
+            dateParams.push(startDate);
+        }
+        if (endDate) {
+            dateConditions.push(`t.post_date <= $${dateParams.length + 2}`);
+            dateParams.push(endDate);
+        }
+        const dateWhereClause = dateConditions.length > 0 ? ` AND ${dateConditions.join(' AND ')}` : '';
+
+        // 1. Get the total balance of the account (considering date filter for filtered balance)
+        // For running balance, we need balance as of the end of the date range (or total if no filter)
+        let balanceQuery: string;
+        let balanceParams: (string | number)[];
+
+        if (endDate) {
+            // Get balance up to and including endDate
+            balanceQuery = `
+                SELECT COALESCE(SUM(CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC)), 0) as balance
+                FROM splits s
+                JOIN transactions t ON s.tx_guid = t.guid
+                WHERE s.account_guid = $1 AND t.post_date <= $2
+            `;
+            balanceParams = [accountGuid, endDate];
+        } else {
+            balanceQuery = `
+                SELECT COALESCE(SUM(CAST(quantity_num AS NUMERIC) / CAST(quantity_denom AS NUMERIC)), 0) as balance
+                FROM splits
+                WHERE account_guid = $1
+            `;
+            balanceParams = [accountGuid];
+        }
+        const { rows: balanceRows } = await query(balanceQuery, balanceParams);
         const totalBalance = parseFloat(balanceRows[0].balance);
 
         // 2. Get the sum of splits for transactions that are NEWER than the current batch (to calculate starting balance for the page)
-        // Newer means they would have appeared in previous pages (offset < current offset)
         let startingBalance = totalBalance;
         if (offset > 0) {
             const newerSplitsQuery = `
@@ -31,26 +61,27 @@ export async function GET(
                 JOIN transactions t ON s.tx_guid = t.guid
                 WHERE s.account_guid = $1
                 AND s.tx_guid IN (
-                    SELECT guid FROM transactions 
-                    WHERE guid IN (SELECT tx_guid FROM splits WHERE account_guid = $1)
-                    ORDER BY post_date DESC, enter_date DESC
-                    LIMIT $2
+                    SELECT t2.guid FROM transactions t2
+                    JOIN splits s2 ON t2.guid = s2.tx_guid
+                    WHERE s2.account_guid = $1 ${dateWhereClause.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n) + 1}`)}
+                    ORDER BY t2.post_date DESC, t2.enter_date DESC
+                    LIMIT $${2 + dateParams.length}
                 )
             `;
-            const { rows: newerRows } = await query(newerSplitsQuery, [accountGuid, offset]);
+            const { rows: newerRows } = await query(newerSplitsQuery, [accountGuid, ...dateParams, offset]);
             startingBalance = totalBalance - parseFloat(newerRows[0].sum_splits);
         }
 
-        // 3. Fetch transactions for this account
+        // 3. Fetch transactions for this account with date filtering
         const txQuery = `
-            SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description 
+            SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description
             FROM transactions t
             JOIN splits s ON t.guid = s.tx_guid
-            WHERE s.account_guid = $1
+            WHERE s.account_guid = $1 ${dateWhereClause}
             ORDER BY t.post_date DESC, t.enter_date DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $${2 + dateParams.length} OFFSET $${3 + dateParams.length}
         `;
-        const { rows: transactions } = await query(txQuery, [accountGuid, limit, offset]);
+        const { rows: transactions } = await query(txQuery, [accountGuid, ...dateParams, limit, offset]);
 
         if (transactions.length === 0) {
             return NextResponse.json([]);
