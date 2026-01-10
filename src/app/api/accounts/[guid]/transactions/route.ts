@@ -131,7 +131,9 @@ export async function GET(
                 ...enrichedTx,
                 running_balance: currentRunningBalance.toFixed(2),
                 account_split_value: splitValue.toFixed(2),
-                commodity_mnemonic: accountMnemonic
+                commodity_mnemonic: accountMnemonic,
+                account_split_guid: accountSplit?.guid || '',
+                account_split_reconcile_state: accountSplit?.reconcile_state || 'n',
             };
 
             currentRunningBalance -= splitValue;

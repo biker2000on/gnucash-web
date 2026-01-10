@@ -3,11 +3,14 @@
 import { Transaction, Split } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { ReconciliationPanel } from './ReconciliationPanel';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
     account_split_value: string;
     commodity_mnemonic: string;
+    account_split_guid: string;
+    account_split_reconcile_state: string;
 }
 
 interface AccountLedgerProps {
@@ -15,13 +18,17 @@ interface AccountLedgerProps {
     initialTransactions: AccountTransaction[];
     startDate?: string | null;
     endDate?: string | null;
+    accountCurrency?: string;
+    currentBalance?: number;
 }
 
 export default function AccountLedger({
     accountGuid,
     initialTransactions,
     startDate,
-    endDate
+    endDate,
+    accountCurrency = 'USD',
+    currentBalance = 0,
 }: AccountLedgerProps) {
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
@@ -29,6 +36,45 @@ export default function AccountLedger({
     const [loading, setLoading] = useState(false);
     const [expandedTxs, setExpandedTxs] = useState<Record<string, boolean>>({});
     const loader = useRef<HTMLDivElement>(null);
+
+    // Reconciliation state
+    const [isReconciling, setIsReconciling] = useState(false);
+    const [selectedSplits, setSelectedSplits] = useState<Set<string>>(new Set());
+
+    const toggleSplitSelection = useCallback((splitGuid: string) => {
+        setSelectedSplits(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(splitGuid)) {
+                newSet.delete(splitGuid);
+            } else {
+                newSet.add(splitGuid);
+            }
+            return newSet;
+        });
+    }, []);
+
+    const selectAllUnreconciled = useCallback(() => {
+        const unreconciledSplits = transactions
+            .filter(tx => tx.account_split_reconcile_state !== 'y')
+            .map(tx => tx.account_split_guid);
+        setSelectedSplits(new Set(unreconciledSplits));
+    }, [transactions]);
+
+    const clearSelection = useCallback(() => {
+        setSelectedSplits(new Set());
+    }, []);
+
+    const handleReconcileComplete = useCallback(() => {
+        // Refresh the transactions to show updated reconcile states
+        setTransactions(prev => prev.map(tx => {
+            if (selectedSplits.has(tx.account_split_guid)) {
+                return { ...tx, account_split_reconcile_state: 'y' };
+            }
+            return tx;
+        }));
+        setSelectedSplits(new Set());
+        setIsReconciling(false);
+    }, [selectedSplits]);
 
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
@@ -92,12 +138,42 @@ export default function AccountLedger({
         return () => observer.disconnect();
     }, [fetchMoreTransactions, hasMore, loading]);
 
+    const getReconcileIcon = (state: string) => {
+        switch (state) {
+            case 'y': return { icon: 'Y', color: 'text-emerald-400 bg-emerald-500/10', label: 'Reconciled' };
+            case 'c': return { icon: 'C', color: 'text-amber-400 bg-amber-500/10', label: 'Cleared' };
+            default: return { icon: 'N', color: 'text-neutral-500 bg-neutral-500/10', label: 'Not Reconciled' };
+        }
+    };
+
     return (
         <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl overflow-hidden shadow-2xl">
+            {/* Reconciliation Panel */}
+            <div className="p-4 border-b border-neutral-800 flex justify-end">
+                <ReconciliationPanel
+                    accountGuid={accountGuid}
+                    accountCurrency={accountCurrency}
+                    currentBalance={currentBalance}
+                    onReconcileComplete={handleReconcileComplete}
+                    selectedSplits={selectedSplits}
+                    onToggleSplit={toggleSplitSelection}
+                    onSelectAll={selectAllUnreconciled}
+                    onClearSelection={clearSelection}
+                    isReconciling={isReconciling}
+                    onStartReconcile={() => setIsReconciling(true)}
+                    onCancelReconcile={() => {
+                        setIsReconciling(false);
+                        setSelectedSplits(new Set());
+                    }}
+                />
+            </div>
+
             <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                     <thead>
                         <tr className="bg-neutral-900/50 text-neutral-400 text-[10px] uppercase tracking-[0.2em] font-bold">
+                            {isReconciling && <th className="px-4 py-4 w-10"></th>}
+                            <th className="px-4 py-4 w-10">R</th>
                             <th className="px-6 py-4">Date</th>
                             <th className="px-6 py-4">Description</th>
                             <th className="px-6 py-4">Transfer / Splits</th>
@@ -111,9 +187,31 @@ export default function AccountLedger({
                             const isExpanded = expandedTxs[tx.guid];
                             const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
                             const amount = parseFloat(tx.account_split_value);
+                            const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
+                            const isSelected = selectedSplits.has(tx.account_split_guid);
 
                             return (
-                                <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group">
+                                <tr key={tx.guid} className={`hover:bg-white/[0.02] transition-colors group ${isSelected ? 'bg-amber-500/5' : ''}`}>
+                                    {isReconciling && (
+                                        <td className="px-4 py-4 align-top">
+                                            {tx.account_split_reconcile_state !== 'y' && (
+                                                <input
+                                                    type="checkbox"
+                                                    checked={isSelected}
+                                                    onChange={() => toggleSplitSelection(tx.account_split_guid)}
+                                                    className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-amber-500 focus:ring-amber-500/50 cursor-pointer"
+                                                />
+                                            )}
+                                        </td>
+                                    )}
+                                    <td className="px-4 py-4 align-top">
+                                        <span
+                                            className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
+                                            title={reconcileInfo.label}
+                                        >
+                                            {reconcileInfo.icon}
+                                        </span>
+                                    </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-xs text-neutral-400 align-top font-mono">
                                         {new Date(tx.post_date).toLocaleDateString()}
                                     </td>
