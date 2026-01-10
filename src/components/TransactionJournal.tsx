@@ -3,6 +3,14 @@
 import { Transaction } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { FilterPanel, AccountTypeFilter, AmountFilter, ReconcileFilter } from './filters';
+
+interface TransactionFilters {
+    accountTypes: string[];
+    minAmount: string;
+    maxAmount: string;
+    reconcileStates: string[];
+}
 
 interface TransactionJournalProps {
     initialTransactions: Transaction[];
@@ -19,6 +27,15 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [debouncedFilter, setDebouncedFilter] = useState('');
     const loader = useRef<HTMLDivElement>(null);
 
+    // Advanced filters
+    const [filters, setFilters] = useState<TransactionFilters>({
+        accountTypes: [],
+        minAmount: '',
+        maxAmount: '',
+        reconcileStates: [],
+    });
+    const [debouncedFilters, setDebouncedFilters] = useState<TransactionFilters>(filters);
+
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
         setTransactions(initialTransactions);
@@ -34,17 +51,55 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         return () => clearTimeout(timer);
     }, [filterText]);
 
+    // Debounce advanced filters
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedFilters(filters);
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [filters]);
+
+    // Count active filters
+    const activeFilterCount = [
+        filters.accountTypes.length > 0,
+        filters.minAmount !== '',
+        filters.maxAmount !== '',
+        filters.reconcileStates.length > 0,
+    ].filter(Boolean).length;
+
+    // Clear all filters
+    const clearAllFilters = () => {
+        setFilters({
+            accountTypes: [],
+            minAmount: '',
+            maxAmount: '',
+            reconcileStates: [],
+        });
+    };
+
     // Build URL params helper
     const buildUrlParams = useCallback((extraParams: Record<string, string | number> = {}) => {
         const params = new URLSearchParams();
         params.set('limit', '100');
         if (startDate) params.set('startDate', startDate);
         if (endDate) params.set('endDate', endDate);
+        if (debouncedFilters.accountTypes.length > 0) {
+            params.set('accountTypes', debouncedFilters.accountTypes.join(','));
+        }
+        if (debouncedFilters.minAmount) {
+            params.set('minAmount', debouncedFilters.minAmount);
+        }
+        if (debouncedFilters.maxAmount) {
+            params.set('maxAmount', debouncedFilters.maxAmount);
+        }
+        if (debouncedFilters.reconcileStates.length > 0) {
+            params.set('reconcileStates', debouncedFilters.reconcileStates.join(','));
+        }
         Object.entries(extraParams).forEach(([key, value]) => {
             params.set(key, String(value));
         });
         return params.toString();
-    }, [startDate, endDate]);
+    }, [startDate, endDate, debouncedFilters]);
 
     // Reset and fetch when filter changes
     useEffect(() => {
@@ -65,11 +120,17 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             }
         };
 
-        // Only run if filter text has been set (not on initial mount)
-        if (debouncedFilter) {
+        // Run when any filter changes (text or advanced filters)
+        const hasTextFilter = debouncedFilter !== '';
+        const hasAdvancedFilters = debouncedFilters.accountTypes.length > 0 ||
+            debouncedFilters.minAmount !== '' ||
+            debouncedFilters.maxAmount !== '' ||
+            debouncedFilters.reconcileStates.length > 0;
+
+        if (hasTextFilter || hasAdvancedFilters) {
             resetAndFetch();
         }
-    }, [debouncedFilter, buildUrlParams]);
+    }, [debouncedFilter, debouncedFilters, buildUrlParams]);
 
     const fetchMoreTransactions = useCallback(async () => {
         if (loading || !hasMore) return;
@@ -122,25 +183,47 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     </span>
                 </div>
 
-                <div className="relative w-full md:w-64">
-                    <input
-                        type="text"
-                        placeholder="Search description, # or account..."
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
-                        value={filterText}
-                        onChange={(e) => setFilterText(e.target.value)}
-                    />
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-lg">
-                        🔍
-                    </span>
-                    {filterText && (
-                        <button
-                            onClick={() => setFilterText('')}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
-                        >
-                            ✕
-                        </button>
-                    )}
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                    <FilterPanel
+                        activeFilterCount={activeFilterCount}
+                        onClearAll={clearAllFilters}
+                    >
+                        <AccountTypeFilter
+                            selectedTypes={filters.accountTypes}
+                            onChange={(types) => setFilters(f => ({ ...f, accountTypes: types }))}
+                        />
+                        <AmountFilter
+                            minAmount={filters.minAmount}
+                            maxAmount={filters.maxAmount}
+                            onMinChange={(val) => setFilters(f => ({ ...f, minAmount: val }))}
+                            onMaxChange={(val) => setFilters(f => ({ ...f, maxAmount: val }))}
+                        />
+                        <ReconcileFilter
+                            selectedStates={filters.reconcileStates}
+                            onChange={(states) => setFilters(f => ({ ...f, reconcileStates: states }))}
+                        />
+                    </FilterPanel>
+
+                    <div className="relative flex-1 md:w-64">
+                        <input
+                            type="text"
+                            placeholder="Search description, # or account..."
+                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
+                            value={filterText}
+                            onChange={(e) => setFilterText(e.target.value)}
+                        />
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 text-lg">
+                            🔍
+                        </span>
+                        {filterText && (
+                            <button
+                                onClick={() => setFilterText('')}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                            >
+                                ✕
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
             <div className="overflow-x-auto">
@@ -153,32 +236,40 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-800">
-                        {transactions.map(tx => (
-                            <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group">
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-300 align-top">
-                                    {new Date(tx.post_date).toLocaleDateString()}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-neutral-100 align-top max-w-xs">
-                                    <div className="font-medium">{tx.description}</div>
-                                    {tx.num && <span className="text-xs text-neutral-500">#{tx.num}</span>}
-                                </td>
-                                <td className="px-6 py-4 text-sm align-top">
-                                    <div className="space-y-2">
-                                        {tx.splits?.map(split => (
-                                            <div key={split.guid} className="flex justify-between gap-4">
-                                                <span className="text-neutral-400 truncate max-w-[200px]">{split.account_name}</span>
-                                                <span className={`font-mono ${parseFloat(split.quantity_decimal || '0') < 0
-                                                    ? 'text-rose-400'
-                                                    : 'text-emerald-400'
-                                                    }`}>
-                                                    {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
+                        {transactions.length === 0 ? (
+                            <tr>
+                                <td colSpan={3} className="px-6 py-12 text-center text-neutral-500">
+                                    {loading ? 'Loading...' : 'No transactions found matching your filters.'}
                                 </td>
                             </tr>
-                        ))}
+                        ) : (
+                            transactions.map(tx => (
+                                <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-300 align-top">
+                                        {new Date(tx.post_date).toLocaleDateString()}
+                                    </td>
+                                    <td className="px-6 py-4 text-sm text-neutral-100 align-top max-w-xs">
+                                        <div className="font-medium">{tx.description}</div>
+                                        {tx.num && <span className="text-xs text-neutral-500">#{tx.num}</span>}
+                                    </td>
+                                    <td className="px-6 py-4 text-sm align-top">
+                                        <div className="space-y-2">
+                                            {tx.splits?.map(split => (
+                                                <div key={split.guid} className="flex justify-between gap-4">
+                                                    <span className="text-neutral-400 truncate max-w-[200px]">{split.account_name}</span>
+                                                    <span className={`font-mono ${parseFloat(split.quantity_decimal || '0') < 0
+                                                        ? 'text-rose-400'
+                                                        : 'text-emerald-400'
+                                                        }`}>
+                                                        {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
 
@@ -192,7 +283,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     ) : hasMore ? (
                         <span className="text-sm text-neutral-600 italic">Scroll for more</span>
                     ) : (
-                        <span className="text-sm text-neutral-600 italic font-medium">✨ All transactions loaded</span>
+                        <span className="text-sm text-neutral-600 italic font-medium">All transactions loaded</span>
                     )}
                 </div>
             </div>

@@ -37,6 +37,26 @@ import { Transaction, Split } from '@/lib/types';
  *           type: string
  *           format: date
  *         description: Filter transactions on or before this date (ISO 8601).
+ *       - in: query
+ *         name: accountTypes
+ *         schema:
+ *           type: string
+ *         description: Comma-separated list of account types to filter by (e.g., ASSET,EXPENSE).
+ *       - in: query
+ *         name: minAmount
+ *         schema:
+ *           type: number
+ *         description: Minimum absolute transaction amount.
+ *       - in: query
+ *         name: maxAmount
+ *         schema:
+ *           type: number
+ *         description: Maximum absolute transaction amount.
+ *       - in: query
+ *         name: reconcileStates
+ *         schema:
+ *           type: string
+ *         description: Comma-separated reconciliation states (n=not reconciled, c=cleared, y=reconciled).
  *     responses:
  *       200:
  *         description: A list of transactions.
@@ -55,6 +75,10 @@ export async function GET(request: Request) {
         const search = searchParams.get('search') || '';
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
+        const accountTypes = searchParams.get('accountTypes');
+        const minAmount = searchParams.get('minAmount');
+        const maxAmount = searchParams.get('maxAmount');
+        const reconcileStates = searchParams.get('reconcileStates');
 
         const conditions: string[] = [];
         const queryParams: any[] = [limit, offset];
@@ -84,6 +108,49 @@ export async function GET(request: Request) {
                 )
             )`);
             queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+
+        // Account type filter
+        if (accountTypes) {
+            const types = accountTypes.split(',').map(t => t.trim().toUpperCase());
+            conditions.push(`EXISTS (
+                SELECT 1 FROM splits s
+                JOIN accounts a ON s.account_guid = a.guid
+                WHERE s.tx_guid = t.guid AND a.account_type = ANY($${paramIndex})
+            )`);
+            queryParams.push(types);
+            paramIndex++;
+        }
+
+        // Amount range filters (on any split in the transaction)
+        if (minAmount) {
+            conditions.push(`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                AND ABS(CAST(s.value_num AS NUMERIC) / CAST(s.value_denom AS NUMERIC)) >= $${paramIndex}
+            )`);
+            queryParams.push(parseFloat(minAmount));
+            paramIndex++;
+        }
+        if (maxAmount) {
+            conditions.push(`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid
+                AND ABS(CAST(s.value_num AS NUMERIC) / CAST(s.value_denom AS NUMERIC)) <= $${paramIndex}
+            )`);
+            queryParams.push(parseFloat(maxAmount));
+            paramIndex++;
+        }
+
+        // Reconciliation state filter
+        if (reconcileStates) {
+            const states = reconcileStates.split(',').map(s => s.trim().toLowerCase());
+            conditions.push(`EXISTS (
+                SELECT 1 FROM splits s
+                WHERE s.tx_guid = t.guid AND s.reconcile_state = ANY($${paramIndex})
+            )`);
+            queryParams.push(states);
             paramIndex++;
         }
 
