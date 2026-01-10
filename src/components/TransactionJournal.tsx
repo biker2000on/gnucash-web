@@ -4,6 +4,7 @@ import { Transaction } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { FilterPanel, AccountTypeFilter, AmountFilter, ReconcileFilter } from './filters';
+import { TransactionModal } from './TransactionModal';
 
 interface TransactionFilters {
     accountTypes: string[];
@@ -27,6 +28,10 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [debouncedFilter, setDebouncedFilter] = useState('');
     const loader = useRef<HTMLDivElement>(null);
 
+    // Modal state
+    const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+
     // Advanced filters
     const [filters, setFilters] = useState<TransactionFilters>({
         accountTypes: [],
@@ -35,6 +40,16 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         reconcileStates: [],
     });
     const [debouncedFilters, setDebouncedFilters] = useState<TransactionFilters>(filters);
+
+    const handleRowClick = (guid: string) => {
+        setSelectedTxGuid(guid);
+        setIsModalOpen(true);
+    };
+
+    const handleCloseModal = () => {
+        setIsModalOpen(false);
+        setSelectedTxGuid(null);
+    };
 
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
@@ -244,7 +259,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             </tr>
                         ) : (
                             transactions.map(tx => (
-                                <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer">
+                                <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-300 align-top">
                                         {new Date(tx.post_date).toLocaleDateString()}
                                     </td>
@@ -287,6 +302,13 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     )}
                 </div>
             </div>
+
+            {/* Transaction Details Modal */}
+            <TransactionModal
+                transactionGuid={selectedTxGuid}
+                isOpen={isModalOpen}
+                onClose={handleCloseModal}
+            />
         </div>
     );
 }
