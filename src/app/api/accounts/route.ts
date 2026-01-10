@@ -35,6 +35,34 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
+        const flat = searchParams.get('flat') === 'true';
+
+        // Flat mode: return all accounts with fullname (for account selector)
+        if (flat) {
+            const flatQuery = `
+                WITH RECURSIVE account_path AS (
+                    SELECT guid, name, account_type, parent_guid, commodity_guid,
+                           name::text as fullname
+                    FROM accounts
+                    WHERE parent_guid IS NULL OR parent_guid NOT IN (SELECT guid FROM accounts)
+
+                    UNION ALL
+
+                    SELECT a.guid, a.name, a.account_type, a.parent_guid, a.commodity_guid,
+                           (ap.fullname || ':' || a.name)::text as fullname
+                    FROM accounts a
+                    JOIN account_path ap ON a.parent_guid = ap.guid
+                )
+                SELECT ap.guid, ap.name, ap.account_type, ap.parent_guid, ap.commodity_guid, ap.fullname,
+                       c.mnemonic as commodity_mnemonic
+                FROM account_path ap
+                JOIN commodities c ON ap.commodity_guid = c.guid
+                WHERE ap.account_type NOT IN ('ROOT')
+                ORDER BY ap.fullname
+            `;
+            const { rows } = await query(flatQuery);
+            return NextResponse.json(rows);
+        }
 
         // Build dynamic query based on date filters
         const queryParams: (string | null)[] = [];

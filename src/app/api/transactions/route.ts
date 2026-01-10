@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { query, toDecimal } from '@/lib/db';
-import { Transaction, Split } from '@/lib/types';
+import { Transaction, Split, CreateTransactionRequest } from '@/lib/types';
+import { generateGuid } from '@/lib/guid';
+import { validateTransaction } from '@/lib/validation';
 
 /**
  * @openapi
@@ -203,5 +205,112 @@ export async function GET(request: Request) {
     } catch (error) {
         console.error('Error fetching transactions:', error);
         return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
+    }
+}
+
+/**
+ * @openapi
+ * /api/transactions:
+ *   post:
+ *     description: Create a new transaction with splits.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateTransactionRequest'
+ *     responses:
+ *       201:
+ *         description: Transaction created successfully.
+ *       400:
+ *         description: Validation error.
+ *       500:
+ *         description: Server error.
+ */
+export async function POST(request: Request) {
+    try {
+        const body: CreateTransactionRequest = await request.json();
+
+        // Validate the transaction
+        const validation = validateTransaction(body);
+        if (!validation.valid) {
+            return NextResponse.json({ errors: validation.errors }, { status: 400 });
+        }
+
+        // Verify all account GUIDs exist
+        const accountGuids = body.splits.map(s => s.account_guid);
+        const accountCheck = await query(
+            'SELECT guid FROM accounts WHERE guid = ANY($1)',
+            [accountGuids]
+        );
+        if (accountCheck.rows.length !== accountGuids.length) {
+            const foundGuids = new Set(accountCheck.rows.map((r: { guid: string }) => r.guid));
+            const missingGuids = accountGuids.filter(g => !foundGuids.has(g));
+            return NextResponse.json({
+                errors: [{ field: 'splits', message: `Invalid account GUIDs: ${missingGuids.join(', ')}` }]
+            }, { status: 400 });
+        }
+
+        // Generate GUIDs
+        const txGuid = generateGuid();
+        const now = new Date().toISOString();
+
+        // Insert transaction
+        await query(
+            `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [txGuid, body.currency_guid, body.num || '', body.post_date, now, body.description]
+        );
+
+        // Insert splits
+        for (const split of body.splits) {
+            const splitGuid = generateGuid();
+            await query(
+                `INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state, reconcile_date, value_num, value_denom, quantity_num, quantity_denom, lot_guid)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                [
+                    splitGuid,
+                    txGuid,
+                    split.account_guid,
+                    split.memo || '',
+                    split.action || '',
+                    split.reconcile_state || 'n',
+                    null,
+                    split.value_num,
+                    split.value_denom,
+                    split.quantity_num ?? split.value_num,
+                    split.quantity_denom ?? split.value_denom,
+                    null
+                ]
+            );
+        }
+
+        // Return the created transaction
+        const txResult = await query(
+            `SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description
+             FROM transactions t WHERE t.guid = $1`,
+            [txGuid]
+        );
+
+        const splitResult = await query(
+            `SELECT s.*, a.name as account_name, c.mnemonic as commodity_mnemonic
+             FROM splits s
+             JOIN accounts a ON s.account_guid = a.guid
+             JOIN commodities c ON a.commodity_guid = c.guid
+             WHERE s.tx_guid = $1`,
+            [txGuid]
+        );
+
+        const transaction = txResult.rows[0];
+        transaction.splits = splitResult.rows.map((split: Split) => ({
+            ...split,
+            value_decimal: toDecimal(split.value_num, split.value_denom),
+            quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
+        }));
+
+        return NextResponse.json(transaction, { status: 201 });
+    } catch (error) {
+        console.error('Error creating transaction:', error);
+        return NextResponse.json({ error: 'Failed to create transaction' }, { status: 500 });
     }
 }

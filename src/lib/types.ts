@@ -96,3 +96,44 @@ export interface Split {
 export interface AccountWithChildren extends Account {
     children: AccountWithChildren[];
 }
+
+// Form types for transaction creation/editing
+export interface SplitFormData {
+    id: string; // Temporary ID for React key
+    account_guid: string;
+    account_name?: string;
+    debit: string;
+    credit: string;
+    memo: string;
+    reconcile_state: 'n' | 'c' | 'y';
+}
+
+export interface TransactionFormData {
+    post_date: string;
+    description: string;
+    num: string;
+    currency_guid: string;
+    splits: SplitFormData[];
+}
+
+// API request/response types
+export interface CreateTransactionRequest {
+    currency_guid: string;
+    num?: string;
+    post_date: string;
+    description: string;
+    splits: {
+        account_guid: string;
+        value_num: number;
+        value_denom: number;
+        quantity_num?: number;
+        quantity_denom?: number;
+        memo?: string;
+        action?: string;
+        reconcile_state?: 'n' | 'c' | 'y';
+    }[];
+}
+
+export interface UpdateTransactionRequest extends CreateTransactionRequest {
+    guid: string;
+}
