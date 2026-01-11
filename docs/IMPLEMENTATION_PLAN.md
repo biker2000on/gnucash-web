@@ -527,13 +527,202 @@ GET /api/reports/{reportId}/export?format=csv&...options
 
 ## Phase 5: Supporting Features
 
-### 5.1 Multi-Currency Support
+### 5.1 Investment Account Support (Commodity Valuation)
+
+**Problem**: Investment accounts hold non-cash commodities (stocks, mutual funds, etc.) where the quantity is in shares/units but needs to be displayed in the reporting currency (e.g., USD) using current market prices.
+
+**GnuCash Data Model**:
+- **Accounts**: `commodity_guid` references the commodity held (e.g., AAPL stock)
+- **Splits**: `quantity_num/quantity_denom` = shares held, `value_num/value_denom` = transaction currency value
+- **Commodities**: `namespace` distinguishes types (CURRENCY, STOCK, FUND, etc.)
+- **Prices**: Historical price quotes with `commodity_guid`, `currency_guid`, `date`, `value_num/value_denom`
+
+**How GnuCash Desktop Handles This** (from gnc-pricedb.h):
+1. For each account, check if its commodity differs from the reporting currency
+2. If different, look up the conversion price using:
+   - `gnc_pricedb_lookup_latest()` - Most recent available price
+   - `gnc_pricedb_lookup_nearest_in_time64()` - Price nearest to a specific date
+   - `gnc_pricedb_convert_balance_latest_price()` - Direct balance conversion
+3. Multiply quantity by price to get value in reporting currency
+4. For multi-currency chains (e.g., EUR stock → EUR → USD), traverse price lookups
+
+**Implementation for GnuCash Web**:
+
+#### 5.1.1 Price API Endpoints
+
+```
+GET  /api/prices                                    - List all prices (paginated)
+GET  /api/prices/latest?commodity={guid}            - Latest price for commodity
+GET  /api/prices/nearest?commodity={guid}&date={date} - Price nearest to date
+GET  /api/prices?commodity={guid}&currency={guid}&date={date} - Specific lookup
+POST /api/prices                                    - Add new price quote
+```
+
+**New Files**:
+- `src/app/api/prices/route.ts` - Price listing and creation
+- `src/app/api/prices/latest/route.ts` - Latest price lookup
+- `src/app/api/prices/nearest/route.ts` - Time-based price lookup
+- `src/lib/prices.ts` - Price lookup utility functions
+
+**Price Lookup Utility** (`src/lib/prices.ts`):
+```typescript
+interface PriceLookup {
+  commodity_guid: string;
+  currency_guid: string;
+  date: Date;
+  value: number;  // Price as decimal
+  source: string;
+}
+
+// Get latest price, optionally traversing currency chains
+async function getLatestPrice(
+  commodityGuid: string,
+  targetCurrencyGuid: string
+): Promise<number | null>;
+
+// Get price nearest to a specific date
+async function getNearestPrice(
+  commodityGuid: string,
+  targetCurrencyGuid: string,
+  asOfDate: Date
+): Promise<number | null>;
+
+// Convert a quantity to target currency using latest prices
+async function convertToReportingCurrency(
+  quantity: number,
+  commodityGuid: string,
+  reportingCurrencyGuid: string
+): Promise<number | null>;
+```
+
+#### 5.1.2 Account Balance Conversion
+
+**Modify `/api/accounts` route**:
+1. Add optional `reportingCurrency` query parameter (defaults to USD)
+2. For each account where `commodity_guid` != reporting currency:
+   - Look up latest price from `prices` table
+   - Calculate `converted_balance = quantity * price`
+3. Return both `native_balance` (in account's commodity) and `converted_balance` (in reporting currency)
+
+**Updated Account Response**:
+```typescript
+interface Account {
+  // ... existing fields
+  commodity_guid: string;
+  commodity_mnemonic: string;      // e.g., "AAPL", "USD", "EUR"
+  commodity_namespace: string;      // e.g., "STOCK", "CURRENCY"
+  native_balance: string;           // Balance in account's commodity
+  converted_balance: string;        // Balance in reporting currency
+  conversion_price?: string;        // Price used for conversion (if applicable)
+  conversion_date?: string;         // Date of price quote used
+}
+```
+
+**SQL Query Pattern**:
+```sql
+WITH account_balances AS (
+  SELECT
+    a.guid,
+    a.commodity_guid,
+    c.mnemonic as commodity_mnemonic,
+    c.namespace as commodity_namespace,
+    COALESCE(SUM(s.quantity_num::numeric / s.quantity_denom), 0) as native_balance
+  FROM accounts a
+  JOIN commodities c ON a.commodity_guid = c.guid
+  LEFT JOIN splits s ON a.guid = s.account_guid
+  GROUP BY a.guid, a.commodity_guid, c.mnemonic, c.namespace
+),
+latest_prices AS (
+  SELECT DISTINCT ON (commodity_guid)
+    commodity_guid,
+    currency_guid,
+    value_num::numeric / value_denom as price,
+    date
+  FROM prices
+  WHERE currency_guid = $1  -- reporting currency GUID
+  ORDER BY commodity_guid, date DESC
+)
+SELECT
+  ab.*,
+  COALESCE(lp.price, 1) as conversion_price,
+  lp.date as conversion_date,
+  ab.native_balance * COALESCE(lp.price, 1) as converted_balance
+FROM account_balances ab
+LEFT JOIN latest_prices lp ON ab.commodity_guid = lp.commodity_guid;
+```
+
+#### 5.1.3 Account Hierarchy UI Updates
+
+**Modify `AccountHierarchy.tsx`**:
+1. Show converted balances for aggregation (summing in same currency)
+2. Display commodity symbol alongside balance for investment accounts
+3. Add tooltip showing: "123.45 shares @ $456.78 = $56,290.91"
+4. Aggregate child balances in reporting currency, not native
+
+**Display Format Examples**:
+- Cash account (USD): `$1,234.56`
+- Stock account: `$56,290.91` (tooltip: "123.45 AAPL @ $456.78")
+- Parent total: Sum of all children in reporting currency
+
+**New Component Props**:
+```typescript
+interface AccountNodeProps {
+  // ... existing
+  showNativeBalance?: boolean;  // Toggle to show shares/units
+  reportingCurrency: string;    // Currency for totals
+}
+```
+
+#### 5.1.4 Price Management UI
+
+**New Page**: `/prices` - View and manage price quotes
+
+**Features**:
+- List all commodities with their latest prices
+- Historical price chart per commodity
+- Manual price entry form
+- Price import from CSV
+- Integration with external quote services (future)
+
+**New Files**:
+- `src/app/(main)/prices/page.tsx`
+- `src/components/PriceList.tsx`
+- `src/components/PriceChart.tsx`
+- `src/components/PriceEntryForm.tsx`
+
+#### 5.1.5 Database Initialization
+
+**Add to `db-init.ts`**:
+```sql
+-- Index for efficient price lookups
+CREATE INDEX IF NOT EXISTS idx_prices_commodity_date
+  ON prices(commodity_guid, date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_prices_commodity_currency
+  ON prices(commodity_guid, currency_guid);
+
+-- View for latest prices per commodity
+CREATE OR REPLACE VIEW latest_prices AS
+SELECT DISTINCT ON (commodity_guid, currency_guid)
+  guid,
+  commodity_guid,
+  currency_guid,
+  date,
+  source,
+  type,
+  value_num::numeric / value_denom as price
+FROM prices
+ORDER BY commodity_guid, currency_guid, date DESC;
+```
+
+### 5.2 Multi-Currency Support (General)
 
 **Features**:
 - Price database queries for exchange rates
 - Convert all amounts to reporting currency
 - Display original currency alongside converted amount
 - Support for manual exchange rate entry
+- Currency chain traversal (e.g., GBP → EUR → USD)
 
 **API**:
 ```
@@ -541,7 +730,7 @@ GET  /api/prices?commodity={guid}&currency={guid}&date={date}
 POST /api/prices - Add price quote
 ```
 
-### 5.2 User Authentication
+### 5.3 User Authentication
 
 **Implementation Options**:
 - NextAuth.js with database adapter
@@ -554,7 +743,7 @@ POST /api/prices - Add price quote
 - Protected API routes
 - User preferences storage
 
-### 5.3 Data Validation & Integrity
+### 5.4 Data Validation & Integrity
 
 **Features**:
 - Unbalanced transaction detection
@@ -568,7 +757,7 @@ GET /api/integrity/check - Run all checks, return issues
 POST /api/integrity/repair/{issueType} - Fix specific issue type
 ```
 
-### 5.4 Audit Trail
+### 5.5 Audit Trail
 
 **Implementation**:
 - Log all write operations
@@ -714,24 +903,25 @@ Add to sidebar:
 7. Account CRUD operations
 8. Reconciliation workflow
 
-### Milestone 3: Reporting
-9. Report framework setup
-10. Balance Sheet report
-11. Income Statement report
-12. Chart visualizations
+### Milestone 3: Reporting & Investments
+9. Investment account support (price lookups, balance conversion)
+10. Report framework setup
+11. Balance Sheet report
+12. Income Statement report
+13. Chart visualizations
 
 ### Milestone 4: Budgeting
-13. Budget list page
-14. Budget editor
-15. Budget vs Actual view
-16. Budget reports
+14. Budget list page
+15. Budget editor
+16. Budget vs Actual view
+17. Budget reports
 
 ### Milestone 5: Polish
-17. Cash Flow Statement
-18. Export functionality (PDF, CSV, Excel)
-19. Keyboard shortcuts
-20. Mobile optimization
-21. User authentication
+18. Cash Flow Statement
+19. Export functionality (PDF, CSV, Excel)
+20. Keyboard shortcuts
+21. Mobile optimization
+22. User authentication
 
 ---
 
