@@ -7,6 +7,7 @@ interface ReconciliationPanelProps {
     accountGuid: string;
     accountCurrency: string;
     currentBalance: number;
+    selectedBalance: number;
     onReconcileComplete?: () => void;
     selectedSplits: Set<string>;
     onToggleSplit: (splitGuid: string) => void;
@@ -20,6 +21,7 @@ interface ReconciliationPanelProps {
 export function ReconciliationPanel({
     accountCurrency,
     currentBalance,
+    selectedBalance,
     onReconcileComplete,
     selectedSplits,
     onSelectAll,
@@ -34,9 +36,6 @@ export function ReconciliationPanel({
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
-    // Calculate reconciled balance from selected splits
-    const selectedBalance = 0; // This will be passed in from parent
 
     const handleFinish = useCallback(async () => {
         if (selectedSplits.size === 0) {
@@ -72,7 +71,7 @@ export function ReconciliationPanel({
     }, [selectedSplits, statementDate, onReconcileComplete, onCancelReconcile]);
 
     const parsedStatementBalance = parseFloat(statementBalance) || 0;
-    const difference = parsedStatementBalance - currentBalance;
+    const difference = parsedStatementBalance - selectedBalance;
 
     if (!isReconciling) {
         return (

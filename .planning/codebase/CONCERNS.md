@@ -37,6 +37,7 @@
 - Files: `src/app/api/transactions/route.ts`, `src/app/api/accounts/[guid]/transactions/route.ts`
 - Current mitigation: Using parameterized queries (`$1`, `$2` placeholders)
 - Recommendations: Review all query builders, consider an ORM for additional safety layer
+- Prefer to use Prisma as a ORM.
 
 **No Input Sanitization on Search:**
 - Risk: Search terms passed directly to ILIKE patterns

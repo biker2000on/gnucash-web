@@ -41,6 +41,12 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     });
     const [debouncedFilters, setDebouncedFilters] = useState<TransactionFilters>(filters);
 
+    // Track if filters were previously active (to detect clearing)
+    const prevFiltersRef = useRef<{ hadTextFilter: boolean; hadAdvancedFilters: boolean }>({
+        hadTextFilter: false,
+        hadAdvancedFilters: false,
+    });
+
     const handleRowClick = (guid: string) => {
         setSelectedTxGuid(guid);
         setIsModalOpen(true);
@@ -135,14 +141,23 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             }
         };
 
-        // Run when any filter changes (text or advanced filters)
+        // Check current filter state
         const hasTextFilter = debouncedFilter !== '';
         const hasAdvancedFilters = debouncedFilters.accountTypes.length > 0 ||
             debouncedFilters.minAmount !== '' ||
             debouncedFilters.maxAmount !== '' ||
             debouncedFilters.reconcileStates.length > 0;
 
-        if (hasTextFilter || hasAdvancedFilters) {
+        // Check if filters were just cleared (had filters before, none now)
+        const filtersWereCleared =
+            (prevFiltersRef.current.hadTextFilter || prevFiltersRef.current.hadAdvancedFilters) &&
+            !hasTextFilter && !hasAdvancedFilters;
+
+        // Update the ref for next comparison
+        prevFiltersRef.current = { hadTextFilter: hasTextFilter, hadAdvancedFilters: hasAdvancedFilters };
+
+        // Run when any filter is active OR when filters were just cleared
+        if (hasTextFilter || hasAdvancedFilters || filtersWereCleared) {
             resetAndFetch();
         }
     }, [debouncedFilter, debouncedFilters, buildUrlParams]);

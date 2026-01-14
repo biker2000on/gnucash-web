@@ -29,6 +29,7 @@ export function Modal({
     closeOnEscape = true,
 }: ModalProps) {
     const modalRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
 
     // Handle escape key
     useEffect(() => {
@@ -56,6 +57,13 @@ export function Modal({
         };
     }, [isOpen]);
 
+    // Reset scroll position when modal opens
+    useEffect(() => {
+        if (isOpen && contentRef.current) {
+            contentRef.current.scrollTop = 0;
+        }
+    }, [isOpen]);
+
     // Focus trap
     useEffect(() => {
         if (!isOpen) return;
@@ -79,7 +87,8 @@ export function Modal({
         };
 
         document.addEventListener('keydown', handleTabKey);
-        firstElement?.focus();
+        // Use preventScroll to avoid unwanted scrolling when focusing
+        firstElement?.focus({ preventScroll: true });
 
         return () => document.removeEventListener('keydown', handleTabKey);
     }, [isOpen]);
@@ -120,7 +129,7 @@ export function Modal({
                 )}
 
                 {/* Content */}
-                <div className="flex-1 overflow-y-auto">
+                <div ref={contentRef} className="flex-1 overflow-y-auto">
                     {children}
                 </div>
             </div>

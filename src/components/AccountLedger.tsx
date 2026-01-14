@@ -1,7 +1,7 @@
 "use client";
 
 import { Transaction, Split } from '@/lib/types';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { ReconciliationPanel } from './ReconciliationPanel';
 
@@ -63,6 +63,17 @@ export default function AccountLedger({
     const clearSelection = useCallback(() => {
         setSelectedSplits(new Set());
     }, []);
+
+    // Calculate the sum of selected splits for reconciliation
+    const selectedBalance = useMemo(() => {
+        let sum = 0;
+        for (const tx of transactions) {
+            if (selectedSplits.has(tx.account_split_guid)) {
+                sum += parseFloat(tx.account_split_value) || 0;
+            }
+        }
+        return sum;
+    }, [transactions, selectedSplits]);
 
     const handleReconcileComplete = useCallback(() => {
         // Refresh the transactions to show updated reconcile states
@@ -154,6 +165,7 @@ export default function AccountLedger({
                     accountGuid={accountGuid}
                     accountCurrency={accountCurrency}
                     currentBalance={currentBalance}
+                    selectedBalance={selectedBalance}
                     onReconcileComplete={handleReconcileComplete}
                     selectedSplits={selectedSplits}
                     onToggleSplit={toggleSplitSelection}
