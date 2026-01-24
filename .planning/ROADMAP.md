@@ -30,14 +30,16 @@ Decimal phases appear between their surrounding integers in numeric order.
 ### Phase 1: Foundation
 **Goal**: Migrate from direct pg queries to Prisma ORM and establish comprehensive testing infrastructure
 **Depends on**: Nothing (first phase)
-**Research**: Likely (Prisma migration patterns, Next.js App Router testing)
+**Research**: Completed (Prisma migration patterns, Next.js App Router testing)
 **Research topics**: Prisma introspection for existing PostgreSQL schema, GnuCash fraction-based numeric handling in Prisma, testing patterns for Next.js 16 App Router API routes
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
-- [ ] 01-01: Prisma setup and schema introspection
-- [ ] 01-02: Migrate API routes from pg to Prisma
-- [ ] 01-03: Testing infrastructure setup
+- [ ] 01-01-PLAN.md — Prisma Core Setup
+- [ ] 01-02-PLAN.md — Testing Infrastructure
+- [ ] 01-03-PLAN.md — TDD: Prisma Extension Logic
+- [ ] 01-04-PLAN.md — API Migration - Core Routes
+- [ ] 01-05-PLAN.md — API Migration - Remaining Routes
 
 ### Phase 2: Date Filtering
 **Goal**: Replace hardcoded 2026-01-01 date filter with configurable date range picker
@@ -118,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/3 | Not started | - |
+| 1. Foundation | 0/5 | Not started | - |
 | 2. Date Filtering | 0/1 | Not started | - |
 | 3. Advanced Filtering | 0/2 | Not started | - |
 | 4. Transaction Details | 0/1 | Not started | - |
