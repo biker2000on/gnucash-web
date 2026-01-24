@@ -57,7 +57,7 @@ Plans:
 **Goal**: Account CRUD operations, hierarchy reorganization, and summary aggregations
 **Depends on**: Phase 2
 **Research**: Unlikely (follows Phase 2 patterns)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 03-01: Account creation and editing
@@ -69,7 +69,7 @@ Plans:
 **Depends on**: Phase 3
 **Research**: Likely (GnuCash budget schema)
 **Research topics**: GnuCash budgets and budget_amounts tables, budget period handling, budget recurrence patterns
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 04-01: Budget list and management
@@ -81,7 +81,7 @@ Plans:
 **Depends on**: Phase 1
 **Research**: Likely (Financial report logic)
 **Research topics**: Balance sheet and P&L calculation logic for GnuCash schema, PDF/CSV export libraries for Next.js
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 05-01: Report framework and base UI
@@ -93,7 +93,7 @@ Plans:
 **Depends on**: Phase 1
 **Research**: Likely (Investment valuation & Multi-currency)
 **Research topics**: GnuCash commodity/price tables, currency chain traversal, local authentication patterns for self-hosting
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 06-01: Investment account support (commodity valuation)
@@ -105,7 +105,7 @@ Plans:
 **Depends on**: Phase 2 (for CRUD) & Phase 6 (for Auth)
 **Research**: Very Likely (Plaid API & GnuCash extension schema)
 **Research topics**: Plaid Link flow in Next.js, extension tables for bank linking, sync scheduling, automatic import logic
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 07-01: Plaid account linking (extension tables)
