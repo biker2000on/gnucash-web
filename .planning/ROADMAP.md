@@ -2,7 +2,7 @@
 
 ## Overview
 
-Transform the existing read-only GnuCash Web viewer into a full transaction management system. Starting with foundation work (Prisma migration, testing), then progressively adding transaction filtering, CRUD operations, reconciliation, account management, and budgeting capabilities—all while maintaining GnuCash desktop compatibility.
+Transform the existing read-only GnuCash Web viewer into a full transaction management system. Starting with foundation work (Prisma migration, testing), then progressively adding transaction management, account organization, budgeting, reporting, and automated bank imports—all while maintaining GnuCash desktop compatibility.
 
 ## Domain Expertise
 
@@ -17,13 +17,12 @@ None
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Foundation** - Prisma migration and testing infrastructure
-- [ ] **Phase 2: Date Filtering** - Configurable date filtering in transaction journal
-- [ ] **Phase 3: Advanced Filtering** - Account type, amount range, reconciliation filters
-- [ ] **Phase 4: Transaction Details** - Transaction details modal
-- [ ] **Phase 5: Transaction CRUD** - Create, edit, delete transactions
-- [ ] **Phase 6: Reconciliation** - Reconciliation workflow
-- [ ] **Phase 7: Account Management** - Account CRUD and hierarchy reorganization
-- [ ] **Phase 8: Budgeting** - Budget system with editor and reports
+- [ ] **Phase 2: Enhanced Transaction Journal** - Advanced filtering, CRUD operations, and reconciliation
+- [ ] **Phase 3: Enhanced Account Hierarchy** - Account CRUD, reorganization, and summary aggregations
+- [ ] **Phase 4: Budgeting System** - Budget editor, vs-actual views, and reports
+- [ ] **Phase 5: Reporting System** - Financial statements (P&L, Balance Sheet) and chart visualizations
+- [ ] **Phase 6: Supporting Features** - Investments, multi-currency support, and authentication
+- [ ] **Phase 7: Plaid Integration** - Automated transaction imports and bank linking
 
 ## Phase Details
 
@@ -41,90 +40,89 @@ Plans:
 - [ ] 01-04-PLAN.md — API Migration - Core Routes
 - [ ] 01-05-PLAN.md — API Migration - Remaining Routes
 
-### Phase 2: Date Filtering
-**Goal**: Replace hardcoded 2026-01-01 date filter with configurable date range picker
+### Phase 2: Enhanced Transaction Journal
+**Goal**: Advanced filtering and full CRUD operations with double-entry validation and reconciliation
 **Depends on**: Phase 1
-**Research**: Unlikely (internal UI patterns)
-**Plans**: TBD
+**Research**: Completed (GnuCash transaction rules)
+**Research topics**: GnuCash transaction and split table relationships, GUID generation, double-entry enforcement, fraction-based amount storage, reconciliation states (n/c/y)
+**Plans**: 4 plans
 
 Plans:
-- [ ] 02-01: Date filtering UI and API integration
+- [ ] 02-01-PLAN.md — Advanced Filtering & Details UI
+- [ ] 02-02-PLAN.md — CRUD Infrastructure & Backend
+- [ ] 02-03-PLAN.md — Transaction Form & Editor
+- [ ] 02-04-PLAN.md — Reconciliation Workflow
 
-### Phase 3: Advanced Filtering
-**Goal**: Add transaction filtering by account type, amount range, and reconciliation status
+### Phase 3: Enhanced Account Hierarchy
+**Goal**: Account CRUD operations, hierarchy reorganization, and summary aggregations
 **Depends on**: Phase 2
-**Research**: Unlikely (internal UI patterns)
+**Research**: Unlikely (follows Phase 2 patterns)
 **Plans**: TBD
 
 Plans:
-- [ ] 03-01: Filter UI components and state management
-- [ ] 03-02: API filtering parameters and query logic
+- [ ] 03-01: Account creation and editing
+- [ ] 03-02: Account hierarchy drag-drop reorganization
+- [ ] 03-03: Account type aggregations (summary cards)
 
-### Phase 4: Transaction Details
-**Goal**: Transaction details modal showing full split breakdown and metadata
-**Depends on**: Phase 3
-**Research**: Unlikely (internal UI patterns)
-**Plans**: TBD
-
-Plans:
-- [ ] 04-01: Transaction details modal component
-
-### Phase 5: Transaction CRUD
-**Goal**: Create, edit, and delete transactions with double-entry bookkeeping validation
-**Depends on**: Phase 4
-**Research**: Likely (GnuCash transaction rules)
-**Research topics**: GnuCash transaction and split table relationships, GUID generation, double-entry enforcement (splits sum to zero), fraction-based amount storage
-**Plans**: TBD
-
-Plans:
-- [ ] 05-01: Transaction creation form and validation
-- [ ] 05-02: Transaction edit functionality
-- [ ] 05-03: Transaction delete with confirmation
-
-### Phase 6: Reconciliation
-**Goal**: Reconciliation workflow for marking transactions as cleared/reconciled
-**Depends on**: Phase 5
-**Research**: Likely (reconciliation workflow patterns)
-**Research topics**: GnuCash reconciliation state machine (n/c/y states), reconciliation balance calculation, statement date handling
-**Plans**: TBD
-
-Plans:
-- [ ] 06-01: Reconciliation panel and workflow
-
-### Phase 7: Account Management
-**Goal**: Account CRUD operations and hierarchy reorganization
-**Depends on**: Phase 6
-**Research**: Unlikely (follows Phase 5 patterns)
-**Plans**: TBD
-
-Plans:
-- [ ] 07-01: Account creation and editing
-- [ ] 07-02: Account hierarchy drag-drop reorganization
-
-### Phase 8: Budgeting
+### Phase 4: Budgeting System
 **Goal**: Budget management system with spreadsheet editor and vs-actual reporting
-**Depends on**: Phase 7
+**Depends on**: Phase 3
 **Research**: Likely (GnuCash budget schema)
 **Research topics**: GnuCash budgets and budget_amounts tables, budget period handling, budget recurrence patterns
 **Plans**: TBD
 
 Plans:
-- [ ] 08-01: Budget list and management
-- [ ] 08-02: Budget editor (spreadsheet-style)
-- [ ] 08-03: Budget vs Actual view and reports
+- [ ] 04-01: Budget list and management
+- [ ] 04-02: Budget editor (spreadsheet-style)
+- [ ] 04-03: Budget vs Actual view and reports
+
+### Phase 5: Reporting System
+**Goal**: Comprehensive financial reporting framework and visualizations
+**Depends on**: Phase 1
+**Research**: Likely (Financial report logic)
+**Research topics**: Balance sheet and P&L calculation logic for GnuCash schema, PDF/CSV export libraries for Next.js
+**Plans**: TBD
+
+Plans:
+- [ ] 05-01: Report framework and base UI
+- [ ] 05-02: Core financial statements (P&L, Balance Sheet, Cash Flow)
+- [ ] 05-03: Chart visualizations and export (PDF, CSV, Excel)
+
+### Phase 6: Supporting Features
+**Goal**: Investments, multi-currency support, authentication, and data integrity
+**Depends on**: Phase 1
+**Research**: Likely (Investment valuation & Multi-currency)
+**Research topics**: GnuCash commodity/price tables, currency chain traversal, local authentication patterns for self-hosting
+**Plans**: TBD
+
+Plans:
+- [ ] 06-01: Investment account support (commodity valuation)
+- [ ] 06-02: Advanced multi-currency support
+- [ ] 06-03: Local user authentication and audit trail
+
+### Phase 7: Plaid Integration
+**Goal**: Automated bank transaction imports via Plaid
+**Depends on**: Phase 2 (for CRUD) & Phase 6 (for Auth)
+**Research**: Very Likely (Plaid API & GnuCash extension schema)
+**Research topics**: Plaid Link flow in Next.js, extension tables for bank linking, sync scheduling, automatic import logic
+**Plans**: TBD
+
+Plans:
+- [ ] 07-01: Plaid account linking (extension tables)
+- [ ] 07-02: Transaction import and sync logic
+- [ ] 07-03: Sync scheduling and on-revisit triggers
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation | 0/5 | Not started | - |
-| 2. Date Filtering | 0/1 | Not started | - |
-| 3. Advanced Filtering | 0/2 | Not started | - |
-| 4. Transaction Details | 0/1 | Not started | - |
-| 5. Transaction CRUD | 0/3 | Not started | - |
-| 6. Reconciliation | 0/1 | Not started | - |
-| 7. Account Management | 0/2 | Not started | - |
-| 8. Budgeting | 0/3 | Not started | - |
+| 2. Enhanced Journal | 0/4 | Not started | - |
+| 3. Enhanced Hierarchy | 0/3 | Not started | - |
+| 4. Budgeting | 0/3 | Not started | - |
+| 5. Reporting | 0/3 | Not started | - |
+| 6. Supporting Features | 0/3 | Not started | - |
+| 7. Plaid Integration | 0/3 | Not started | - |
