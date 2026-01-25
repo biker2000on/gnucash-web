@@ -144,9 +144,25 @@ async function createExtensionTables() {
         );
     `;
 
+    // Migration: Add balance_reversal column to existing users table
+    const addBalanceReversalDDL = `
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'gnucash_web_users'
+                AND column_name = 'balance_reversal'
+            ) THEN
+                ALTER TABLE gnucash_web_users
+                ADD COLUMN balance_reversal VARCHAR(20) DEFAULT 'none';
+            END IF;
+        END $$;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
+        await query(addBalanceReversalDDL);
         console.log('✓ Extension tables created/verified successfully');
     } catch (error) {
         console.error('Error creating extension tables:', error);

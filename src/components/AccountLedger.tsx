@@ -2,7 +2,8 @@
 
 import { Transaction, Split } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { formatCurrency } from '@/lib/format';
+import { formatCurrency, applyBalanceReversal } from '@/lib/format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
 
 export interface AccountTransaction extends Transaction {
@@ -20,6 +21,7 @@ interface AccountLedgerProps {
     endDate?: string | null;
     accountCurrency?: string;
     currentBalance?: number;
+    accountType?: string;
 }
 
 export default function AccountLedger({
@@ -29,7 +31,9 @@ export default function AccountLedger({
     endDate,
     accountCurrency = 'USD',
     currentBalance = 0,
+    accountType = 'ASSET',
 }: AccountLedgerProps) {
+    const { balanceReversal } = useUserPreferences();
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -268,8 +272,8 @@ export default function AccountLedger({
                                     <td className={`px-6 py-4 text-sm font-mono text-right align-top ${amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                                         {formatCurrency(tx.account_split_value, tx.commodity_mnemonic)}
                                     </td>
-                                    <td className={`px-6 py-4 text-sm font-mono text-right align-top font-bold ${parseFloat(tx.running_balance) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                        {formatCurrency(tx.running_balance, tx.commodity_mnemonic)}
+                                    <td className={`px-6 py-4 text-sm font-mono text-right align-top font-bold ${applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                        {formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic)}
                                     </td>
                                 </tr>
                             );

@@ -3,7 +3,8 @@
 import { AccountWithChildren } from '@/lib/types';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { formatCurrency } from '@/lib/format';
+import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { Modal } from './ui/Modal';
 import { AccountForm } from './AccountForm';
 
@@ -20,6 +21,7 @@ interface AccountNodeProps {
     onEdit?: (account: AccountWithChildren) => void;
     onDelete?: (account: AccountWithChildren) => void;
     onNewChild?: (parent: AccountWithChildren) => void;
+    balanceReversal: BalanceReversal;
 }
 
 function AccountNode({
@@ -33,6 +35,7 @@ function AccountNode({
     onEdit,
     onDelete,
     onNewChild,
+    balanceReversal,
 }: AccountNodeProps) {
     // Determine initial expansion state
     // Priority: 1) User manually expanded/collapsed, 2) Global depth setting
@@ -71,8 +74,17 @@ function AccountNode({
 
     // Recursive balance calculation for children that are visible
     const getAggregatedBalances = (acc: AccountWithChildren): { total: number, period: number } => {
-        let total = parseFloat(acc.total_balance || '0');
-        let period = parseFloat(acc.period_balance || '0');
+        // Apply balance reversal to this account's balances based on its type
+        let total = applyBalanceReversal(
+            parseFloat(acc.total_balance || '0'),
+            acc.account_type,
+            balanceReversal
+        );
+        let period = applyBalanceReversal(
+            parseFloat(acc.period_balance || '0'),
+            acc.account_type,
+            balanceReversal
+        );
 
         acc.children.forEach(child => {
             if (!child.hidden || showHidden) {
@@ -206,6 +218,7 @@ function AccountNode({
                             onEdit={onEdit}
                             onDelete={onDelete}
                             onNewChild={onNewChild}
+                            balanceReversal={balanceReversal}
                         />
                     ))}
                 </div>
@@ -220,6 +233,8 @@ interface AccountHierarchyProps {
 }
 
 export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarchyProps) {
+    const { balanceReversal } = useUserPreferences();
+
     // Initialize state from localStorage with fallback defaults
     const [showHidden, setShowHidden] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -501,6 +516,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         onEdit={handleEdit}
                         onDelete={handleDeleteConfirm}
                         onNewChild={handleNewChild}
+                        balanceReversal={balanceReversal}
                     />
                 ))}
             </div>

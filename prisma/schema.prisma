@@ -403,14 +403,15 @@ model gnclock {
 // ============================================
 
 model gnucash_web_users {
-  id            Int       @id @default(autoincrement())
-  username      String    @unique @db.VarChar(255)
-  password_hash String    @db.VarChar(255)
-  created_at    DateTime  @default(now())
-  last_login    DateTime?
+  id               Int       @id @default(autoincrement())
+  username         String    @unique @db.VarChar(255)
+  password_hash    String    @db.VarChar(255)
+  balance_reversal String    @default("none") @db.VarChar(20)
+  created_at       DateTime  @default(now())
+  last_login       DateTime?
 
   // Relations
-  audit_logs    gnucash_web_audit[]
+  audit_logs       gnucash_web_audit[]
 }
 
 model gnucash_web_audit {

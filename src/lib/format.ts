@@ -19,3 +19,45 @@ export function formatCurrency(amount: number | string, currencyMnemonic: string
         return `${currencyMnemonic} ${formattedNumber}`;
     }
 }
+
+/**
+ * Balance reversal modes for displaying account balances
+ */
+export type BalanceReversal = 'none' | 'credit' | 'income_expense';
+
+/**
+ * Account types that are naturally credit-balance accounts
+ * These show negative values in GnuCash but represent positive balances
+ */
+const CREDIT_ACCOUNT_TYPES = ['INCOME', 'LIABILITY', 'EQUITY', 'CREDIT'];
+
+/**
+ * Account types for P&L (profit & loss) display reversal
+ */
+const INCOME_EXPENSE_TYPES = ['INCOME', 'EXPENSE'];
+
+/**
+ * Apply balance reversal based on user preference and account type
+ *
+ * @param balance - The raw balance value from GnuCash
+ * @param accountType - The GnuCash account type (e.g., 'INCOME', 'ASSET')
+ * @param reversalMode - The user's balance reversal preference
+ * @returns The balance with reversal applied if applicable
+ */
+export function applyBalanceReversal(
+    balance: number,
+    accountType: string,
+    reversalMode: BalanceReversal
+): number {
+    if (reversalMode === 'none') return balance;
+
+    if (reversalMode === 'credit' && CREDIT_ACCOUNT_TYPES.includes(accountType)) {
+        return -balance;
+    }
+
+    if (reversalMode === 'income_expense' && INCOME_EXPENSE_TYPES.includes(accountType)) {
+        return -balance;
+    }
+
+    return balance;
+}

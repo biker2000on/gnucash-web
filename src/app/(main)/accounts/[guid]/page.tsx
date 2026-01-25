@@ -6,7 +6,8 @@ import AccountLedger, { AccountTransaction } from '@/components/AccountLedger';
 import { InvestmentAccount } from '@/components/InvestmentAccount';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { useDateFilter } from '@/hooks/useDateFilter';
-import { formatCurrency } from '@/lib/format';
+import { formatCurrency, applyBalanceReversal } from '@/lib/format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import Link from 'next/link';
 
 interface AccountData {
@@ -33,6 +34,7 @@ function AccountPageContent() {
     const params = useParams();
     const guid = params.guid as string;
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
+    const { balanceReversal } = useUserPreferences();
 
     const [account, setAccount] = useState<AccountData | null>(null);
     const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
@@ -134,9 +136,9 @@ function AccountPageContent() {
                     />
                     <div className="text-right pb-1">
                         <p className="text-xs text-neutral-500 uppercase tracking-widest font-bold">Current Balance</p>
-                        <p className={`text-2xl font-mono font-bold ${currentBalance && parseFloat(currentBalance) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        <p className={`text-2xl font-mono font-bold ${currentBalance && applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                             {currentBalance
-                                ? formatCurrency(currentBalance, commodityMnemonic)
+                                ? formatCurrency(applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal), commodityMnemonic)
                                 : '$0.00'}
                         </p>
                     </div>
@@ -166,6 +168,7 @@ function AccountPageContent() {
                     initialTransactions={transactions}
                     startDate={startDate}
                     endDate={endDate}
+                    accountType={account?.account_type}
                 />
             )}
         </div>
