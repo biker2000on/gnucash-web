@@ -8,6 +8,9 @@ import { UserMenu } from './UserMenu';
 export default function Layout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
 
+    // Budget detail pages need full width for the period columns
+    const isFullWidthPage = pathname?.startsWith('/budgets/') && pathname !== '/budgets/';
+
     const navItems = [
         { name: 'Account Hierarchy', href: '/accounts' },
         { name: 'General Ledger', href: '/ledger' },
@@ -57,11 +60,11 @@ export default function Layout({ children }: { children: ReactNode }) {
             <main className="flex-1 overflow-auto bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-neutral-900 via-neutral-950 to-neutral-950">
                 {/* Top Bar */}
                 <div className="border-b border-neutral-800 bg-neutral-950/50 backdrop-blur-sm sticky top-0 z-10">
-                    <div className="max-w-6xl mx-auto px-8 py-3 flex items-center justify-end">
+                    <div className="px-8 py-3 flex items-center justify-end">
                         <UserMenu />
                     </div>
                 </div>
-                <div className="max-w-6xl mx-auto p-8">
+                <div className={`p-8 ${isFullWidthPage ? '' : 'max-w-6xl mx-auto'}`}>
                     {children}
                 </div>
             </main>

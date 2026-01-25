@@ -447,9 +447,9 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             </div>
 
             {/* Budget Table - Full Width */}
-            <div className="-mx-8 px-0">
+            <div>
                 {flattenedNodes.length === 0 ? (
-                    <div className="mx-8 bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 text-center">
+                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 text-center">
                         <svg className="w-16 h-16 mx-auto text-neutral-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
