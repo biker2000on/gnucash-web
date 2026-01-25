@@ -219,6 +219,7 @@ export function TransactionEditModal({
                                     <tr className="text-xs text-neutral-500 uppercase tracking-wider">
                                         <th className="px-4 py-3 text-left">Account</th>
                                         <th className="px-4 py-3 text-left">Memo</th>
+                                        <th className="px-4 py-3 text-left">Action</th>
                                         <th className="px-4 py-3 text-center">Status</th>
                                         <th className="px-4 py-3 text-right">Amount</th>
                                     </tr>
@@ -240,6 +241,9 @@ export function TransactionEditModal({
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-neutral-500 italic">
                                                     {split.memo || '—'}
+                                                </td>
+                                                <td className="px-4 py-3 text-sm text-neutral-400">
+                                                    {split.action || '—'}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
                                                     <span className={`text-xs px-2 py-1 rounded-full ${reconcile.color}`}>
