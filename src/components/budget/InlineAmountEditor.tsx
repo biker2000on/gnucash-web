@@ -132,9 +132,9 @@ export function InlineAmountEditor({
         <button
             onClick={handleClick}
             disabled={isSaving}
-            className={`w-full text-right px-2 py-1 rounded hover:bg-blue-50 transition-colors ${
+            className={`w-full text-right px-2 py-1 rounded hover:bg-neutral-700/50 transition-colors ${
                 isSaving ? 'opacity-50' : ''
-            } ${value === 0 ? 'text-gray-400' : displayValue < 0 ? 'text-rose-400' : ''}`}
+            } ${value === 0 ? 'text-neutral-500' : displayValue < 0 ? 'text-rose-400' : 'text-neutral-200'}`}
             title="Click to edit"
         >
             {value === 0 ? '—' : formatCurrency(displayValue, currency)}

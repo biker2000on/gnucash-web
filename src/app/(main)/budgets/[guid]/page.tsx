@@ -468,7 +468,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         </button>
                     </div>
                 ) : (
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border-y border-neutral-800 overflow-hidden">
+                    <div className="bg-neutral-900/30 backdrop-blur-xl border-y border-neutral-800">
                         {/* Expand/Collapse Controls */}
                         <div className="px-4 py-2 bg-neutral-900/50 border-b border-neutral-800 flex items-center gap-2">
                             <button
@@ -484,7 +484,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                 Collapse All
                             </button>
                         </div>
-                        <div className="overflow-x-auto">
+                        <div className="overflow-auto max-h-[calc(100vh-300px)]">
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 z-20">
                                     <tr className="bg-neutral-900 text-neutral-400 text-xs uppercase tracking-widest shadow-md">
