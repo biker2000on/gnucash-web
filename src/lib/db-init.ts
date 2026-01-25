@@ -117,6 +117,44 @@ async function createAccountHierarchyView() {
 }
 
 /**
+ * Creates the gnucash_web extension tables if they don't exist.
+ * These tables are used for authentication and audit logging.
+ */
+async function createExtensionTables() {
+    const userTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_users (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP
+        );
+    `;
+
+    const auditTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_audit (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES gnucash_web_users(id),
+            action VARCHAR(50) NOT NULL,
+            entity_type VARCHAR(50) NOT NULL,
+            entity_guid VARCHAR(32) NOT NULL,
+            old_values JSONB,
+            new_values JSONB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `;
+
+    try {
+        await query(userTableDDL);
+        await query(auditTableDDL);
+        console.log('✓ Extension tables created/verified successfully');
+    } catch (error) {
+        console.error('Error creating extension tables:', error);
+        throw error;
+    }
+}
+
+/**
  * Initializes the database schema by creating required views and tables.
  * This should be called once when the application starts.
  */
@@ -124,6 +162,7 @@ export async function initializeDatabase() {
     try {
         console.log('Initializing database schema...');
         await createAccountHierarchyView();
+        await createExtensionTables();
         console.log('✓ Database initialization complete');
     } catch (error) {
         console.error('Database initialization failed:', error);
