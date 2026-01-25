@@ -70,13 +70,14 @@ export class BudgetService {
       return null;
     }
 
-    // Transform to include computed decimals
+    // Transform to include computed decimals and hierarchy info
     return serializeBigInts({
       ...budget,
       amounts: budget.amounts.map(amount => ({
         ...amount,
         amount_decimal: toDecimal(amount.amount_num, amount.amount_denom),
         account_name: amount.account.name,
+        account_parent_guid: amount.account.parent_guid,
         commodity_mnemonic: amount.account.commodity?.mnemonic,
       })),
     });
@@ -229,6 +230,122 @@ export class BudgetService {
       ...budgetAmount,
       amount_decimal: toDecimal(budgetAmount.amount_num, budgetAmount.amount_denom),
     });
+  }
+
+  /**
+   * Add an account to a budget with zero amounts for all periods
+   */
+  static async addAccount(budgetGuid: string, accountGuid: string) {
+    // Get the budget to know num_periods
+    const budget = await prisma.budgets.findUnique({
+      where: { guid: budgetGuid },
+      select: { num_periods: true },
+    });
+    if (!budget) throw new Error('Budget not found');
+
+    // Check account exists and is not already in budget
+    const existingAmounts = await prisma.budget_amounts.findFirst({
+      where: { budget_guid: budgetGuid, account_guid: accountGuid },
+    });
+    if (existingAmounts) throw new Error('Account already in budget');
+
+    // Create amounts for all periods with 0 value
+    const amounts = [];
+    for (let period = 1; period <= budget.num_periods; period++) {
+      const amount = await prisma.budget_amounts.create({
+        data: {
+          budget_guid: budgetGuid,
+          account_guid: accountGuid,
+          period_num: period,
+          amount_num: 0n,
+          amount_denom: 100n,
+        },
+      });
+      amounts.push(amount);
+    }
+    return serializeBigInts(amounts);
+  }
+
+  /**
+   * Delete all budget amounts for a specific account
+   */
+  static async deleteAccountAmounts(budgetGuid: string, accountGuid: string) {
+    const result = await prisma.budget_amounts.deleteMany({
+      where: {
+        budget_guid: budgetGuid,
+        account_guid: accountGuid,
+      },
+    });
+    return result.count;
+  }
+
+  /**
+   * Set the same amount for all periods of an account
+   */
+  static async setAllPeriods(
+    budgetGuid: string,
+    accountGuid: string,
+    amount: number
+  ) {
+    const budget = await prisma.budgets.findUnique({
+      where: { guid: budgetGuid },
+      select: { num_periods: true },
+    });
+    if (!budget) throw new Error('Budget not found');
+
+    const amounts = [];
+    for (let period = 1; period <= budget.num_periods; period++) {
+      const result = await this.setAmount(budgetGuid, accountGuid, period, amount);
+      amounts.push(result);
+    }
+    return amounts;
+  }
+
+  /**
+   * Calculate average monthly spending from last N months
+   */
+  static async getHistoricalAverage(accountGuid: string, months: number = 12) {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - months);
+
+    const splits = await prisma.splits.findMany({
+      where: {
+        account_guid: accountGuid,
+        transaction: {
+          post_date: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+      },
+      select: {
+        value_num: true,
+        value_denom: true,
+      },
+    });
+
+    const total = splits.reduce((sum, split) => {
+      const value = split.value_denom
+        ? Number(split.value_num) / Number(split.value_denom)
+        : 0;
+      return sum + value;
+    }, 0);
+
+    // Get account type to determine if we need to negate (income is stored negative)
+    const account = await prisma.accounts.findUnique({
+      where: { guid: accountGuid },
+      select: { account_type: true },
+    });
+
+    const adjustedTotal = account?.account_type === 'INCOME' ? -total : total;
+    const average = adjustedTotal / months;
+
+    return {
+      average: Math.round(average * 100) / 100,
+      total: Math.round(adjustedTotal * 100) / 100,
+      transactionCount: splits.length,
+    };
   }
 }
 
