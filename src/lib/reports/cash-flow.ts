@@ -1,0 +1,165 @@
+import prisma from '@/lib/prisma';
+import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
+
+/**
+ * Convert GnuCash fraction to decimal number
+ */
+function toDecimal(num: bigint | null, denom: bigint | null): number {
+    if (num === null || denom === null || denom === 0n) return 0;
+    return Number(num) / Number(denom);
+}
+
+/**
+ * Categorize account type for cash flow statement
+ */
+function getCashFlowCategory(accountType: string): 'operating' | 'investing' | 'financing' | 'cash' | null {
+    switch (accountType) {
+        case 'BANK':
+        case 'CASH':
+            return 'cash';
+        case 'INCOME':
+        case 'EXPENSE':
+        case 'RECEIVABLE':
+        case 'PAYABLE':
+            return 'operating';
+        case 'STOCK':
+        case 'MUTUAL':
+        case 'ASSET':
+            return 'investing';
+        case 'LIABILITY':
+        case 'CREDIT':
+        case 'EQUITY':
+            return 'financing';
+        default:
+            return null;
+    }
+}
+
+/**
+ * Generate Cash Flow Statement
+ */
+export async function generateCashFlow(filters: ReportFilters): Promise<ReportData> {
+    const now = new Date();
+    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(now.getFullYear(), 0, 1);
+    const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
+
+    // Get all accounts
+    const accounts = await prisma.accounts.findMany({
+        where: {
+            hidden: 0,
+        },
+        select: {
+            guid: true,
+            name: true,
+            account_type: true,
+        },
+    });
+
+    // Group accounts by cash flow category
+    const cashAccounts = accounts.filter(a => getCashFlowCategory(a.account_type) === 'cash');
+    const operatingAccounts = accounts.filter(a => getCashFlowCategory(a.account_type) === 'operating');
+    const investingAccounts = accounts.filter(a => getCashFlowCategory(a.account_type) === 'investing');
+    const financingAccounts = accounts.filter(a => getCashFlowCategory(a.account_type) === 'financing');
+
+    // Calculate cash changes for each category
+    async function getAccountChanges(accountList: typeof accounts) {
+        const changes: LineItem[] = [];
+
+        for (const account of accountList) {
+            const splits = await prisma.splits.findMany({
+                where: {
+                    account_guid: account.guid,
+                    transaction: {
+                        post_date: {
+                            gte: startDate,
+                            lte: endDate,
+                        },
+                    },
+                },
+                select: {
+                    value_num: true,
+                    value_denom: true,
+                },
+            });
+
+            const netChange = splits.reduce((sum, split) => {
+                return sum + toDecimal(split.value_num, split.value_denom);
+            }, 0);
+
+            if (netChange !== 0 || filters.showZeroBalances) {
+                changes.push({
+                    guid: account.guid,
+                    name: account.name,
+                    amount: netChange,
+                });
+            }
+        }
+
+        return changes;
+    }
+
+    // Get opening cash balance
+    const openingCash = await Promise.all(
+        cashAccounts.map(async (account) => {
+            const splits = await prisma.splits.findMany({
+                where: {
+                    account_guid: account.guid,
+                    transaction: {
+                        post_date: {
+                            lt: startDate,
+                        },
+                    },
+                },
+                select: {
+                    value_num: true,
+                    value_denom: true,
+                },
+            });
+
+            return splits.reduce((sum, split) => {
+                return sum + toDecimal(split.value_num, split.value_denom);
+            }, 0);
+        })
+    );
+
+    const totalOpeningCash = openingCash.reduce((sum, val) => sum + val, 0);
+
+    // Get changes by category
+    const operatingChanges = await getAccountChanges(operatingAccounts);
+    const investingChanges = await getAccountChanges(investingAccounts);
+    const financingChanges = await getAccountChanges(financingAccounts);
+    const cashChanges = await getAccountChanges(cashAccounts);
+
+    // Calculate totals
+    const totalOperating = operatingChanges.reduce((sum, item) => sum + item.amount, 0);
+    const totalInvesting = investingChanges.reduce((sum, item) => sum + item.amount, 0);
+    const totalFinancing = financingChanges.reduce((sum, item) => sum + item.amount, 0);
+    const totalCashChange = cashChanges.reduce((sum, item) => sum + item.amount, 0);
+
+    const sections: ReportSection[] = [
+        {
+            title: 'Cash Flows from Operating Activities',
+            items: operatingChanges,
+            total: -totalOperating, // Negate because income decreases cash in splits
+        },
+        {
+            title: 'Cash Flows from Investing Activities',
+            items: investingChanges,
+            total: -totalInvesting,
+        },
+        {
+            title: 'Cash Flows from Financing Activities',
+            items: financingChanges,
+            total: -totalFinancing,
+        },
+    ];
+
+    return {
+        type: ReportType.CASH_FLOW,
+        title: 'Cash Flow Statement',
+        generatedAt: new Date().toISOString(),
+        filters,
+        sections,
+        grandTotal: totalCashChange,
+    };
+}
