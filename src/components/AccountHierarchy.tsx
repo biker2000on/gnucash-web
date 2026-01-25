@@ -1,11 +1,26 @@
 "use client";
 
 import { AccountWithChildren } from '@/lib/types';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
+import { Modal } from './ui/Modal';
+import { AccountForm } from './AccountForm';
 
 type SortKey = 'name' | 'total_balance' | 'period_balance';
+
+interface AccountNodeProps {
+    account: AccountWithChildren;
+    showHidden: boolean;
+    filterText: string;
+    depth?: number;
+    expandToDepth?: number;
+    expandedNodes: Set<string>;
+    setExpandedNodes: (updater: (prev: Set<string>) => Set<string>) => void;
+    onEdit?: (account: AccountWithChildren) => void;
+    onDelete?: (account: AccountWithChildren) => void;
+    onNewChild?: (parent: AccountWithChildren) => void;
+}
 
 function AccountNode({
     account,
@@ -14,16 +29,11 @@ function AccountNode({
     depth = 0,
     expandToDepth = Infinity,
     expandedNodes,
-    setExpandedNodes
-}: {
-    account: AccountWithChildren;
-    showHidden: boolean;
-    filterText: string;
-    depth?: number;
-    expandToDepth?: number;
-    expandedNodes: Set<string>;
-    setExpandedNodes: (updater: (prev: Set<string>) => Set<string>) => void;
-}) {
+    setExpandedNodes,
+    onEdit,
+    onDelete,
+    onNewChild,
+}: AccountNodeProps) {
     // Determine initial expansion state
     // Priority: 1) User manually expanded/collapsed, 2) Global depth setting
     const hasUserPreference = expandedNodes.has(account.guid);
@@ -95,7 +105,7 @@ function AccountNode({
     return (
         <div className="ml-4">
             <div
-                className={`flex items-center gap-4 py-2 px-3 rounded-lg transition-colors cursor-pointer ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'
+                className={`group flex items-center gap-4 py-2 px-3 rounded-lg transition-colors cursor-pointer ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'
                     } ${account.hidden ? 'opacity-50 grayscale' : ''}`}
                 onClick={handleToggle}
             >
@@ -127,6 +137,43 @@ function AccountNode({
                             HIDDEN
                         </span>
                     )}
+
+                    {/* Action buttons - visible on hover */}
+                    <div className="opacity-0 group-hover:opacity-100 flex gap-1 ml-2 transition-opacity">
+                        {onNewChild && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onNewChild(account); }}
+                                className="p-1 rounded hover:bg-emerald-500/20 text-neutral-500 hover:text-emerald-400 transition-colors"
+                                title="Add Child Account"
+                            >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                            </button>
+                        )}
+                        {onEdit && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onEdit(account); }}
+                                className="p-1 rounded hover:bg-cyan-500/20 text-neutral-500 hover:text-cyan-400 transition-colors"
+                                title="Edit Account"
+                            >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                            </button>
+                        )}
+                        {onDelete && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onDelete(account); }}
+                                className="p-1 rounded hover:bg-rose-500/20 text-neutral-500 hover:text-rose-400 transition-colors"
+                                title="Delete Account"
+                            >
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex gap-6 text-right shrink-0">
@@ -156,6 +203,9 @@ function AccountNode({
                             expandToDepth={expandToDepth}
                             expandedNodes={expandedNodes}
                             setExpandedNodes={setExpandedNodes}
+                            onEdit={onEdit}
+                            onDelete={onDelete}
+                            onNewChild={onNewChild}
                         />
                     ))}
                 </div>
@@ -164,7 +214,12 @@ function AccountNode({
     );
 }
 
-export default function AccountHierarchy({ accounts }: { accounts: AccountWithChildren[] }) {
+interface AccountHierarchyProps {
+    accounts: AccountWithChildren[];
+    onRefresh?: () => void;
+}
+
+export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarchyProps) {
     // Initialize state from localStorage with fallback defaults
     const [showHidden, setShowHidden] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -200,6 +255,15 @@ export default function AccountHierarchy({ accounts }: { accounts: AccountWithCh
         return new Set();
     });
 
+    // Modal state
+    const [modalOpen, setModalOpen] = useState(false);
+    const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
+    const [selectedAccount, setSelectedAccount] = useState<AccountWithChildren | null>(null);
+    const [parentGuid, setParentGuid] = useState<string | null>(null);
+    const [deleteConfirm, setDeleteConfirm] = useState<AccountWithChildren | null>(null);
+    const [deleting, setDeleting] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+
     // Persist state changes to localStorage
     useEffect(() => {
         localStorage.setItem('accountHierarchy.showHidden', JSON.stringify(showHidden));
@@ -231,6 +295,88 @@ export default function AccountHierarchy({ accounts }: { accounts: AccountWithCh
 
     const sortedAccounts = useMemo(() => sortTree(accounts), [accounts, sortKey]);
 
+    // Account CRUD handlers
+    const handleNewAccount = useCallback(() => {
+        setSelectedAccount(null);
+        setParentGuid(null);
+        setModalMode('create');
+        setModalOpen(true);
+    }, []);
+
+    const handleNewChild = useCallback((parent: AccountWithChildren) => {
+        setSelectedAccount(null);
+        setParentGuid(parent.guid);
+        setModalMode('create');
+        setModalOpen(true);
+    }, []);
+
+    const handleEdit = useCallback((account: AccountWithChildren) => {
+        setSelectedAccount(account);
+        setParentGuid(null);
+        setModalMode('edit');
+        setModalOpen(true);
+    }, []);
+
+    const handleDeleteConfirm = useCallback((account: AccountWithChildren) => {
+        setDeleteConfirm(account);
+        setDeleteError(null);
+    }, []);
+
+    const handleDelete = useCallback(async () => {
+        if (!deleteConfirm) return;
+
+        setDeleting(true);
+        setDeleteError(null);
+
+        try {
+            const res = await fetch(`/api/accounts/${deleteConfirm.guid}`, {
+                method: 'DELETE',
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to delete account');
+            }
+
+            setDeleteConfirm(null);
+            onRefresh?.();
+        } catch (err) {
+            setDeleteError(err instanceof Error ? err.message : 'Failed to delete account');
+        } finally {
+            setDeleting(false);
+        }
+    }, [deleteConfirm, onRefresh]);
+
+    const handleSave = useCallback(async (data: {
+        name: string;
+        account_type: string;
+        parent_guid: string | null;
+        commodity_guid: string;
+        code: string;
+        description: string;
+        hidden: number;
+        placeholder: number;
+    }) => {
+        const url = modalMode === 'create'
+            ? '/api/accounts'
+            : `/api/accounts/${selectedAccount?.guid}`;
+        const method = modalMode === 'create' ? 'POST' : 'PUT';
+
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.error || errorData.errors?.[0]?.message || 'Failed to save account');
+        }
+
+        setModalOpen(false);
+        onRefresh?.();
+    }, [modalMode, selectedAccount, onRefresh]);
+
     return (
         <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6 shadow-2xl">
             <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-neutral-800/50">
@@ -239,16 +385,27 @@ export default function AccountHierarchy({ accounts }: { accounts: AccountWithCh
                         <span className="w-2 h-6 bg-emerald-500 rounded-full" />
                         Account Assets & Liabilities
                     </h2>
-                    <div className="flex items-center gap-3">
-                        <span className="text-sm text-neutral-400">Show Hidden</span>
+                    <div className="flex items-center gap-4">
                         <button
-                            onClick={() => setShowHidden(!showHidden)}
-                            className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-neutral-700'
-                                }`}
+                            onClick={handleNewAccount}
+                            className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors"
                         >
-                            <div className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'
-                                }`} />
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            New Account
                         </button>
+                        <div className="flex items-center gap-3">
+                            <span className="text-sm text-neutral-400">Show Hidden</span>
+                            <button
+                                onClick={() => setShowHidden(!showHidden)}
+                                className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-neutral-700'
+                                    }`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'
+                                    }`} />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -341,9 +498,76 @@ export default function AccountHierarchy({ accounts }: { accounts: AccountWithCh
                         expandToDepth={expandToDepth}
                         expandedNodes={expandedNodes}
                         setExpandedNodes={setExpandedNodes}
+                        onEdit={handleEdit}
+                        onDelete={handleDeleteConfirm}
+                        onNewChild={handleNewChild}
                     />
                 ))}
             </div>
+
+            {/* Account Form Modal */}
+            <Modal
+                isOpen={modalOpen}
+                onClose={() => setModalOpen(false)}
+                title={modalMode === 'create' ? 'Create Account' : 'Edit Account'}
+                size="lg"
+            >
+                <div className="p-6">
+                    <AccountForm
+                        mode={modalMode}
+                        initialData={selectedAccount ? {
+                            name: selectedAccount.name,
+                            account_type: selectedAccount.account_type,
+                            parent_guid: selectedAccount.parent_guid,
+                            commodity_guid: selectedAccount.commodity_guid,
+                            code: selectedAccount.code,
+                            description: selectedAccount.description,
+                            hidden: selectedAccount.hidden,
+                            placeholder: selectedAccount.placeholder,
+                        } : undefined}
+                        parentGuid={parentGuid}
+                        onSave={handleSave}
+                        onCancel={() => setModalOpen(false)}
+                    />
+                </div>
+            </Modal>
+
+            {/* Delete Confirmation Modal */}
+            <Modal
+                isOpen={deleteConfirm !== null}
+                onClose={() => setDeleteConfirm(null)}
+                title="Delete Account"
+                size="sm"
+            >
+                <div className="p-6 space-y-4">
+                    {deleteError && (
+                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-rose-400 text-sm">
+                            {deleteError}
+                        </div>
+                    )}
+                    <p className="text-neutral-300">
+                        Are you sure you want to delete <strong className="text-neutral-100">{deleteConfirm?.name}</strong>?
+                    </p>
+                    <p className="text-sm text-neutral-500">
+                        This action cannot be undone. Accounts with transactions cannot be deleted.
+                    </p>
+                    <div className="flex justify-end gap-3 pt-4">
+                        <button
+                            onClick={() => setDeleteConfirm(null)}
+                            className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleDelete}
+                            disabled={deleting}
+                            className="px-4 py-2 text-sm bg-rose-600 hover:bg-rose-500 disabled:bg-rose-600/50 text-white rounded-lg transition-colors"
+                        >
+                            {deleting ? 'Deleting...' : 'Delete Account'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }
