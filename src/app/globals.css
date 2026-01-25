@@ -1,26 +1,263 @@
 @import "tailwindcss";
 
+/* ========================================
+   Theme CSS Variables
+   ======================================== */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+    /* Light theme colors (default) */
+    --background: #ffffff;
+    --background-secondary: #f8fafc;
+    --background-tertiary: #f1f5f9;
+    --foreground: #0f172a;
+    --foreground-secondary: #475569;
+    --foreground-muted: #94a3b8;
+
+    /* Card and surface colors */
+    --surface: #ffffff;
+    --surface-elevated: #ffffff;
+    --surface-hover: #f8fafc;
+
+    /* Border colors */
+    --border: #e2e8f0;
+    --border-hover: #cbd5e1;
+
+    /* Primary accent (emerald) */
+    --primary: #059669;
+    --primary-hover: #047857;
+    --primary-light: #d1fae5;
+    --primary-foreground: #ffffff;
+
+    /* Secondary accent (cyan) */
+    --secondary: #0891b2;
+    --secondary-hover: #0e7490;
+    --secondary-light: #cffafe;
+
+    /* Status colors */
+    --success: #16a34a;
+    --success-light: #dcfce7;
+    --error: #dc2626;
+    --error-light: #fee2e2;
+    --warning: #d97706;
+    --warning-light: #fef3c7;
+
+    /* Financial colors */
+    --positive: #16a34a;
+    --negative: #dc2626;
+
+    /* Sidebar */
+    --sidebar-bg: #f8fafc;
+    --sidebar-border: #e2e8f0;
+    --sidebar-text: #475569;
+    --sidebar-text-active: #059669;
+    --sidebar-hover: #f1f5f9;
+    --sidebar-active-bg: #ecfdf5;
+
+    /* Input */
+    --input-bg: #ffffff;
+    --input-border: #e2e8f0;
+    --input-focus: #059669;
+
+    /* Shadow */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
+
+/* Dark theme colors */
+.dark {
+    --background: #0a0a0a;
+    --background-secondary: #0f0f0f;
+    --background-tertiary: #171717;
+    --foreground: #fafafa;
+    --foreground-secondary: #a3a3a3;
+    --foreground-muted: #525252;
+
+    /* Card and surface colors */
+    --surface: #171717;
+    --surface-elevated: #1c1c1c;
+    --surface-hover: #262626;
+
+    /* Border colors */
+    --border: #262626;
+    --border-hover: #404040;
+
+    /* Primary accent (emerald) */
+    --primary: #34d399;
+    --primary-hover: #6ee7b7;
+    --primary-light: #064e3b;
+    --primary-foreground: #0a0a0a;
+
+    /* Secondary accent (cyan) */
+    --secondary: #22d3ee;
+    --secondary-hover: #67e8f9;
+    --secondary-light: #164e63;
+
+    /* Status colors */
+    --success: #4ade80;
+    --success-light: #14532d;
+    --error: #f87171;
+    --error-light: #450a0a;
+    --warning: #fbbf24;
+    --warning-light: #451a03;
+
+    /* Financial colors */
+    --positive: #4ade80;
+    --negative: #f87171;
+
+    /* Sidebar */
+    --sidebar-bg: #0f0f0f;
+    --sidebar-border: #262626;
+    --sidebar-text: #a3a3a3;
+    --sidebar-text-active: #34d399;
+    --sidebar-hover: #171717;
+    --sidebar-active-bg: #052e16;
+
+    /* Input */
+    --input-bg: #0f0f0f;
+    --input-border: #262626;
+    --input-focus: #34d399;
+
+    /* Shadow */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+}
+
+/* ========================================
+   Tailwind Theme Configuration
+   ======================================== */
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+    --color-background: var(--background);
+    --color-background-secondary: var(--background-secondary);
+    --color-background-tertiary: var(--background-tertiary);
+    --color-foreground: var(--foreground);
+    --color-foreground-secondary: var(--foreground-secondary);
+    --color-foreground-muted: var(--foreground-muted);
+
+    --color-surface: var(--surface);
+    --color-surface-elevated: var(--surface-elevated);
+    --color-surface-hover: var(--surface-hover);
+
+    --color-border: var(--border);
+    --color-border-hover: var(--border-hover);
+
+    --color-primary: var(--primary);
+    --color-primary-hover: var(--primary-hover);
+    --color-primary-light: var(--primary-light);
+    --color-primary-foreground: var(--primary-foreground);
+
+    --color-secondary: var(--secondary);
+    --color-secondary-hover: var(--secondary-hover);
+    --color-secondary-light: var(--secondary-light);
+
+    --color-success: var(--success);
+    --color-success-light: var(--success-light);
+    --color-error: var(--error);
+    --color-error-light: var(--error-light);
+    --color-warning: var(--warning);
+    --color-warning-light: var(--warning-light);
+
+    --color-positive: var(--positive);
+    --color-negative: var(--negative);
+
+    --color-sidebar-bg: var(--sidebar-bg);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-text: var(--sidebar-text);
+    --color-sidebar-text-active: var(--sidebar-text-active);
+    --color-sidebar-hover: var(--sidebar-hover);
+    --color-sidebar-active-bg: var(--sidebar-active-bg);
+
+    --color-input-bg: var(--input-bg);
+    --color-input-border: var(--input-border);
+    --color-input-focus: var(--input-focus);
+
+    --font-sans: var(--font-geist-sans);
+    --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ========================================
+   Base Styles
+   ======================================== */
+
+html {
+    /* Smooth theme transitions */
+    color-scheme: light;
+}
+
+html.dark {
+    color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* ========================================
+   Theme Transition Classes
+   ======================================== */
+
+/* Apply smooth transitions to elements that change with theme */
+.theme-transition,
+.theme-transition * {
+    transition:
+        background-color 0.3s ease,
+        border-color 0.3s ease,
+        color 0.3s ease,
+        box-shadow 0.3s ease;
+}
+
+/* Disable transitions during initial load to prevent flash */
+html:not(.theme-ready) * {
+    transition: none !important;
+}
+
+/* ========================================
+   Scrollbar Styling
+   ======================================== */
+
+/* Light theme scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--background-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-hover);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--foreground-muted);
+}
+
+/* ========================================
+   Focus Styles
+   ======================================== */
+
+:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+/* ========================================
+   Selection Styling
+   ======================================== */
+
+::selection {
+    background: var(--primary-light);
+    color: var(--foreground);
+}
+
+.dark ::selection {
+    background: var(--primary);
+    color: var(--primary-foreground);
 }
