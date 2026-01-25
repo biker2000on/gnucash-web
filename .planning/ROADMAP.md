@@ -56,49 +56,50 @@ Plans:
 ### Phase 3: Enhanced Account Hierarchy
 **Goal**: Account CRUD operations, hierarchy reorganization, and summary aggregations
 **Depends on**: Phase 2
-**Research**: Unlikely (follows Phase 2 patterns)
+**Research**: Completed (DnD patterns, account constraints)
+**Research topics**: @dnd-kit for drag-drop, account type constraints, circular reference prevention
 **Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: Account creation and editing
-- [ ] 03-02: Account hierarchy drag-drop reorganization
-- [ ] 03-03: Account type aggregations (summary cards)
+- [ ] 03-01-PLAN.md — Account CRUD Operations
+- [ ] 03-02-PLAN.md — Drag-Drop Hierarchy Reorganization
+- [ ] 03-03-PLAN.md — Account Type Summary Cards
 
 ### Phase 4: Budgeting System
 **Goal**: Budget management system with spreadsheet editor and vs-actual reporting
 **Depends on**: Phase 3
-**Research**: Likely (GnuCash budget schema)
+**Research**: Completed (GnuCash budget schema)
 **Research topics**: GnuCash budgets and budget_amounts tables, budget period handling, budget recurrence patterns
 **Plans**: 3 plans
 
 Plans:
-- [ ] 04-01: Budget list and management
-- [ ] 04-02: Budget editor (spreadsheet-style)
-- [ ] 04-03: Budget vs Actual view and reports
+- [ ] 04-01-PLAN.md — Budget List and Management
+- [ ] 04-02-PLAN.md — Spreadsheet-Style Budget Editor
+- [ ] 04-03-PLAN.md — Budget vs Actual Comparison and Reports
 
 ### Phase 5: Reporting System
 **Goal**: Comprehensive financial reporting framework and visualizations
 **Depends on**: Phase 1
-**Research**: Likely (Financial report logic)
+**Research**: Completed (Financial report logic)
 **Research topics**: Balance sheet and P&L calculation logic for GnuCash schema, PDF/CSV export libraries for Next.js
 **Plans**: 3 plans
 
 Plans:
-- [ ] 05-01: Report framework and base UI
-- [ ] 05-02: Core financial statements (P&L, Balance Sheet, Cash Flow)
-- [ ] 05-03: Chart visualizations and export (PDF, CSV, Excel)
+- [ ] 05-01-PLAN.md — Report Framework and Base UI
+- [ ] 05-02-PLAN.md — Core Financial Statements (Balance Sheet, P&L, Cash Flow)
+- [ ] 05-03-PLAN.md — Chart Visualizations and Export (PDF, Excel, CSV)
 
 ### Phase 6: Supporting Features
 **Goal**: Investments, multi-currency support, authentication, and data integrity
 **Depends on**: Phase 1
-**Research**: Likely (Investment valuation & Multi-currency)
+**Research**: Completed (Investment valuation & Multi-currency)
 **Research topics**: GnuCash commodity/price tables, currency chain traversal, local authentication patterns for self-hosting
 **Plans**: 3 plans
 
 Plans:
-- [ ] 06-01: Investment account support (commodity valuation)
-- [ ] 06-02: Advanced multi-currency support
-- [ ] 06-03: Local user authentication and audit trail
+- [ ] 06-01-PLAN.md — Investment Account Support (Commodity Valuation)
+- [ ] 06-02-PLAN.md — Advanced Multi-Currency Support
+- [ ] 06-03-PLAN.md — Local User Authentication and Audit Trail
 
 ### Phase 7: Plaid Integration
 **Goal**: Automated bank transaction imports via Plaid
