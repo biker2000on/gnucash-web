@@ -71,50 +71,50 @@ export function BatchEditModal({
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title="Set All Periods">
             <div className="space-y-4">
-                <p className="text-gray-600">
-                    Set the same amount for all {numPeriods} periods of <strong>{accountName}</strong>
+                <p className="text-neutral-300">
+                    Set the same amount for all {numPeriods} periods of <strong className="text-neutral-100">{accountName}</strong>
                 </p>
 
                 <div>
-                    <label htmlFor="amount" className="block text-sm font-medium text-gray-700 mb-1">
+                    <label htmlFor="amount" className="block text-sm font-medium text-neutral-300 mb-1">
                         Amount per period
                     </label>
                     <div className="relative">
-                        <span className="absolute left-3 top-2 text-gray-500">$</span>
+                        <span className="absolute left-3 top-2 text-neutral-400">$</span>
                         <input
                             id="amount"
                             type="text"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
                             placeholder="0.00"
-                            className={`w-full pl-7 pr-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                                error ? 'border-red-500' : 'border-gray-300'
+                            className={`w-full pl-7 pr-3 py-2 bg-neutral-800 border rounded-md text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
+                                error ? 'border-rose-500' : 'border-neutral-700'
                             }`}
                             autoFocus
                         />
                     </div>
                     {error && (
-                        <p className="mt-1 text-sm text-red-500">{error}</p>
+                        <p className="mt-1 text-sm text-rose-400">{error}</p>
                     )}
                 </div>
 
                 {amount && !isNaN(parseFloat(amount)) && (
-                    <div className="p-3 bg-blue-50 rounded-md text-sm text-blue-700">
-                        Total for all {numPeriods} periods: <strong>${(parseFloat(amount) * numPeriods).toFixed(2)}</strong>
+                    <div className="p-3 bg-cyan-900/30 border border-cyan-800/50 rounded-md text-sm text-cyan-300">
+                        Total for all {numPeriods} periods: <strong className="text-cyan-200">${(parseFloat(amount) * numPeriods).toFixed(2)}</strong>
                     </div>
                 )}
 
                 <div className="flex justify-end gap-3">
                     <button
                         onClick={handleClose}
-                        className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                        className="px-4 py-2 text-neutral-300 hover:bg-neutral-700 rounded-md transition-colors"
                     >
                         Cancel
                     </button>
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !amount}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-500 transition-colors disabled:opacity-50"
                     >
                         {isSaving ? 'Saving...' : 'Apply to All Periods'}
                     </button>

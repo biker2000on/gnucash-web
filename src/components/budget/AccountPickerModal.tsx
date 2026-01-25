@@ -99,39 +99,39 @@ export function AccountPickerModal({
                         placeholder="Search accounts..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-md text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
                         autoFocus
                     />
                 </div>
 
                 {error && (
-                    <div className="p-3 bg-red-50 text-red-700 rounded-md text-sm">
+                    <div className="p-3 bg-rose-900/30 text-rose-400 border border-rose-800/50 rounded-md text-sm">
                         {error}
                     </div>
                 )}
 
-                <div className="max-h-80 overflow-y-auto border rounded-md">
+                <div className="max-h-80 overflow-y-auto border border-neutral-700 rounded-md">
                     {isLoading ? (
-                        <div className="p-4 text-center text-gray-500">Loading accounts...</div>
+                        <div className="p-4 text-center text-neutral-400">Loading accounts...</div>
                     ) : filteredAccounts.length === 0 ? (
-                        <div className="p-4 text-center text-gray-500">
+                        <div className="p-4 text-center text-neutral-400">
                             {searchTerm ? 'No matching accounts found' : 'All accounts are already in the budget'}
                         </div>
                     ) : (
-                        <ul className="divide-y divide-gray-200">
+                        <ul className="divide-y divide-neutral-700">
                             {filteredAccounts.map((account) => (
                                 <li key={account.guid}>
                                     <button
                                         onClick={() => handleAddAccount(account)}
                                         disabled={isAdding}
-                                        className="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50"
+                                        className="w-full px-4 py-3 text-left hover:bg-neutral-700/50 transition-colors disabled:opacity-50"
                                     >
-                                        <div className="font-medium">{account.name}</div>
-                                        <div className="text-sm text-gray-500">
+                                        <div className="font-medium text-neutral-100">{account.name}</div>
+                                        <div className="text-sm text-neutral-400">
                                             {account.full_name && account.full_name !== account.name && (
                                                 <span className="mr-2">{account.full_name}</span>
                                             )}
-                                            <span className="inline-block px-2 py-0.5 bg-gray-100 rounded text-xs">
+                                            <span className="inline-block px-2 py-0.5 bg-neutral-700 rounded text-xs text-neutral-300">
                                                 {account.account_type}
                                             </span>
                                         </div>
@@ -145,7 +145,7 @@ export function AccountPickerModal({
                 <div className="flex justify-end">
                     <button
                         onClick={onClose}
-                        className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                        className="px-4 py-2 text-neutral-300 hover:bg-neutral-700 rounded-md transition-colors"
                     >
                         Cancel
                     </button>
