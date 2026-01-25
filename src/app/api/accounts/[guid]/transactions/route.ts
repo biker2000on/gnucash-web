@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { query, toDecimal } from '@/lib/db';
-import { Transaction, Split } from '@/lib/types';
+import prisma, { toDecimal } from '@/lib/prisma';
+import { serializeBigInts } from '@/lib/gnucash';
+import { Prisma } from '@prisma/client';
 
 export async function GET(
     request: Request,
@@ -14,121 +15,162 @@ export async function GET(
         const endDate = searchParams.get('endDate');
         const { guid: accountGuid } = await params;
 
-        // Build date conditions
-        const dateConditions: string[] = [];
-        const dateParams: string[] = [];
+        // Build date filter for transactions
+        const dateFilter: Prisma.transactionsWhereInput = {};
         if (startDate) {
-            dateConditions.push(`t.post_date >= $${dateParams.length + 2}`);
-            dateParams.push(startDate);
+            dateFilter.post_date = {
+                ...(dateFilter.post_date as Prisma.DateTimeNullableFilter || {}),
+                gte: new Date(startDate),
+            };
         }
         if (endDate) {
-            dateConditions.push(`t.post_date <= $${dateParams.length + 2}`);
-            dateParams.push(endDate);
+            dateFilter.post_date = {
+                ...(dateFilter.post_date as Prisma.DateTimeNullableFilter || {}),
+                lte: new Date(endDate),
+            };
         }
-        const dateWhereClause = dateConditions.length > 0 ? ` AND ${dateConditions.join(' AND ')}` : '';
 
         // 1. Get the total balance of the account (considering date filter for filtered balance)
         // For running balance, we need balance as of the end of the date range (or total if no filter)
-        let balanceQuery: string;
-        let balanceParams: (string | number)[];
+        const balanceWhere: Prisma.splitsWhereInput = {
+            account_guid: accountGuid,
+            ...(endDate ? {
+                transaction: {
+                    post_date: {
+                        lte: new Date(endDate),
+                    },
+                },
+            } : {}),
+        };
 
-        if (endDate) {
-            // Get balance up to and including endDate
-            balanceQuery = `
-                SELECT COALESCE(SUM(CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC)), 0) as balance
-                FROM splits s
-                JOIN transactions t ON s.tx_guid = t.guid
-                WHERE s.account_guid = $1 AND t.post_date <= $2
-            `;
-            balanceParams = [accountGuid, endDate];
-        } else {
-            balanceQuery = `
-                SELECT COALESCE(SUM(CAST(quantity_num AS NUMERIC) / CAST(quantity_denom AS NUMERIC)), 0) as balance
-                FROM splits
-                WHERE account_guid = $1
-            `;
-            balanceParams = [accountGuid];
-        }
-        const { rows: balanceRows } = await query(balanceQuery, balanceParams);
-        const totalBalance = parseFloat(balanceRows[0].balance);
+        const balanceSplits = await prisma.splits.findMany({
+            where: balanceWhere,
+        });
+
+        const totalBalance = balanceSplits.reduce((sum, split) => {
+            return sum + Number(split.quantity_num) / Number(split.quantity_denom);
+        }, 0);
 
         // 2. Get the sum of splits for transactions that are NEWER than the current batch (to calculate starting balance for the page)
         let startingBalance = totalBalance;
         if (offset > 0) {
-            const newerSplitsQuery = `
-                SELECT COALESCE(SUM(CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC)), 0) as sum_splits
-                FROM splits s
-                JOIN transactions t ON s.tx_guid = t.guid
-                WHERE s.account_guid = $1
-                AND s.tx_guid IN (
-                    SELECT t2.guid FROM transactions t2
-                    JOIN splits s2 ON t2.guid = s2.tx_guid
-                    WHERE s2.account_guid = $1 ${dateWhereClause.replace(/\$(\d+)/g, (_, n) => `$${parseInt(n) + 1}`)}
-                    ORDER BY t2.post_date DESC, t2.enter_date DESC
-                    LIMIT $${2 + dateParams.length}
-                )
-            `;
-            const { rows: newerRows } = await query(newerSplitsQuery, [accountGuid, ...dateParams, offset]);
-            startingBalance = totalBalance - parseFloat(newerRows[0].sum_splits);
+            // Get transaction GUIDs that are newer (before this page)
+            const newerTransactions = await prisma.transactions.findMany({
+                where: {
+                    ...dateFilter,
+                    splits: {
+                        some: {
+                            account_guid: accountGuid,
+                        },
+                    },
+                },
+                orderBy: [
+                    { post_date: 'desc' },
+                    { enter_date: 'desc' },
+                ],
+                take: offset,
+                select: {
+                    guid: true,
+                },
+            });
+
+            const newerTxGuids = newerTransactions.map(tx => tx.guid);
+
+            if (newerTxGuids.length > 0) {
+                const newerSplits = await prisma.splits.findMany({
+                    where: {
+                        account_guid: accountGuid,
+                        tx_guid: {
+                            in: newerTxGuids,
+                        },
+                    },
+                });
+
+                const newerSum = newerSplits.reduce((sum, split) => {
+                    return sum + Number(split.quantity_num) / Number(split.quantity_denom);
+                }, 0);
+
+                startingBalance = totalBalance - newerSum;
+            }
         }
 
         // 3. Fetch transactions for this account with date filtering
-        const txQuery = `
-            SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description
-            FROM transactions t
-            JOIN splits s ON t.guid = s.tx_guid
-            WHERE s.account_guid = $1 ${dateWhereClause}
-            ORDER BY t.post_date DESC, t.enter_date DESC
-            LIMIT $${2 + dateParams.length} OFFSET $${3 + dateParams.length}
-        `;
-        const { rows: transactions } = await query(txQuery, [accountGuid, ...dateParams, limit, offset]);
+        const transactions = await prisma.transactions.findMany({
+            where: {
+                ...dateFilter,
+                splits: {
+                    some: {
+                        account_guid: accountGuid,
+                    },
+                },
+            },
+            orderBy: [
+                { post_date: 'desc' },
+                { enter_date: 'desc' },
+            ],
+            take: limit,
+            skip: offset,
+            include: {
+                splits: {
+                    include: {
+                        account: {
+                            include: {
+                                commodity: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
 
         if (transactions.length === 0) {
             return NextResponse.json([]);
         }
 
-        // 4. Fetch ALL splits for these transactions
-        const txGuids = transactions.map(tx => tx.guid);
-        const splitQuery = `
-            SELECT s.*, a.name as account_name, c.mnemonic as commodity_mnemonic 
-            FROM splits s
-            JOIN accounts a ON s.account_guid = a.guid
-            JOIN commodities c ON a.commodity_guid = c.guid
-            WHERE s.tx_guid = ANY($1)
-        `;
-        const { rows: allSplits } = await query(splitQuery, [txGuids]);
-
-        // 4.5 Get account mnemonic
-        const accountMnemonicQuery = `SELECT b.mnemonic FROM accounts a JOIN commodities b ON a.commodity_guid = b.guid WHERE a.guid = $1`;
-        const { rows: mnemonicRows } = await query(accountMnemonicQuery, [accountGuid]);
-        const accountMnemonic = mnemonicRows[0].mnemonic;
+        // 4. Get account mnemonic
+        const account = await prisma.accounts.findUnique({
+            where: { guid: accountGuid },
+            include: { commodity: true },
+        });
+        const accountMnemonic = account?.commodity?.mnemonic || '';
 
         // 5. Build the response with running balance
-        const txMap: Record<string, any> = {};
-        transactions.forEach(tx => {
-            txMap[tx.guid] = { ...tx, splits: [] };
-        });
-
-        allSplits.forEach(split => {
-            if (txMap[split.tx_guid]) {
-                txMap[split.tx_guid].splits.push({
-                    ...split,
-                    value_decimal: toDecimal(split.value_num, split.value_denom),
-                    quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom)
-                });
-            }
-        });
-
-        // 6. Calculate running balance and attach to each transaction
         let currentRunningBalance = startingBalance;
         const result = transactions.map(tx => {
-            const enrichedTx = txMap[tx.guid];
+            // Enrich splits with computed decimals
+            const enrichedSplits = tx.splits.map(split => ({
+                guid: split.guid,
+                tx_guid: split.tx_guid,
+                account_guid: split.account_guid,
+                memo: split.memo,
+                action: split.action,
+                reconcile_state: split.reconcile_state,
+                reconcile_date: split.reconcile_date,
+                value_num: split.value_num,
+                value_denom: split.value_denom,
+                quantity_num: split.quantity_num,
+                quantity_denom: split.quantity_denom,
+                lot_guid: split.lot_guid,
+                account_name: split.account.name,
+                commodity_mnemonic: split.account.commodity?.mnemonic,
+                value_decimal: toDecimal(split.value_num, split.value_denom),
+                quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
+            }));
+
             // Find the split corresponding to the current account
-            const accountSplit = enrichedTx.splits.find((s: any) => s.account_guid === accountGuid);
-            const splitValue = accountSplit ? parseFloat(toDecimal(accountSplit.quantity_num, accountSplit.quantity_denom)) : 0;
+            const accountSplit = enrichedSplits.find(s => s.account_guid === accountGuid);
+            const splitValue = accountSplit
+                ? Number(accountSplit.quantity_num) / Number(accountSplit.quantity_denom)
+                : 0;
 
             const row = {
-                ...enrichedTx,
+                guid: tx.guid,
+                currency_guid: tx.currency_guid,
+                num: tx.num,
+                post_date: tx.post_date,
+                enter_date: tx.enter_date,
+                description: tx.description,
+                splits: enrichedSplits,
                 running_balance: currentRunningBalance.toFixed(2),
                 account_split_value: splitValue.toFixed(2),
                 commodity_mnemonic: accountMnemonic,
@@ -140,7 +182,7 @@ export async function GET(
             return row;
         });
 
-        return NextResponse.json(result);
+        return NextResponse.json(serializeBigInts(result));
     } catch (error) {
         console.error('Error fetching account transactions:', error);
         return NextResponse.json({ error: 'Failed' }, { status: 500 });

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import prisma from '@/lib/prisma';
+import { serializeBigInts } from '@/lib/gnucash';
 import { Account, AccountWithChildren } from '@/lib/types';
+import { Prisma } from '@prisma/client';
+import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
 
 /**
  * @openapi
@@ -39,7 +42,17 @@ export async function GET(request: NextRequest) {
 
         // Flat mode: return all accounts with fullname (for account selector)
         if (flat) {
-            const flatQuery = `
+            // For flat mode, we need a recursive query to build fullnames
+            // Using raw SQL for the recursive CTE as Prisma doesn't support recursive queries
+            const flatAccounts = await prisma.$queryRaw<Array<{
+                guid: string;
+                name: string;
+                account_type: string;
+                parent_guid: string | null;
+                commodity_guid: string | null;
+                fullname: string;
+                commodity_mnemonic: string;
+            }>>`
                 WITH RECURSIVE account_path AS (
                     SELECT guid, name, account_type, parent_guid, commodity_guid,
                            name::text as fullname
@@ -60,47 +73,92 @@ export async function GET(request: NextRequest) {
                 WHERE ap.account_type NOT IN ('ROOT')
                 ORDER BY ap.fullname
             `;
-            const { rows } = await query(flatQuery);
-            return NextResponse.json(rows);
+            return NextResponse.json(serializeBigInts(flatAccounts));
         }
 
-        // Build dynamic query based on date filters
-        const queryParams: (string | null)[] = [];
-        let dateCondition = '';
+        // Hierarchical mode with balances
+        // Build date filter conditions for period balance
+        let periodBalanceFilter: Prisma.splitsWhereInput = {};
+        if (startDate && endDate) {
+            periodBalanceFilter = {
+                transaction: {
+                    post_date: {
+                        gte: new Date(startDate),
+                        lte: new Date(endDate),
+                    },
+                },
+            };
+        } else if (startDate) {
+            periodBalanceFilter = {
+                transaction: {
+                    post_date: {
+                        gte: new Date(startDate),
+                    },
+                },
+            };
+        } else if (endDate) {
+            periodBalanceFilter = {
+                transaction: {
+                    post_date: {
+                        lte: new Date(endDate),
+                    },
+                },
+            };
+        }
 
-        if (startDate || endDate) {
-            if (startDate && endDate) {
-                dateCondition = 't.post_date >= $1 AND t.post_date <= $2';
-                queryParams.push(startDate, endDate);
-            } else if (startDate) {
-                dateCondition = 't.post_date >= $1';
-                queryParams.push(startDate);
-            } else if (endDate) {
-                dateCondition = 't.post_date <= $1';
-                queryParams.push(endDate);
+        // Fetch all accounts with their commodity and splits
+        const accountsData = await prisma.accounts.findMany({
+            include: {
+                commodity: true,
+                splits: {
+                    include: {
+                        transaction: true,
+                    },
+                },
+            },
+        });
+
+        // Calculate balances for each account
+        const accounts: Account[] = accountsData.map(acc => {
+            // Calculate total balance from all splits
+            let totalBalance = 0;
+            let periodBalance = 0;
+
+            for (const split of acc.splits) {
+                const qty = Number(split.quantity_num) / Number(split.quantity_denom);
+                totalBalance += qty;
+
+                // Check if split's transaction falls within period
+                const postDate = split.transaction.post_date;
+                if (postDate) {
+                    const inPeriod =
+                        (!startDate || postDate >= new Date(startDate)) &&
+                        (!endDate || postDate <= new Date(endDate));
+                    if (inPeriod) {
+                        periodBalance += qty;
+                    }
+                }
             }
-        }
 
-        const accountQuery = `
-      SELECT
-        a.*,
-        c.mnemonic as commodity_mnemonic,
-        COALESCE(SUM(CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC)), 0) as total_balance,
-        COALESCE(SUM(CASE WHEN ${dateCondition || '1=1'} THEN CAST(s.quantity_num AS NUMERIC) / CAST(s.quantity_denom AS NUMERIC) ELSE 0 END), 0) as period_balance
-      FROM accounts a
-      JOIN commodities c ON a.commodity_guid = c.guid
-      LEFT JOIN splits s ON a.guid = s.account_guid
-      LEFT JOIN transactions t ON s.tx_guid = t.guid
-      GROUP BY a.guid, c.mnemonic
-    `;
+            return {
+                guid: acc.guid,
+                name: acc.name,
+                account_type: acc.account_type,
+                commodity_guid: acc.commodity_guid || '',
+                commodity_scu: acc.commodity_scu,
+                non_std_scu: acc.non_std_scu,
+                parent_guid: acc.parent_guid,
+                code: acc.code || '',
+                description: acc.description || '',
+                hidden: acc.hidden || 0,
+                placeholder: acc.placeholder || 0,
+                commodity_mnemonic: acc.commodity?.mnemonic,
+                total_balance: totalBalance.toFixed(2),
+                period_balance: periodBalance.toFixed(2),
+            };
+        });
 
-        const { rows } = await query(accountQuery, queryParams);
-        const accounts: Account[] = rows.map(row => ({
-            ...row,
-            total_balance: parseFloat(row.total_balance).toFixed(2),
-            period_balance: parseFloat(row.period_balance).toFixed(2)
-        }));
-
+        // Build hierarchy
         const accountMap: Record<string, AccountWithChildren> = {};
         const roots: AccountWithChildren[] = [];
 
@@ -135,5 +193,71 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         console.error('Error fetching accounts:', error);
         return NextResponse.json({ error: 'Failed to fetch accounts' }, { status: 500 });
+    }
+}
+
+/**
+ * @openapi
+ * /api/accounts:
+ *   post:
+ *     description: Create a new account.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *               - account_type
+ *               - commodity_guid
+ *             properties:
+ *               name:
+ *                 type: string
+ *               account_type:
+ *                 type: string
+ *                 enum: [ASSET, BANK, CASH, CREDIT, EQUITY, EXPENSE, INCOME, LIABILITY, MUTUAL, PAYABLE, RECEIVABLE, ROOT, STOCK, TRADING]
+ *               parent_guid:
+ *                 type: string
+ *                 nullable: true
+ *               commodity_guid:
+ *                 type: string
+ *               code:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *               hidden:
+ *                 type: integer
+ *               placeholder:
+ *                 type: integer
+ *     responses:
+ *       201:
+ *         description: Account created successfully.
+ *       400:
+ *         description: Validation error.
+ *       500:
+ *         description: Server error.
+ */
+export async function POST(request: NextRequest) {
+    try {
+        const body = await request.json();
+
+        // Validate input
+        const parseResult = CreateAccountSchema.safeParse(body);
+        if (!parseResult.success) {
+            return NextResponse.json(
+                { errors: parseResult.error.issues },
+                { status: 400 }
+            );
+        }
+
+        const account = await AccountService.create(parseResult.data);
+        return NextResponse.json(account, { status: 201 });
+    } catch (error) {
+        console.error('Error creating account:', error);
+        if (error instanceof Error) {
+            return NextResponse.json({ error: error.message }, { status: 400 });
+        }
+        return NextResponse.json({ error: 'Failed to create account' }, { status: 500 });
     }
 }

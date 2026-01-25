@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import prisma from '@/lib/prisma';
+import { serializeBigInts } from '@/lib/gnucash';
 
 /**
  * @openapi
@@ -21,21 +22,26 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const type = searchParams.get('type');
 
-        let commodityQuery = `
-            SELECT guid, namespace, mnemonic, fullname, cusip, fraction, quote_flag, quote_source, quote_tz
-            FROM commodities
-        `;
-        const params: string[] = [];
+        const commodities = await prisma.commodities.findMany({
+            where: type ? { namespace: type } : undefined,
+            orderBy: [
+                { namespace: 'asc' },
+                { mnemonic: 'asc' },
+            ],
+            select: {
+                guid: true,
+                namespace: true,
+                mnemonic: true,
+                fullname: true,
+                cusip: true,
+                fraction: true,
+                quote_flag: true,
+                quote_source: true,
+                quote_tz: true,
+            },
+        });
 
-        if (type) {
-            commodityQuery += ' WHERE namespace = $1';
-            params.push(type);
-        }
-
-        commodityQuery += ' ORDER BY namespace, mnemonic';
-
-        const { rows } = await query(commodityQuery, params);
-        return NextResponse.json(rows);
+        return NextResponse.json(serializeBigInts(commodities));
     } catch (error) {
         console.error('Error fetching commodities:', error);
         return NextResponse.json({ error: 'Failed to fetch commodities' }, { status: 500 });

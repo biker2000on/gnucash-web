@@ -9,6 +9,7 @@ const withPWA = require('next-pwa')({
 const nextConfig = {
     // Your other Next.js config options here
     output: 'standalone',
+    turbopack: {},
     webpack: (config) => {
         return config;
     },

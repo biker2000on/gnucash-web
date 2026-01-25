@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import prisma from '@/lib/prisma';
 
 interface BulkReconcileBody {
     splits: string[];
@@ -63,20 +63,23 @@ export async function POST(request: Request) {
         }
 
         const reconcileDate = body.reconcile_state === 'y'
-            ? (body.reconcile_date || new Date().toISOString())
+            ? new Date(body.reconcile_date || new Date().toISOString())
             : null;
 
         // Bulk update all splits
-        const result = await query(
-            `UPDATE splits
-             SET reconcile_state = $2, reconcile_date = $3
-             WHERE guid = ANY($1)`,
-            [body.splits, body.reconcile_state, reconcileDate]
-        );
+        const result = await prisma.splits.updateMany({
+            where: {
+                guid: { in: body.splits },
+            },
+            data: {
+                reconcile_state: body.reconcile_state,
+                reconcile_date: reconcileDate,
+            },
+        });
 
         return NextResponse.json({
             success: true,
-            updated: result.rowCount,
+            updated: result.count,
             reconcile_state: body.reconcile_state,
             reconcile_date: reconcileDate,
         });

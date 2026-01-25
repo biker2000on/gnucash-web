@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import prisma from '@/lib/prisma';
+import { serializeBigInts } from '@/lib/gnucash';
 
 export async function GET(
     request: Request,
@@ -8,24 +9,46 @@ export async function GET(
     try {
         const { guid } = await params;
 
-        const res = await query(
-            `SELECT
+        // The account_hierarchy view is created by db-init.ts
+        // We need to use raw SQL since it's a view, not a Prisma model
+        const result = await prisma.$queryRaw<Array<{
+            name: string;
+            fullname: string | null;
+            account_type: string;
+            commodity_namespace: string | null;
+            guid1: string | null;
+            guid2: string | null;
+            guid3: string | null;
+            guid4: string | null;
+            guid5: string | null;
+            guid6: string | null;
+            level1: string | null;
+            level2: string | null;
+            level3: string | null;
+            level4: string | null;
+            level5: string | null;
+            level6: string | null;
+            depth: number | null;
+        }>>`
+            SELECT
                 a.name,
                 ah.fullname,
+                a.account_type,
+                c.namespace as commodity_namespace,
                 ah.guid1, ah.guid2, ah.guid3, ah.guid4, ah.guid5, ah.guid6,
                 ah.level1, ah.level2, ah.level3, ah.level4, ah.level5, ah.level6,
                 ah.depth
             FROM accounts a
             LEFT JOIN account_hierarchy ah ON a.guid = ah.guid
-            WHERE a.guid = $1`,
-            [guid]
-        );
+            LEFT JOIN commodities c ON a.commodity_guid = c.guid
+            WHERE a.guid = ${guid}
+        `;
 
-        if (res.rows.length === 0) {
+        if (result.length === 0) {
             return NextResponse.json({ error: 'Account not found' }, { status: 404 });
         }
 
-        return NextResponse.json(res.rows[0]);
+        return NextResponse.json(serializeBigInts(result[0]));
     } catch (error) {
         console.error('Error fetching account info:', error);
         return NextResponse.json({ error: 'Failed to fetch account info' }, { status: 500 });

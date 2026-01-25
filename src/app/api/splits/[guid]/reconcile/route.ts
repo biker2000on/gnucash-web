@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import prisma from '@/lib/prisma';
+import { serializeBigInts } from '@/lib/gnucash';
 
 interface ReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
@@ -60,36 +61,47 @@ export async function PATCH(
         }
 
         // Verify split exists
-        const existingSplit = await query(
-            'SELECT guid FROM splits WHERE guid = $1',
-            [guid]
-        );
-        if (existingSplit.rows.length === 0) {
+        const existingSplit = await prisma.splits.findUnique({
+            where: { guid },
+        });
+        if (!existingSplit) {
             return NextResponse.json({ error: 'Split not found' }, { status: 404 });
         }
 
         // Update the split
         const reconcileDate = body.reconcile_state === 'y'
-            ? (body.reconcile_date || new Date().toISOString())
+            ? new Date(body.reconcile_date || new Date().toISOString())
             : null;
 
-        await query(
-            `UPDATE splits
-             SET reconcile_state = $2, reconcile_date = $3
-             WHERE guid = $1`,
-            [guid, body.reconcile_state, reconcileDate]
-        );
+        const updatedSplit = await prisma.splits.update({
+            where: { guid },
+            data: {
+                reconcile_state: body.reconcile_state,
+                reconcile_date: reconcileDate,
+            },
+            include: {
+                account: true,
+            },
+        });
 
         // Return the updated split
-        const result = await query(
-            `SELECT s.*, a.name as account_name
-             FROM splits s
-             JOIN accounts a ON s.account_guid = a.guid
-             WHERE s.guid = $1`,
-            [guid]
-        );
+        const result = {
+            guid: updatedSplit.guid,
+            tx_guid: updatedSplit.tx_guid,
+            account_guid: updatedSplit.account_guid,
+            memo: updatedSplit.memo,
+            action: updatedSplit.action,
+            reconcile_state: updatedSplit.reconcile_state,
+            reconcile_date: updatedSplit.reconcile_date,
+            value_num: updatedSplit.value_num,
+            value_denom: updatedSplit.value_denom,
+            quantity_num: updatedSplit.quantity_num,
+            quantity_denom: updatedSplit.quantity_denom,
+            lot_guid: updatedSplit.lot_guid,
+            account_name: updatedSplit.account.name,
+        };
 
-        return NextResponse.json(result.rows[0]);
+        return NextResponse.json(serializeBigInts(result));
     } catch (error) {
         console.error('Error updating split reconcile state:', error);
         return NextResponse.json(
@@ -124,20 +136,23 @@ export async function POST(
         }
 
         const date = reconcile_state === 'y'
-            ? (reconcile_date || new Date().toISOString())
+            ? new Date(reconcile_date || new Date().toISOString())
             : null;
 
         // Bulk update
-        await query(
-            `UPDATE splits
-             SET reconcile_state = $2, reconcile_date = $3
-             WHERE guid = ANY($1)`,
-            [splits, reconcile_state, date]
-        );
+        const result = await prisma.splits.updateMany({
+            where: {
+                guid: { in: splits },
+            },
+            data: {
+                reconcile_state,
+                reconcile_date: date,
+            },
+        });
 
         return NextResponse.json({
             success: true,
-            updated: splits.length,
+            updated: result.count,
             reconcile_state,
         });
     } catch (error) {

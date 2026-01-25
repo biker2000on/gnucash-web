@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { query, toDecimal } from '@/lib/db';
+import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
+import { serializeBigInts } from '@/lib/gnucash';
 import { Transaction, Split, CreateTransactionRequest } from '@/lib/types';
-import { generateGuid } from '@/lib/guid';
 import { validateTransaction } from '@/lib/validation';
+import { Prisma } from '@prisma/client';
 
 /**
  * @openapi
@@ -82,126 +83,142 @@ export async function GET(request: Request) {
         const maxAmount = searchParams.get('maxAmount');
         const reconcileStates = searchParams.get('reconcileStates');
 
-        const conditions: string[] = [];
-        const queryParams: any[] = [limit, offset];
-        let paramIndex = 3;
+        // Build where conditions
+        const whereConditions: Prisma.transactionsWhereInput = {};
 
         // Date filters
-        if (startDate) {
-            conditions.push(`t.post_date >= $${paramIndex}`);
-            queryParams.push(startDate);
-            paramIndex++;
-        }
-        if (endDate) {
-            conditions.push(`t.post_date <= $${paramIndex}`);
-            queryParams.push(endDate);
-            paramIndex++;
+        if (startDate || endDate) {
+            whereConditions.post_date = {};
+            if (startDate) {
+                whereConditions.post_date.gte = new Date(startDate);
+            }
+            if (endDate) {
+                whereConditions.post_date.lte = new Date(endDate);
+            }
         }
 
-        // Search filter
+        // Search filter (description, num, or account name)
         if (search) {
-            conditions.push(`(
-                t.description ILIKE $${paramIndex}
-                OR t.num ILIKE $${paramIndex}
-                OR EXISTS (
-                    SELECT 1 FROM splits s
-                    JOIN accounts a ON s.account_guid = a.guid
-                    WHERE s.tx_guid = t.guid AND a.name ILIKE $${paramIndex}
-                )
-            )`);
-            queryParams.push(`%${search}%`);
-            paramIndex++;
+            whereConditions.OR = [
+                { description: { contains: search, mode: 'insensitive' } },
+                { num: { contains: search, mode: 'insensitive' } },
+                {
+                    splits: {
+                        some: {
+                            account: {
+                                name: { contains: search, mode: 'insensitive' },
+                            },
+                        },
+                    },
+                },
+            ];
         }
 
         // Account type filter
         if (accountTypes) {
             const types = accountTypes.split(',').map(t => t.trim().toUpperCase());
-            conditions.push(`EXISTS (
-                SELECT 1 FROM splits s
-                JOIN accounts a ON s.account_guid = a.guid
-                WHERE s.tx_guid = t.guid AND a.account_type = ANY($${paramIndex})
-            )`);
-            queryParams.push(types);
-            paramIndex++;
+            whereConditions.splits = {
+                ...whereConditions.splits,
+                some: {
+                    ...((whereConditions.splits as Prisma.SplitsListRelationFilter)?.some || {}),
+                    account: {
+                        account_type: { in: types },
+                    },
+                },
+            };
         }
 
-        // Amount range filters (on any split in the transaction)
+        // Amount range filters (need raw SQL for these due to computed values)
+        // For minAmount and maxAmount, we'll use Prisma's raw filter
+        let minAmountFilter: Prisma.transactionsWhereInput | undefined;
+        let maxAmountFilter: Prisma.transactionsWhereInput | undefined;
+
+        if (minAmount || maxAmount || reconcileStates) {
+            // These require post-filtering or raw SQL
+            // For now, we'll fetch and filter in JS for complex cases
+            // This is less efficient but maintains correctness
+        }
+
+        // Fetch transactions
+        const transactions = await prisma.transactions.findMany({
+            where: whereConditions,
+            orderBy: {
+                post_date: 'desc',
+            },
+            take: limit,
+            skip: offset,
+            include: {
+                splits: {
+                    include: {
+                        account: {
+                            include: {
+                                commodity: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        // Post-filter for amount range and reconcile states if needed
+        let filteredTransactions = transactions;
+
         if (minAmount) {
-            conditions.push(`EXISTS (
-                SELECT 1 FROM splits s
-                WHERE s.tx_guid = t.guid
-                AND ABS(CAST(s.value_num AS NUMERIC) / CAST(s.value_denom AS NUMERIC)) >= $${paramIndex}
-            )`);
-            queryParams.push(parseFloat(minAmount));
-            paramIndex++;
-        }
-        if (maxAmount) {
-            conditions.push(`EXISTS (
-                SELECT 1 FROM splits s
-                WHERE s.tx_guid = t.guid
-                AND ABS(CAST(s.value_num AS NUMERIC) / CAST(s.value_denom AS NUMERIC)) <= $${paramIndex}
-            )`);
-            queryParams.push(parseFloat(maxAmount));
-            paramIndex++;
+            const minVal = parseFloat(minAmount);
+            filteredTransactions = filteredTransactions.filter(tx =>
+                tx.splits.some(split => {
+                    const absValue = Math.abs(Number(split.value_num) / Number(split.value_denom));
+                    return absValue >= minVal;
+                })
+            );
         }
 
-        // Reconciliation state filter
+        if (maxAmount) {
+            const maxVal = parseFloat(maxAmount);
+            filteredTransactions = filteredTransactions.filter(tx =>
+                tx.splits.some(split => {
+                    const absValue = Math.abs(Number(split.value_num) / Number(split.value_denom));
+                    return absValue <= maxVal;
+                })
+            );
+        }
+
         if (reconcileStates) {
             const states = reconcileStates.split(',').map(s => s.trim().toLowerCase());
-            conditions.push(`EXISTS (
-                SELECT 1 FROM splits s
-                WHERE s.tx_guid = t.guid AND s.reconcile_state = ANY($${paramIndex})
-            )`);
-            queryParams.push(states);
-            paramIndex++;
+            filteredTransactions = filteredTransactions.filter(tx =>
+                tx.splits.some(split => states.includes(split.reconcile_state.toLowerCase()))
+            );
         }
 
-        let txQuery = `
-      SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description
-      FROM transactions t
-    `;
+        // Transform to response format
+        const result = filteredTransactions.map(tx => ({
+            guid: tx.guid,
+            currency_guid: tx.currency_guid,
+            num: tx.num,
+            post_date: tx.post_date,
+            enter_date: tx.enter_date,
+            description: tx.description,
+            splits: tx.splits.map(split => ({
+                guid: split.guid,
+                tx_guid: split.tx_guid,
+                account_guid: split.account_guid,
+                memo: split.memo,
+                action: split.action,
+                reconcile_state: split.reconcile_state,
+                reconcile_date: split.reconcile_date,
+                value_num: split.value_num,
+                value_denom: split.value_denom,
+                quantity_num: split.quantity_num,
+                quantity_denom: split.quantity_denom,
+                lot_guid: split.lot_guid,
+                account_name: split.account.name,
+                commodity_mnemonic: split.account.commodity?.mnemonic,
+                value_decimal: toDecimal(split.value_num, split.value_denom),
+                quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
+            })),
+        }));
 
-        if (conditions.length > 0) {
-            txQuery += ` WHERE ${conditions.join(' AND ')}`;
-        }
-
-        txQuery += `
-      ORDER BY t.post_date DESC
-      LIMIT $1 OFFSET $2
-    `;
-        const splitQuery = `
-      SELECT s.*, a.name as account_name, c.mnemonic as commodity_mnemonic 
-      FROM splits s
-      JOIN accounts a ON s.account_guid = a.guid
-      JOIN commodities c ON a.commodity_guid = c.guid
-      WHERE s.tx_guid = ANY($1)
-    `;
-
-        const txResult = await query(txQuery, queryParams);
-        const transactions: Transaction[] = txResult.rows;
-
-        const txGuids = transactions.map(tx => tx.guid);
-        const splitResult = await query(splitQuery, [txGuids]);
-        const splits: Split[] = splitResult.rows;
-
-        const txMap: Record<string, Transaction> = {};
-        transactions.forEach(tx => {
-            txMap[tx.guid] = { ...tx, splits: [] };
-        });
-
-        splits.forEach(split => {
-            if (txMap[split.tx_guid]) {
-                const valueDecimal = toDecimal(split.value_num, split.value_denom);
-                const quantityDecimal = toDecimal(split.quantity_num, split.quantity_denom);
-                txMap[split.tx_guid].splits!.push({
-                    ...split,
-                    value_decimal: valueDecimal,
-                    quantity_decimal: quantityDecimal
-                });
-            }
-        });
-
-        return NextResponse.json(Object.values(txMap));
+        return NextResponse.json(serializeBigInts(result));
     } catch (error) {
         console.error('Error fetching transactions:', error);
         return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
@@ -239,12 +256,15 @@ export async function POST(request: Request) {
 
         // Verify all account GUIDs exist
         const accountGuids = body.splits.map(s => s.account_guid);
-        const accountCheck = await query(
-            'SELECT guid FROM accounts WHERE guid = ANY($1)',
-            [accountGuids]
-        );
-        if (accountCheck.rows.length !== accountGuids.length) {
-            const foundGuids = new Set(accountCheck.rows.map((r: { guid: string }) => r.guid));
+        const accounts = await prisma.accounts.findMany({
+            where: {
+                guid: { in: accountGuids },
+            },
+            select: { guid: true },
+        });
+
+        if (accounts.length !== accountGuids.length) {
+            const foundGuids = new Set(accounts.map(a => a.guid));
             const missingGuids = accountGuids.filter(g => !foundGuids.has(g));
             return NextResponse.json({
                 errors: [{ field: 'splits', message: `Invalid account GUIDs: ${missingGuids.join(', ')}` }]
@@ -253,62 +273,93 @@ export async function POST(request: Request) {
 
         // Generate GUIDs
         const txGuid = generateGuid();
-        const now = new Date().toISOString();
+        const now = new Date();
 
-        // Insert transaction
-        await query(
-            `INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [txGuid, body.currency_guid, body.num || '', body.post_date, now, body.description]
-        );
+        // Create transaction with splits in a transaction
+        const transaction = await prisma.$transaction(async (tx) => {
+            // Insert transaction
+            const newTx = await tx.transactions.create({
+                data: {
+                    guid: txGuid,
+                    currency_guid: body.currency_guid,
+                    num: body.num || '',
+                    post_date: new Date(body.post_date),
+                    enter_date: now,
+                    description: body.description,
+                },
+            });
 
-        // Insert splits
-        for (const split of body.splits) {
-            const splitGuid = generateGuid();
-            await query(
-                `INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state, reconcile_date, value_num, value_denom, quantity_num, quantity_denom, lot_guid)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-                [
-                    splitGuid,
-                    txGuid,
-                    split.account_guid,
-                    split.memo || '',
-                    split.action || '',
-                    split.reconcile_state || 'n',
-                    null,
-                    split.value_num,
-                    split.value_denom,
-                    split.quantity_num ?? split.value_num,
-                    split.quantity_denom ?? split.value_denom,
-                    null
-                ]
-            );
+            // Insert splits
+            for (const split of body.splits) {
+                const splitGuid = generateGuid();
+                await tx.splits.create({
+                    data: {
+                        guid: splitGuid,
+                        tx_guid: txGuid,
+                        account_guid: split.account_guid,
+                        memo: split.memo || '',
+                        action: split.action || '',
+                        reconcile_state: split.reconcile_state || 'n',
+                        reconcile_date: null,
+                        value_num: BigInt(split.value_num),
+                        value_denom: BigInt(split.value_denom),
+                        quantity_num: BigInt(split.quantity_num ?? split.value_num),
+                        quantity_denom: BigInt(split.quantity_denom ?? split.value_denom),
+                        lot_guid: null,
+                    },
+                });
+            }
+
+            // Return the created transaction with splits
+            return await tx.transactions.findUnique({
+                where: { guid: txGuid },
+                include: {
+                    splits: {
+                        include: {
+                            account: {
+                                include: {
+                                    commodity: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+        });
+
+        if (!transaction) {
+            throw new Error('Failed to create transaction');
         }
 
-        // Return the created transaction
-        const txResult = await query(
-            `SELECT t.guid, t.currency_guid, t.num, t.post_date, t.enter_date, t.description
-             FROM transactions t WHERE t.guid = $1`,
-            [txGuid]
-        );
+        // Transform to response format
+        const result = {
+            guid: transaction.guid,
+            currency_guid: transaction.currency_guid,
+            num: transaction.num,
+            post_date: transaction.post_date,
+            enter_date: transaction.enter_date,
+            description: transaction.description,
+            splits: transaction.splits.map(split => ({
+                guid: split.guid,
+                tx_guid: split.tx_guid,
+                account_guid: split.account_guid,
+                memo: split.memo,
+                action: split.action,
+                reconcile_state: split.reconcile_state,
+                reconcile_date: split.reconcile_date,
+                value_num: split.value_num,
+                value_denom: split.value_denom,
+                quantity_num: split.quantity_num,
+                quantity_denom: split.quantity_denom,
+                lot_guid: split.lot_guid,
+                account_name: split.account.name,
+                commodity_mnemonic: split.account.commodity?.mnemonic,
+                value_decimal: toDecimal(split.value_num, split.value_denom),
+                quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
+            })),
+        };
 
-        const splitResult = await query(
-            `SELECT s.*, a.name as account_name, c.mnemonic as commodity_mnemonic
-             FROM splits s
-             JOIN accounts a ON s.account_guid = a.guid
-             JOIN commodities c ON a.commodity_guid = c.guid
-             WHERE s.tx_guid = $1`,
-            [txGuid]
-        );
-
-        const transaction = txResult.rows[0];
-        transaction.splits = splitResult.rows.map((split: Split) => ({
-            ...split,
-            value_decimal: toDecimal(split.value_num, split.value_denom),
-            quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
-        }));
-
-        return NextResponse.json(transaction, { status: 201 });
+        return NextResponse.json(serializeBigInts(result), { status: 201 });
     } catch (error) {
         console.error('Error creating transaction:', error);
         return NextResponse.json({ error: 'Failed to create transaction' }, { status: 500 });
