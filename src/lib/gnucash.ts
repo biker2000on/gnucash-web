@@ -99,6 +99,11 @@ export function serializeBigInts<T>(obj: T): T {
     return obj.toString() as unknown as T;
   }
 
+  // Preserve Date objects as ISO strings for proper JSON serialization
+  if (obj instanceof Date) {
+    return obj.toISOString() as unknown as T;
+  }
+
   if (Array.isArray(obj)) {
     return obj.map(serializeBigInts) as unknown as T;
   }

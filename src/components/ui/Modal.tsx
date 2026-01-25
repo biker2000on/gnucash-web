@@ -1,6 +1,7 @@
 'use client';
 
-import { ReactNode, useEffect, useRef } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
     isOpen: boolean;
@@ -30,6 +31,12 @@ export function Modal({
 }: ModalProps) {
     const modalRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const [mounted, setMounted] = useState(false);
+
+    // Wait for client-side mount before rendering portal
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Handle escape key
     useEffect(() => {
@@ -93,10 +100,11 @@ export function Modal({
         return () => document.removeEventListener('keydown', handleTabKey);
     }, [isOpen]);
 
-    if (!isOpen) return null;
+    // Don't render on server or when closed
+    if (!mounted || !isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    const modalContent = (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -135,4 +143,7 @@ export function Modal({
             </div>
         </div>
     );
+
+    // Use portal to render modal at document body level
+    return createPortal(modalContent, document.body);
 }
