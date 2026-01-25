@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import AccountLedger, { AccountTransaction } from '@/components/AccountLedger';
+import { InvestmentAccount } from '@/components/InvestmentAccount';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { useDateFilter } from '@/hooks/useDateFilter';
 import { formatCurrency } from '@/lib/format';
@@ -12,6 +13,8 @@ interface AccountData {
     name: string;
     fullname: string;
     depth: number;
+    account_type?: string;
+    commodity_namespace?: string;
     guid1?: string;
     guid2?: string;
     guid3?: string;
@@ -86,6 +89,9 @@ function AccountPageContent() {
     const currentBalance = transactions[0]?.running_balance;
     const commodityMnemonic = transactions[0]?.commodity_mnemonic;
 
+    // Check if this is an investment account (non-currency commodity)
+    const isInvestmentAccount = account?.commodity_namespace && account.commodity_namespace !== 'CURRENCY';
+
     return (
         <div className="space-y-6">
             <header className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
@@ -137,6 +143,12 @@ function AccountPageContent() {
                 </div>
             </header>
 
+            {/* Investment Account View */}
+            {isInvestmentAccount && (
+                <InvestmentAccount accountGuid={guid} />
+            )}
+
+            {/* Transaction Ledger */}
             {loading ? (
                 <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
