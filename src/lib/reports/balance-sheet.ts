@@ -47,6 +47,16 @@ function buildHierarchy(accounts: AccountWithBalance[], parentGuid: string | nul
 export async function generateBalanceSheet(filters: ReportFilters): Promise<ReportData> {
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
 
+    // Find the Root Account GUID
+    const rootAccount = await prisma.accounts.findFirst({
+        where: {
+            account_type: 'ROOT',
+            name: { startsWith: 'Root' }
+        },
+        select: { guid: true }
+    });
+    const rootGuid = rootAccount?.guid || null;
+
     // Get all asset, liability, and equity accounts with their balances
     const accounts = await prisma.accounts.findMany({
         where: {
@@ -102,9 +112,9 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
     const equityAccounts = accountBalances.filter(a => equityTypes.includes(a.account_type));
 
     // Build hierarchies
-    const assetItems = buildHierarchy(assetAccounts);
-    const liabilityItems = buildHierarchy(liabilityAccounts);
-    const equityItems = buildHierarchy(equityAccounts);
+    const assetItems = buildHierarchy(assetAccounts, rootGuid);
+    const liabilityItems = buildHierarchy(liabilityAccounts, rootGuid);
+    const equityItems = buildHierarchy(equityAccounts, rootGuid);
 
     // Calculate totals
     const totalAssets = assetItems.reduce((sum, item) => sum + item.amount, 0);

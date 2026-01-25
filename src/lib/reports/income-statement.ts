@@ -87,6 +87,16 @@ export async function generateIncomeStatement(filters: ReportFilters): Promise<R
     const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(now.getFullYear(), 0, 1);
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
 
+    // Find the Root Account GUID
+    const rootAccount = await prisma.accounts.findFirst({
+        where: {
+            account_type: 'ROOT',
+            name: { startsWith: 'Root' }
+        },
+        select: { guid: true }
+    });
+    const rootGuid = rootAccount?.guid || null;
+
     // Get all income and expense accounts
     const accounts = await prisma.accounts.findMany({
         where: {
@@ -128,12 +138,12 @@ export async function generateIncomeStatement(filters: ReportFilters): Promise<R
     const expenseAccounts = accountBalances.filter(a => a.account_type === 'EXPENSE');
 
     // Build hierarchies - income is typically negative in GnuCash, so we negate it
-    const incomeItems = buildHierarchy(incomeAccounts).map(item => ({
+    const incomeItems = buildHierarchy(incomeAccounts, rootGuid).map(item => ({
         ...item,
         amount: -item.amount, // Negate income to show as positive
         previousAmount: item.previousAmount !== undefined ? -item.previousAmount : undefined,
     }));
-    const expenseItems = buildHierarchy(expenseAccounts);
+    const expenseItems = buildHierarchy(expenseAccounts, rootGuid);
 
     // Calculate totals
     const totalIncome = incomeItems.reduce((sum, item) => sum + item.amount, 0);
