@@ -153,36 +153,24 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
                     Collapse All
                 </button>
             </div>
-            <table className="w-full">
-                <thead>
-                    <tr className="border-b border-neutral-700 text-neutral-400 text-sm uppercase tracking-wider">
-                        <th className="py-3 px-4 text-left font-medium">Account</th>
-                        <th className="py-3 px-4 text-right font-medium">Balance</th>
-                        {showComparison && (
-                            <>
-                                <th className="py-3 px-4 text-right font-medium">Previous</th>
-                                <th className="py-3 px-4 text-right font-medium">Change</th>
-                            </>
-                        )}
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-800/50">
-                    {sections.map((section, idx) => (
-                        <tr key={section.title} className="bg-neutral-800/30">
-                            <td colSpan={showComparison ? 4 : 2} className="py-3 px-4">
-                                <h3 className="text-lg font-semibold text-neutral-100">{section.title}</h3>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-
             {sections.map(section => (
                 <div key={section.title} className="mb-6">
                     <div className="bg-gradient-to-r from-neutral-800/50 to-transparent py-3 px-4 border-b border-neutral-700">
                         <h3 className="text-lg font-semibold text-neutral-100">{section.title}</h3>
                     </div>
                     <table className="w-full">
+                        <thead>
+                            <tr className="border-b border-neutral-700 text-neutral-400 text-sm uppercase tracking-wider">
+                                <th className="py-2 px-4 text-left font-medium">Account</th>
+                                <th className="py-2 px-4 text-right font-medium">Balance</th>
+                                {showComparison && (
+                                    <>
+                                        <th className="py-2 px-4 text-right font-medium">Previous</th>
+                                        <th className="py-2 px-4 text-right font-medium">Change</th>
+                                    </>
+                                )}
+                            </tr>
+                        </thead>
                         <tbody className="divide-y divide-neutral-800/50">
                             {section.items.map(item => (
                                 <LineItemRow
