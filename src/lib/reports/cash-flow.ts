@@ -43,6 +43,8 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
     const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(now.getFullYear(), 0, 1);
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
 
+    const investmentTypes = ['STOCK', 'MUTUAL'];
+
     // Get all accounts
     const accounts = await prisma.accounts.findMany({
         where: {
@@ -66,6 +68,9 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
         const changes: LineItem[] = [];
 
         for (const account of accountList) {
+            // For investment accounts, use value (cost basis / cash impact)
+            // For regular accounts, use quantity (account currency amount)
+            const isInvestment = investmentTypes.includes(account.account_type);
             const splits = await prisma.splits.findMany({
                 where: {
                     account_guid: account.guid,
@@ -76,14 +81,18 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
                         },
                     },
                 },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                },
+                select: isInvestment
+                    ? { value_num: true, value_denom: true }
+                    : { quantity_num: true, quantity_denom: true },
             });
 
             const netChange = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
+                if (isInvestment) {
+                    const s = split as { value_num: bigint; value_denom: bigint };
+                    return sum + toDecimal(s.value_num, s.value_denom);
+                }
+                const s = split as { quantity_num: bigint; quantity_denom: bigint };
+                return sum + toDecimal(s.quantity_num, s.quantity_denom);
             }, 0);
 
             if (netChange !== 0 || filters.showZeroBalances) {

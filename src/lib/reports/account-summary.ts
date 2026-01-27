@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { getLatestPrice } from '@/lib/commodities';
 import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
 
 /**
@@ -22,6 +23,8 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
         ? { in: filters.accountTypes }
         : undefined;
 
+    const investmentTypes = ['STOCK', 'MUTUAL'];
+
     // Get all non-hidden accounts
     const accounts = await prisma.accounts.findMany({
         where: {
@@ -33,6 +36,7 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
             name: true,
             account_type: true,
             parent_guid: true,
+            commodity_guid: true,
         },
         orderBy: [
             { account_type: 'asc' },
@@ -43,6 +47,8 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
     // Get balances and activity for each account
     const accountSummaries = await Promise.all(
         accounts.map(async (account) => {
+            const isInvestment = investmentTypes.includes(account.account_type) && account.commodity_guid;
+
             // Get opening balance (before start date)
             const openingSplits = await prisma.splits.findMany({
                 where: {
@@ -59,7 +65,7 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 },
             });
 
-            const openingBalance = openingSplits.reduce((sum, split) => {
+            let openingBalance = openingSplits.reduce((sum, split) => {
                 return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
@@ -80,13 +86,22 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 },
             });
 
-            const debits = periodSplits
+            let debits = periodSplits
                 .filter(s => toDecimal(s.quantity_num, s.quantity_denom) > 0)
                 .reduce((sum, s) => sum + toDecimal(s.quantity_num, s.quantity_denom), 0);
 
-            const credits = periodSplits
+            let credits = periodSplits
                 .filter(s => toDecimal(s.quantity_num, s.quantity_denom) < 0)
                 .reduce((sum, s) => sum + Math.abs(toDecimal(s.quantity_num, s.quantity_denom)), 0);
+
+            // For investment accounts, convert share quantities to market value
+            if (isInvestment) {
+                const price = await getLatestPrice(account.commodity_guid!, undefined, endDate);
+                const priceValue = price?.value || 0;
+                openingBalance *= priceValue;
+                debits *= priceValue;
+                credits *= priceValue;
+            }
 
             const netChange = debits - credits;
             const closingBalance = openingBalance + netChange;

@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { getLatestPrice } from '@/lib/commodities';
 import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
 
 interface AccountWithBalance {
@@ -57,6 +58,8 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
     });
     const rootGuid = rootAccount?.guid || null;
 
+    const investmentTypes = ['STOCK', 'MUTUAL'];
+
     // Get all asset, liability, and equity accounts with their balances
     const accounts = await prisma.accounts.findMany({
         where: {
@@ -70,6 +73,7 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
             name: true,
             account_type: true,
             parent_guid: true,
+            commodity_guid: true,
         },
     });
 
@@ -91,9 +95,18 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
                 },
             });
 
-            const balance = splits.reduce((sum, split) => {
+            const quantity = splits.reduce((sum, split) => {
                 return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
+
+            // For investment accounts, convert shares to market value using latest price
+            let balance = quantity;
+            if (investmentTypes.includes(account.account_type) && account.commodity_guid) {
+                const price = await getLatestPrice(account.commodity_guid, undefined, endDate);
+                if (price) {
+                    balance = quantity * price.value;
+                }
+            }
 
             return {
                 ...account,
