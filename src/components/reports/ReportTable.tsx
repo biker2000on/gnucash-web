@@ -121,6 +121,18 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
         });
     };
 
+    // Calculate max depth across all sections
+    const getMaxDepth = (items: LineItem[], currentDepth = 0): number => {
+        let max = currentDepth;
+        items.forEach(item => {
+            if (item.children) {
+                max = Math.max(max, getMaxDepth(item.children, currentDepth + 1));
+            }
+        });
+        return max;
+    };
+    const maxDepth = sections.reduce((max, section) => Math.max(max, getMaxDepth(section.items)), 0);
+
     const expandAll = () => {
         const all = new Set<string>();
         const addAllItems = (items: LineItem[]) => {
@@ -137,9 +149,44 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
         setExpanded(new Set());
     };
 
+    const expandToLevel = (level: number) => {
+        const result = new Set<string>();
+        const addItemsToLevel = (items: LineItem[], currentDepth: number) => {
+            items.forEach(item => {
+                if (currentDepth < level && item.children) {
+                    result.add(item.guid);
+                    addItemsToLevel(item.children, currentDepth + 1);
+                }
+            });
+        };
+        sections.forEach(section => addItemsToLevel(section.items, 0));
+        setExpanded(result);
+    };
+
     return (
         <div>
-            <div className="flex justify-end gap-2 p-2 border-b border-neutral-800">
+            <div className="flex justify-end items-center gap-2 p-2 border-b border-neutral-800">
+                {maxDepth > 0 && (
+                    <div className="flex items-center gap-1 mr-2">
+                        <label className="text-xs text-neutral-500">Level:</label>
+                        <select
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === 'all') expandAll();
+                                else expandToLevel(Number(val));
+                            }}
+                            defaultValue="1"
+                            className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-neutral-500"
+                        >
+                            {Array.from({ length: maxDepth + 1 }, (_, i) => (
+                                <option key={i} value={i}>
+                                    {i === 0 ? 'None' : i}
+                                </option>
+                            ))}
+                            <option value="all">All</option>
+                        </select>
+                    </div>
+                )}
                 <button
                     onClick={expandAll}
                     className="px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"

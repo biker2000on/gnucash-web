@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
+import { buildAccountPathMap } from './utils';
 
 /**
  * Convert GnuCash fraction to decimal number
@@ -44,6 +45,9 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
 
     const investmentTypes = ['STOCK', 'MUTUAL'];
+
+    // Build full account path map for display names
+    const accountPaths = await buildAccountPathMap();
 
     // Get all accounts
     const accounts = await prisma.accounts.findMany({
@@ -98,7 +102,7 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
             if (netChange !== 0 || filters.showZeroBalances) {
                 changes.push({
                     guid: account.guid,
-                    name: account.name,
+                    name: accountPaths.get(account.guid) || account.name,
                     amount: netChange,
                 });
             }

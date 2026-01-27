@@ -10,6 +10,38 @@ function toDecimal(num: bigint | null, denom: bigint | null): number {
     return Number(num) / Number(denom);
 }
 
+interface AccountWithBalances {
+    guid: string;
+    name: string;
+    account_type: string;
+    parent_guid: string | null;
+    commodity_guid: string | null;
+    closingBalance: number;
+    openingBalance: number;
+}
+
+/**
+ * Build hierarchical line items from flat account list
+ */
+function buildHierarchy(accounts: AccountWithBalances[], parentGuid: string | null = null, depth = 0): LineItem[] {
+    const children = accounts.filter(a => a.parent_guid === parentGuid);
+
+    return children.map(account => {
+        const childItems = buildHierarchy(accounts, account.guid, depth + 1);
+        const childrenClosingTotal = childItems.reduce((sum, item) => sum + item.amount, 0);
+        const childrenOpeningTotal = childItems.reduce((sum, item) => sum + (item.previousAmount || 0), 0);
+
+        return {
+            guid: account.guid,
+            name: account.name,
+            amount: account.closingBalance + childrenClosingTotal,
+            previousAmount: account.openingBalance + childrenOpeningTotal,
+            children: childItems.length > 0 ? childItems : undefined,
+            depth,
+        };
+    });
+}
+
 /**
  * Generate Account Summary report
  */
@@ -18,18 +50,22 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
     const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(now.getFullYear(), 0, 1);
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
 
-    // Filter by account types if specified
-    const accountTypeFilter = filters.accountTypes && filters.accountTypes.length > 0
-        ? { in: filters.accountTypes }
-        : undefined;
-
     const investmentTypes = ['STOCK', 'MUTUAL'];
+
+    // Find the Root Account GUID
+    const rootAccount = await prisma.accounts.findFirst({
+        where: {
+            account_type: 'ROOT',
+            name: { startsWith: 'Root' }
+        },
+        select: { guid: true }
+    });
+    const rootGuid = rootAccount?.guid || null;
 
     // Get all non-hidden accounts
     const accounts = await prisma.accounts.findMany({
         where: {
             hidden: 0,
-            account_type: accountTypeFilter,
         },
         select: {
             guid: true,
@@ -38,14 +74,10 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
             parent_guid: true,
             commodity_guid: true,
         },
-        orderBy: [
-            { account_type: 'asc' },
-            { name: 'asc' },
-        ],
     });
 
-    // Get balances and activity for each account
-    const accountSummaries = await Promise.all(
+    // Get balances for each account
+    const accountBalances: AccountWithBalances[] = await Promise.all(
         accounts.map(async (account) => {
             const isInvestment = investmentTypes.includes(account.account_type) && account.commodity_guid;
 
@@ -54,9 +86,7 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 where: {
                     account_guid: account.guid,
                     transaction: {
-                        post_date: {
-                            lt: startDate,
-                        },
+                        post_date: { lt: startDate },
                     },
                 },
                 select: {
@@ -69,15 +99,12 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
-            // Get activity during period
-            const periodSplits = await prisma.splits.findMany({
+            // Get closing balance (up to end date)
+            const closingSplits = await prisma.splits.findMany({
                 where: {
                     account_guid: account.guid,
                     transaction: {
-                        post_date: {
-                            gte: startDate,
-                            lte: endDate,
-                        },
+                        post_date: { lte: endDate },
                     },
                 },
                 select: {
@@ -86,68 +113,70 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 },
             });
 
-            let debits = periodSplits
-                .filter(s => toDecimal(s.quantity_num, s.quantity_denom) > 0)
-                .reduce((sum, s) => sum + toDecimal(s.quantity_num, s.quantity_denom), 0);
-
-            let credits = periodSplits
-                .filter(s => toDecimal(s.quantity_num, s.quantity_denom) < 0)
-                .reduce((sum, s) => sum + Math.abs(toDecimal(s.quantity_num, s.quantity_denom)), 0);
+            let closingBalance = closingSplits.reduce((sum, split) => {
+                return sum + toDecimal(split.quantity_num, split.quantity_denom);
+            }, 0);
 
             // For investment accounts, convert share quantities to market value
             if (isInvestment) {
                 const price = await getLatestPrice(account.commodity_guid!, undefined, endDate);
                 const priceValue = price?.value || 0;
                 openingBalance *= priceValue;
-                debits *= priceValue;
-                credits *= priceValue;
+                closingBalance *= priceValue;
             }
-
-            const netChange = debits - credits;
-            const closingBalance = openingBalance + netChange;
 
             return {
                 ...account,
                 openingBalance,
-                debits,
-                credits,
-                netChange,
                 closingBalance,
-                transactionCount: periodSplits.length,
             };
         })
     );
 
-    // Filter out zero balances if not requested
-    const filteredSummaries = filters.showZeroBalances
-        ? accountSummaries
-        : accountSummaries.filter(a =>
-            a.openingBalance !== 0 ||
-            a.closingBalance !== 0 ||
-            a.transactionCount > 0
-        );
+    // Categorize top-level account types
+    const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL'];
+    const liabilityTypes = ['LIABILITY', 'CREDIT'];
+    const incomeTypes = ['INCOME'];
+    const expenseTypes = ['EXPENSE'];
+    const equityTypes = ['EQUITY'];
 
-    // Group by account type
-    const groupedByType = filteredSummaries.reduce((acc, account) => {
-        if (!acc[account.account_type]) {
-            acc[account.account_type] = [];
-        }
-        acc[account.account_type].push(account);
-        return acc;
-    }, {} as Record<string, typeof filteredSummaries>);
+    function getTopLevelCategory(type: string): string | null {
+        if (assetTypes.includes(type)) return 'Assets';
+        if (liabilityTypes.includes(type)) return 'Liabilities';
+        if (incomeTypes.includes(type)) return 'Income';
+        if (expenseTypes.includes(type)) return 'Expenses';
+        if (equityTypes.includes(type)) return 'Equity';
+        return null;
+    }
 
-    // Build sections
-    const sections: ReportSection[] = Object.entries(groupedByType).map(([type, accounts]) => ({
-        title: type.charAt(0) + type.slice(1).toLowerCase(),
-        items: accounts.map(a => ({
-            guid: a.guid,
-            name: a.name,
-            amount: a.closingBalance,
-            previousAmount: a.openingBalance,
-        })),
-        total: accounts.reduce((sum, a) => sum + a.closingBalance, 0),
-        previousTotal: accounts.reduce((sum, a) => sum + a.openingBalance, 0),
-    }));
+    // Build sections by top-level category with hierarchy
+    const categoryConfigs = [
+        { title: 'Assets', types: assetTypes },
+        { title: 'Liabilities', types: liabilityTypes },
+        { title: 'Income', types: incomeTypes },
+        { title: 'Expenses', types: expenseTypes },
+        { title: 'Equity', types: equityTypes },
+    ];
+
+    const sections: ReportSection[] = [];
+
+    for (const config of categoryConfigs) {
+        const categoryAccounts = accountBalances.filter(a => config.types.includes(a.account_type));
+        if (categoryAccounts.length === 0) continue;
+
+        const items = buildHierarchy(categoryAccounts, rootGuid);
+        if (items.length === 0) continue;
+
+        const total = items.reduce((sum, item) => sum + item.amount, 0);
+        const previousTotal = items.reduce((sum, item) => sum + (item.previousAmount || 0), 0);
+
+        sections.push({
+            title: config.title,
+            items,
+            total,
+            previousTotal,
+        });
+    }
 
     return {
         type: ReportType.ACCOUNT_SUMMARY,

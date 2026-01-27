@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
+import { buildAccountPathMap } from './utils';
 
 /**
  * Convert GnuCash fraction to decimal number
@@ -65,6 +66,9 @@ export async function generateTransactionReport(filters: ReportFilters): Promise
         },
     });
 
+    // Build full account path map for display names
+    const accountPaths = await buildAccountPathMap();
+
     // Flatten to transaction items
     const items: TransactionReportItem[] = [];
     let totalDebits = 0;
@@ -85,11 +89,12 @@ export async function generateTransactionReport(filters: ReportFilters): Promise
                 totalCredits += Math.abs(amount);
             }
 
+            const accountGuid = split.account?.guid || '';
             items.push({
                 guid: split.guid,
                 date: tx.post_date?.toISOString().split('T')[0] || '',
                 description: tx.description || '',
-                account: split.account?.name || 'Unknown',
+                account: accountPaths.get(accountGuid) || split.account?.name || 'Unknown',
                 amount,
                 memo: split.memo || '',
                 reconciled: split.reconcile_state || 'n',
