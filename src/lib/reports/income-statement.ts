@@ -62,13 +62,13 @@ async function getAccountBalances(
                     },
                 },
                 select: {
-                    value_num: true,
-                    value_denom: true,
+                    quantity_num: true,
+                    quantity_denom: true,
                 },
             });
 
             const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.value_num, split.value_denom);
+                return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
             return {

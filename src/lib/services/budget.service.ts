@@ -320,14 +320,14 @@ export class BudgetService {
         },
       },
       select: {
-        value_num: true,
-        value_denom: true,
+        quantity_num: true,
+        quantity_denom: true,
       },
     });
 
     const total = splits.reduce((sum, split) => {
-      const value = split.value_denom
-        ? Number(split.value_num) / Number(split.value_denom)
+      const value = split.quantity_denom
+        ? Number(split.quantity_num) / Number(split.quantity_denom)
         : 0;
       return sum + value;
     }, 0);

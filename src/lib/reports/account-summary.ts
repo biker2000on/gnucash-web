@@ -54,13 +54,13 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                     },
                 },
                 select: {
-                    value_num: true,
-                    value_denom: true,
+                    quantity_num: true,
+                    quantity_denom: true,
                 },
             });
 
             const openingBalance = openingSplits.reduce((sum, split) => {
-                return sum + toDecimal(split.value_num, split.value_denom);
+                return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
             // Get activity during period
@@ -75,18 +75,18 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                     },
                 },
                 select: {
-                    value_num: true,
-                    value_denom: true,
+                    quantity_num: true,
+                    quantity_denom: true,
                 },
             });
 
             const debits = periodSplits
-                .filter(s => toDecimal(s.value_num, s.value_denom) > 0)
-                .reduce((sum, s) => sum + toDecimal(s.value_num, s.value_denom), 0);
+                .filter(s => toDecimal(s.quantity_num, s.quantity_denom) > 0)
+                .reduce((sum, s) => sum + toDecimal(s.quantity_num, s.quantity_denom), 0);
 
             const credits = periodSplits
-                .filter(s => toDecimal(s.value_num, s.value_denom) < 0)
-                .reduce((sum, s) => sum + Math.abs(toDecimal(s.value_num, s.value_denom)), 0);
+                .filter(s => toDecimal(s.quantity_num, s.quantity_denom) < 0)
+                .reduce((sum, s) => sum + Math.abs(toDecimal(s.quantity_num, s.quantity_denom)), 0);
 
             const netChange = debits - credits;
             const closingBalance = openingBalance + netChange;
