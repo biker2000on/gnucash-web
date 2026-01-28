@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
+import { getLatestPrice } from '@/lib/commodities';
 import { Account, AccountWithChildren } from '@/lib/types';
 import { Prisma } from '@prisma/client';
 import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
@@ -119,7 +120,22 @@ export async function GET(request: NextRequest) {
         });
 
         // Calculate balances for each account
+        // Pre-fetch prices for investment accounts (STOCK/MUTUAL with non-currency commodities)
+        const investmentTypes = ['STOCK', 'MUTUAL'];
+        const priceCache = new Map<string, number>();
+        for (const acc of accountsData) {
+            if (investmentTypes.includes(acc.account_type) && acc.commodity_guid && acc.commodity?.namespace !== 'CURRENCY') {
+                if (!priceCache.has(acc.commodity_guid)) {
+                    const price = await getLatestPrice(acc.commodity_guid);
+                    priceCache.set(acc.commodity_guid, price?.value || 0);
+                }
+            }
+        }
+
         const accounts: Account[] = accountsData.map(acc => {
+            const isInvestment = investmentTypes.includes(acc.account_type) && acc.commodity?.namespace !== 'CURRENCY';
+            const pricePerShare = isInvestment && acc.commodity_guid ? (priceCache.get(acc.commodity_guid) || 0) : 0;
+
             // Calculate total balance from all splits
             let totalBalance = 0;
             let periodBalance = 0;
@@ -155,6 +171,8 @@ export async function GET(request: NextRequest) {
                 commodity_mnemonic: acc.commodity?.mnemonic,
                 total_balance: totalBalance.toFixed(2),
                 period_balance: periodBalance.toFixed(2),
+                total_balance_usd: isInvestment ? (totalBalance * pricePerShare).toFixed(2) : undefined,
+                period_balance_usd: isInvestment ? (periodBalance * pricePerShare).toFixed(2) : undefined,
             };
         });
 

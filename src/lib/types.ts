@@ -61,6 +61,8 @@ export interface Account {
     fullname?: string;
     total_balance?: string;
     period_balance?: string;
+    total_balance_usd?: string;
+    period_balance_usd?: string;
     commodity_mnemonic?: string;
 }
 

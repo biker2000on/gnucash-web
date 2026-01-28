@@ -73,7 +73,7 @@ function AccountNode({
     const hasChildren = account.children.length > 0;
 
     // Recursive balance calculation for children that are visible
-    const getAggregatedBalances = (acc: AccountWithChildren): { total: number, period: number } => {
+    const getAggregatedBalances = (acc: AccountWithChildren): { total: number, period: number, totalUsd: number, periodUsd: number } => {
         // Apply balance reversal to this account's balances based on its type
         let total = applyBalanceReversal(
             parseFloat(acc.total_balance || '0'),
@@ -85,19 +85,30 @@ function AccountNode({
             acc.account_type,
             balanceReversal
         );
+        // For investment accounts, use USD values; for regular accounts, USD = native
+        let totalUsd = acc.total_balance_usd
+            ? applyBalanceReversal(parseFloat(acc.total_balance_usd), acc.account_type, balanceReversal)
+            : total;
+        let periodUsd = acc.period_balance_usd
+            ? applyBalanceReversal(parseFloat(acc.period_balance_usd), acc.account_type, balanceReversal)
+            : period;
 
         acc.children.forEach(child => {
             if (!child.hidden || showHidden) {
                 const childBal = getAggregatedBalances(child);
                 total += childBal.total;
                 period += childBal.period;
+                totalUsd += childBal.totalUsd;
+                periodUsd += childBal.periodUsd;
             }
         });
 
-        return { total, period };
+        return { total, period, totalUsd, periodUsd };
     };
 
-    const { total: aggTotal, period: aggPeriod } = getAggregatedBalances(account);
+    const { total: aggTotal, period: aggPeriod, totalUsd: aggTotalUsd, periodUsd: aggPeriodUsd } = getAggregatedBalances(account);
+
+    const isInvestment = account.account_type === 'STOCK' || account.account_type === 'MUTUAL';
 
     const handleToggle = () => {
         const newExpanded = !isExpanded;
@@ -115,115 +126,117 @@ function AccountNode({
     };
 
     return (
-        <div className="ml-4">
+        <>
             <div
-                className={`group flex items-center gap-4 py-2 px-3 rounded-lg transition-colors cursor-pointer ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'
-                    } ${account.hidden ? 'opacity-50 grayscale' : ''}`}
+                className={`group flex items-center gap-2 py-2 px-3 cursor-pointer rounded-l-lg transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'} ${account.hidden ? 'opacity-50 grayscale' : ''}`}
+                style={{ paddingLeft: `${depth * 20 + 12}px` }}
                 onClick={handleToggle}
             >
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {hasChildren && (
-                        <span className={`text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
-                            ▶
-                        </span>
+                {hasChildren && (
+                    <span className={`text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
+                        ▶
+                    </span>
+                )}
+                <Link
+                    href={`/accounts/${account.guid}`}
+                    className={`text-neutral-300 font-medium truncate hover:text-emerald-400 transition-colors ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {account.name}
+                </Link>
+                <Link
+                    href={`/accounts/${account.guid}`}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-neutral-700 rounded text-neutral-500 hover:text-emerald-400 ml-1"
+                    title="View Ledger"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    </svg>
+                </Link>
+                {account.hidden === 1 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500 border border-neutral-700 ml-2">
+                        HIDDEN
+                    </span>
+                )}
+                {/* Action buttons - visible on hover */}
+                <div className="opacity-0 group-hover:opacity-100 flex gap-1 ml-2 transition-opacity">
+                    {onNewChild && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onNewChild(account); }}
+                            className="p-1 rounded hover:bg-emerald-500/20 text-neutral-500 hover:text-emerald-400 transition-colors"
+                            title="Add Child Account"
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                        </button>
                     )}
-                    <Link
-                        href={`/accounts/${account.guid}`}
-                        className={`text-neutral-300 font-medium truncate hover:text-emerald-400 transition-colors ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {account.name}
-                    </Link>
-                    <Link
-                        href={`/accounts/${account.guid}`}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-neutral-700 rounded text-neutral-500 hover:text-emerald-400 ml-1"
-                        title="View Ledger"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                        </svg>
-                    </Link>
-                    {account.hidden === 1 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500 border border-neutral-700 ml-2">
-                            HIDDEN
-                        </span>
+                    {onEdit && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onEdit(account); }}
+                            className="p-1 rounded hover:bg-cyan-500/20 text-neutral-500 hover:text-cyan-400 transition-colors"
+                            title="Edit Account"
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                        </button>
                     )}
-
-                    {/* Action buttons - visible on hover */}
-                    <div className="opacity-0 group-hover:opacity-100 flex gap-1 ml-2 transition-opacity">
-                        {onNewChild && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onNewChild(account); }}
-                                className="p-1 rounded hover:bg-emerald-500/20 text-neutral-500 hover:text-emerald-400 transition-colors"
-                                title="Add Child Account"
-                            >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                </svg>
-                            </button>
-                        )}
-                        {onEdit && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onEdit(account); }}
-                                className="p-1 rounded hover:bg-cyan-500/20 text-neutral-500 hover:text-cyan-400 transition-colors"
-                                title="Edit Account"
-                            >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
-                            </button>
-                        )}
-                        {onDelete && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); onDelete(account); }}
-                                className="p-1 rounded hover:bg-rose-500/20 text-neutral-500 hover:text-rose-400 transition-colors"
-                                title="Delete Account"
-                            >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                <div className="flex gap-6 text-right shrink-0">
-                    <div className="flex flex-col">
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Period</span>
-                        <span className={`font-mono text-sm ${aggPeriod < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                            {formatCurrency(aggPeriod, account.commodity_mnemonic)}
-                        </span>
-                    </div>
-                    <div className="flex flex-col">
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Total</span>
-                        <span className={`font-mono text-sm font-bold ${aggTotal < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                            {formatCurrency(aggTotal, account.commodity_mnemonic)}
-                        </span>
-                    </div>
+                    {onDelete && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); onDelete(account); }}
+                            className="p-1 rounded hover:bg-rose-500/20 text-neutral-500 hover:text-rose-400 transition-colors"
+                            title="Delete Account"
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                    )}
                 </div>
             </div>
-            {isExpanded && hasChildren && (
-                <div className="border-l border-neutral-800/50 ml-5 mt-1">
-                    {account.children.map(child => (
-                        <AccountNode
-                            key={child.guid}
-                            account={child}
-                            showHidden={showHidden}
-                            filterText={filterText}
-                            depth={depth + 1}
-                            expandToDepth={expandToDepth}
-                            expandedNodes={expandedNodes}
-                            setExpandedNodes={setExpandedNodes}
-                            onEdit={onEdit}
-                            onDelete={onDelete}
-                            onNewChild={onNewChild}
-                            balanceReversal={balanceReversal}
-                        />
-                    ))}
-                </div>
-            )}
-        </div>
+            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'}`} onClick={handleToggle}>
+                {isInvestment && (
+                    <>
+                        <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">{account.commodity_mnemonic || 'Shares'}</span>
+                        <span className="text-sm text-neutral-400">
+                            {new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(parseFloat(account.total_balance || '0'))}
+                        </span>
+                    </>
+                )}
+            </div>
+            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'}`} onClick={handleToggle}>
+                <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Period</span>
+                <span className={`text-sm ${aggPeriodUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {formatCurrency(aggPeriodUsd, 'USD')}
+                </span>
+            </div>
+            <div className={`flex flex-col justify-center text-right py-2 pr-3 pl-4 font-mono rounded-r-lg transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'}`} onClick={handleToggle}>
+                <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Total</span>
+                <span className={`text-sm font-bold ${aggTotalUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    {formatCurrency(aggTotalUsd, 'USD')}
+                </span>
+            </div>
+            {isExpanded && hasChildren && account.children.map(child => (
+                (!child.hidden || showHidden) && (
+                    <AccountNode
+                        key={child.guid}
+                        account={child}
+                        showHidden={showHidden}
+                        filterText={filterText}
+                        depth={depth + 1}
+                        expandToDepth={expandToDepth}
+                        expandedNodes={expandedNodes}
+                        setExpandedNodes={setExpandedNodes}
+                        onEdit={onEdit}
+                        onDelete={onDelete}
+                        onNewChild={onNewChild}
+                        balanceReversal={balanceReversal}
+                    />
+                )
+            ))}
+        </>
     );
 }
 
@@ -502,7 +515,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 </div>
             </div>
 
-            <div className="space-y-1 overflow-x-hidden">
+            <div className="grid overflow-x-hidden" style={{ gridTemplateColumns: '1fr auto auto auto' }}>
                 {sortedAccounts.map(acc => (
                     <AccountNode
                         key={acc.guid}
