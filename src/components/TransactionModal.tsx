@@ -135,7 +135,7 @@ export function TransactionModal({
             isOpen={isOpen}
             onClose={onClose}
             title="Transaction Details"
-            size="lg"
+            size="xl"
         >
             {loading ? (
                 <div className="p-8 flex items-center justify-center">
@@ -197,7 +197,7 @@ export function TransactionModal({
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
                                             <tr key={split.guid} className="hover:bg-neutral-800/30">
-                                                <td className="px-4 py-3">
+                                                <td className="px-4 py-3 whitespace-nowrap">
                                                     <Link
                                                         href={`/accounts/${split.account_guid}`}
                                                         className="text-neutral-200 hover:text-cyan-400 transition-colors"
@@ -209,18 +209,18 @@ export function TransactionModal({
                                                         <span className="ml-2 text-xs text-neutral-500">({split.action})</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-neutral-500 italic">
+                                                <td className="px-4 py-3 text-sm text-neutral-500 italic max-w-[200px] truncate" title={split.memo || undefined}>
                                                     {split.memo || '—'}
                                                 </td>
-                                                <td className="px-4 py-3 text-center">
+                                                <td className="px-4 py-3 text-center whitespace-nowrap">
                                                     <span className={`text-xs px-2 py-1 rounded-full ${reconcile.color}`}>
                                                         {split.reconcile_state.toUpperCase()}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-mono text-emerald-400">
+                                                <td className="px-4 py-3 text-right font-mono text-emerald-400 whitespace-nowrap">
                                                     {debit > 0 ? formatCurrency(debit.toString(), split.commodity_mnemonic) : ''}
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-mono text-rose-400">
+                                                <td className="px-4 py-3 text-right font-mono text-rose-400 whitespace-nowrap">
                                                     {credit > 0 ? formatCurrency(credit.toString(), split.commodity_mnemonic) : ''}
                                                 </td>
                                             </tr>
