@@ -10,6 +10,7 @@ const nextConfig = {
     // Your other Next.js config options here
     output: 'standalone',
     turbopack: {},
+    serverExternalPackages: ['bcrypt'],
     webpack: (config) => {
         return config;
     },
