@@ -4,6 +4,7 @@ import { serializeBigInts } from '@/lib/gnucash';
 import { Transaction, Split, CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { Prisma } from '@prisma/client';
+import { logAudit } from '@/lib/services/audit.service';
 
 /**
  * @openapi
@@ -330,6 +331,13 @@ export async function POST(request: Request) {
         if (!transaction) {
             throw new Error('Failed to create transaction');
         }
+
+        // Log audit event
+        await logAudit('CREATE', 'TRANSACTION', txGuid, null, {
+            description: body.description,
+            post_date: body.post_date,
+            splits_count: body.splits.length,
+        });
 
         // Transform to response format
         const result = {

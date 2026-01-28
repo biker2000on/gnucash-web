@@ -7,6 +7,7 @@ import { FilterPanel, AccountTypeFilter, AmountFilter, ReconcileFilter } from '.
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
+import { useToast } from '@/contexts/ToastContext';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -33,6 +34,7 @@ interface TransactionJournalProps {
 }
 
 export default function TransactionJournal({ initialTransactions, startDate, endDate }: TransactionJournalProps) {
+    const { success, error } = useToast();
     const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -53,6 +55,11 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [reconcileWarningOpen, setReconcileWarningOpen] = useState(false);
     const [pendingAction, setPendingAction] = useState<'edit' | 'delete' | null>(null);
     const [pendingGuid, setPendingGuid] = useState<string | null>(null);
+
+    // Delete confirmation state
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deletingGuid, setDeletingGuid] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     // Advanced filters
     const [filters, setFilters] = useState<TransactionFilters>({
@@ -189,27 +196,37 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 setReconcileWarningOpen(true);
             } else {
                 // Show basic confirmation for un-reconciled transactions
-                if (confirm('Are you sure you want to delete this transaction?')) {
-                    performDelete(guid);
-                }
+                setDeletingGuid(guid);
+                setDeleteConfirmOpen(true);
             }
         }
     }, [transactions]);
 
     const performDelete = async (guid: string) => {
+        setIsDeleting(true);
         try {
             const res = await fetch(`/api/transactions/${guid}`, {
                 method: 'DELETE',
             });
             if (!res.ok) throw new Error('Failed to delete');
 
+            success('Transaction deleted successfully');
             // Refresh transactions
             fetchTransactions();
             setIsModalOpen(false);
-        } catch (error) {
-            console.error('Delete failed:', error);
-            alert('Failed to delete transaction');
+        } catch (err) {
+            console.error('Delete failed:', err);
+            error('Failed to delete transaction');
+        } finally {
+            setIsDeleting(false);
+            setDeleteConfirmOpen(false);
+            setDeletingGuid(null);
         }
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!deletingGuid) return;
+        await performDelete(deletingGuid);
     };
 
     const handleReconcileWarningConfirm = () => {
@@ -225,9 +242,8 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             }
         } else if (pendingAction === 'delete') {
             // Show final confirmation before deleting
-            if (confirm('Are you sure you want to delete this transaction?')) {
-                performDelete(pendingGuid);
-            }
+            setDeletingGuid(pendingGuid);
+            setDeleteConfirmOpen(true);
         }
 
         setPendingAction(null);
@@ -487,6 +503,21 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 }
                 confirmLabel="Continue Anyway"
                 confirmVariant={hasReconciled ? "danger" : "warning"}
+            />
+
+            {/* Delete Confirmation Dialog */}
+            <ConfirmationDialog
+                isOpen={deleteConfirmOpen}
+                onConfirm={handleDeleteConfirm}
+                onCancel={() => {
+                    setDeleteConfirmOpen(false);
+                    setDeletingGuid(null);
+                }}
+                title="Delete Transaction"
+                message="Are you sure you want to delete this transaction? This cannot be undone."
+                confirmLabel="Delete"
+                confirmVariant="danger"
+                isLoading={isDeleting}
             />
         </div>
     );

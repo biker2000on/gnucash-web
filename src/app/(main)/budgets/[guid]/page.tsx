@@ -7,6 +7,8 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { InlineAmountEditor } from '@/components/budget/InlineAmountEditor';
 import { AccountPickerModal } from '@/components/budget/AccountPickerModal';
 import { BatchEditModal } from '@/components/budget/BatchEditModal';
+import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
+import { useToast } from '@/contexts/ToastContext';
 
 interface BudgetAmount {
     id: number;
@@ -57,6 +59,7 @@ interface BudgetDetailPageProps {
 export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const { guid } = use(params);
     const { balanceReversal } = useUserPreferences();
+    const toast = useToast();
     const [budget, setBudget] = useState<Budget | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -64,6 +67,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const [batchEditAccount, setBatchEditAccount] = useState<{ guid: string; name: string } | null>(null);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
+
+    // Delete confirmation state
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deletingAccountGuid, setDeletingAccountGuid] = useState<string | null>(null);
 
     useEffect(() => {
         async function fetchBudget() {
@@ -98,12 +105,17 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         }
     };
 
-    const handleDeleteAccount = async (accountGuid: string) => {
-        if (!confirm('Remove this account from the budget?')) return;
+    const handleDeleteAccount = (accountGuid: string) => {
+        setDeletingAccountGuid(accountGuid);
+        setDeleteConfirmOpen(true);
+    };
 
-        setIsDeleting(accountGuid);
+    const handleDeleteConfirm = async () => {
+        if (!deletingAccountGuid) return;
+
+        setIsDeleting(deletingAccountGuid);
         try {
-            const res = await fetch(`/api/budgets/${guid}/amounts?account_guid=${accountGuid}`, {
+            const res = await fetch(`/api/budgets/${guid}/amounts?account_guid=${deletingAccountGuid}`, {
                 method: 'DELETE'
             });
             if (res.ok) {
@@ -113,6 +125,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             console.error('Error deleting account:', err);
         } finally {
             setIsDeleting(null);
+            setDeleteConfirmOpen(false);
+            setDeletingAccountGuid(null);
         }
     };
 
@@ -133,11 +147,14 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             });
 
             if (applyRes.ok) {
+                toast.success('Budget estimate applied successfully');
                 await refreshBudget();
+            } else {
+                throw new Error('Failed to apply estimate');
             }
         } catch (err) {
             console.error('Error applying estimate:', err);
-            alert('Failed to apply estimate');
+            toast.error('Failed to apply estimate');
         }
     };
 
@@ -660,6 +677,21 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     onUpdate={refreshBudget}
                 />
             )}
+
+            {/* Delete Account Confirmation Dialog */}
+            <ConfirmationDialog
+                isOpen={deleteConfirmOpen}
+                onConfirm={handleDeleteConfirm}
+                onCancel={() => {
+                    setDeleteConfirmOpen(false);
+                    setDeletingAccountGuid(null);
+                }}
+                title="Remove Account from Budget"
+                message="Are you sure you want to remove this account from the budget? All budget amounts for this account will be deleted."
+                confirmLabel="Remove"
+                confirmVariant="danger"
+                isLoading={isDeleting === deletingAccountGuid}
+            />
         </>
     );
 }

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Modal } from './ui/Modal';
 import { TransactionForm } from './TransactionForm';
 import { Transaction, CreateTransactionRequest } from '@/lib/types';
+import { useToast } from '@/contexts/ToastContext';
 
 interface TransactionFormModalProps {
     isOpen: boolean;
@@ -20,6 +21,7 @@ export function TransactionFormModal({
     defaultAccountGuid,
     onSuccess,
 }: TransactionFormModalProps) {
+    const { success, error: showError } = useToast();
     const [fullTransaction, setFullTransaction] = useState<Transaction | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -80,11 +82,13 @@ export function TransactionFormModal({
                 throw new Error(errorData.error || `Failed to ${isEditMode ? 'update' : 'create'} transaction`);
             }
 
+            success(isEditMode ? 'Transaction updated successfully' : 'Transaction created successfully');
             onSuccess();
             onClose();
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
+            showError(errorMessage);
             throw new Error(errorMessage);
         }
     };

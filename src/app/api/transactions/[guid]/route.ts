@@ -3,6 +3,7 @@ import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
+import { logAudit } from '@/lib/services/audit.service';
 
 export async function GET(
     request: Request,
@@ -83,9 +84,12 @@ export async function PUT(
             return NextResponse.json({ errors: validation.errors }, { status: 400 });
         }
 
-        // Verify transaction exists
+        // Verify transaction exists and capture old values for audit
         const existingTx = await prisma.transactions.findUnique({
             where: { guid },
+            include: {
+                splits: true,
+            },
         });
         if (!existingTx) {
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
@@ -171,6 +175,17 @@ export async function PUT(
             throw new Error('Failed to update transaction');
         }
 
+        // Log audit event
+        await logAudit('UPDATE', 'TRANSACTION', guid, {
+            description: existingTx.description,
+            post_date: existingTx.post_date,
+            splits_count: existingTx.splits.length,
+        }, {
+            description: body.description,
+            post_date: body.post_date,
+            splits_count: body.splits.length,
+        });
+
         // Transform to response format
         const result = {
             guid: transaction.guid,
@@ -213,9 +228,12 @@ export async function DELETE(
     try {
         const { guid } = await params;
 
-        // Verify transaction exists
+        // Verify transaction exists and capture values for audit
         const existingTx = await prisma.transactions.findUnique({
             where: { guid },
+            include: {
+                splits: true,
+            },
         });
         if (!existingTx) {
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
@@ -233,6 +251,13 @@ export async function DELETE(
                 where: { guid },
             });
         });
+
+        // Log audit event
+        await logAudit('DELETE', 'TRANSACTION', guid, {
+            description: existingTx.description,
+            post_date: existingTx.post_date,
+            splits_count: existingTx.splits.length,
+        }, null);
 
         return NextResponse.json({ success: true, deleted: guid });
     } catch (error) {

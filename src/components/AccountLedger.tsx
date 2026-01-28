@@ -8,6 +8,7 @@ import { ReconciliationPanel } from './ReconciliationPanel';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
+import { useToast } from '@/contexts/ToastContext';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -37,6 +38,7 @@ export default function AccountLedger({
     accountType = 'ASSET',
 }: AccountLedgerProps) {
     const { balanceReversal } = useUserPreferences();
+    const { success, error } = useToast();
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -157,16 +159,17 @@ export default function AccountLedger({
         try {
             const res = await fetch(`/api/transactions/${deletingGuid}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Failed to delete');
+            success('Transaction deleted successfully');
             fetchTransactions();
-        } catch (error) {
-            console.error('Delete failed:', error);
-            alert('Failed to delete transaction');
+        } catch (err) {
+            console.error('Delete failed:', err);
+            error('Failed to delete transaction');
         } finally {
             setIsDeleting(false);
             setDeleteConfirmOpen(false);
             setDeletingGuid(null);
         }
-    }, [deletingGuid, fetchTransactions]);
+    }, [deletingGuid, fetchTransactions, success, error]);
 
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
