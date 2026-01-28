@@ -5,6 +5,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
+import { TransactionModal } from './TransactionModal';
+import { TransactionFormModal } from './TransactionFormModal';
+import { ConfirmationDialog } from './ui/ConfirmationDialog';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -44,6 +47,15 @@ export default function AccountLedger({
     // Reconciliation state
     const [isReconciling, setIsReconciling] = useState(false);
     const [selectedSplits, setSelectedSplits] = useState<Set<string>>(new Set());
+
+    // Modal state
+    const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
+    const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+    const [deletingGuid, setDeletingGuid] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     const toggleSplitSelection = useCallback((splitGuid: string) => {
         setSelectedSplits(prev => {
@@ -91,18 +103,7 @@ export default function AccountLedger({
         setIsReconciling(false);
     }, [selectedSplits]);
 
-    // Reset when initialTransactions change (e.g., date filter changed)
-    useEffect(() => {
-        setTransactions(initialTransactions);
-        setOffset(initialTransactions.length);
-        setHasMore(initialTransactions.length >= 100);
-    }, [initialTransactions]);
-
-    const toggleExpand = (guid: string) => {
-        setExpandedTxs(prev => ({ ...prev, [guid]: !prev[guid] }));
-    };
-
-    // Build URL params helper
+    // Build URL params helper (needed by fetchTransactions)
     const buildUrlParams = useCallback((extraParams: Record<string, string | number> = {}) => {
         const params = new URLSearchParams();
         params.set('limit', '100');
@@ -113,6 +114,70 @@ export default function AccountLedger({
         });
         return params.toString();
     }, [startDate, endDate]);
+
+    // Refresh transactions helper
+    const fetchTransactions = useCallback(async () => {
+        try {
+            const params = buildUrlParams();
+            const res = await fetch(`/api/accounts/${accountGuid}/transactions?${params}`);
+            if (!res.ok) throw new Error('Failed to fetch');
+            const data: AccountTransaction[] = await res.json();
+            setTransactions(data);
+            setOffset(data.length);
+            setHasMore(data.length >= 100);
+        } catch (error) {
+            console.error('Error fetching transactions:', error);
+        }
+    }, [accountGuid, buildUrlParams]);
+
+    // Transaction row click handler
+    const handleRowClick = useCallback((txGuid: string) => {
+        setSelectedTxGuid(txGuid);
+        setIsViewModalOpen(true);
+    }, []);
+
+    // Edit handler
+    const handleEdit = useCallback((guid: string) => {
+        const tx = transactions.find(t => t.guid === guid);
+        setEditingTransaction(tx || null);
+        setIsViewModalOpen(false);
+        setIsEditModalOpen(true);
+    }, [transactions]);
+
+    // Delete handlers
+    const handleDeleteClick = useCallback((guid: string) => {
+        setDeletingGuid(guid);
+        setDeleteConfirmOpen(true);
+        setIsViewModalOpen(false);
+    }, []);
+
+    const handleDeleteConfirm = useCallback(async () => {
+        if (!deletingGuid) return;
+        setIsDeleting(true);
+        try {
+            const res = await fetch(`/api/transactions/${deletingGuid}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Failed to delete');
+            fetchTransactions();
+        } catch (error) {
+            console.error('Delete failed:', error);
+            alert('Failed to delete transaction');
+        } finally {
+            setIsDeleting(false);
+            setDeleteConfirmOpen(false);
+            setDeletingGuid(null);
+        }
+    }, [deletingGuid, fetchTransactions]);
+
+    // Reset when initialTransactions change (e.g., date filter changed)
+    useEffect(() => {
+        setTransactions(initialTransactions);
+        setOffset(initialTransactions.length);
+        setHasMore(initialTransactions.length >= 100);
+    }, [initialTransactions]);
+
+    const toggleExpand = (guid: string) => {
+        setExpandedTxs(prev => ({ ...prev, [guid]: !prev[guid] }));
+    };
 
     const fetchMoreTransactions = useCallback(async () => {
         if (loading || !hasMore) return;
@@ -163,8 +228,17 @@ export default function AccountLedger({
 
     return (
         <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl overflow-hidden shadow-2xl">
-            {/* Reconciliation Panel */}
-            <div className="p-4 border-b border-neutral-800 flex justify-end">
+            {/* Top Bar: New Transaction + Reconciliation Panel */}
+            <div className="p-4 border-b border-neutral-800 flex justify-between items-center">
+                <button
+                    onClick={() => {
+                        setEditingTransaction(null);
+                        setIsEditModalOpen(true);
+                    }}
+                    className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
+                >
+                    New Transaction
+                </button>
                 <ReconciliationPanel
                     accountGuid={accountGuid}
                     accountCurrency={accountCurrency}
@@ -207,7 +281,15 @@ export default function AccountLedger({
                             const isSelected = selectedSplits.has(tx.account_split_guid);
 
                             return (
-                                <tr key={tx.guid} className={`hover:bg-white/[0.02] transition-colors group ${isSelected ? 'bg-amber-500/5' : ''}`}>
+                                <tr
+                                    key={tx.guid}
+                                    className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''}`}
+                                    onClick={(e) => {
+                                        // Don't trigger on checkbox or button clicks
+                                        if ((e.target as HTMLElement).closest('input, button')) return;
+                                        handleRowClick(tx.guid);
+                                    }}
+                                >
                                     {isReconciling && (
                                         <td className="px-4 py-4 align-top">
                                             {tx.account_split_reconcile_state !== 'y' && (
@@ -294,6 +376,44 @@ export default function AccountLedger({
                     )}
                 </div>
             </div>
+
+            {/* Modals */}
+            <TransactionModal
+                transactionGuid={selectedTxGuid}
+                isOpen={isViewModalOpen}
+                onClose={() => setIsViewModalOpen(false)}
+                onEdit={handleEdit}
+                onDelete={handleDeleteClick}
+            />
+
+            <TransactionFormModal
+                isOpen={isEditModalOpen}
+                onClose={() => {
+                    setIsEditModalOpen(false);
+                    setEditingTransaction(null);
+                }}
+                transaction={editingTransaction}
+                defaultAccountGuid={accountGuid}
+                onSuccess={() => {
+                    setIsEditModalOpen(false);
+                    setEditingTransaction(null);
+                    fetchTransactions();
+                }}
+            />
+
+            <ConfirmationDialog
+                isOpen={deleteConfirmOpen}
+                onConfirm={handleDeleteConfirm}
+                onCancel={() => {
+                    setDeleteConfirmOpen(false);
+                    setDeletingGuid(null);
+                }}
+                title="Delete Transaction"
+                message="Are you sure you want to delete this transaction? This cannot be undone."
+                confirmLabel="Delete"
+                confirmVariant="danger"
+                isLoading={isDeleting}
+            />
         </div>
     );
 }

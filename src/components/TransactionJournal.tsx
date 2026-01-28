@@ -1,10 +1,23 @@
 "use client";
 
-import { Transaction } from '@/lib/types';
+import { Transaction, Split } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { FilterPanel, AccountTypeFilter, AmountFilter, ReconcileFilter } from './filters';
 import { TransactionModal } from './TransactionModal';
+import { TransactionFormModal } from './TransactionFormModal';
+import { ConfirmationDialog } from './ui/ConfirmationDialog';
+
+function getReconcileStatus(splits: Split[] | undefined): {
+    hasReconciled: boolean;
+    hasCleared: boolean;
+} {
+    if (!splits || splits.length === 0) return { hasReconciled: false, hasCleared: false };
+    return {
+        hasReconciled: splits.some(s => s.reconcile_state === 'y'),
+        hasCleared: splits.some(s => s.reconcile_state === 'c'),
+    };
+}
 
 interface TransactionFilters {
     accountTypes: string[];
@@ -31,6 +44,15 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     // Modal state
     const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+
+    // Edit modal state
+    const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+    // Reconcile warning state
+    const [reconcileWarningOpen, setReconcileWarningOpen] = useState(false);
+    const [pendingAction, setPendingAction] = useState<'edit' | 'delete' | null>(null);
+    const [pendingGuid, setPendingGuid] = useState<string | null>(null);
 
     // Advanced filters
     const [filters, setFilters] = useState<TransactionFilters>({
@@ -121,6 +143,106 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         });
         return params.toString();
     }, [startDate, endDate, debouncedFilters]);
+
+    // Reset and fetch helper
+    const fetchTransactions = useCallback(async () => {
+        setLoading(true);
+        try {
+            const params = buildUrlParams({ offset: 0, search: debouncedFilter });
+            const res = await fetch(`/api/transactions?${params}`);
+            if (!res.ok) throw new Error('Failed to fetch');
+            const data: Transaction[] = await res.json();
+            setTransactions(data);
+            setOffset(data.length);
+            setHasMore(data.length >= 100);
+        } catch (error) {
+            console.error('Error fetching transactions:', error);
+        } finally {
+            setLoading(false);
+        }
+    }, [buildUrlParams, debouncedFilter]);
+
+    const handleEdit = useCallback((guid: string) => {
+        // Find the transaction by guid
+        const tx = transactions.find(t => t.guid === guid);
+        if (tx) {
+            const { hasReconciled, hasCleared } = getReconcileStatus(tx.splits);
+            if (hasReconciled || hasCleared) {
+                setPendingAction('edit');
+                setPendingGuid(guid);
+                setReconcileWarningOpen(true);
+            } else {
+                setEditingTransaction(tx);
+                setIsEditModalOpen(true);
+                setIsModalOpen(false); // Close view modal
+            }
+        }
+    }, [transactions]);
+
+    const handleDelete = useCallback((guid: string) => {
+        const tx = transactions.find(t => t.guid === guid);
+        if (tx) {
+            const { hasReconciled, hasCleared } = getReconcileStatus(tx.splits);
+            if (hasReconciled || hasCleared) {
+                setPendingAction('delete');
+                setPendingGuid(guid);
+                setReconcileWarningOpen(true);
+            } else {
+                // Show basic confirmation for un-reconciled transactions
+                if (confirm('Are you sure you want to delete this transaction?')) {
+                    performDelete(guid);
+                }
+            }
+        }
+    }, [transactions]);
+
+    const performDelete = async (guid: string) => {
+        try {
+            const res = await fetch(`/api/transactions/${guid}`, {
+                method: 'DELETE',
+            });
+            if (!res.ok) throw new Error('Failed to delete');
+
+            // Refresh transactions
+            fetchTransactions();
+            setIsModalOpen(false);
+        } catch (error) {
+            console.error('Delete failed:', error);
+            alert('Failed to delete transaction');
+        }
+    };
+
+    const handleReconcileWarningConfirm = () => {
+        setReconcileWarningOpen(false);
+        if (!pendingGuid) return;
+
+        if (pendingAction === 'edit') {
+            const tx = transactions.find(t => t.guid === pendingGuid);
+            if (tx) {
+                setEditingTransaction(tx);
+                setIsEditModalOpen(true);
+                setIsModalOpen(false); // Close view modal
+            }
+        } else if (pendingAction === 'delete') {
+            // Show final confirmation before deleting
+            if (confirm('Are you sure you want to delete this transaction?')) {
+                performDelete(pendingGuid);
+            }
+        }
+
+        setPendingAction(null);
+        setPendingGuid(null);
+    };
+
+    const handleReconcileWarningCancel = () => {
+        setReconcileWarningOpen(false);
+        setPendingAction(null);
+        setPendingGuid(null);
+    };
+
+    // Get reconcile status for warning dialog
+    const pendingTx = pendingGuid ? transactions.find(t => t.guid === pendingGuid) : null;
+    const { hasReconciled, hasCleared } = getReconcileStatus(pendingTx?.splits);
 
     // Reset and fetch when filter changes
     useEffect(() => {
@@ -214,6 +336,17 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 </div>
 
                 <div className="flex items-center gap-3 w-full md:w-auto">
+                    <button
+                        onClick={() => {
+                            setEditingTransaction(null);
+                            setIsEditModalOpen(true);
+                        }}
+                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
+                    >
+                        <span>+</span>
+                        New Transaction
+                    </button>
+
                     <FilterPanel
                         activeFilterCount={activeFilterCount}
                         onClearAll={clearAllFilters}
@@ -323,6 +456,37 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 transactionGuid={selectedTxGuid}
                 isOpen={isModalOpen}
                 onClose={handleCloseModal}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+            />
+
+            {/* Transaction Form Modal */}
+            <TransactionFormModal
+                isOpen={isEditModalOpen}
+                onClose={() => {
+                    setIsEditModalOpen(false);
+                    setEditingTransaction(null);
+                }}
+                transaction={editingTransaction}
+                onSuccess={() => {
+                    setIsEditModalOpen(false);
+                    setEditingTransaction(null);
+                    fetchTransactions();
+                }}
+            />
+
+            {/* Reconcile Warning Dialog */}
+            <ConfirmationDialog
+                isOpen={reconcileWarningOpen}
+                onConfirm={handleReconcileWarningConfirm}
+                onCancel={handleReconcileWarningCancel}
+                title={hasReconciled ? (pendingAction === 'delete' ? "Delete Reconciled Transaction?" : "Edit Reconciled Transaction?") : (pendingAction === 'delete' ? "Delete Cleared Transaction?" : "Edit Cleared Transaction?")}
+                message={hasReconciled
+                    ? `This transaction has reconciled splits. ${pendingAction === 'delete' ? 'Deleting' : 'Editing'} may affect your account reconciliation. Are you sure you want to continue?`
+                    : `This transaction has cleared splits. Are you sure you want to ${pendingAction === 'delete' ? 'delete' : 'edit'} it?`
+                }
+                confirmLabel="Continue Anyway"
+                confirmVariant={hasReconciled ? "danger" : "warning"}
             />
         </div>
     );

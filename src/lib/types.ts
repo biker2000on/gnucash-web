@@ -108,6 +108,7 @@ export interface SplitFormData {
     credit: string;
     memo: string;
     reconcile_state: 'n' | 'c' | 'y';
+    exchange_rate?: string; // Exchange rate when account commodity differs from transaction currency
 }
 
 export interface TransactionFormData {

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Account } from '@/lib/types';
+import { useAccounts } from '@/lib/hooks/useAccounts';
 
 interface AccountSelectorProps {
     value: string;
@@ -20,38 +21,19 @@ export function AccountSelector({
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
-    const [accounts, setAccounts] = useState<Account[]>([]);
-    const [loading, setLoading] = useState(false);
     const [selectedName, setSelectedName] = useState('');
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    // Fetch accounts with fullname
-    const fetchAccounts = useCallback(async () => {
-        setLoading(true);
-        try {
-            const res = await fetch('/api/accounts?flat=true');
-            if (!res.ok) throw new Error('Failed to fetch accounts');
-            const data = await res.json();
-            setAccounts(data);
+    // Use React Query hook for accounts
+    const { data: accounts = [], isLoading: loading, error } = useAccounts({ flat: true });
 
-            // If we have a value, find and set the selected name
-            if (value) {
-                const selected = data.find((a: Account) => a.guid === value);
-                if (selected) {
-                    setSelectedName(selected.fullname || selected.name);
-                }
-            }
-        } catch (error) {
-            console.error('Error fetching accounts:', error);
-        } finally {
-            setLoading(false);
-        }
-    }, [value]);
-
+    // Log errors
     useEffect(() => {
-        fetchAccounts();
-    }, [fetchAccounts]);
+        if (error) {
+            console.error('Error fetching accounts:', error);
+        }
+    }, [error]);
 
     // Update selected name when value changes
     useEffect(() => {

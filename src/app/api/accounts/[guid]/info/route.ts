@@ -15,7 +15,9 @@ export async function GET(
             name: string;
             fullname: string | null;
             account_type: string;
+            commodity_guid: string | null;
             commodity_namespace: string | null;
+            commodity_mnemonic: string | null;
             guid1: string | null;
             guid2: string | null;
             guid3: string | null;
@@ -34,7 +36,9 @@ export async function GET(
                 a.name,
                 ah.fullname,
                 a.account_type,
+                a.commodity_guid,
                 c.namespace as commodity_namespace,
+                c.mnemonic as commodity_mnemonic,
                 ah.guid1, ah.guid2, ah.guid3, ah.guid4, ah.guid5, ah.guid6,
                 ah.level1, ah.level2, ah.level3, ah.level4, ah.level5, ah.level6,
                 ah.depth

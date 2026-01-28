@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 
 interface PriceData {
     guid: string;
@@ -55,6 +56,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     const [showPriceModal, setShowPriceModal] = useState(false);
     const [newPrice, setNewPrice] = useState({ date: '', value: '' });
     const [savingPrice, setSavingPrice] = useState(false);
+    const [showTransactionModal, setShowTransactionModal] = useState(false);
 
     const fetchData = useCallback(async () => {
         try {
@@ -161,18 +163,29 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             <p className="text-neutral-500 mt-1">{commodity.fullname}</p>
                         )}
                     </div>
-                    <button
-                        onClick={() => {
-                            setNewPrice({ date: new Date().toISOString().split('T')[0], value: '' });
-                            setShowPriceModal(true);
-                        }}
-                        className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        Add Price
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowTransactionModal(true)}
+                            className="flex items-center gap-2 px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            New Transaction
+                        </button>
+                        <button
+                            onClick={() => {
+                                setNewPrice({ date: new Date().toISOString().split('T')[0], value: '' });
+                                setShowPriceModal(true);
+                            }}
+                            className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            Add Price
+                        </button>
+                    </div>
                 </div>
 
                 {holdings?.latestPrice && (
@@ -291,6 +304,25 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Investment Transaction Modal */}
+            {showTransactionModal && commodity && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <InvestmentTransactionForm
+                            accountGuid={data.account.guid}
+                            accountName={data.account.name}
+                            accountCommodityGuid={commodity.guid}
+                            commoditySymbol={commodity.mnemonic}
+                            onSave={() => {
+                                setShowTransactionModal(false);
+                                fetchData();
+                            }}
+                            onCancel={() => setShowTransactionModal(false)}
+                        />
                     </div>
                 </div>
             )}

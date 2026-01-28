@@ -3,8 +3,20 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Modal } from './ui/Modal';
+import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { Transaction, Split } from '@/lib/types';
 import { formatCurrency } from '@/lib/format';
+
+function getReconcileStatus(splits: Split[] | undefined): {
+    hasReconciled: boolean;
+    hasCleared: boolean;
+} {
+    if (!splits || splits.length === 0) return { hasReconciled: false, hasCleared: false };
+    return {
+        hasReconciled: splits.some(s => s.reconcile_state === 'y'),
+        hasCleared: splits.some(s => s.reconcile_state === 'c'),
+    };
+}
 
 interface TransactionModalProps {
     transactionGuid: string | null;
@@ -34,6 +46,8 @@ export function TransactionModal({
     const [transaction, setTransaction] = useState<TransactionDetail | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [reconcileWarningOpen, setReconcileWarningOpen] = useState(false);
+    const [pendingAction, setPendingAction] = useState<'edit' | 'delete' | null>(null);
 
     useEffect(() => {
         if (!isOpen || !transactionGuid) {
@@ -66,6 +80,46 @@ export function TransactionModal({
             default: return { label: 'Not Reconciled', color: 'text-neutral-400 bg-neutral-500/10' };
         }
     };
+
+    const handleEditClick = () => {
+        if (!transaction) return;
+        const { hasReconciled, hasCleared } = getReconcileStatus(transaction.splits);
+        if (hasReconciled || hasCleared) {
+            setPendingAction('edit');
+            setReconcileWarningOpen(true);
+        } else {
+            onEdit?.(transaction.guid);
+        }
+    };
+
+    const handleDeleteClick = () => {
+        if (!transaction) return;
+        const { hasReconciled, hasCleared } = getReconcileStatus(transaction.splits);
+        if (hasReconciled || hasCleared) {
+            setPendingAction('delete');
+            setReconcileWarningOpen(true);
+        } else {
+            onDelete?.(transaction.guid);
+        }
+    };
+
+    const handleReconcileWarningConfirm = () => {
+        setReconcileWarningOpen(false);
+        if (!transaction) return;
+        if (pendingAction === 'edit') {
+            onEdit?.(transaction.guid);
+        } else if (pendingAction === 'delete') {
+            onDelete?.(transaction.guid);
+        }
+        setPendingAction(null);
+    };
+
+    const handleReconcileWarningCancel = () => {
+        setReconcileWarningOpen(false);
+        setPendingAction(null);
+    };
+
+    const { hasReconciled, hasCleared } = getReconcileStatus(transaction?.splits);
 
     return (
         <Modal
@@ -186,7 +240,7 @@ export function TransactionModal({
                         <div className="flex justify-end gap-3 pt-4 border-t border-neutral-800">
                             {onDelete && (
                                 <button
-                                    onClick={() => onDelete(transaction.guid)}
+                                    onClick={handleDeleteClick}
                                     className="px-4 py-2 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
                                 >
                                     Delete
@@ -194,7 +248,7 @@ export function TransactionModal({
                             )}
                             {onEdit && (
                                 <button
-                                    onClick={() => onEdit(transaction.guid)}
+                                    onClick={handleEditClick}
                                     className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
                                 >
                                     Edit Transaction
@@ -204,6 +258,20 @@ export function TransactionModal({
                     )}
                 </div>
             ) : null}
+
+            {/* Reconcile Warning Dialog */}
+            <ConfirmationDialog
+                isOpen={reconcileWarningOpen}
+                onConfirm={handleReconcileWarningConfirm}
+                onCancel={handleReconcileWarningCancel}
+                title={hasReconciled ? (pendingAction === 'delete' ? "Delete Reconciled Transaction?" : "Edit Reconciled Transaction?") : (pendingAction === 'delete' ? "Delete Cleared Transaction?" : "Edit Cleared Transaction?")}
+                message={hasReconciled
+                    ? `This transaction has reconciled splits. ${pendingAction === 'delete' ? 'Deleting' : 'Editing'} may affect your account reconciliation. Are you sure you want to continue?`
+                    : `This transaction has cleared splits. Are you sure you want to ${pendingAction === 'delete' ? 'delete' : 'edit'} it?`
+                }
+                confirmLabel="Continue Anyway"
+                confirmVariant={hasReconciled ? "danger" : "warning"}
+            />
         </Modal>
     );
 }
