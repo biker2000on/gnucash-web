@@ -18,6 +18,15 @@ function getReconcileStatus(splits: Split[] | undefined): {
     };
 }
 
+// Format account path, stripping "Root Account:" prefix
+function formatAccountPath(fullname: string | undefined, name: string): string {
+    const path = fullname || name;
+    if (path.startsWith('Root Account:')) {
+        return path.substring('Root Account:'.length);
+    }
+    return path;
+}
+
 interface TransactionModalProps {
     transactionGuid: string | null;
     isOpen: boolean;
@@ -175,14 +184,16 @@ export function TransactionModal({
                                     <tr className="text-xs text-neutral-500 uppercase tracking-wider">
                                         <th className="px-4 py-3 text-left">Account</th>
                                         <th className="px-4 py-3 text-left">Memo</th>
-                                        <th className="px-4 py-3 text-left">Action</th>
                                         <th className="px-4 py-3 text-center">Status</th>
-                                        <th className="px-4 py-3 text-right">Amount</th>
+                                        <th className="px-4 py-3 text-right">Debit</th>
+                                        <th className="px-4 py-3 text-right">Credit</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-neutral-800">
                                     {transaction.splits.map(split => {
                                         const amount = parseFloat(split.quantity_decimal);
+                                        const debit = amount > 0 ? amount : 0;
+                                        const credit = amount < 0 ? Math.abs(amount) : 0;
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
                                             <tr key={split.guid} className="hover:bg-neutral-800/30">
@@ -192,24 +203,25 @@ export function TransactionModal({
                                                         className="text-neutral-200 hover:text-cyan-400 transition-colors"
                                                         onClick={onClose}
                                                     >
-                                                        {split.account_name}
+                                                        {formatAccountPath(split.account_fullname, split.account_name)}
                                                     </Link>
+                                                    {split.action && (
+                                                        <span className="ml-2 text-xs text-neutral-500">({split.action})</span>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-neutral-500 italic">
                                                     {split.memo || '—'}
-                                                </td>
-                                                <td className="px-4 py-3 text-sm text-neutral-400">
-                                                    {split.action || '—'}
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
                                                     <span className={`text-xs px-2 py-1 rounded-full ${reconcile.color}`}>
                                                         {split.reconcile_state.toUpperCase()}
                                                     </span>
                                                 </td>
-                                                <td className={`px-4 py-3 text-right font-mono ${
-                                                    amount < 0 ? 'text-rose-400' : 'text-emerald-400'
-                                                }`}>
-                                                    {formatCurrency(split.quantity_decimal, split.commodity_mnemonic)}
+                                                <td className="px-4 py-3 text-right font-mono text-emerald-400">
+                                                    {debit > 0 ? formatCurrency(debit.toString(), split.commodity_mnemonic) : ''}
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-mono text-rose-400">
+                                                    {credit > 0 ? formatCurrency(credit.toString(), split.commodity_mnemonic) : ''}
                                                 </td>
                                             </tr>
                                         );

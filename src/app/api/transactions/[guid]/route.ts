@@ -35,6 +35,13 @@ export async function GET(
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }
 
+        // Get account fullnames from account_hierarchy view
+        const accountGuids = transaction.splits.map(s => s.account_guid);
+        const accountHierarchy = await prisma.$queryRaw<{ guid: string; fullname: string }[]>`
+            SELECT guid, fullname FROM account_hierarchy WHERE guid = ANY(${accountGuids}::text[])
+        `;
+        const fullnameMap = new Map(accountHierarchy.map(a => [a.guid, a.fullname]));
+
         // Transform to response format
         const result = {
             guid: transaction.guid,
@@ -57,6 +64,7 @@ export async function GET(
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
+                account_fullname: fullnameMap.get(split.account_guid) || split.account.name,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),

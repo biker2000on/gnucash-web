@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Account } from '@/lib/types';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 
@@ -10,6 +11,16 @@ interface AccountSelectorProps {
     placeholder?: string;
     disabled?: boolean;
     className?: string;
+}
+
+// Strip "Root Account:" prefix from account paths
+function formatAccountPath(fullname: string | undefined, name: string): string {
+    const path = fullname || name;
+    // Remove "Root Account:" prefix if present
+    if (path.startsWith('Root Account:')) {
+        return path.substring('Root Account:'.length);
+    }
+    return path;
 }
 
 export function AccountSelector({
@@ -22,6 +33,7 @@ export function AccountSelector({
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
     const [selectedName, setSelectedName] = useState('');
+    const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -40,29 +52,53 @@ export function AccountSelector({
         if (value && accounts.length > 0) {
             const selected = accounts.find(a => a.guid === value);
             if (selected) {
-                setSelectedName(selected.fullname || selected.name);
+                setSelectedName(formatAccountPath(selected.fullname, selected.name));
             }
         } else if (!value) {
             setSelectedName('');
         }
     }, [value, accounts]);
 
-    // Close dropdown when clicking outside
+    // Calculate dropdown position when opening
     useEffect(() => {
+        if (isOpen && containerRef.current) {
+            const rect = containerRef.current.getBoundingClientRect();
+            setDropdownStyle({
+                position: 'fixed',
+                top: rect.bottom + 4,
+                left: rect.left,
+                width: rect.width,
+                zIndex: 99999,
+            });
+        }
+    }, [isOpen]);
+
+    // Close dropdown when clicking outside (accounts for portal)
+    useEffect(() => {
+        if (!isOpen) return;
+
         const handleClickOutside = (e: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+            const target = e.target as Node;
+            // Check if click is inside the container or the dropdown (which is in a portal)
+            const isInsideContainer = containerRef.current?.contains(target);
+            const isInsideDropdown = (target as HTMLElement).closest?.('[data-account-dropdown]');
+
+            if (!isInsideContainer && !isInsideDropdown) {
                 setIsOpen(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
+    }, [isOpen]);
 
     // Filter accounts by search
     const filteredAccounts = accounts.filter(account => {
+        // Exclude ROOT account type
+        if (account.account_type === 'ROOT') return false;
+
         const searchLower = search.toLowerCase();
-        const fullname = account.fullname || account.name;
-        return fullname.toLowerCase().includes(searchLower) ||
+        const displayName = formatAccountPath(account.fullname, account.name);
+        return displayName.toLowerCase().includes(searchLower) ||
             account.account_type.toLowerCase().includes(searchLower);
     });
 
@@ -75,8 +111,9 @@ export function AccountSelector({
     }, {} as Record<string, Account[]>);
 
     const handleSelect = (account: Account) => {
-        onChange(account.guid, account.fullname || account.name);
-        setSelectedName(account.fullname || account.name);
+        const displayName = formatAccountPath(account.fullname, account.name);
+        onChange(account.guid, displayName);
+        setSelectedName(displayName);
         setSearch('');
         setIsOpen(false);
     };
@@ -114,8 +151,12 @@ export function AccountSelector({
                 </svg>
             </div>
 
-            {isOpen && (
-                <div className="absolute z-50 w-full mt-1 bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl max-h-64 overflow-y-auto">
+            {isOpen && typeof document !== 'undefined' && createPortal(
+                <div
+                    data-account-dropdown
+                    style={dropdownStyle}
+                    className="bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl max-h-64 overflow-y-auto"
+                >
                     {loading ? (
                         <div className="px-3 py-4 text-center text-neutral-500 text-sm">
                             Loading accounts...
@@ -138,13 +179,14 @@ export function AccountSelector({
                                         }`}
                                         onClick={() => handleSelect(account)}
                                     >
-                                        <div className="text-sm">{account.fullname || account.name}</div>
+                                        <div className="text-sm">{formatAccountPath(account.fullname, account.name)}</div>
                                     </div>
                                 ))}
                             </div>
                         ))
                     )}
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

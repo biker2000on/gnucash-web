@@ -75,8 +75,11 @@ export function TransactionForm({
                 splits,
             });
 
-            // If editing a 2-split transaction, populate simple mode data
-            if (splits.length === 2) {
+            // If editing a transaction with more than 2 splits, use advanced mode
+            if (splits.length > 2) {
+                setIsSimpleMode(false);
+            } else if (splits.length === 2) {
+                // If editing a 2-split transaction, populate simple mode data
                 const debitSplit = splits.find(s => parseFloat(s.debit) > 0);
                 const creditSplit = splits.find(s => parseFloat(s.credit) > 0);
                 if (debitSplit && creditSplit) {

@@ -103,7 +103,7 @@ export function TransactionFormModal({
             isOpen={isOpen}
             onClose={handleCancel}
             title={isEditMode ? 'Edit Transaction' : 'New Transaction'}
-            size="xl"
+            size="2xl"
             closeOnBackdrop={false}
             closeOnEscape={true}
         >
