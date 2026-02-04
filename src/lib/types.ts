@@ -66,6 +66,14 @@ export interface Account {
     commodity_mnemonic?: string;
 }
 
+export interface AccountBalance {
+    guid: string;
+    total_balance: string;
+    period_balance: string;
+    total_balance_usd?: string;
+    period_balance_usd?: string;
+}
+
 export interface Transaction {
     guid: string;
     currency_guid: string;

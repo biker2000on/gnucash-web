@@ -11,6 +11,8 @@ export async function GET(
         const { searchParams } = new URL(request.url);
         const asOfDateStr = searchParams.get('asOfDate');
         const asOfDate = asOfDateStr ? new Date(asOfDateStr) : undefined;
+        const daysParam = searchParams.get('days');
+        const days = daysParam ? parseInt(daysParam, 10) : 365;
 
         // Get account details
         const account = await prisma.accounts.findUnique({
@@ -46,7 +48,7 @@ export async function GET(
 
         // Get price history
         const priceHistory = account.commodity_guid
-            ? await getPriceHistory(account.commodity_guid, undefined, 90)
+            ? await getPriceHistory(account.commodity_guid, undefined, days)
             : [];
 
         // Get transaction history for this account

@@ -7,6 +7,15 @@ import { useAccounts } from '@/lib/hooks/useAccounts';
 
 type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
+// Helper to strip "Root Account:" prefix from account paths
+function formatAccountPath(fullname: string | undefined, name: string): string {
+    const path = fullname || name;
+    if (path.startsWith('Root Account:')) {
+        return path.substring('Root Account:'.length);
+    }
+    return path;
+}
+
 interface InvestmentTransactionFormProps {
     accountGuid: string;
     accountName: string;
@@ -21,6 +30,7 @@ interface FormState {
     date: string;
     shares: string;
     pricePerShare: string;
+    total: string;
     amount: string;
     commission: string;
     cashAccountGuid: string;
@@ -38,6 +48,7 @@ const INITIAL_FORM_STATE: FormState = {
     date: new Date().toISOString().split('T')[0],
     shares: '',
     pricePerShare: '',
+    total: '',
     amount: '',
     commission: '',
     cashAccountGuid: '',
@@ -70,6 +81,27 @@ export function InvestmentTransactionForm({
     const [errors, setErrors] = useState<string[]>([]);
     const [saving, setSaving] = useState(false);
     const [currencyGuid, setCurrencyGuid] = useState<string>('');
+
+    // Track which fields have been edited for auto-calculation
+    type EditedField = 'shares' | 'price' | 'total';
+    const [editHistory, setEditHistory] = useState<EditedField[]>([]);
+
+    const recordEdit = (field: EditedField) => {
+        setEditHistory(prev => {
+            const filtered = prev.filter(f => f !== field);
+            const updated = [field, ...filtered];
+            return updated.slice(0, 2);
+        });
+    };
+
+    const getCalculatedField = (): EditedField | null => {
+        if (editHistory.length < 2) return null;
+        const editedSet = new Set(editHistory);
+        if (!editedSet.has('shares')) return 'shares';
+        if (!editedSet.has('price')) return 'price';
+        if (!editedSet.has('total')) return 'total';
+        return null;
+    };
 
     // Fetch all accounts for selectors
     const { data: accounts = [], isLoading: loadingAccounts } = useAccounts({ flat: true });
@@ -136,15 +168,84 @@ export function InvestmentTransactionForm({
         }
     }, [accounts, form.incomeAccountGuid, form.expenseAccountGuid]);
 
-    // Calculate total for Buy/Sell
+    // Calculate derived value based on which field should be auto-calculated
+    useEffect(() => {
+        const calculatedField = getCalculatedField();
+        if (!calculatedField) return;
+
+        const shares = parseFloat(form.shares) || 0;
+        const price = parseFloat(form.pricePerShare) || 0;
+        const total = parseFloat(form.total) || 0;
+
+        let newValue: number | null = null;
+        let targetField: string | null = null;
+
+        switch (calculatedField) {
+            case 'total':
+                newValue = shares * price;
+                targetField = 'total';
+                break;
+            case 'price':
+                if (shares > 0) {
+                    newValue = total / shares;
+                    targetField = 'pricePerShare';
+                }
+                break;
+            case 'shares':
+                if (price > 0) {
+                    newValue = total / price;
+                    targetField = 'shares';
+                }
+                break;
+        }
+
+        if (newValue !== null && targetField) {
+            const decimals = targetField === 'shares' ? 4 : 2;
+            const formatted = newValue > 0 ? newValue.toFixed(decimals) : '';
+            const currentValue = form[targetField as keyof typeof form];
+            if (currentValue !== formatted) {
+                setForm(prev => ({ ...prev, [targetField!]: formatted }));
+            }
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [form.shares, form.pricePerShare, form.total, editHistory]);
+
+    // Calculate total for summary display (using form.total when available, else computed)
     const calculatedTotal = useMemo(() => {
+        const totalFromForm = parseFloat(form.total);
+        if (!isNaN(totalFromForm) && totalFromForm > 0) {
+            return totalFromForm;
+        }
         const shares = parseFloat(form.shares) || 0;
         const price = parseFloat(form.pricePerShare) || 0;
         return shares * price;
-    }, [form.shares, form.pricePerShare]);
+    }, [form.shares, form.pricePerShare, form.total]);
 
     const handleChange = (field: keyof FormState, value: string) => {
         setForm(prev => ({ ...prev, [field]: value }));
+        // Reset edit history when action changes
+        if (field === 'action') {
+            setEditHistory([]);
+        }
+    };
+
+    const handleNumericFieldChange = (
+        field: 'shares' | 'pricePerShare' | 'total',
+        value: string
+    ) => {
+        const fieldMap: Record<string, EditedField> = {
+            shares: 'shares',
+            pricePerShare: 'price',
+            total: 'total',
+        };
+
+        setForm(prev => ({ ...prev, [field]: value }));
+
+        if (value.trim() !== '') {
+            recordEdit(fieldMap[field]);
+        } else {
+            setEditHistory(prev => prev.filter(f => f !== fieldMap[field]));
+        }
     };
 
     const handleAccountSelect = (
@@ -166,17 +267,22 @@ export function InvestmentTransactionForm({
 
         switch (form.action) {
             case 'Buy':
-            case 'Sell':
+            case 'Sell': {
                 if (!form.shares || parseFloat(form.shares) <= 0) {
                     errs.push('Shares must be a positive number');
                 }
                 if (!form.pricePerShare || parseFloat(form.pricePerShare) <= 0) {
                     errs.push('Price per share must be a positive number');
                 }
+                const total = parseFloat(form.total) || 0;
+                if (total <= 0) {
+                    errs.push('Total must be a positive number');
+                }
                 if (!form.cashAccountGuid) {
                     errs.push('Cash account is required');
                 }
                 break;
+            }
 
             case 'Dividend':
                 if (!form.amount || parseFloat(form.amount) <= 0) {
@@ -215,8 +321,7 @@ export function InvestmentTransactionForm({
         switch (form.action) {
             case 'Buy': {
                 const shares = parseFloat(form.shares);
-                const price = parseFloat(form.pricePerShare);
-                const total = shares * price;
+                const total = parseFloat(form.total);
                 const commission = parseFloat(form.commission) || 0;
                 const totalWithCommission = total + commission;
 
@@ -261,8 +366,7 @@ export function InvestmentTransactionForm({
 
             case 'Sell': {
                 const shares = parseFloat(form.shares);
-                const price = parseFloat(form.pricePerShare);
-                const total = shares * price;
+                const total = parseFloat(form.total);
                 const commission = parseFloat(form.commission) || 0;
                 const netProceeds = total - commission;
 
@@ -483,7 +587,7 @@ export function InvestmentTransactionForm({
                 <option value="">{placeholder}</option>
                 {accounts.map(account => (
                     <option key={account.guid} value={account.guid}>
-                        {account.fullname || account.name}
+                        {formatAccountPath(account.fullname, account.name)}
                     </option>
                 ))}
             </select>
@@ -553,40 +657,70 @@ export function InvestmentTransactionForm({
                 <>
                     <div className="grid grid-cols-3 gap-4">
                         <div>
-                            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
-                                Shares
+                            <label className={`block text-xs uppercase tracking-wider mb-1 ${
+                                getCalculatedField() === 'shares'
+                                    ? 'text-cyan-400'
+                                    : 'text-neutral-500'
+                            }`}>
+                                Shares {getCalculatedField() === 'shares' && '(auto)'}
                             </label>
                             <input
                                 type="number"
                                 step="any"
                                 min="0"
                                 value={form.shares}
-                                onChange={(e) => handleChange('shares', e.target.value)}
+                                onChange={(e) => handleNumericFieldChange('shares', e.target.value)}
                                 placeholder="0"
-                                className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
+                                    getCalculatedField() === 'shares'
+                                        ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
+                                        : 'bg-neutral-950/50 border-neutral-800 text-neutral-200'
+                                } focus:border-cyan-500/50`}
                             />
                         </div>
                         <div>
-                            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
-                                Price per Share
+                            <label className={`block text-xs uppercase tracking-wider mb-1 ${
+                                getCalculatedField() === 'price'
+                                    ? 'text-cyan-400'
+                                    : 'text-neutral-500'
+                            }`}>
+                                Price per Share {getCalculatedField() === 'price' && '(auto)'}
                             </label>
                             <input
                                 type="number"
                                 step="0.01"
                                 min="0"
                                 value={form.pricePerShare}
-                                onChange={(e) => handleChange('pricePerShare', e.target.value)}
+                                onChange={(e) => handleNumericFieldChange('pricePerShare', e.target.value)}
                                 placeholder="0.00"
-                                className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
+                                    getCalculatedField() === 'price'
+                                        ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
+                                        : 'bg-neutral-950/50 border-neutral-800 text-neutral-200'
+                                } focus:border-cyan-500/50`}
                             />
                         </div>
                         <div>
-                            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
-                                Total
+                            <label className={`block text-xs uppercase tracking-wider mb-1 ${
+                                getCalculatedField() === 'total'
+                                    ? 'text-cyan-400'
+                                    : 'text-neutral-500'
+                            }`}>
+                                Total {getCalculatedField() === 'total' && '(auto)'}
                             </label>
-                            <div className="bg-neutral-900/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-300 font-mono">
-                                ${calculatedTotal.toFixed(2)}
-                            </div>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={form.total}
+                                onChange={(e) => handleNumericFieldChange('total', e.target.value)}
+                                placeholder="0.00"
+                                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
+                                    getCalculatedField() === 'total'
+                                        ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
+                                        : 'bg-neutral-950/50 border-neutral-800 text-neutral-200'
+                                } focus:border-cyan-500/50`}
+                            />
                         </div>
                     </div>
 

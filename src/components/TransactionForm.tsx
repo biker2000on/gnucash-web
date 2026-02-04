@@ -1,10 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { SplitFormData, TransactionFormData, CreateTransactionRequest, Transaction } from '@/lib/types';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { SplitFormData, TransactionFormData, CreateTransactionRequest, Transaction, Account } from '@/lib/types';
 import { SplitRow } from './SplitRow';
 import { toNumDenom } from '@/lib/validation';
 import { AccountSelector } from './ui/AccountSelector';
+import { DescriptionAutocomplete } from './ui/DescriptionAutocomplete';
+import { TransactionSuggestion } from '@/app/api/transactions/descriptions/route';
+import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
+import { useToast } from '@/contexts/ToastContext';
+import { useAccounts } from '@/lib/hooks/useAccounts';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -43,6 +48,7 @@ export function TransactionForm({
         splits: [createEmptySplit(), createEmptySplit()],
     });
     const [errors, setErrors] = useState<string[]>([]);
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const [isSimpleMode, setIsSimpleMode] = useState(simpleMode);
     const [simpleData, setSimpleData] = useState({
@@ -50,6 +56,78 @@ export function TransactionForm({
         fromAccountGuid: defaultFromAccount,
         toAccountGuid: defaultToAccount,
     });
+    const formRef = useRef<HTMLDivElement>(null);
+    const { success } = useToast();
+
+    // Fetch accounts for commodity info (used for multi-currency detection)
+    const { data: accounts = [] } = useAccounts({ flat: true });
+    const accountMap = useMemo(() => {
+        const map = new Map<string, Account>();
+        for (const acc of accounts as Account[]) {
+            map.set(acc.guid, acc);
+        }
+        return map;
+    }, [accounts]);
+
+    // Detect multi-currency transaction
+    const isMultiCurrency = useMemo(() => {
+        const commodities = new Set<string>();
+
+        if (isSimpleMode) {
+            // Simple mode: check from and to accounts
+            if (simpleData.fromAccountGuid) {
+                const fromAccount = accountMap.get(simpleData.fromAccountGuid);
+                if (fromAccount?.commodity_guid) commodities.add(fromAccount.commodity_guid);
+            }
+            if (simpleData.toAccountGuid) {
+                const toAccount = accountMap.get(simpleData.toAccountGuid);
+                if (toAccount?.commodity_guid) commodities.add(toAccount.commodity_guid);
+            }
+        } else {
+            // Advanced mode: check all splits with accounts selected
+            for (const split of formData.splits) {
+                if (split.account_guid) {
+                    const account = accountMap.get(split.account_guid);
+                    if (account?.commodity_guid) commodities.add(account.commodity_guid);
+                }
+            }
+        }
+
+        return commodities.size > 1;
+    }, [isSimpleMode, simpleData.fromAccountGuid, simpleData.toAccountGuid, formData.splits, accountMap]);
+
+    // Get currency mnemonics for the multi-currency info message
+    const multiCurrencyInfo = useMemo(() => {
+        if (!isMultiCurrency) return null;
+
+        const currencies = new Map<string, string>(); // guid -> mnemonic
+
+        if (isSimpleMode) {
+            if (simpleData.fromAccountGuid) {
+                const acc = accountMap.get(simpleData.fromAccountGuid);
+                if (acc?.commodity_guid && acc.commodity_mnemonic) {
+                    currencies.set(acc.commodity_guid, acc.commodity_mnemonic);
+                }
+            }
+            if (simpleData.toAccountGuid) {
+                const acc = accountMap.get(simpleData.toAccountGuid);
+                if (acc?.commodity_guid && acc.commodity_mnemonic) {
+                    currencies.set(acc.commodity_guid, acc.commodity_mnemonic);
+                }
+            }
+        } else {
+            for (const split of formData.splits) {
+                if (split.account_guid) {
+                    const acc = accountMap.get(split.account_guid);
+                    if (acc?.commodity_guid && acc.commodity_mnemonic) {
+                        currencies.set(acc.commodity_guid, acc.commodity_mnemonic);
+                    }
+                }
+            }
+        }
+
+        return Array.from(currencies.values());
+    }, [isMultiCurrency, isSimpleMode, simpleData.fromAccountGuid, simpleData.toAccountGuid, formData.splits, accountMap]);
 
     // Load transaction data for editing
     useEffect(() => {
@@ -111,6 +189,25 @@ export function TransactionForm({
                 .catch(console.error);
         }
     }, [defaultCurrencyGuid, transaction]);
+
+    const handleDescriptionSelect = (suggestion: TransactionSuggestion) => {
+        // In simple mode, try to auto-fill accounts if there are exactly 2 splits
+        if (isSimpleMode && suggestion.splits.length === 2) {
+            const [split1, split2] = suggestion.splits;
+
+            // Determine which is debit and which is credit based on amount sign
+            const debitSplit = split1.amount > 0 ? split1 : split2;
+            const creditSplit = split1.amount < 0 ? split1 : split2;
+
+            setSimpleData({
+                amount: Math.abs(debitSplit.amount).toFixed(2),
+                fromAccountGuid: creditSplit.accountGuid,
+                toAccountGuid: debitSplit.accountGuid,
+            });
+
+            success(`Auto-filled: ${Math.abs(debitSplit.amount).toFixed(2)} from ${creditSplit.accountName} to ${debitSplit.accountName}`);
+        }
+    };
 
     const handleSplitChange = (index: number, field: keyof SplitFormData, value: string) => {
         setFormData(prev => {
@@ -219,39 +316,77 @@ export function TransactionForm({
         setIsSimpleMode(true);
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setErrors([]);
+    const validateForm = (): { valid: boolean; errors: string[]; fieldErrors: Record<string, string> } => {
+        const errors: string[] = [];
+        const fieldErrors: Record<string, string> = {};
+
+        // Common validation
+        if (!formData.description?.trim()) {
+            errors.push('Description is required');
+            fieldErrors.description = 'Required';
+        }
+        if (!formData.post_date) {
+            errors.push('Post date is required');
+            fieldErrors.post_date = 'Required';
+        }
+
+        if (isSimpleMode) {
+            // Simple mode validation
+            if (!simpleData.amount || parseFloat(simpleData.amount) <= 0) {
+                errors.push('Amount must be greater than zero');
+                fieldErrors.amount = 'Must be > 0';
+            }
+            if (!simpleData.fromAccountGuid) {
+                errors.push('From account is required');
+                fieldErrors.fromAccount = 'Required';
+            }
+            if (!simpleData.toAccountGuid) {
+                errors.push('To account is required');
+                fieldErrors.toAccount = 'Required';
+            }
+            if (simpleData.fromAccountGuid === simpleData.toAccountGuid) {
+                errors.push('From and To accounts must be different');
+                fieldErrors.fromAccount = 'Must differ';
+                fieldErrors.toAccount = 'Must differ';
+            }
+        } else {
+            // Advanced mode validation
+            if (formData.splits.filter(s => s.account_guid).length < 2) {
+                errors.push('At least 2 accounts must be selected');
+                fieldErrors.splits = 'Need 2+ accounts';
+            }
+
+            const { difference } = calculateBalance();
+            if (Math.abs(difference) > 0.01) {
+                errors.push(`Transaction is unbalanced by ${difference.toFixed(2)}. Debits must equal credits.`);
+                fieldErrors.splits = 'Unbalanced';
+            }
+        }
+
+        return { valid: errors.length === 0, errors, fieldErrors };
+    };
+
+    const handleSubmit = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+
+        const validation = validateForm();
+        setErrors(validation.errors);
+        setFieldErrors(validation.fieldErrors);
+
+        if (!validation.valid) {
+            // Focus first invalid field
+            const firstErrorField = Object.keys(validation.fieldErrors)[0];
+            if (firstErrorField) {
+                const element = document.querySelector(`[data-field="${firstErrorField}"]`) as HTMLElement;
+                element?.focus();
+            }
+            return;
+        }
 
         // Prepare splits - either from simple mode or advanced mode
         let submissionSplits: SplitFormData[];
 
         if (isSimpleMode) {
-            // Validate simple mode
-            const validationErrors: string[] = [];
-            if (!formData.description.trim()) {
-                validationErrors.push('Description is required');
-            }
-            if (!formData.post_date) {
-                validationErrors.push('Post date is required');
-            }
-            if (!simpleData.amount || parseFloat(simpleData.amount) <= 0) {
-                validationErrors.push('Amount must be greater than zero');
-            }
-            if (!simpleData.fromAccountGuid) {
-                validationErrors.push('From account is required');
-            }
-            if (!simpleData.toAccountGuid) {
-                validationErrors.push('To account is required');
-            }
-            if (simpleData.fromAccountGuid === simpleData.toAccountGuid) {
-                validationErrors.push('From and To accounts must be different');
-            }
-
-            if (validationErrors.length > 0) {
-                setErrors(validationErrors);
-                return;
-            }
 
             // Generate splits from simple data
             const amount = parseFloat(simpleData.amount);
@@ -276,28 +411,6 @@ export function TransactionForm({
                 },
             ];
         } else {
-            // Validate advanced mode
-            const validationErrors: string[] = [];
-            if (!formData.description.trim()) {
-                validationErrors.push('Description is required');
-            }
-            if (!formData.post_date) {
-                validationErrors.push('Post date is required');
-            }
-            if (formData.splits.filter(s => s.account_guid).length < 2) {
-                validationErrors.push('At least 2 accounts must be selected');
-            }
-
-            const { difference } = calculateBalance();
-            if (Math.abs(difference) > 0.01) {
-                validationErrors.push(`Transaction is unbalanced by ${difference.toFixed(2)}. Debits must equal credits.`);
-            }
-
-            if (validationErrors.length > 0) {
-                setErrors(validationErrors);
-                return;
-            }
-
             submissionSplits = formData.splits;
         }
 
@@ -358,9 +471,15 @@ export function TransactionForm({
 
     const { totalDebit, totalCredit, difference } = calculateBalance();
 
+    // Setup keyboard shortcut
+    useFormKeyboardShortcuts(formRef, () => handleSubmit(), {
+        validate: () => validateForm().valid
+    });
+
     return (
-        <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Error Messages */}
+        <div ref={formRef}>
+            <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Error Messages */}
             {errors.length > 0 && (
                 <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4">
                     <ul className="list-disc list-inside text-sm text-rose-400 space-y-1">
@@ -368,6 +487,24 @@ export function TransactionForm({
                             <li key={i}>{error}</li>
                         ))}
                     </ul>
+                </div>
+            )}
+
+            {/* Multi-Currency Info Banner */}
+            {isMultiCurrency && multiCurrencyInfo && (
+                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-400">
+                    <div className="flex items-start gap-2">
+                        <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div>
+                            <span className="font-medium">Multi-currency transaction detected</span>
+                            <span className="text-blue-400/80"> ({multiCurrencyInfo.join(' / ')})</span>
+                            <p className="text-blue-400/70 mt-1">
+                                Trading splits will be automatically generated to balance this transaction across currencies.
+                            </p>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -388,12 +525,13 @@ export function TransactionForm({
                     <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
                         Description
                     </label>
-                    <input
-                        type="text"
+                    <DescriptionAutocomplete
                         value={formData.description}
-                        onChange={(e) => setFormData(f => ({ ...f, description: e.target.value }))}
+                        onChange={(value) => setFormData(f => ({ ...f, description: value }))}
+                        onSelectSuggestion={handleDescriptionSelect}
+                        accountGuid={simpleData.fromAccountGuid || undefined}
                         placeholder="Enter description..."
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50"
+                        hasError={!!fieldErrors.description}
                     />
                 </div>
             </div>
@@ -549,29 +687,35 @@ export function TransactionForm({
             )}
 
             {/* Actions */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-neutral-800">
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
-                >
-                    Cancel
-                </button>
-                <button
-                    type="submit"
-                    disabled={saving}
-                    className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors flex items-center gap-2"
-                >
-                    {saving ? (
-                        <>
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            Saving...
-                        </>
-                    ) : (
-                        transaction ? 'Update Transaction' : 'Create Transaction'
-                    )}
-                </button>
+            <div className="flex justify-between items-center pt-4 border-t border-neutral-800">
+                <span className="text-xs text-neutral-500">
+                    Press <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Enter</kbd> to save
+                </span>
+                <div className="flex gap-3">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={saving}
+                        className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors flex items-center gap-2"
+                    >
+                        {saving ? (
+                            <>
+                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                Saving...
+                            </>
+                        ) : (
+                            transaction ? 'Update Transaction' : 'Create Transaction'
+                        )}
+                    </button>
+                </div>
             </div>
         </form>
+        </div>
     );
 }

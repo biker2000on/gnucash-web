@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Account } from '@/lib/types';
 import { useAccounts } from '@/lib/hooks/useAccounts';
@@ -11,6 +11,7 @@ interface AccountSelectorProps {
     placeholder?: string;
     disabled?: boolean;
     className?: string;
+    hasError?: boolean;
 }
 
 // Strip "Root Account:" prefix from account paths
@@ -29,13 +30,16 @@ export function AccountSelector({
     placeholder = 'Select account...',
     disabled = false,
     className = '',
+    hasError = false,
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
     const [selectedName, setSelectedName] = useState('');
     const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+    const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
 
     // Use React Query hook for accounts
     const { data: accounts = [], isLoading: loading, error } = useAccounts({ flat: true });
@@ -91,6 +95,23 @@ export function AccountSelector({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isOpen]);
 
+    // Reset focus index when search changes or dropdown opens
+    useEffect(() => {
+        if (isOpen) {
+            setFocusedIndex(0);
+        }
+    }, [search, isOpen]);
+
+    // Scroll focused item into view
+    useEffect(() => {
+        if (focusedIndex !== null && itemRefs.current[focusedIndex]) {
+            itemRefs.current[focusedIndex]?.scrollIntoView({
+                block: 'nearest',
+                behavior: 'smooth'
+            });
+        }
+    }, [focusedIndex]);
+
     // Filter accounts by search
     const filteredAccounts = accounts.filter(account => {
         // Exclude ROOT account type
@@ -110,12 +131,22 @@ export function AccountSelector({
         return acc;
     }, {} as Record<string, Account[]>);
 
+    // Create flattened list of all visible accounts for keyboard navigation
+    const flatOptions = useMemo(() => {
+        const result: Account[] = [];
+        Object.entries(groupedAccounts).forEach(([, accounts]) => {
+            result.push(...accounts);
+        });
+        return result;
+    }, [groupedAccounts]);
+
     const handleSelect = (account: Account) => {
         const displayName = formatAccountPath(account.fullname, account.name);
         onChange(account.guid, displayName);
         setSelectedName(displayName);
         setSearch('');
         setIsOpen(false);
+        setFocusedIndex(null);
     };
 
     const handleInputFocus = () => {
@@ -123,12 +154,54 @@ export function AccountSelector({
         setSearch('');
     };
 
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (!isOpen) {
+            if (e.key === 'ArrowDown') {
+                setIsOpen(true);
+                setFocusedIndex(0);
+                e.preventDefault();
+            }
+            return;
+        }
+
+        switch (e.key) {
+            case 'ArrowDown':
+                setFocusedIndex(prev =>
+                    prev === null ? 0 : Math.min(prev + 1, flatOptions.length - 1)
+                );
+                e.preventDefault();
+                break;
+            case 'ArrowUp':
+                setFocusedIndex(prev =>
+                    prev === null ? flatOptions.length - 1 : Math.max(prev - 1, 0)
+                );
+                e.preventDefault();
+                break;
+            case 'Enter':
+                if (focusedIndex !== null && flatOptions[focusedIndex]) {
+                    handleSelect(flatOptions[focusedIndex]);
+                    e.preventDefault();
+                }
+                break;
+            case 'Tab':
+                if (focusedIndex !== null && flatOptions[focusedIndex]) {
+                    handleSelect(flatOptions[focusedIndex]);
+                }
+                break;
+            case 'Escape':
+                setIsOpen(false);
+                setFocusedIndex(null);
+                e.preventDefault();
+                break;
+        }
+    };
+
     return (
         <div ref={containerRef} className={`relative ${className}`}>
             <div
-                className={`flex items-center bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 cursor-pointer ${
+                className={`flex items-center bg-neutral-950/50 border rounded-lg px-3 py-2 cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-neutral-700'
-                } ${isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : ''}`}
+                } ${isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800'}`}
                 onClick={() => !disabled && inputRef.current?.focus()}
             >
                 <input
@@ -137,6 +210,7 @@ export function AccountSelector({
                     value={isOpen ? search : selectedName}
                     onChange={(e) => setSearch(e.target.value)}
                     onFocus={handleInputFocus}
+                    onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={disabled}
                     className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none"
@@ -166,24 +240,33 @@ export function AccountSelector({
                             No accounts found
                         </div>
                     ) : (
-                        Object.entries(groupedAccounts).map(([type, typeAccounts]) => (
-                            <div key={type}>
-                                <div className="px-3 py-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider bg-neutral-950/50 sticky top-0">
-                                    {type}
-                                </div>
-                                {typeAccounts.map(account => (
-                                    <div
-                                        key={account.guid}
-                                        className={`px-3 py-2 cursor-pointer hover:bg-neutral-800/50 ${
-                                            account.guid === value ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-200'
-                                        }`}
-                                        onClick={() => handleSelect(account)}
-                                    >
-                                        <div className="text-sm">{formatAccountPath(account.fullname, account.name)}</div>
+                        (() => {
+                            let globalIndex = 0;
+                            return Object.entries(groupedAccounts).map(([type, typeAccounts]) => (
+                                <div key={type}>
+                                    <div className="px-3 py-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider bg-neutral-950/50 sticky top-0">
+                                        {type}
                                     </div>
-                                ))}
-                            </div>
-                        ))
+                                    {typeAccounts.map(account => {
+                                        const currentIndex = globalIndex++;
+                                        return (
+                                            <div
+                                                key={account.guid}
+                                                ref={el => { itemRefs.current[currentIndex] = el; }}
+                                                className={`px-3 py-2 cursor-pointer hover:bg-neutral-800/50 ${
+                                                    currentIndex === focusedIndex ? 'bg-blue-100 dark:bg-blue-900' : ''
+                                                } ${
+                                                    account.guid === value ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-200'
+                                                }`}
+                                                onClick={() => handleSelect(account)}
+                                            >
+                                                <div className="text-sm">{formatAccountPath(account.fullname, account.name)}</div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ));
+                        })()
                     )}
                 </div>,
                 document.body

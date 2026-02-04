@@ -24,6 +24,11 @@ import { AccountService, CreateAccountSchema } from '@/lib/services/account.serv
  *         schema:
  *           type: string
  *           format: date
+ *       - name: noBalances
+ *         in: query
+ *         description: Skip balance calculation and return hierarchy only
+ *         schema:
+ *           type: boolean
  *     responses:
  *       200:
  *         description: A hierarchical list of accounts.
@@ -40,6 +45,7 @@ export async function GET(request: NextRequest) {
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
         const flat = searchParams.get('flat') === 'true';
+        const noBalances = searchParams.get('noBalances') === 'true';
 
         // Flat mode: return all accounts with fullname (for account selector)
         if (flat) {
@@ -107,56 +113,25 @@ export async function GET(request: NextRequest) {
             };
         }
 
-        // Fetch all accounts with their commodity and splits
+        // Fetch all accounts with their commodity and optionally splits
         const accountsData = await prisma.accounts.findMany({
             include: {
                 commodity: true,
-                splits: {
-                    include: {
-                        transaction: true,
+                ...(noBalances ? {} : {
+                    splits: {
+                        include: {
+                            transaction: true,
+                        },
                     },
-                },
+                }),
             },
         });
 
-        // Calculate balances for each account
-        // Pre-fetch prices for investment accounts (STOCK/MUTUAL with non-currency commodities)
-        const investmentTypes = ['STOCK', 'MUTUAL'];
-        const priceCache = new Map<string, number>();
-        for (const acc of accountsData) {
-            if (investmentTypes.includes(acc.account_type) && acc.commodity_guid && acc.commodity?.namespace !== 'CURRENCY') {
-                if (!priceCache.has(acc.commodity_guid)) {
-                    const price = await getLatestPrice(acc.commodity_guid);
-                    priceCache.set(acc.commodity_guid, price?.value || 0);
-                }
-            }
-        }
+        let accounts: Account[];
 
-        const accounts: Account[] = accountsData.map(acc => {
-            const isInvestment = investmentTypes.includes(acc.account_type) && acc.commodity?.namespace !== 'CURRENCY';
-            const pricePerShare = isInvestment && acc.commodity_guid ? (priceCache.get(acc.commodity_guid) || 0) : 0;
-
-            // Calculate total balance from all splits
-            let totalBalance = 0;
-            let periodBalance = 0;
-
-            for (const split of acc.splits) {
-                const qty = Number(split.quantity_num) / Number(split.quantity_denom);
-                totalBalance += qty;
-
-                // Check if split's transaction falls within period
-                const postDate = split.transaction.post_date;
-                if (postDate) {
-                    const inPeriod =
-                        (!startDate || postDate >= new Date(startDate)) &&
-                        (!endDate || postDate <= new Date(endDate));
-                    if (inPeriod) {
-                        periodBalance += qty;
-                    }
-                }
-            }
-
-            return {
+        if (noBalances) {
+            // Skip balance calculation when noBalances is true
+            accounts = accountsData.map(acc => ({
                 guid: acc.guid,
                 name: acc.name,
                 account_type: acc.account_type,
@@ -169,12 +144,69 @@ export async function GET(request: NextRequest) {
                 hidden: acc.hidden || 0,
                 placeholder: acc.placeholder || 0,
                 commodity_mnemonic: acc.commodity?.mnemonic,
-                total_balance: totalBalance.toFixed(2),
-                period_balance: periodBalance.toFixed(2),
-                total_balance_usd: isInvestment ? (totalBalance * pricePerShare).toFixed(2) : undefined,
-                period_balance_usd: isInvestment ? (periodBalance * pricePerShare).toFixed(2) : undefined,
-            };
-        });
+                total_balance: undefined,
+                period_balance: undefined,
+                total_balance_usd: undefined,
+                period_balance_usd: undefined,
+            }));
+        } else {
+            // Calculate balances for each account
+            // Pre-fetch prices for investment accounts (STOCK/MUTUAL with non-currency commodities)
+            const investmentTypes = ['STOCK', 'MUTUAL'];
+            const priceCache = new Map<string, number>();
+            for (const acc of accountsData) {
+                if (investmentTypes.includes(acc.account_type) && acc.commodity_guid && acc.commodity?.namespace !== 'CURRENCY') {
+                    if (!priceCache.has(acc.commodity_guid)) {
+                        const price = await getLatestPrice(acc.commodity_guid);
+                        priceCache.set(acc.commodity_guid, price?.value || 0);
+                    }
+                }
+            }
+
+            accounts = accountsData.map(acc => {
+                const isInvestment = investmentTypes.includes(acc.account_type) && acc.commodity?.namespace !== 'CURRENCY';
+                const pricePerShare = isInvestment && acc.commodity_guid ? (priceCache.get(acc.commodity_guid) || 0) : 0;
+
+                // Calculate total balance from all splits
+                let totalBalance = 0;
+                let periodBalance = 0;
+
+                for (const split of (acc as any).splits || []) {
+                    const qty = Number(split.quantity_num) / Number(split.quantity_denom);
+                    totalBalance += qty;
+
+                    // Check if split's transaction falls within period
+                    const postDate = split.transaction.post_date;
+                    if (postDate) {
+                        const inPeriod =
+                            (!startDate || postDate >= new Date(startDate)) &&
+                            (!endDate || postDate <= new Date(endDate));
+                        if (inPeriod) {
+                            periodBalance += qty;
+                        }
+                    }
+                }
+
+                return {
+                    guid: acc.guid,
+                    name: acc.name,
+                    account_type: acc.account_type,
+                    commodity_guid: acc.commodity_guid || '',
+                    commodity_scu: acc.commodity_scu,
+                    non_std_scu: acc.non_std_scu,
+                    parent_guid: acc.parent_guid,
+                    code: acc.code || '',
+                    description: acc.description || '',
+                    hidden: acc.hidden || 0,
+                    placeholder: acc.placeholder || 0,
+                    commodity_mnemonic: acc.commodity?.mnemonic,
+                    total_balance: totalBalance.toFixed(2),
+                    period_balance: periodBalance.toFixed(2),
+                    total_balance_usd: isInvestment ? (totalBalance * pricePerShare).toFixed(2) : undefined,
+                    period_balance_usd: isInvestment ? (periodBalance * pricePerShare).toFixed(2) : undefined,
+                };
+            });
+        }
 
         // Build hierarchy
         const accountMap: Record<string, AccountWithChildren> = {};
