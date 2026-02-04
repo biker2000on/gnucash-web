@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
+import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
 import type { CategoricalChartFunc } from 'recharts/types/chart/types';
@@ -52,12 +54,15 @@ interface InvestmentAccountProps {
 }
 
 export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
+    const router = useRouter();
+    const { success, error: showError } = useToast();
     const [data, setData] = useState<ValuationData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showPriceModal, setShowPriceModal] = useState(false);
     const [newPrice, setNewPrice] = useState({ date: '', value: '' });
     const [savingPrice, setSavingPrice] = useState(false);
+    const [fetchingPrice, setFetchingPrice] = useState(false);
     const [showTransactionModal, setShowTransactionModal] = useState(false);
 
     // Time period selection
@@ -210,6 +215,37 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
         setZoomDomain({ startIndex: null, endIndex: null });
     }, [selectedPeriod]);
 
+    const handleFetchPrice = async () => {
+        if (!data?.commodity) return;
+
+        setFetchingPrice(true);
+        try {
+            const response = await fetch('/api/prices/fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbols: [data.commodity.mnemonic] }),
+            });
+
+            const responseData = await response.json();
+
+            if (!response.ok) {
+                showError(responseData.error || 'Failed to fetch price');
+                return;
+            }
+
+            if (responseData.stored > 0) {
+                success(`Price updated: $${responseData.results[0]?.price?.toFixed(2)}`);
+                router.refresh();
+            } else {
+                showError(responseData.results[0]?.error || 'Failed to fetch price');
+            }
+        } catch (err) {
+            showError('Network error fetching price');
+        } finally {
+            setFetchingPrice(false);
+        }
+    };
+
     const handleAddPrice = async () => {
         if (!data?.commodity || !newPrice.date || !newPrice.value) return;
 
@@ -306,6 +342,17 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                             </svg>
                             New Transaction
+                        </button>
+                        <button
+                            onClick={handleFetchPrice}
+                            disabled={fetchingPrice}
+                            className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            {fetchingPrice ? 'Fetching...' : 'Fetch Price'}
                         </button>
                         <button
                             onClick={() => {

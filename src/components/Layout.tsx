@@ -14,6 +14,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     const navItems = [
         { name: 'Account Hierarchy', href: '/accounts' },
         { name: 'General Ledger', href: '/ledger' },
+        { name: 'Investments', href: '/investments' },
         { name: 'Budgets', href: '/budgets' },
         { name: 'Reports', href: '/reports' },
     ];
