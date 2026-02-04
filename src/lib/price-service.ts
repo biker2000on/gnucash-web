@@ -98,7 +98,8 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<PriceFetchRes
 
   const results: PriceFetchResult[] = [];
   const symbolList = symbols.join(',');
-  const url = `${config.fmpBaseUrl}/api/v3/quote/${symbolList}?apikey=${config.fmpApiKey}`;
+  // Use /stable/batch-quote endpoint (free tier compatible, not legacy)
+  const url = `${config.fmpBaseUrl}/stable/batch-quote?symbols=${symbolList}&apikey=${config.fmpApiKey}`;
 
   try {
     const response = await fetch(url);
