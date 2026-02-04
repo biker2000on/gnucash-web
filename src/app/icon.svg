@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 4 Narrow Bars for a more "Data Dense" look -->
+  
+  <!-- Bar 1 -->
+  <rect x="48" y="352" width="80" height="96" rx="8" fill="#064e3b" />
+  
+  <!-- Bar 2 -->
+  <rect x="160" y="256" width="80" height="192" rx="8" fill="#047857" />
+  
+  <!-- Bar 3 -->
+  <rect x="272" y="160" width="80" height="288" rx="8" fill="#059669" />
+  
+  <!-- Bar 4 -->
+  <rect x="384" y="64" width="80" height="384" rx="8" fill="#34d399" />
+</svg>

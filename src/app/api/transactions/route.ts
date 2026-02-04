@@ -5,6 +5,7 @@ import { Transaction, Split, CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { Prisma } from '@prisma/client';
 import { logAudit } from '@/lib/services/audit.service';
+import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 
 /**
  * @openapi
@@ -276,8 +277,21 @@ export async function POST(request: Request) {
         const txGuid = generateGuid();
         const now = new Date();
 
+        // Track multi-currency status for audit log
+        let isMultiCurrency = false;
+        let totalSplitsCount = body.splits.length;
+
         // Create transaction with splits in a transaction
         const transaction = await prisma.$transaction(async (tx) => {
+            // Process multi-currency splits and add trading splits if needed
+            const multiCurrencyResult = await processMultiCurrencySplits(
+                body.splits,
+                tx
+            );
+            isMultiCurrency = multiCurrencyResult.isMultiCurrency;
+            const allSplits = multiCurrencyResult.allSplits;
+            totalSplitsCount = allSplits.length;
+
             // Insert transaction
             const newTx = await tx.transactions.create({
                 data: {
@@ -290,8 +304,8 @@ export async function POST(request: Request) {
                 },
             });
 
-            // Insert splits
-            for (const split of body.splits) {
+            // Insert all splits (including auto-generated trading splits)
+            for (const split of allSplits) {
                 const splitGuid = generateGuid();
                 await tx.splits.create({
                     data: {
@@ -304,8 +318,8 @@ export async function POST(request: Request) {
                         reconcile_date: null,
                         value_num: BigInt(split.value_num),
                         value_denom: BigInt(split.value_denom),
-                        quantity_num: BigInt(split.quantity_num ?? split.value_num),
-                        quantity_denom: BigInt(split.quantity_denom ?? split.value_denom),
+                        quantity_num: BigInt(split.quantity_num),
+                        quantity_denom: BigInt(split.quantity_denom),
                         lot_guid: null,
                     },
                 });
@@ -336,7 +350,9 @@ export async function POST(request: Request) {
         await logAudit('CREATE', 'TRANSACTION', txGuid, null, {
             description: body.description,
             post_date: body.post_date,
-            splits_count: body.splits.length,
+            splits_count: totalSplitsCount,
+            is_multi_currency: isMultiCurrency,
+            trading_splits_added: isMultiCurrency ? totalSplitsCount - body.splits.length : 0,
         });
 
         // Transform to response format

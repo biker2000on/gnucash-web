@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
 
 const ACCOUNT_TYPES = [
     { value: 'ASSET', label: 'Asset', group: 'Assets' },
@@ -68,7 +69,9 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
     const [commodities, setCommodities] = useState<Commodity[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
+    const formRef = useRef<HTMLFormElement>(null);
 
     // Fetch accounts and commodities for dropdowns
     useEffect(() => {
@@ -124,9 +127,41 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
         }
     }, [formData.parent_guid, accounts, commodities, mode]);
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
+    const validateForm = (): { valid: boolean; error: string | null; fieldErrors: Record<string, string> } => {
+        const fieldErrors: Record<string, string> = {};
+
+        if (!formData.name?.trim()) {
+            fieldErrors.name = 'Required';
+        }
+        if (mode === 'create' && !formData.commodity_guid) {
+            fieldErrors.commodity_guid = 'Required';
+        }
+
+        const hasErrors = Object.keys(fieldErrors).length > 0;
+        return {
+            valid: !hasErrors,
+            error: hasErrors ? 'Please fix the validation errors' : null,
+            fieldErrors
+        };
+    };
+
+    const handleSubmit = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+
+        const validation = validateForm();
+        setFieldErrors(validation.fieldErrors);
+        setError(validation.error);
+
+        if (!validation.valid) {
+            // Focus first invalid field
+            const firstErrorField = Object.keys(validation.fieldErrors)[0];
+            if (firstErrorField) {
+                const element = document.querySelector(`[data-field="${firstErrorField}"]`) as HTMLElement;
+                element?.focus();
+            }
+            return;
+        }
+
         setSaving(true);
 
         try {
@@ -137,6 +172,11 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
             setSaving(false);
         }
     };
+
+    // Setup keyboard shortcut
+    useFormKeyboardShortcuts(formRef, () => handleSubmit(), {
+        validate: () => validateForm().valid
+    });
 
     const groupedAccountTypes = ACCOUNT_TYPES.reduce((acc, type) => {
         if (!acc[type.group]) acc[type.group] = [];
@@ -168,11 +208,17 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                 <input
                     type="text"
                     required
+                    data-field="name"
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all"
+                    className={`w-full bg-neutral-950/50 border rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all ${
+                        fieldErrors.name ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800'
+                    }`}
                     placeholder="e.g., Checking Account"
                 />
+                {fieldErrors.name && (
+                    <p className="mt-1 text-xs text-rose-400">{fieldErrors.name}</p>
+                )}
             </div>
 
             {/* Account Type - only for create mode */}
@@ -232,9 +278,12 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                     </label>
                     <select
                         required
+                        data-field="commodity_guid"
                         value={formData.commodity_guid}
                         onChange={e => setFormData(prev => ({ ...prev, commodity_guid: e.target.value }))}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                        className={`w-full bg-neutral-950/50 border rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer ${
+                            fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800'
+                        }`}
                     >
                         {commodities.map(comm => (
                             <option key={comm.guid} value={comm.guid}>
@@ -242,6 +291,9 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                             </option>
                         ))}
                     </select>
+                    {fieldErrors.commodity_guid && (
+                        <p className="mt-1 text-xs text-rose-400">{fieldErrors.commodity_guid}</p>
+                    )}
                 </div>
             )}
 
@@ -304,21 +356,26 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
             </p>
 
             {/* Actions */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-neutral-800">
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
-                >
-                    Cancel
-                </button>
-                <button
-                    type="submit"
-                    disabled={saving || !formData.name || !formData.commodity_guid}
-                    className="px-6 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-                >
-                    {saving ? 'Saving...' : mode === 'create' ? 'Create Account' : 'Save Changes'}
-                </button>
+            <div className="flex justify-between items-center pt-4 border-t border-neutral-800">
+                <span className="text-xs text-neutral-500">
+                    Press <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Enter</kbd> to save
+                </span>
+                <div className="flex gap-3">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="submit"
+                        disabled={saving || !formData.name || !formData.commodity_guid}
+                        className="px-6 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                    >
+                        {saving ? 'Saving...' : mode === 'create' ? 'Create Account' : 'Save Changes'}
+                    </button>
+                </div>
             </div>
         </form>
     );

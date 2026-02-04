@@ -5,6 +5,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { useInvalidateAccounts } from '@/lib/hooks/useAccounts';
 import { Modal } from './ui/Modal';
 import { AccountForm } from './AccountForm';
 
@@ -247,6 +248,7 @@ interface AccountHierarchyProps {
 
 export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarchyProps) {
     const { balanceReversal } = useUserPreferences();
+    const invalidateAccounts = useInvalidateAccounts();
 
     // Initialize state from localStorage with fallback defaults
     const [showHidden, setShowHidden] = useState(() => {
@@ -367,13 +369,14 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             }
 
             setDeleteConfirm(null);
+            invalidateAccounts();
             onRefresh?.();
         } catch (err) {
             setDeleteError(err instanceof Error ? err.message : 'Failed to delete account');
         } finally {
             setDeleting(false);
         }
-    }, [deleteConfirm, onRefresh]);
+    }, [deleteConfirm, invalidateAccounts, onRefresh]);
 
     const handleSave = useCallback(async (data: {
         name: string;
@@ -402,8 +405,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         }
 
         setModalOpen(false);
+        invalidateAccounts();
         onRefresh?.();
-    }, [modalMode, selectedAccount, onRefresh]);
+    }, [modalMode, selectedAccount, invalidateAccounts, onRefresh]);
 
     return (
         <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6 shadow-2xl">
