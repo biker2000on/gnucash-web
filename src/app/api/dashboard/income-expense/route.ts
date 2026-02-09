@@ -29,6 +29,9 @@ function buildAccountPath(
 /**
  * Check if an account path contains "Tax" (case-insensitive) in any segment.
  */
+// buildAccountPath() traverses the full parent chain via parent_guid,
+// so the path includes all ancestor names (e.g. "Root:Expenses:Taxes:Federal").
+// This means the "tax" check correctly matches at any level of the hierarchy.
 function isTaxAccount(path: string): boolean {
     return path.toLowerCase().includes('tax');
 }
