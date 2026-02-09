@@ -210,7 +210,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     account_guid: accountGuid,
-                    period_num: 1,
+                    period_num: 0,
                     amount: 0
                 })
             });
@@ -419,8 +419,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         const totals = new Array(budget.num_periods).fill(0);
         for (const root of roots) {
             for (const [period, value] of root.rolledUpPeriods) {
-                if (period >= 1 && period <= budget.num_periods) {
-                    totals[period - 1] += value;
+                if (period >= 0 && period < budget.num_periods) {
+                    totals[period] += value;
                 }
             }
         }
@@ -501,7 +501,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             const sums = new Array(budget.num_periods).fill(0);
             for (const node of nodes) {
                 for (let i = 0; i < budget.num_periods; i++) {
-                    sums[i] += node.rolledUpPeriods.get(i + 1) || 0;
+                    sums[i] += node.rolledUpPeriods.get(i) || 0;
                 }
             }
             return sums;
@@ -803,8 +803,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                     </div>
                                                 </td>
                                                 {Array.from({ length: budget.num_periods }, (_, i) => {
-                                                    const value = displayPeriods.get(i + 1) || 0;
-                                                    const ownValue = account.periods.get(i + 1) || 0;
+                                                    const value = displayPeriods.get(i) || 0;
+                                                    const ownValue = account.periods.get(i) || 0;
                                                     const invert = false;
 
                                                     // Show editor for accounts with their own budget
@@ -815,12 +815,12 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                     value={ownValue}
                                                                     budgetGuid={budget.guid}
                                                                     accountGuid={account.guid}
-                                                                    periodNum={i + 1}
+                                                                    periodNum={i}
                                                                     currency={account.mnemonic}
                                                                     accountType={account.type}
                                                                     balanceReversal={balanceReversal}
                                                                     invertDisplay={invert}
-                                                                    onUpdate={(newValue) => handleAmountUpdate(account.guid, i + 1, newValue)}
+                                                                    onUpdate={(newValue) => handleAmountUpdate(account.guid, i, newValue)}
                                                                 />
                                                             </td>
                                                         );
@@ -835,7 +835,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                             headers: { 'Content-Type': 'application/json' },
                                                                             body: JSON.stringify({
                                                                                 account_guid: account.guid,
-                                                                                period_num: i + 1,
+                                                                                period_num: i,
                                                                                 amount: 0
                                                                             })
                                                                         });

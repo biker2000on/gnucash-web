@@ -11,7 +11,7 @@ export async function PATCH(
         const body = await request.json();
         const { account_guid, period_num, amount } = body;
 
-        if (!account_guid || !period_num || amount === undefined) {
+        if (!account_guid || (period_num === undefined || period_num === null) || amount === undefined) {
             return NextResponse.json(
                 { error: 'Missing required fields: account_guid, period_num, amount' },
                 { status: 400 }

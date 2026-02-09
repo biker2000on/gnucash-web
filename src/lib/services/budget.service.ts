@@ -185,8 +185,8 @@ export class BudgetService {
     }
 
     // Validate period number
-    if (periodNum < 1 || periodNum > budget.num_periods) {
-      throw new Error(`Period must be between 1 and ${budget.num_periods}`);
+    if (periodNum < 0 || periodNum >= budget.num_periods) {
+      throw new Error(`Period must be between 0 and ${budget.num_periods - 1}`);
     }
 
     // Check account exists
@@ -251,7 +251,7 @@ export class BudgetService {
 
     // Create amounts for all periods with 0 value
     const amounts = [];
-    for (let period = 1; period <= budget.num_periods; period++) {
+    for (let period = 0; period < budget.num_periods; period++) {
       const amount = await prisma.budget_amounts.create({
         data: {
           budget_guid: budgetGuid,
@@ -294,7 +294,7 @@ export class BudgetService {
     if (!budget) throw new Error('Budget not found');
 
     const amounts = [];
-    for (let period = 1; period <= budget.num_periods; period++) {
+    for (let period = 0; period < budget.num_periods; period++) {
       const result = await this.setAmount(budgetGuid, accountGuid, period, amount);
       amounts.push(result);
     }
