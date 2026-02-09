@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { BalanceReversal } from '@/lib/format';
 
 interface User {
@@ -27,8 +28,30 @@ const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; descrip
     },
 ];
 
+const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; description: string; icon: string }[] = [
+    {
+        value: 'light',
+        label: 'Light',
+        description: 'Always use light theme',
+        icon: '☀️',
+    },
+    {
+        value: 'dark',
+        label: 'Dark',
+        description: 'Always use dark theme',
+        icon: '🌙',
+    },
+    {
+        value: 'system',
+        label: 'System',
+        description: 'Match your system preference',
+        icon: '💻',
+    },
+];
+
 export default function ProfilePage() {
     const { balanceReversal, setBalanceReversal, loading: prefsLoading } = useUserPreferences();
+    const { theme, setTheme } = useTheme();
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -162,6 +185,45 @@ export default function ProfilePage() {
                                         {saving && balanceReversal === option.value && (
                                             <div className="w-3 h-3 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
                                         )}
+                                    </div>
+                                    <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
+                                </div>
+                            </div>
+                        </label>
+                    ))}
+                </div>
+            </div>
+
+            {/* Theme Settings */}
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-foreground mb-2">Theme</h3>
+                <p className="text-sm text-foreground-muted mb-6">
+                    Choose your preferred color scheme. System mode automatically matches your device settings.
+                </p>
+
+                <div className="space-y-3">
+                    {THEME_OPTIONS.map((option) => (
+                        <label
+                            key={option.value}
+                            className={`block p-4 rounded-xl border cursor-pointer transition-all ${
+                                theme === option.value
+                                    ? 'bg-emerald-500/10 border-emerald-500/50'
+                                    : 'bg-surface/50 border-border hover:border-border-hover'
+                            }`}
+                        >
+                            <div className="flex items-start gap-3">
+                                <input
+                                    type="radio"
+                                    name="theme"
+                                    value={option.value}
+                                    checked={theme === option.value}
+                                    onChange={() => setTheme(option.value)}
+                                    className="mt-1 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
+                                />
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-lg">{option.icon}</span>
+                                        <span className="font-medium text-foreground">{option.label}</span>
                                     </div>
                                     <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
                                 </div>
