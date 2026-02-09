@@ -6,6 +6,7 @@ import { validateTransaction } from '@/lib/validation';
 import { Prisma } from '@prisma/client';
 import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 /**
  * @openapi
@@ -85,8 +86,17 @@ export async function GET(request: Request) {
         const maxAmount = searchParams.get('maxAmount');
         const reconcileStates = searchParams.get('reconcileStates');
 
-        // Build where conditions
-        const whereConditions: Prisma.transactionsWhereInput = {};
+        // Get book account GUIDs for scoping
+        const bookAccountGuids = await getBookAccountGuids();
+
+        // Build where conditions - scoped to active book
+        const whereConditions: Prisma.transactionsWhereInput = {
+            splits: {
+                some: {
+                    account_guid: { in: bookAccountGuids },
+                },
+            },
+        };
 
         // Date filters
         if (startDate || endDate) {
@@ -116,13 +126,12 @@ export async function GET(request: Request) {
             ];
         }
 
-        // Account type filter
+        // Account type filter (merged with existing book scoping)
         if (accountTypes) {
             const types = accountTypes.split(',').map(t => t.trim().toUpperCase());
             whereConditions.splits = {
-                ...whereConditions.splits,
                 some: {
-                    ...((whereConditions.splits as Prisma.SplitsListRelationFilter)?.some || {}),
+                    account_guid: { in: bookAccountGuids },
                     account: {
                         account_type: { in: types },
                     },

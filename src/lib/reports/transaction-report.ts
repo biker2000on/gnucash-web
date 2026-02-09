@@ -40,13 +40,20 @@ export async function generateTransactionReport(filters: ReportFilters): Promise
         ? { in: filters.accountTypes }
         : undefined;
 
-    // Get transactions with splits
+    // Get transactions with splits (scoped to active book if bookAccountGuids provided)
     const transactions = await prisma.transactions.findMany({
         where: {
             post_date: {
                 gte: startDate,
                 lte: endDate,
             },
+            ...(filters.bookAccountGuids ? {
+                splits: {
+                    some: {
+                        account_guid: { in: filters.bookAccountGuids },
+                    },
+                },
+            } : {}),
         },
         include: {
             splits: {
@@ -67,7 +74,7 @@ export async function generateTransactionReport(filters: ReportFilters): Promise
     });
 
     // Build full account path map for display names
-    const accountPaths = await buildAccountPathMap();
+    const accountPaths = await buildAccountPathMap(filters.bookAccountGuids);
 
     // Flatten to transaction items
     const items: TransactionReportItem[] = [];

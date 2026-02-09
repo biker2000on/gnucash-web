@@ -5,6 +5,7 @@ import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 export async function GET(
     request: Request,
@@ -12,6 +13,19 @@ export async function GET(
 ) {
     try {
         const { guid } = await params;
+
+        // Verify transaction belongs to active book
+        const bookAccountGuids = await getBookAccountGuids();
+        const txCheck = await prisma.transactions.findFirst({
+            where: {
+                guid,
+                splits: { some: { account_guid: { in: bookAccountGuids } } },
+            },
+            select: { guid: true },
+        });
+        if (!txCheck) {
+            return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+        }
 
         // Fetch transaction with splits
         const transaction = await prisma.transactions.findUnique({

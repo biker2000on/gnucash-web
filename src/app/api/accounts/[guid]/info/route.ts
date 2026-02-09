@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
+import { isAccountInActiveBook } from '@/lib/book-scope';
 
 export async function GET(
     request: Request,
@@ -8,6 +9,11 @@ export async function GET(
 ) {
     try {
         const { guid } = await params;
+
+        // Verify account belongs to active book
+        if (!await isAccountInActiveBook(guid)) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
 
         // The account_hierarchy view is created by db-init.ts
         // We need to use raw SQL since it's a view, not a Prisma model

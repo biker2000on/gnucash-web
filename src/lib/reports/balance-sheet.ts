@@ -48,21 +48,35 @@ function buildHierarchy(accounts: AccountWithBalance[], parentGuid: string | nul
 export async function generateBalanceSheet(filters: ReportFilters): Promise<ReportData> {
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
 
-    // Find the Root Account GUID
-    const rootAccount = await prisma.accounts.findFirst({
-        where: {
-            account_type: 'ROOT',
-            name: { startsWith: 'Root' }
-        },
-        select: { guid: true }
-    });
-    const rootGuid = rootAccount?.guid || null;
+    // Determine root GUID from book scoping or fallback
+    let rootGuid: string | null = null;
+    if (filters.bookAccountGuids && filters.bookAccountGuids.length > 0) {
+        // Find the ROOT account in the book's accounts
+        const rootAccount = await prisma.accounts.findFirst({
+            where: {
+                guid: { in: filters.bookAccountGuids },
+                account_type: 'ROOT',
+            },
+            select: { guid: true }
+        });
+        rootGuid = rootAccount?.guid || null;
+    } else {
+        const rootAccount = await prisma.accounts.findFirst({
+            where: {
+                account_type: 'ROOT',
+                name: { startsWith: 'Root' }
+            },
+            select: { guid: true }
+        });
+        rootGuid = rootAccount?.guid || null;
+    }
 
     const investmentTypes = ['STOCK', 'MUTUAL'];
 
     // Get all asset, liability, and equity accounts with their balances
     const accounts = await prisma.accounts.findMany({
         where: {
+            ...(filters.bookAccountGuids ? { guid: { in: filters.bookAccountGuids } } : {}),
             account_type: {
                 in: ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'LIABILITY', 'CREDIT', 'EQUITY'],
             },

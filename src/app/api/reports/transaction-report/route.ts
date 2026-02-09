@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateTransactionReport } from '@/lib/reports/transaction-report';
 import { ReportFilters } from '@/lib/reports/types';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
+        const bookAccountGuids = await getBookAccountGuids();
 
         const filters: ReportFilters = {
             startDate: searchParams.get('startDate'),
@@ -12,6 +14,7 @@ export async function GET(request: NextRequest) {
             compareToPrevious: searchParams.get('compareToPrevious') === 'true',
             showZeroBalances: searchParams.get('showZeroBalances') === 'true',
             accountTypes: searchParams.get('accountTypes')?.split(',').filter(Boolean),
+            bookAccountGuids,
         };
 
         const report = await generateTransactionReport(filters);

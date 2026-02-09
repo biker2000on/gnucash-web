@@ -5,6 +5,7 @@ import { getLatestPrice } from '@/lib/commodities';
 import { Account, AccountWithChildren } from '@/lib/types';
 import { Prisma } from '@prisma/client';
 import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
+import { getBookAccountGuids, getActiveBookRootGuid } from '@/lib/book-scope';
 
 /**
  * @openapi
@@ -47,6 +48,10 @@ export async function GET(request: NextRequest) {
         const flat = searchParams.get('flat') === 'true';
         const noBalances = searchParams.get('noBalances') === 'true';
 
+        // Get book account GUIDs for scoping
+        const bookAccountGuids = await getBookAccountGuids();
+        const bookRootGuid = await getActiveBookRootGuid();
+
         // Flat mode: return all accounts with fullname (for account selector)
         if (flat) {
             // For flat mode, we need a recursive query to build fullnames
@@ -64,7 +69,7 @@ export async function GET(request: NextRequest) {
                     SELECT guid, name, account_type, parent_guid, commodity_guid,
                            name::text as fullname
                     FROM accounts
-                    WHERE parent_guid IS NULL OR parent_guid NOT IN (SELECT guid FROM accounts)
+                    WHERE guid = ${bookRootGuid}
 
                     UNION ALL
 
@@ -113,8 +118,11 @@ export async function GET(request: NextRequest) {
             };
         }
 
-        // Fetch all accounts with their commodity and optionally splits
+        // Fetch all accounts in the active book with their commodity and optionally splits
         const accountsData = await prisma.accounts.findMany({
+            where: {
+                guid: { in: bookAccountGuids },
+            },
             include: {
                 commodity: true,
                 ...(noBalances ? {} : {

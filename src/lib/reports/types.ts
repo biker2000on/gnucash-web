@@ -24,6 +24,8 @@ export interface ReportFilters {
   compareToPrevious?: boolean;
   accountTypes?: string[];
   showZeroBalances?: boolean;
+  /** Book-scoped account GUIDs. When set, restrict queries to these accounts. */
+  bookAccountGuids?: string[];
 }
 
 export interface LineItem {

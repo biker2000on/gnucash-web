@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { getLatestPrice } from '@/lib/commodities';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 interface AccountBalance {
     guid: string;
@@ -66,7 +67,10 @@ export async function GET(request: NextRequest) {
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
 
-        // Build the SQL query with aggregation
+        // Get book account GUIDs for scoping
+        const bookAccountGuids = await getBookAccountGuids();
+
+        // Build the SQL query with aggregation, scoped to active book
         const results = await prisma.$queryRaw<BalanceQueryResult[]>`
             SELECT
                 s.account_guid,
@@ -87,6 +91,7 @@ export async function GET(request: NextRequest) {
             JOIN transactions t ON s.tx_guid = t.guid
             JOIN accounts a ON s.account_guid = a.guid
             LEFT JOIN commodities c ON a.commodity_guid = c.guid
+            WHERE s.account_guid = ANY(${bookAccountGuids}::text[])
             GROUP BY s.account_guid, a.account_type, a.commodity_guid, c.namespace, c.mnemonic
         `;
 

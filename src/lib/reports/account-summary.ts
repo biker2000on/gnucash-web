@@ -52,19 +52,32 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
 
     const investmentTypes = ['STOCK', 'MUTUAL'];
 
-    // Find the Root Account GUID
-    const rootAccount = await prisma.accounts.findFirst({
-        where: {
-            account_type: 'ROOT',
-            name: { startsWith: 'Root' }
-        },
-        select: { guid: true }
-    });
-    const rootGuid = rootAccount?.guid || null;
+    // Determine root GUID from book scoping or fallback
+    let rootGuid: string | null = null;
+    if (filters.bookAccountGuids && filters.bookAccountGuids.length > 0) {
+        const rootAccount = await prisma.accounts.findFirst({
+            where: {
+                guid: { in: filters.bookAccountGuids },
+                account_type: 'ROOT',
+            },
+            select: { guid: true }
+        });
+        rootGuid = rootAccount?.guid || null;
+    } else {
+        const rootAccount = await prisma.accounts.findFirst({
+            where: {
+                account_type: 'ROOT',
+                name: { startsWith: 'Root' }
+            },
+            select: { guid: true }
+        });
+        rootGuid = rootAccount?.guid || null;
+    }
 
     // Get all non-hidden accounts
     const accounts = await prisma.accounts.findMany({
         where: {
+            ...(filters.bookAccountGuids ? { guid: { in: filters.bookAccountGuids } } : {}),
             hidden: 0,
         },
         select: {

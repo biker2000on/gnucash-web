@@ -3,9 +3,11 @@ import prisma from '@/lib/prisma';
 /**
  * Build a map of account GUID to full account path (e.g. "Assets:Current Assets:Checking")
  * Excludes the root account name from the path.
+ * If bookAccountGuids is provided, only includes those accounts.
  */
-export async function buildAccountPathMap(): Promise<Map<string, string>> {
+export async function buildAccountPathMap(bookAccountGuids?: string[]): Promise<Map<string, string>> {
     const accounts = await prisma.accounts.findMany({
+        where: bookAccountGuids ? { guid: { in: bookAccountGuids } } : undefined,
         select: {
             guid: true,
             name: true,

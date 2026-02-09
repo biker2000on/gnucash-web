@@ -17,6 +17,7 @@ export interface SessionData {
     userId?: number;
     username?: string;
     isLoggedIn: boolean;
+    activeBookGuid?: string;
 }
 
 // Session configuration

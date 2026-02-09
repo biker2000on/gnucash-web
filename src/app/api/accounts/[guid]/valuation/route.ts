@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getAccountHoldings, getPriceHistory, isInvestmentAccount } from '@/lib/commodities';
+import { isAccountInActiveBook } from '@/lib/book-scope';
 
 export async function GET(
     request: NextRequest,
@@ -8,6 +9,12 @@ export async function GET(
 ) {
     try {
         const { guid } = await params;
+
+        // Verify account belongs to active book
+        if (!await isAccountInActiveBook(guid)) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
+
         const { searchParams } = new URL(request.url);
         const asOfDateStr = searchParams.get('asOfDate');
         const asOfDate = asOfDateStr ? new Date(asOfDateStr) : undefined;

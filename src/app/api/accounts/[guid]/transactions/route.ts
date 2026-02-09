@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma, { toDecimal } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { Prisma } from '@prisma/client';
+import { isAccountInActiveBook } from '@/lib/book-scope';
 
 export async function GET(
     request: Request,
@@ -14,6 +15,11 @@ export async function GET(
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
         const { guid: accountGuid } = await params;
+
+        // Verify account belongs to active book
+        if (!await isAccountInActiveBook(accountGuid)) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
 
         // Build date filter for transactions
         const dateFilter: Prisma.transactionsWhereInput = {};

@@ -47,11 +47,12 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
     const investmentTypes = ['STOCK', 'MUTUAL'];
 
     // Build full account path map for display names
-    const accountPaths = await buildAccountPathMap();
+    const accountPaths = await buildAccountPathMap(filters.bookAccountGuids);
 
-    // Get all accounts
+    // Get all accounts (scoped to active book if bookAccountGuids provided)
     const accounts = await prisma.accounts.findMany({
         where: {
+            ...(filters.bookAccountGuids ? { guid: { in: filters.bookAccountGuids } } : {}),
             hidden: 0,
         },
         select: {

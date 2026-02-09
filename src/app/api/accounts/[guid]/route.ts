@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AccountService, UpdateAccountSchema } from '@/lib/services/account.service';
+import { isAccountInActiveBook } from '@/lib/book-scope';
 
 /**
  * @openapi
@@ -24,6 +25,11 @@ export async function GET(
 ) {
     try {
         const { guid } = await params;
+
+        // Verify account belongs to active book
+        if (!await isAccountInActiveBook(guid)) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
 
         const account = await AccountService.getById(guid);
         if (!account) {
@@ -79,6 +85,12 @@ export async function PUT(
 ) {
     try {
         const { guid } = await params;
+
+        // Verify account belongs to active book
+        if (!await isAccountInActiveBook(guid)) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
+
         const body = await request.json();
 
         // Validate input
@@ -129,6 +141,11 @@ export async function DELETE(
 ) {
     try {
         const { guid } = await params;
+
+        // Verify account belongs to active book
+        if (!await isAccountInActiveBook(guid)) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
 
         const result = await AccountService.delete(guid);
         return NextResponse.json(result);

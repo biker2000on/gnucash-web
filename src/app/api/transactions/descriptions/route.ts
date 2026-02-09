@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma, { toDecimal } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 export interface TransactionSuggestion {
   description: string;
@@ -23,19 +24,20 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Build where clause with optional account filter
+    // Get book account GUIDs for scoping
+    const bookAccountGuids = await getBookAccountGuids();
+
+    // Build where clause with book scoping and optional account filter
     const whereClause: Prisma.transactionsWhereInput = {
       description: {
         contains: query,
         mode: 'insensitive'
       },
-      ...(accountGuid && {
-        splits: {
-          some: {
-            account_guid: accountGuid
-          }
+      splits: {
+        some: {
+          account_guid: accountGuid ? accountGuid : { in: bookAccountGuids },
         }
-      })
+      }
     };
 
     // Get unique descriptions with most recent post_date
