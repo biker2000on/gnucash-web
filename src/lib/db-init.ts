@@ -159,10 +159,77 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Migration: Add name and description columns to books table
+    const addBooksColumnsDDL = `
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'books'
+                AND column_name = 'name'
+            ) THEN
+                ALTER TABLE books
+                ADD COLUMN name VARCHAR(255);
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'books'
+                AND column_name = 'description'
+            ) THEN
+                ALTER TABLE books
+                ADD COLUMN description TEXT;
+            END IF;
+        END $$;
+    `;
+
+    // Migration: Add saved_reports table
+    const savedReportsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_saved_reports (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+            base_report_type VARCHAR(50) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            description TEXT,
+            config JSONB NOT NULL DEFAULT '{}',
+            filters JSONB,
+            is_starred BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_saved_reports_user_id ON gnucash_web_saved_reports(user_id);
+    `;
+
+    const savedReportsTriggerDDL = `
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'update_saved_reports_updated_at'
+            ) THEN
+                CREATE OR REPLACE FUNCTION update_updated_at_column()
+                RETURNS TRIGGER AS $func$
+                BEGIN
+                    NEW.updated_at = CURRENT_TIMESTAMP;
+                    RETURN NEW;
+                END;
+                $func$ LANGUAGE plpgsql;
+
+                CREATE TRIGGER update_saved_reports_updated_at
+                BEFORE UPDATE ON gnucash_web_saved_reports
+                FOR EACH ROW
+                EXECUTE FUNCTION update_updated_at_column();
+            END IF;
+        END $$;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
         await query(addBalanceReversalDDL);
+        await query(addBooksColumnsDDL);
+        await query(savedReportsTableDDL);
+        await query(savedReportsTriggerDDL);
         console.log('✓ Extension tables created/verified successfully');
     } catch (error) {
         console.error('Error creating extension tables:', error);

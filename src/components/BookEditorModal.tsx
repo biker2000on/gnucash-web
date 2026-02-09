@@ -74,7 +74,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved }: Book
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary"
+                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500"
                         placeholder="Book name"
                         disabled={loading}
                     />
@@ -89,7 +89,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved }: Book
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         rows={4}
-                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-accent-primary resize-none"
+                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
                         placeholder="Optional description"
                         disabled={loading}
                     />
@@ -112,7 +112,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved }: Book
                     <button
                         onClick={handleSave}
                         disabled={loading}
-                        className="flex-1 px-4 py-2 text-sm font-medium text-white bg-accent-primary rounded-lg hover:bg-accent-primary/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex-1 px-4 py-2 text-sm font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {loading ? 'Saving...' : 'Save'}
                     </button>
