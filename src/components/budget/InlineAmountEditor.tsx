@@ -11,6 +11,7 @@ interface InlineAmountEditorProps {
     currency?: string;
     accountType?: string;
     balanceReversal?: BalanceReversal;
+    invertDisplay?: boolean;
     onUpdate: (newValue: number) => void;
 }
 
@@ -22,10 +23,14 @@ export function InlineAmountEditor({
     currency = 'USD',
     accountType = 'EXPENSE',
     balanceReversal = 'none',
+    invertDisplay = false,
     onUpdate
 }: InlineAmountEditorProps) {
-    // Apply balance reversal for display purposes only
-    const displayValue = applyBalanceReversal(value, accountType, balanceReversal);
+    // Apply balance reversal for display purposes only, then apply invertDisplay
+    let displayValue = applyBalanceReversal(value, accountType, balanceReversal);
+    if (invertDisplay) {
+        displayValue = -displayValue;
+    }
     const [isEditing, setIsEditing] = useState(false);
     const [editValue, setEditValue] = useState(value.toString());
     const [isSaving, setIsSaving] = useState(false);
@@ -115,9 +120,9 @@ export function InlineAmountEditor({
                     onBlur={handleSave}
                     onKeyDown={handleKeyDown}
                     disabled={isSaving}
-                    className={`w-full px-2 py-1 text-right text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                        error ? 'border-red-500' : 'border-blue-500'
-                    } ${isSaving ? 'bg-gray-100' : 'bg-white'}`}
+                    className={`w-full px-2 py-1 text-right text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary ${
+                        error ? 'border-red-500' : 'border-primary'
+                    } ${isSaving ? 'bg-background-tertiary' : 'bg-surface'}`}
                 />
                 {error && (
                     <div className="absolute top-full right-0 mt-1 text-xs text-red-500 whitespace-nowrap">

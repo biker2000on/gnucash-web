@@ -67,6 +67,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const [batchEditAccount, setBatchEditAccount] = useState<{ guid: string; name: string } | null>(null);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
+    const [expandLevel, setExpandLevel] = useState<number>(0);
 
     // View toggle state
     const [showAllAccounts, setShowAllAccounts] = useState(false);
@@ -201,6 +202,30 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         });
     };
 
+    const handleAddToBudget = async (accountGuid: string) => {
+        if (!budget) return;
+        try {
+            const res = await fetch(`/api/budgets/${budget.guid}/amounts`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    account_guid: accountGuid,
+                    period_num: 1,
+                    amount: 0
+                })
+            });
+            if (res.ok) {
+                toast.success('Account added to budget');
+                await refreshBudget();
+            } else {
+                throw new Error('Failed to add account');
+            }
+        } catch (err) {
+            console.error('Error adding account to budget:', err);
+            toast.error('Failed to add account to budget');
+        }
+    };
+
     const handleAccountAdded = async () => {
         await refreshBudget();
     };
@@ -238,6 +263,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
     const collapseAll = useCallback(() => {
         setExpandedNodes(new Set());
+        setExpandLevel(0);
     }, []);
 
     // Build hierarchical tree structure from flat amounts
@@ -409,10 +435,103 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         };
     }, [budget, expandedNodes, showAllAccounts, allAccounts]);
 
+    const budgetCurrency = useMemo(() => {
+        if (!budget?.amounts?.length) return 'USD';
+        // Get the most common currency from budget accounts
+        const currencies = budget.amounts.map(a => a.commodity_mnemonic).filter(Boolean);
+        if (!currencies.length) return 'USD';
+        // Return most frequent
+        const freq = new Map<string, number>();
+        currencies.forEach(c => freq.set(c, (freq.get(c) || 0) + 1));
+        return [...freq.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    }, [budget]);
+
     const existingAccountGuids = useMemo(() =>
         flattenedNodes.filter(a => a.hasOwnBudget).map(a => a.guid),
         [flattenedNodes]
     );
+
+    const handleLevelChange = useCallback((level: number) => {
+        setExpandLevel(level);
+        const toExpand = new Set<string>();
+        const traverse = (nodes: AccountNode[], depth: number) => {
+            for (const node of nodes) {
+                if (depth < level && node.children.length > 0) {
+                    toExpand.add(node.guid);
+                    traverse(node.children, depth + 1);
+                }
+            }
+        };
+        traverse(treeData, 0);
+        setExpandedNodes(toExpand);
+    }, [treeData]);
+
+    const autoExpandBudgeted = useCallback(() => {
+        const toExpand = new Set<string>();
+        const findBudgeted = (nodes: AccountNode[], ancestors: string[]) => {
+            for (const node of nodes) {
+                if (node.hasOwnBudget) {
+                    ancestors.forEach(a => toExpand.add(a));
+                }
+                if (node.children.length > 0) {
+                    findBudgeted(node.children, [...ancestors, node.guid]);
+                }
+            }
+        };
+        findBudgeted(treeData, []);
+        setExpandedNodes(toExpand);
+    }, [treeData]);
+
+    // Compute footer summary rows by account type
+    const { incomePeriods, expensePeriods, transferPeriods, remainingPeriods,
+            incomeTotal, expenseTotal, transferTotal, remainingTotal } = useMemo(() => {
+        if (!budget) {
+            const empty = new Array(0).fill(0);
+            return {
+                incomePeriods: empty, expensePeriods: empty, transferPeriods: empty, remainingPeriods: empty,
+                incomeTotal: 0, expenseTotal: 0, transferTotal: 0, remainingTotal: 0
+            };
+        }
+
+        const incomeRoots = treeData.filter(n => n.type === 'INCOME');
+        const expenseRoots = treeData.filter(n => n.type === 'EXPENSE');
+        const transferRoots = treeData.filter(n => ['ASSET', 'LIABILITY', 'BANK', 'CASH'].includes(n.type));
+
+        const sumPeriods = (nodes: AccountNode[]) => {
+            const sums = new Array(budget.num_periods).fill(0);
+            for (const node of nodes) {
+                for (let i = 0; i < budget.num_periods; i++) {
+                    sums[i] += node.rolledUpPeriods.get(i + 1) || 0;
+                }
+            }
+            return sums;
+        };
+
+        const inc = sumPeriods(incomeRoots);
+        const exp = sumPeriods(expenseRoots);
+        const xfer = sumPeriods(transferRoots);
+
+        // Income is stored as negative in GnuCash, negate for display
+        const incDisplay = inc.map(v => -v);
+        // Liabilities within transfers are stored as negative, show as-is for net effect
+        const rem = incDisplay.map((v, i) => v - exp[i] - xfer[i]);
+
+        return {
+            incomePeriods: incDisplay,
+            expensePeriods: exp,
+            transferPeriods: xfer,
+            remainingPeriods: rem,
+            incomeTotal: incDisplay.reduce((s, v) => s + v, 0),
+            expenseTotal: exp.reduce((s, v) => s + v, 0),
+            transferTotal: xfer.reduce((s, v) => s + v, 0),
+            remainingTotal: rem.reduce((s, v) => s + v, 0),
+        };
+    }, [budget, treeData]);
+
+    // Helper to determine if a value should be display-inverted for budget view
+    const shouldInvertDisplay = (accountType: string) => {
+        return accountType === 'INCOME' || accountType === 'LIABILITY';
+    };
 
     const getPeriodLabel = (num: number, index: number) => {
         if (num === 12) {
@@ -517,17 +636,23 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 </header>
 
                 {/* Summary Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Budget</div>
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Income</div>
                         <div className="text-2xl font-bold text-emerald-400">
-                            {formatCurrency(grandTotal.toString(), 'USD')}
+                            {formatCurrency(incomeTotal.toString(), budgetCurrency)}
+                        </div>
+                    </div>
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Expenses</div>
+                        <div className="text-2xl font-bold text-rose-400">
+                            {formatCurrency(expenseTotal.toString(), budgetCurrency)}
                         </div>
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Average per Period</div>
                         <div className="text-2xl font-bold text-cyan-400">
-                            {formatCurrency((grandTotal / budget.num_periods).toString(), 'USD')}
+                            {formatCurrency((incomeTotal / budget.num_periods).toString(), budgetCurrency)}
                         </div>
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
@@ -583,6 +708,24 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                             >
                                 Collapse All
                             </button>
+                            <button
+                                onClick={autoExpandBudgeted}
+                                className="text-xs text-cyan-400 hover:text-cyan-300 px-2 py-1 rounded hover:bg-cyan-500/10 transition-colors"
+                                title="Expand only branches that contain budgeted accounts"
+                            >
+                                Auto-expand
+                            </button>
+                            <select
+                                value={expandLevel}
+                                onChange={(e) => handleLevelChange(parseInt(e.target.value))}
+                                className="text-xs bg-surface text-foreground-secondary border border-border rounded px-2 py-1"
+                            >
+                                <option value="0">Collapse All</option>
+                                <option value="1">Level 1</option>
+                                <option value="2">Level 2</option>
+                                <option value="3">Level 3</option>
+                                <option value="99">Expand All</option>
+                            </select>
                             <div className="w-px h-4 bg-border mx-1" />
                             <button
                                 onClick={() => setShowAllAccounts(!showAllAccounts)}
@@ -662,8 +805,9 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                 {Array.from({ length: budget.num_periods }, (_, i) => {
                                                     const value = displayPeriods.get(i + 1) || 0;
                                                     const ownValue = account.periods.get(i + 1) || 0;
+                                                    const invert = false;
 
-                                                    // Only show editor for accounts with their own budget
+                                                    // Show editor for accounts with their own budget
                                                     if (account.hasOwnBudget) {
                                                         return (
                                                             <td key={i} className="px-1 py-1">
@@ -675,13 +819,39 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                     currency={account.mnemonic}
                                                                     accountType={account.type}
                                                                     balanceReversal={balanceReversal}
+                                                                    invertDisplay={invert}
                                                                     onUpdate={(newValue) => handleAmountUpdate(account.guid, i + 1, newValue)}
                                                                 />
                                                             </td>
                                                         );
+                                                    } else if (!hasChildren && showAllAccounts) {
+                                                        // Non-budgeted leaf account: clickable empty cell to create budget entry inline
+                                                        return (
+                                                            <td key={i} className="px-2 py-1 text-right text-foreground-muted cursor-pointer hover:bg-surface-hover/50 transition-colors"
+                                                                onClick={async () => {
+                                                                    try {
+                                                                        await fetch(`/api/budgets/${budget.guid}/amounts`, {
+                                                                            method: 'PATCH',
+                                                                            headers: { 'Content-Type': 'application/json' },
+                                                                            body: JSON.stringify({
+                                                                                account_guid: account.guid,
+                                                                                period_num: i + 1,
+                                                                                amount: 0
+                                                                            })
+                                                                        });
+                                                                        await refreshBudget();
+                                                                    } catch (err) {
+                                                                        console.error('Error creating budget entry:', err);
+                                                                    }
+                                                                }}
+                                                                title="Click to add budget amount"
+                                                            >
+                                                                {'—'}
+                                                            </td>
+                                                        );
                                                     } else {
                                                         // Show rolled up value (read-only) or dash for unbudgeted
-                                                        const displayValue = applyBalanceReversal(value, account.type, balanceReversal);
+                                                        let displayValue = applyBalanceReversal(value, account.type, balanceReversal);
                                                         const isSubtotal = showRolledUp && account.rolledUpTotal !== 0;
                                                         return (
                                                             <td key={i} className={`px-2 py-1 text-right font-mono text-sm ${
@@ -694,20 +864,25 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         );
                                                     }
                                                 })}
-                                                <td className={`px-4 py-3 text-right font-mono font-semibold bg-background-tertiary/30 ${
-                                                    isUnbudgeted
-                                                        ? 'text-foreground-muted'
-                                                        : showRolledUp && !account.hasOwnBudget
-                                                            ? `italic ${applyBalanceReversal(displayTotal, account.type, balanceReversal) < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
-                                                            : applyBalanceReversal(displayTotal, account.type, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'
-                                                }`}>
-                                                    {isUnbudgeted
-                                                        ? '—'
-                                                        : formatCurrency(applyBalanceReversal(displayTotal, account.type, balanceReversal), account.mnemonic)
-                                                    }
-                                                </td>
+                                                {(() => {
+                                                    let totalDisplay = applyBalanceReversal(displayTotal, account.type, balanceReversal);
+                                                    return (
+                                                        <td className={`px-4 py-3 text-right font-mono font-semibold bg-background-tertiary/30 ${
+                                                            isUnbudgeted
+                                                                ? 'text-foreground-muted'
+                                                                : showRolledUp && !account.hasOwnBudget
+                                                                    ? `italic ${totalDisplay < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
+                                                                    : totalDisplay < 0 ? 'text-rose-400' : 'text-emerald-400'
+                                                        }`}>
+                                                            {isUnbudgeted
+                                                                ? '—'
+                                                                : formatCurrency(totalDisplay, account.mnemonic)
+                                                            }
+                                                        </td>
+                                                    );
+                                                })()}
                                                 <td className="px-2 py-2 text-center">
-                                                    {account.hasOwnBudget && (
+                                                    {account.hasOwnBudget ? (
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
                                                                 onClick={() => setBatchEditAccount({ guid: account.guid, name: account.name })}
@@ -738,24 +913,80 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                 </svg>
                                                             </button>
                                                         </div>
-                                                    )}
+                                                    ) : !hasChildren && showAllAccounts ? (
+                                                        <button
+                                                            onClick={() => handleAddToBudget(account.guid)}
+                                                            className="p-1.5 text-foreground-secondary hover:text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                                                            title="Add to budget"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                                            </svg>
+                                                        </button>
+                                                    ) : null}
                                                 </td>
                                             </tr>
                                         );
                                     })}
                                 </tbody>
                                 <tfoot className="sticky bottom-0 z-20">
-                                    <tr className="bg-background-tertiary font-semibold shadow-[0_-2px_10px_rgba(0,0,0,0.3)]">
-                                        <td className="px-4 py-3 text-foreground sticky left-0 bg-background-tertiary z-30">
-                                            Total
+                                    {/* Income row */}
+                                    <tr className="bg-background-tertiary/80 font-semibold border-t border-border">
+                                        <td className="px-4 py-2 text-emerald-400 sticky left-0 bg-background-tertiary/80 z-30">
+                                            Income
                                         </td>
-                                        {periodTotals.map((total, i) => (
-                                            <td key={i} className="px-3 py-3 text-right font-mono text-cyan-400">
-                                                {formatCurrency(total.toString(), 'USD')}
+                                        {incomePeriods.map((val, i) => (
+                                            <td key={i} className="px-3 py-2 text-right font-mono text-emerald-400">
+                                                {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-3 text-right font-mono text-emerald-400 bg-emerald-500/10">
-                                            {formatCurrency(grandTotal.toString(), 'USD')}
+                                        <td className="px-4 py-2 text-right font-mono text-emerald-400 bg-emerald-500/10">
+                                            {formatCurrency(incomeTotal.toString(), budgetCurrency)}
+                                        </td>
+                                        <td className="px-2 py-2"></td>
+                                    </tr>
+                                    {/* Expense row */}
+                                    <tr className="bg-background-tertiary/80 font-semibold">
+                                        <td className="px-4 py-2 text-rose-400 sticky left-0 bg-background-tertiary/80 z-30">
+                                            Expenses
+                                        </td>
+                                        {expensePeriods.map((val, i) => (
+                                            <td key={i} className="px-3 py-2 text-right font-mono text-rose-400">
+                                                {formatCurrency(val.toString(), budgetCurrency)}
+                                            </td>
+                                        ))}
+                                        <td className="px-4 py-2 text-right font-mono text-rose-400 bg-rose-500/10">
+                                            {formatCurrency(expenseTotal.toString(), budgetCurrency)}
+                                        </td>
+                                        <td className="px-2 py-2"></td>
+                                    </tr>
+                                    {/* Transfers row */}
+                                    <tr className="bg-background-tertiary/80 font-semibold">
+                                        <td className="px-4 py-2 text-foreground-secondary sticky left-0 bg-background-tertiary/80 z-30">
+                                            Transfers
+                                        </td>
+                                        {transferPeriods.map((val, i) => (
+                                            <td key={i} className="px-3 py-2 text-right font-mono text-foreground-secondary">
+                                                {formatCurrency(val.toString(), budgetCurrency)}
+                                            </td>
+                                        ))}
+                                        <td className="px-4 py-2 text-right font-mono text-foreground-secondary bg-background-tertiary/30">
+                                            {formatCurrency(transferTotal.toString(), budgetCurrency)}
+                                        </td>
+                                        <td className="px-2 py-2"></td>
+                                    </tr>
+                                    {/* Remaining to Budget row */}
+                                    <tr className="bg-background-tertiary font-semibold shadow-[0_-2px_10px_rgba(0,0,0,0.3)]">
+                                        <td className="px-4 py-3 text-foreground sticky left-0 bg-background-tertiary z-30">
+                                            Remaining to Budget
+                                        </td>
+                                        {remainingPeriods.map((val, i) => (
+                                            <td key={i} className={`px-3 py-3 text-right font-mono ${val < 0 ? 'text-rose-400' : 'text-cyan-400'}`}>
+                                                {formatCurrency(val.toString(), budgetCurrency)}
+                                            </td>
+                                        ))}
+                                        <td className={`px-4 py-3 text-right font-mono font-bold ${remainingTotal < 0 ? 'text-rose-400 bg-rose-500/10' : 'text-emerald-400 bg-emerald-500/10'}`}>
+                                            {formatCurrency(remainingTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-3"></td>
                                     </tr>
