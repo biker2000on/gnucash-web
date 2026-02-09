@@ -8,8 +8,12 @@
 export {
   fetchBatchQuotes,
   fetchAndStorePrices,
+  fetchHistoricalPrices,
+  getLastPriceDate,
+  detectAndFillGaps,
   getQuotableCommodities,
   storeFetchedPrice,
+  getExistingPriceDates,
 } from './yahoo-price-service';
 
 export type {

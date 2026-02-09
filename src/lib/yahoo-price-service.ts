@@ -1,8 +1,11 @@
 /**
  * Yahoo Finance Price Service
  *
- * Service for fetching stock/commodity prices from Yahoo Finance
+ * Service for fetching historical closing prices from Yahoo Finance
  * and storing them in the GnuCash prices table.
+ *
+ * DESIGN RULE: Only historical closing prices are stored.
+ * The most recent price is always yesterday's close. No real-time quotes.
  *
  * Uses the yahoo-finance2 package which requires no API key.
  */
@@ -16,11 +19,8 @@ import { fromDecimal, generateGuid } from './prisma';
  */
 export interface PriceFetchResult {
   symbol: string;
-  price: number;
-  previousClose: number;
-  change: number;
-  changePercent: number;
-  timestamp: Date;
+  pricesStored: number;
+  dateRange: { from: string; to: string } | null;
   success: boolean;
   error?: string;
 }
@@ -39,53 +39,204 @@ export interface QuotableCommodity {
  * Result summary from fetchAndStorePrices operation
  */
 export interface FetchAndStoreResult {
-  fetched: number;
   stored: number;
+  backfilled: number;
+  gapsFilled: number;
   failed: number;
-  skipped: number;
   results: PriceFetchResult[];
 }
 
 /**
- * Check if a price already exists for a commodity today
- * @param commodityGuid GUID of the commodity to check
- * @returns true if a price exists for today, false otherwise
+ * A single historical price row returned from Yahoo Finance
  */
-async function hasPriceForToday(commodityGuid: string): Promise<boolean> {
-  const { default: prisma } = await import('./prisma');
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const existingPrice = await prisma.prices.findFirst({
-    where: {
-      commodity_guid: commodityGuid,
-      date: { gte: today, lt: tomorrow },
-    },
-  });
-
-  return existingPrice !== null;
+interface HistoricalPriceRow {
+  date: Date;
+  close: number;
 }
 
 /**
- * Fetch batch quotes from Yahoo Finance
- * @param symbols Array of stock symbols to fetch
- * @returns Array of price fetch results
+ * Format a Date as YYYY-MM-DD string (UTC)
  */
-export async function fetchBatchQuotes(symbols: string[]): Promise<PriceFetchResult[]> {
+function formatDateYMD(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Get yesterday's date at midnight UTC
+ */
+function getYesterday(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d;
+}
+
+/**
+ * Get the date of the most recent stored price for a commodity
+ * @param commodityGuid GUID of the commodity
+ * @returns The latest price date, or null if no prices exist
+ */
+export async function getLastPriceDate(commodityGuid: string): Promise<Date | null> {
+  const { default: prisma } = await import('./prisma');
+
+  const latestPrice = await prisma.prices.findFirst({
+    where: { commodity_guid: commodityGuid },
+    orderBy: { date: 'desc' },
+    select: { date: true },
+  });
+
+  return latestPrice?.date ?? null;
+}
+
+/**
+ * Get a Set of YYYY-MM-DD date strings for all existing prices in a range.
+ * CRITICAL: The prices table has NO unique constraint, so we must deduplicate
+ * by checking existing dates before every insert.
+ *
+ * @param commodityGuid GUID of the commodity
+ * @param startDate Start of range (inclusive)
+ * @param endDate End of range (inclusive)
+ * @returns Set of date strings in YYYY-MM-DD format
+ */
+export async function getExistingPriceDates(
+  commodityGuid: string,
+  startDate: Date,
+  endDate: Date
+): Promise<Set<string>> {
+  const { default: prisma } = await import('./prisma');
+
+  const existing = await prisma.prices.findMany({
+    where: {
+      commodity_guid: commodityGuid,
+      date: { gte: startDate, lte: endDate },
+    },
+    select: { date: true },
+  });
+
+  const dateSet = new Set<string>();
+  for (const row of existing) {
+    dateSet.add(formatDateYMD(row.date));
+  }
+  return dateSet;
+}
+
+/**
+ * Fetch historical closing prices from Yahoo Finance.
+ * Uses yahooFinance.historical() -- never real-time quotes.
+ *
+ * @param symbol Stock ticker symbol
+ * @param startDate Start date (inclusive)
+ * @param endDate End date (inclusive)
+ * @returns Array of { date, close } objects
+ */
+export async function fetchHistoricalPrices(
+  symbol: string,
+  startDate: Date,
+  endDate: Date
+): Promise<HistoricalPriceRow[]> {
+  const yahooFinance = new YahooFinance();
+
+  const rows = await yahooFinance.historical(symbol, {
+    period1: startDate,
+    period2: endDate,
+    interval: '1d',
+  });
+
+  return rows
+    .filter((r) => typeof r.close === 'number' && r.close > 0)
+    .map((r) => ({ date: r.date, close: r.close }));
+}
+
+/**
+ * Detect and fill gaps in stored price history for a commodity.
+ * Fetches existing dates, gets historical prices from Yahoo, and stores only missing dates.
+ * Uses yesterday as the upper bound -- never today.
+ *
+ * @param commodityGuid GUID of the commodity
+ * @param symbol Stock ticker symbol
+ * @param lookbackMonths Number of months to look back for gaps (default 3)
+ * @returns Number of gap prices filled
+ */
+export async function detectAndFillGaps(
+  commodityGuid: string,
+  symbol: string,
+  lookbackMonths: number = 3
+): Promise<number> {
+  const yesterday = getYesterday();
+  const startDate = new Date(yesterday);
+  startDate.setUTCMonth(startDate.getUTCMonth() - lookbackMonths);
+
+  // Get all existing dates in the range
+  const existingDates = await getExistingPriceDates(commodityGuid, startDate, yesterday);
+
+  // If no existing prices at all, skip gap detection (backfill should handle it)
+  if (existingDates.size === 0) {
+    return 0;
+  }
+
+  // Fetch historical prices for the full range
+  let historicalPrices: HistoricalPriceRow[];
+  try {
+    historicalPrices = await fetchHistoricalPrices(symbol, startDate, yesterday);
+  } catch (err) {
+    console.warn(`Gap detection: failed to fetch historical prices for ${symbol}:`, err);
+    return 0;
+  }
+
+  // Store only dates that are missing
+  let filled = 0;
+  for (const row of historicalPrices) {
+    const dateStr = formatDateYMD(row.date);
+    if (!existingDates.has(dateStr)) {
+      const stored = await storeFetchedPrice(commodityGuid, symbol, row.close, row.date);
+      if (stored) {
+        filled++;
+        // Add to set so we don't double-insert within this batch
+        existingDates.add(dateStr);
+      }
+    }
+  }
+
+  return filled;
+}
+
+/**
+ * Fetch batch quotes from Yahoo Finance (real-time).
+ * KEPT AS UTILITY but NOT used by fetchAndStorePrices.
+ * Only historical closing prices are stored in the database.
+ *
+ * @param symbols Array of stock symbols to fetch
+ * @returns Array of raw quote results
+ */
+export async function fetchBatchQuotes(symbols: string[]): Promise<Array<{
+  symbol: string;
+  price: number;
+  previousClose: number;
+  change: number;
+  changePercent: number;
+  timestamp: Date;
+  success: boolean;
+  error?: string;
+}>> {
   if (symbols.length === 0) {
     return [];
   }
 
-  const results: PriceFetchResult[] = [];
+  const results: Array<{
+    symbol: string;
+    price: number;
+    previousClose: number;
+    change: number;
+    changePercent: number;
+    timestamp: Date;
+    success: boolean;
+    error?: string;
+  }> = [];
 
   try {
     const yahooFinance = new YahooFinance();
     const quotes = await yahooFinance.quote(symbols);
 
-    // Build a map of returned quotes for quick lookup
     const quotesMap = new Map<string, typeof quotes[number]>();
     for (const quote of quotes) {
       if (quote && quote.symbol) {
@@ -93,7 +244,6 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<PriceFetchRes
       }
     }
 
-    // Process each requested symbol
     for (const symbol of symbols) {
       const quote = quotesMap.get(symbol.toUpperCase());
 
@@ -110,7 +260,6 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<PriceFetchRes
           success: true,
         });
       } else {
-        console.warn(`Price fetch: Symbol not found or invalid response: ${symbol}`);
         results.push({
           symbol: symbol,
           price: 0,
@@ -124,7 +273,6 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<PriceFetchRes
       }
     }
   } catch (error) {
-    // If the entire API call fails, mark all symbols as failed
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('Yahoo Finance batch quote error:', errorMessage);
 
@@ -187,7 +335,8 @@ export async function storeFetchedPrice(
 ): Promise<string | null> {
   const { default: prisma } = await import('./prisma');
 
-  // Get USD currency for price storage
+  // TODO: Accept currencyGuid parameter instead of hardcoding USD lookup
+  // Currently hardcodes USD, but should use the commodity's quote currency or book's base currency
   const usd = await getCurrencyByMnemonic('USD');
   if (!usd) {
     console.error(`Cannot store price for ${symbol}: USD currency not found`);
@@ -220,15 +369,27 @@ export async function storeFetchedPrice(
 }
 
 /**
- * Fetch and store prices for all quotable commodities (or specific symbols)
+ * Fetch and store historical closing prices for all quotable commodities (or specific symbols).
+ *
+ * DESIGN: Only historical closing prices are stored. The most recent price is
+ * always yesterday's close. No real-time quotes are fetched or stored.
+ *
+ * Three MUTUALLY EXCLUSIVE paths:
+ * 1. force=true: Fetch full 3-month range, insert only missing dates
+ * 2. !lastDate: First-time backfill, fetch 3 months up to yesterday
+ * 3. Normal: Backfill from lastDate+1 to yesterday, then gap detection
+ *
  * @param symbols Optional array of specific symbols to fetch. If not provided, fetches all quotable commodities.
- * @param force If true, fetch prices even if today's price already exists
+ * @param force If true, fetch full 3-month historical range regardless of existing data
  * @returns Summary of the fetch and store operation
  */
 export async function fetchAndStorePrices(
   symbols?: string[],
   force: boolean = false
 ): Promise<FetchAndStoreResult> {
+  const LOOKBACK_MONTHS = 3;
+  const yesterday = getYesterday();
+
   // Get quotable commodities
   const commodities = await getQuotableCommodities();
 
@@ -240,78 +401,132 @@ export async function fetchAndStorePrices(
   }
 
   if (targetCommodities.length === 0) {
-    return {
-      fetched: 0,
-      stored: 0,
-      failed: 0,
-      skipped: 0,
-      results: [],
-    };
+    return { stored: 0, backfilled: 0, gapsFilled: 0, failed: 0, results: [] };
   }
 
-  // Filter out commodities that already have today's price (unless force=true)
-  let commoditiesToFetch = targetCommodities;
-  let skippedCount = 0;
+  const results: PriceFetchResult[] = [];
+  let totalBackfilled = 0;
+  let totalGapsFilled = 0;
+  let totalFailed = 0;
 
-  if (!force) {
-    commoditiesToFetch = [];
-    for (const commodity of targetCommodities) {
-      const hasToday = await hasPriceForToday(commodity.guid);
-      if (!hasToday) {
-        commoditiesToFetch.push(commodity);
+  for (const commodity of targetCommodities) {
+    const symbol = commodity.mnemonic;
+    let pricesStored = 0;
+    let earliestDate: string | null = null;
+    let latestDate: string | null = null;
+
+    try {
+      if (force) {
+        // PATH 1: Force -- fetch full 3-month range, insert only missing
+        // Mutually exclusive: skip normal backfill and gap detection
+        const startDate = new Date(yesterday);
+        startDate.setUTCMonth(startDate.getUTCMonth() - LOOKBACK_MONTHS);
+
+        const existingDates = await getExistingPriceDates(commodity.guid, startDate, yesterday);
+        const historicalPrices = await fetchHistoricalPrices(symbol, startDate, yesterday);
+
+        for (const row of historicalPrices) {
+          const dateStr = formatDateYMD(row.date);
+          if (!existingDates.has(dateStr)) {
+            const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
+            if (stored) {
+              pricesStored++;
+              existingDates.add(dateStr);
+              if (!earliestDate || dateStr < earliestDate) earliestDate = dateStr;
+              if (!latestDate || dateStr > latestDate) latestDate = dateStr;
+            }
+          }
+        }
+
+        // Force counts toward backfilled (it is a full-range backfill)
+        totalBackfilled += pricesStored;
       } else {
-        skippedCount++;
-      }
-    }
+        const lastDate = await getLastPriceDate(commodity.guid);
 
-    if (commoditiesToFetch.length === 0) {
-      return { fetched: 0, stored: 0, failed: 0, skipped: skippedCount, results: [] };
-    }
-  }
+        if (!lastDate) {
+          // PATH 2: First-time backfill -- fetch 3 months up to yesterday
+          const startDate = new Date(yesterday);
+          startDate.setUTCMonth(startDate.getUTCMonth() - LOOKBACK_MONTHS);
 
-  // Create symbol to commodity GUID mapping
-  const symbolToGuid = new Map<string, string>();
-  for (const commodity of commoditiesToFetch) {
-    symbolToGuid.set(commodity.mnemonic.toUpperCase(), commodity.guid);
-  }
+          const existingDates = await getExistingPriceDates(commodity.guid, startDate, yesterday);
+          const historicalPrices = await fetchHistoricalPrices(symbol, startDate, yesterday);
 
-  // Fetch prices from Yahoo Finance
-  const fetchSymbols = commoditiesToFetch.map(c => c.mnemonic);
-  const fetchResults = await fetchBatchQuotes(fetchSymbols);
+          for (const row of historicalPrices) {
+            const dateStr = formatDateYMD(row.date);
+            if (!existingDates.has(dateStr)) {
+              const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
+              if (stored) {
+                pricesStored++;
+                existingDates.add(dateStr);
+                if (!earliestDate || dateStr < earliestDate) earliestDate = dateStr;
+                if (!latestDate || dateStr > latestDate) latestDate = dateStr;
+              }
+            }
+          }
 
-  let stored = 0;
-  let failed = 0;
-  const now = new Date();
-
-  // Store successful fetches
-  for (const result of fetchResults) {
-    if (result.success) {
-      const commodityGuid = symbolToGuid.get(result.symbol.toUpperCase());
-      if (commodityGuid) {
-        const priceGuid = await storeFetchedPrice(
-          commodityGuid,
-          result.symbol,
-          result.price,
-          now
-        );
-        if (priceGuid) {
-          stored++;
+          totalBackfilled += pricesStored;
         } else {
-          failed++;
-          result.success = false;
-          result.error = 'Failed to store price';
+          // PATH 3: Normal -- backfill from lastDate+1 to yesterday, then gap detection
+          const backfillStart = new Date(lastDate);
+          backfillStart.setUTCDate(backfillStart.getUTCDate() + 1);
+          backfillStart.setUTCHours(0, 0, 0, 0);
+
+          let backfillCount = 0;
+
+          // Only backfill if there are days to fill
+          if (backfillStart <= yesterday) {
+            const existingDates = await getExistingPriceDates(commodity.guid, backfillStart, yesterday);
+            const historicalPrices = await fetchHistoricalPrices(symbol, backfillStart, yesterday);
+
+            for (const row of historicalPrices) {
+              const dateStr = formatDateYMD(row.date);
+              if (!existingDates.has(dateStr)) {
+                const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
+                if (stored) {
+                  backfillCount++;
+                  existingDates.add(dateStr);
+                  if (!earliestDate || dateStr < earliestDate) earliestDate = dateStr;
+                  if (!latestDate || dateStr > latestDate) latestDate = dateStr;
+                }
+              }
+            }
+          }
+
+          totalBackfilled += backfillCount;
+          pricesStored += backfillCount;
+
+          // Gap detection on the full lookback range
+          const gapsFilled = await detectAndFillGaps(commodity.guid, symbol, LOOKBACK_MONTHS);
+          totalGapsFilled += gapsFilled;
+          pricesStored += gapsFilled;
         }
       }
-    } else {
-      failed++;
+
+      results.push({
+        symbol,
+        pricesStored,
+        dateRange: earliestDate && latestDate ? { from: earliestDate, to: latestDate } : null,
+        success: true,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Failed to process ${symbol}:`, errorMessage);
+      totalFailed++;
+      results.push({
+        symbol,
+        pricesStored: 0,
+        dateRange: null,
+        success: false,
+        error: errorMessage,
+      });
     }
   }
 
   return {
-    fetched: fetchResults.filter(r => r.success && r.price > 0).length,
-    stored,
-    failed,
-    skipped: skippedCount,
-    results: fetchResults,
+    stored: totalBackfilled + totalGapsFilled,
+    backfilled: totalBackfilled,
+    gapsFilled: totalGapsFilled,
+    failed: totalFailed,
+    results,
   };
 }

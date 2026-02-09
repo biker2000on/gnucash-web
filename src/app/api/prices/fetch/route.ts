@@ -5,21 +5,23 @@ import { z } from 'zod';
 /**
  * POST /api/prices/fetch
  *
- * Trigger price fetching from Yahoo Finance
+ * Trigger historical price backfill from Yahoo Finance.
+ * Only stores historical closing prices -- never real-time quotes.
+ * The most recent price stored is always yesterday's close.
  *
  * Request body (optional):
  * {
  *   symbols?: string[]  // Specific symbols to fetch (default: all quotable commodities)
- *   force?: boolean     // Force refetch even if price exists for today (default: false)
+ *   force?: boolean     // Force full 3-month historical refetch (default: false)
  * }
  *
  * Response:
  * {
- *   fetched: number,    // Number of prices successfully fetched from API
- *   stored: number,     // Number of prices successfully stored in database
- *   failed: number,     // Number of failed operations
- *   skipped: number,    // Number of symbols skipped (price already exists)
- *   results: [...]      // Detailed results for each symbol
+ *   stored: number,      // Total number of prices stored across all paths
+ *   backfilled: number,  // Number of prices backfilled (new dates since last stored)
+ *   gapsFilled: number,  // Number of gap prices filled from lookback detection
+ *   failed: number,      // Number of failed symbol operations
+ *   results: [...]       // Detailed results for each symbol
  * }
  */
 
@@ -50,30 +52,27 @@ export async function POST(request: NextRequest) {
       force = parseResult.data.force ?? false;
     }
 
-    // Fetch and store prices
+    // Fetch and store historical prices
     const result = await fetchAndStorePrices(symbols, force);
 
     return NextResponse.json({
-      fetched: result.fetched,
       stored: result.stored,
+      backfilled: result.backfilled,
+      gapsFilled: result.gapsFilled,
       failed: result.failed,
-      skipped: result.skipped,
       results: result.results.map(r => ({
         symbol: r.symbol,
-        price: r.price,
-        previousClose: r.previousClose,
-        change: r.change,
-        changePercent: r.changePercent,
-        timestamp: r.timestamp.toISOString(),
+        pricesStored: r.pricesStored,
+        dateRange: r.dateRange,
         success: r.success,
         error: r.error,
       })),
     });
   } catch (error) {
-    console.error('Error in price fetch:', error);
+    console.error('Error in historical price backfill:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { error: `Failed to fetch prices: ${message}` },
+      { error: `Failed to fetch historical prices: ${message}` },
       { status: 500 }
     );
   }
