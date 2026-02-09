@@ -46,15 +46,18 @@ async function prefetchExchangeRates(
 async function computeBalances(
     bookAccountGuids: string[],
     asOfDate: Date,
-    baseCurrencyGuid: string
+    baseCurrencyGuid: string,
+    customAccountGuids?: string[] | null
 ): Promise<{ accounts: Array<{ name: string; balance: number }>; total: number }> {
+    // If custom GUIDs provided, intersect with book scope for security
+    const validGuids = customAccountGuids && customAccountGuids.length > 0
+        ? customAccountGuids.filter(g => bookAccountGuids.includes(g))
+        : null;
+
     const assetAccounts = await prisma.accounts.findMany({
-        where: {
-            guid: { in: bookAccountGuids },
-            account_type: { in: ['ASSET', 'BANK', 'CASH'] },
-            hidden: 0,
-            placeholder: 0,
-        },
+        where: validGuids && validGuids.length > 0
+            ? { guid: { in: validGuids }, hidden: 0, placeholder: 0 }
+            : { guid: { in: bookAccountGuids }, account_type: { in: ['ASSET', 'BANK', 'CASH'] }, hidden: 0, placeholder: 0 },
         select: {
             guid: true,
             name: true,
@@ -240,12 +243,17 @@ export async function GET(request: NextRequest) {
             ? new Date(searchParams.get('endDate')! + 'T23:59:59Z')
             : new Date();
 
+        const accountGuidsParam = searchParams.get('accountGuids');
+        const customAccountGuids = accountGuidsParam
+            ? accountGuidsParam.split(',').filter(g => g.trim())
+            : null;
+
         // Opening balance: sum of asset accounts up to (but not including) period start
         const openingCutoff = new Date(startDate.getTime() - 1);
-        const openingBalance = await computeBalances(bookAccountGuids, openingCutoff, baseCurrencyGuid);
+        const openingBalance = await computeBalances(bookAccountGuids, openingCutoff, baseCurrencyGuid, customAccountGuids);
 
         // Closing balance: sum of asset accounts up to period end
-        const closingBalance = await computeBalances(bookAccountGuids, endDate, baseCurrencyGuid);
+        const closingBalance = await computeBalances(bookAccountGuids, endDate, baseCurrencyGuid, customAccountGuids);
 
         // Income transactions in period
         const incomeSummary = await getTransactionsByType(
