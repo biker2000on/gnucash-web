@@ -68,6 +68,16 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
 
+    // View toggle state
+    const [showAllAccounts, setShowAllAccounts] = useState(false);
+    const [allAccounts, setAllAccounts] = useState<Array<{
+        guid: string;
+        name: string;
+        account_type: string;
+        parent_guid: string | null;
+        commodity: { mnemonic: string } | null;
+    }>>([]);
+
     // Delete confirmation state
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingAccountGuid, setDeletingAccountGuid] = useState<string | null>(null);
@@ -92,6 +102,22 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         }
         fetchBudget();
     }, [guid]);
+
+    useEffect(() => {
+        if (!showAllAccounts) return;
+        async function fetchAllAccounts() {
+            try {
+                const res = await fetch(`/api/budgets/${guid}/accounts`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setAllAccounts(data);
+                }
+            } catch (err) {
+                console.error('Error fetching all accounts:', err);
+            }
+        }
+        fetchAllAccounts();
+    }, [guid, showAllAccounts]);
 
     const refreshBudget = async () => {
         try {
@@ -193,9 +219,22 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
     const expandAll = useCallback(() => {
         if (!budget) return;
-        const allGuids = new Set(budget.amounts.map(a => a.account_parent_guid).filter((g): g is string => g !== null));
-        setExpandedNodes(allGuids);
-    }, [budget]);
+        const parentGuids = new Set(budget.amounts.map(a => a.account_parent_guid).filter((g): g is string => g !== null));
+        if (showAllAccounts && allAccounts.length > 0) {
+            // Also include all parent guids from all accounts, and all accounts that have children
+            const allParentGuids = new Set(allAccounts.map(a => a.parent_guid).filter((g): g is string => g !== null));
+            for (const pg of allParentGuids) {
+                parentGuids.add(pg);
+            }
+            // Any account that is a parent_guid of another account needs to be expandable
+            for (const a of allAccounts) {
+                if (allParentGuids.has(a.guid)) {
+                    parentGuids.add(a.guid);
+                }
+            }
+        }
+        setExpandedNodes(parentGuids);
+    }, [budget, showAllAccounts, allAccounts]);
 
     const collapseAll = useCallback(() => {
         setExpandedNodes(new Set());
@@ -214,6 +253,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             parentGuid: string | null;
             periods: Map<number, number>;
             ownTotal: number;
+            hasOwnBudget: boolean;
         }>();
 
         for (const amount of budget.amounts) {
@@ -234,39 +274,70 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     parentGuid: amount.account_parent_guid,
                     periods,
                     ownTotal: value,
+                    hasOwnBudget: true,
                 });
+            }
+        }
+
+        // When showing all accounts, merge in non-budgeted accounts
+        if (showAllAccounts && allAccounts.length > 0) {
+            // Build a set of all account GUIDs returned by the API (excludes ROOT)
+            const allAccountGuids = new Set(allAccounts.map(a => a.guid));
+
+            for (const acc of allAccounts) {
+                if (!accountMap.has(acc.guid)) {
+                    // If parent_guid points to an account not in allAccounts, it's the ROOT account
+                    // Treat those as top-level (parentGuid = null)
+                    const parentGuid = acc.parent_guid && allAccountGuids.has(acc.parent_guid)
+                        ? acc.parent_guid
+                        : null;
+
+                    accountMap.set(acc.guid, {
+                        guid: acc.guid,
+                        name: acc.name,
+                        type: acc.account_type,
+                        mnemonic: acc.commodity?.mnemonic || 'USD',
+                        parentGuid: parentGuid,
+                        periods: new Map(),
+                        ownTotal: 0,
+                        hasOwnBudget: false,
+                    });
+                }
+            }
+
+            // Also fix parentGuid for budgeted accounts whose parent is ROOT
+            // (i.e., parent_guid not in allAccountGuids means it's ROOT or missing)
+            for (const [, data] of accountMap) {
+                if (data.parentGuid && !allAccountGuids.has(data.parentGuid)) {
+                    data.parentGuid = null;
+                }
             }
         }
 
         // Build tree nodes
         const nodeMap = new Map<string, AccountNode>();
-        const budgetedGuids = new Set(accountMap.keys());
 
-        // Create nodes for all budgeted accounts
+        // Create nodes for all accounts in accountMap
         for (const [guid, data] of accountMap) {
             nodeMap.set(guid, {
-                ...data,
+                guid: data.guid,
+                name: data.name,
+                type: data.type,
+                mnemonic: data.mnemonic,
+                parentGuid: data.parentGuid,
+                periods: data.periods,
+                ownTotal: data.ownTotal,
                 rolledUpTotal: data.ownTotal,
                 rolledUpPeriods: new Map(data.periods),
                 children: [],
                 depth: 0,
-                hasOwnBudget: true,
+                hasOwnBudget: data.hasOwnBudget,
             });
-        }
-
-        // Also add parent nodes that aren't budgeted themselves but have budgeted children
-        // We need to collect parent chain for each budgeted account
-        const parentChains = new Map<string, string[]>();
-        for (const [guid, data] of accountMap) {
-            if (data.parentGuid && !budgetedGuids.has(data.parentGuid)) {
-                // This parent isn't budgeted, we'd need to fetch it
-                // For now, we'll just show the flat list if parent info is missing
-            }
         }
 
         // Build parent-child relationships and find roots
         const roots: AccountNode[] = [];
-        for (const [guid, node] of nodeMap) {
+        for (const [, node] of nodeMap) {
             if (node.parentGuid && nodeMap.has(node.parentGuid)) {
                 const parent = nodeMap.get(node.parentGuid)!;
                 parent.children.push(node);
@@ -303,6 +374,9 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             setDepthAndRollUp(root, 0);
         }
 
+        // When showing all accounts, prune branches that have zero budget anywhere
+        // (optional: keep all to show full hierarchy)
+
         // Flatten tree for rendering, respecting expanded state
         const flattened: AccountNode[] = [];
         const flattenTree = (nodes: AccountNode[], expanded: Set<string>) => {
@@ -333,10 +407,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             periodTotals: totals,
             grandTotal: total,
         };
-    }, [budget, expandedNodes]);
+    }, [budget, expandedNodes, showAllAccounts, allAccounts]);
 
     const existingAccountGuids = useMemo(() =>
-        flattenedNodes.map(a => a.guid),
+        flattenedNodes.filter(a => a.hasOwnBudget).map(a => a.guid),
         [flattenedNodes]
     );
 
@@ -357,18 +431,18 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 <div className="flex items-center gap-4">
                     <Link
                         href="/budgets"
-                        className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="p-2 rounded-lg hover:bg-surface-hover text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                         </svg>
                     </Link>
-                    <div className="h-8 w-48 bg-neutral-800 rounded animate-pulse" />
+                    <div className="h-8 w-48 bg-background-tertiary rounded animate-pulse" />
                 </div>
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading budget...</span>
+                        <span className="text-foreground-secondary">Loading budget...</span>
                     </div>
                 </div>
             </div>
@@ -381,19 +455,19 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 <div className="flex items-center gap-4">
                     <Link
                         href="/budgets"
-                        className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="p-2 rounded-lg hover:bg-surface-hover text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                         </svg>
                     </Link>
-                    <h1 className="text-3xl font-bold text-neutral-100">Budget Not Found</h1>
+                    <h1 className="text-3xl font-bold text-foreground">Budget Not Found</h1>
                 </div>
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
                     <div className="text-rose-400">{error || 'Budget not found'}</div>
                     <Link
                         href="/budgets"
-                        className="inline-block mt-4 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 rounded-lg transition-colors"
+                        className="inline-block mt-4 px-4 py-2 bg-background-tertiary hover:bg-border-hover text-foreground rounded-lg transition-colors"
                     >
                         Back to Budgets
                     </Link>
@@ -410,16 +484,16 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     <div className="flex items-center gap-4">
                         <Link
                             href="/budgets"
-                            className="p-2 rounded-lg hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors"
+                            className="p-2 rounded-lg hover:bg-surface-hover text-foreground-secondary hover:text-foreground transition-colors"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                             </svg>
                         </Link>
                         <div>
-                            <h1 className="text-3xl font-bold text-neutral-100">{budget.name}</h1>
+                            <h1 className="text-3xl font-bold text-foreground">{budget.name}</h1>
                             {budget.description && (
-                                <p className="text-neutral-500">{budget.description}</p>
+                                <p className="text-foreground-muted">{budget.description}</p>
                             )}
                         </div>
                     </div>
@@ -427,7 +501,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
                             {budget.num_periods === 12 ? 'Monthly' : budget.num_periods === 4 ? 'Quarterly' : `${budget.num_periods} Periods`}
                         </span>
-                        <span className="text-neutral-500 text-sm">
+                        <span className="text-foreground-muted text-sm">
                             {flattenedNodes.length} accounts
                         </span>
                         <button
@@ -444,21 +518,30 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
                 {/* Summary Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-6">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-1">Total Budget</div>
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Budget</div>
                         <div className="text-2xl font-bold text-emerald-400">
                             {formatCurrency(grandTotal.toString(), 'USD')}
                         </div>
                     </div>
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-6">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-1">Average per Period</div>
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Average per Period</div>
                         <div className="text-2xl font-bold text-cyan-400">
                             {formatCurrency((grandTotal / budget.num_periods).toString(), 'USD')}
                         </div>
                     </div>
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-6">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-1">Budgeted Accounts</div>
-                        <div className="text-2xl font-bold text-neutral-200">{flattenedNodes.length}</div>
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                            {showAllAccounts ? 'Accounts Shown' : 'Budgeted Accounts'}
+                        </div>
+                        <div className="text-2xl font-bold text-foreground">
+                            {flattenedNodes.length}
+                            {showAllAccounts && (
+                                <span className="text-sm font-normal text-foreground-muted ml-2">
+                                    ({flattenedNodes.filter(n => n.hasOwnBudget).length} budgeted)
+                                </span>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -466,12 +549,12 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             {/* Budget Table - Full Width */}
             <div>
                 {flattenedNodes.length === 0 ? (
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 text-center">
-                        <svg className="w-16 h-16 mx-auto text-neutral-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 text-center">
+                        <svg className="w-16 h-16 mx-auto text-border-hover mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                         </svg>
-                        <h3 className="text-lg font-medium text-neutral-300 mb-2">No Budget Allocations</h3>
-                        <p className="text-neutral-500 mb-4">
+                        <h3 className="text-lg font-medium text-foreground-secondary mb-2">No Budget Allocations</h3>
+                        <p className="text-foreground-muted mb-4">
                             This budget has no account allocations yet.
                         </p>
                         <button
@@ -485,47 +568,60 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         </button>
                     </div>
                 ) : (
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border-y border-neutral-800">
+                    <div className="bg-surface/30 backdrop-blur-xl border-y border-border">
                         {/* Expand/Collapse Controls */}
-                        <div className="px-4 py-2 bg-neutral-900/50 border-b border-neutral-800 flex items-center gap-2">
+                        <div className="px-4 py-2 bg-surface-hover/50 border-b border-border flex items-center gap-2">
                             <button
                                 onClick={expandAll}
-                                className="text-xs text-neutral-400 hover:text-neutral-200 px-2 py-1 rounded hover:bg-neutral-800 transition-colors"
+                                className="text-xs text-foreground-secondary hover:text-foreground px-2 py-1 rounded hover:bg-surface-hover transition-colors"
                             >
                                 Expand All
                             </button>
                             <button
                                 onClick={collapseAll}
-                                className="text-xs text-neutral-400 hover:text-neutral-200 px-2 py-1 rounded hover:bg-neutral-800 transition-colors"
+                                className="text-xs text-foreground-secondary hover:text-foreground px-2 py-1 rounded hover:bg-surface-hover transition-colors"
                             >
                                 Collapse All
+                            </button>
+                            <div className="w-px h-4 bg-border mx-1" />
+                            <button
+                                onClick={() => setShowAllAccounts(!showAllAccounts)}
+                                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                    showAllAccounts
+                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
+                                }`}
+                            >
+                                {showAllAccounts ? 'All Accounts' : 'Budgeted Only'}
                             </button>
                         </div>
                         <div className="overflow-auto max-h-[calc(100vh-300px)]">
                             <table className="w-full text-sm">
                                 <thead className="sticky top-0 z-20">
-                                    <tr className="bg-neutral-900 text-neutral-400 text-xs uppercase tracking-widest shadow-md">
-                                        <th className="px-4 py-3 text-left font-semibold sticky left-0 bg-neutral-900 z-30 min-w-[250px]">Account</th>
+                                    <tr className="bg-background-secondary text-foreground-secondary text-xs uppercase tracking-widest shadow-md">
+                                        <th className="px-4 py-3 text-left font-semibold sticky left-0 bg-background-secondary z-30 min-w-[250px]">Account</th>
                                         {Array.from({ length: budget.num_periods }, (_, i) => (
                                             <th key={i} className="px-3 py-3 text-right font-semibold min-w-[90px]">
                                                 {getPeriodLabel(budget.num_periods, i)}
                                             </th>
                                         ))}
-                                        <th className="px-4 py-3 text-right font-semibold bg-neutral-800/50 min-w-[100px]">Total</th>
+                                        <th className="px-4 py-3 text-right font-semibold bg-background-tertiary/30 min-w-[100px]">Total</th>
                                         <th className="px-3 py-3 text-center font-semibold min-w-[120px]">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-neutral-800/50">
+                                <tbody className="divide-y divide-border/50">
                                     {flattenedNodes.map(account => {
                                         const hasChildren = account.children.length > 0;
                                         const isExpanded = expandedNodes.has(account.guid);
                                         const showRolledUp = hasChildren && !account.hasOwnBudget;
                                         const displayTotal = showRolledUp ? account.rolledUpTotal : account.ownTotal;
                                         const displayPeriods = showRolledUp ? account.rolledUpPeriods : account.periods;
+                                        // Non-budgeted account with no budget in subtree
+                                        const isUnbudgeted = !account.hasOwnBudget && account.rolledUpTotal === 0;
 
                                         return (
-                                            <tr key={account.guid} className="hover:bg-white/[0.02] transition-colors">
-                                                <td className="px-4 py-3 font-medium text-neutral-200 sticky left-0 bg-neutral-950/90 backdrop-blur-sm z-10">
+                                            <tr key={account.guid} className={`hover:bg-white/[0.02] transition-colors ${isUnbudgeted ? 'opacity-50' : ''}`}>
+                                                <td className="px-4 py-3 font-medium text-foreground sticky left-0 bg-background/90 backdrop-blur-sm z-10">
                                                     <div
                                                         className="flex items-center gap-2"
                                                         style={{ paddingLeft: `${account.depth * 20}px` }}
@@ -533,10 +629,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         {hasChildren ? (
                                                             <button
                                                                 onClick={() => toggleExpanded(account.guid)}
-                                                                className="p-0.5 rounded hover:bg-neutral-700 transition-colors"
+                                                                className="p-0.5 rounded hover:bg-border-hover transition-colors"
                                                             >
                                                                 <svg
-                                                                    className={`w-4 h-4 text-neutral-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                                                                    className={`w-4 h-4 text-foreground-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                                                                     fill="none"
                                                                     stroke="currentColor"
                                                                     viewBox="0 0 24 24"
@@ -550,13 +646,13 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         <div>
                                                             <Link
                                                                 href={`/accounts/${account.guid}`}
-                                                                className="hover:text-cyan-400 transition-colors"
+                                                                className={`hover:text-cyan-400 transition-colors ${isUnbudgeted ? 'text-foreground-muted' : ''}`}
                                                             >
                                                                 {account.name}
                                                             </Link>
-                                                            <div className="text-xs text-neutral-500">
+                                                            <div className="text-xs text-foreground-muted">
                                                                 {account.type}
-                                                                {showRolledUp && (
+                                                                {showRolledUp && account.rolledUpTotal !== 0 && (
                                                                     <span className="ml-2 text-cyan-600">(subtotal)</span>
                                                                 )}
                                                             </div>
@@ -584,24 +680,38 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             </td>
                                                         );
                                                     } else {
-                                                        // Show rolled up value (read-only)
+                                                        // Show rolled up value (read-only) or dash for unbudgeted
                                                         const displayValue = applyBalanceReversal(value, account.type, balanceReversal);
+                                                        const isSubtotal = showRolledUp && account.rolledUpTotal !== 0;
                                                         return (
-                                                            <td key={i} className={`px-2 py-1 text-right font-mono text-sm ${displayValue < 0 ? 'text-rose-400' : 'text-cyan-600'}`}>
+                                                            <td key={i} className={`px-2 py-1 text-right font-mono text-sm ${
+                                                                isSubtotal
+                                                                    ? `italic ${displayValue < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
+                                                                    : displayValue < 0 ? 'text-rose-400' : 'text-cyan-600'
+                                                            }`}>
                                                                 {value === 0 ? '—' : formatCurrency(displayValue, account.mnemonic)}
                                                             </td>
                                                         );
                                                     }
                                                 })}
-                                                <td className={`px-4 py-3 text-right font-mono font-semibold bg-neutral-800/30 ${applyBalanceReversal(displayTotal, account.type, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                                    {formatCurrency(applyBalanceReversal(displayTotal, account.type, balanceReversal), account.mnemonic)}
+                                                <td className={`px-4 py-3 text-right font-mono font-semibold bg-background-tertiary/30 ${
+                                                    isUnbudgeted
+                                                        ? 'text-foreground-muted'
+                                                        : showRolledUp && !account.hasOwnBudget
+                                                            ? `italic ${applyBalanceReversal(displayTotal, account.type, balanceReversal) < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
+                                                            : applyBalanceReversal(displayTotal, account.type, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'
+                                                }`}>
+                                                    {isUnbudgeted
+                                                        ? '—'
+                                                        : formatCurrency(applyBalanceReversal(displayTotal, account.type, balanceReversal), account.mnemonic)
+                                                    }
                                                 </td>
                                                 <td className="px-2 py-2 text-center">
                                                     {account.hasOwnBudget && (
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
                                                                 onClick={() => setBatchEditAccount({ guid: account.guid, name: account.name })}
-                                                                className="p-1.5 text-neutral-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                                                                className="p-1.5 text-foreground-secondary hover:text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
                                                                 title="Set all periods"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -610,7 +720,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             </button>
                                                             <button
                                                                 onClick={() => handleEstimate(account.guid)}
-                                                                className="p-1.5 text-neutral-400 hover:text-emerald-400 hover:bg-emerald-500/10 rounded transition-colors"
+                                                                className="p-1.5 text-foreground-secondary hover:text-emerald-400 hover:bg-emerald-500/10 rounded transition-colors"
                                                                 title="Estimate from history"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -620,7 +730,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             <button
                                                                 onClick={() => handleDeleteAccount(account.guid)}
                                                                 disabled={isDeleting === account.guid}
-                                                                className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors disabled:opacity-50"
+                                                                className="p-1.5 text-foreground-secondary hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors disabled:opacity-50"
                                                                 title="Remove from budget"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -635,8 +745,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                     })}
                                 </tbody>
                                 <tfoot className="sticky bottom-0 z-20">
-                                    <tr className="bg-neutral-800 font-semibold shadow-[0_-2px_10px_rgba(0,0,0,0.3)]">
-                                        <td className="px-4 py-3 text-neutral-200 sticky left-0 bg-neutral-800 z-30">
+                                    <tr className="bg-background-tertiary font-semibold shadow-[0_-2px_10px_rgba(0,0,0,0.3)]">
+                                        <td className="px-4 py-3 text-foreground sticky left-0 bg-background-tertiary z-30">
                                             Total
                                         </td>
                                         {periodTotals.map((total, i) => (
