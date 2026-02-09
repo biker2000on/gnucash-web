@@ -1,7 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { REPORTS, getReportsByCategory, ReportConfig } from '@/lib/reports/types';
+import { useState, useEffect } from 'react';
+import { REPORTS, getReportsByCategory, ReportConfig, SavedReport, SavedReportInput, ReportType } from '@/lib/reports/types';
+import SavedReportCard from '@/components/reports/SavedReportCard';
+import SaveReportDialog from '@/components/reports/SaveReportDialog';
 
 const CATEGORY_LABELS: Record<string, string> = {
     financial: 'Financial Statements',
@@ -83,6 +86,115 @@ function ReportCard({ report }: { report: ReportConfig }) {
 export default function ReportsPage() {
     const reportsByCategory = getReportsByCategory();
 
+    const [starredReports, setStarredReports] = useState<SavedReport[]>([]);
+    const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+    const [savedSearch, setSavedSearch] = useState('');
+    const [editingReport, setEditingReport] = useState<SavedReport | null>(null);
+    const [editDialogOpen, setEditDialogOpen] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/reports/saved')
+            .then(res => {
+                if (!res.ok) return [];
+                return res.json();
+            })
+            .then((reports: SavedReport[]) => {
+                setStarredReports(reports.filter(r => r.isStarred));
+                setSavedReports(reports.filter(r => !r.isStarred));
+            })
+            .catch(() => {
+                // silently handle - user may not be authenticated
+            });
+    }, []);
+
+    const handleToggleStar = async (id: number) => {
+        // Find the report in either list
+        const allSaved = [...starredReports, ...savedReports];
+        const report = allSaved.find(r => r.id === id);
+        if (!report) return;
+
+        const wasStarred = report.isStarred;
+        const updated = { ...report, isStarred: !wasStarred };
+
+        // Optimistically update local state
+        if (wasStarred) {
+            setStarredReports(prev => prev.filter(r => r.id !== id));
+            setSavedReports(prev => [...prev, updated]);
+        } else {
+            setSavedReports(prev => prev.filter(r => r.id !== id));
+            setStarredReports(prev => [...prev, updated]);
+        }
+
+        try {
+            await fetch(`/api/reports/saved/${id}/star`, { method: 'PATCH' });
+        } catch {
+            // Revert on failure
+            if (wasStarred) {
+                setSavedReports(prev => prev.filter(r => r.id !== id));
+                setStarredReports(prev => [...prev, report]);
+            } else {
+                setStarredReports(prev => prev.filter(r => r.id !== id));
+                setSavedReports(prev => [...prev, report]);
+            }
+        }
+    };
+
+    const handleDelete = async (id: number) => {
+        setStarredReports(prev => prev.filter(r => r.id !== id));
+        setSavedReports(prev => prev.filter(r => r.id !== id));
+
+        try {
+            await fetch(`/api/reports/saved/${id}`, { method: 'DELETE' });
+        } catch {
+            // Silently handle - item already removed from UI
+        }
+    };
+
+    const handleEdit = (report: SavedReport) => {
+        setEditingReport(report);
+        setEditDialogOpen(true);
+    };
+
+    const handleSaveEdit = async (input: SavedReportInput) => {
+        if (!editingReport) return;
+
+        const res = await fetch(`/api/reports/saved/${editingReport.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(input),
+        });
+
+        if (!res.ok) {
+            throw new Error('Failed to update report');
+        }
+
+        const updated: SavedReport = await res.json();
+
+        // Update local state
+        if (updated.isStarred) {
+            setStarredReports(prev => prev.map(r => r.id === updated.id ? updated : r));
+            setSavedReports(prev => prev.filter(r => r.id !== updated.id));
+            // If it was in non-starred and now starred, add to starred
+            if (!starredReports.find(r => r.id === updated.id)) {
+                setStarredReports(prev => [...prev, updated]);
+            }
+        } else {
+            setSavedReports(prev => prev.map(r => r.id === updated.id ? updated : r));
+            setStarredReports(prev => prev.filter(r => r.id !== updated.id));
+            // If it was in starred and now non-starred, add to non-starred
+            if (!savedReports.find(r => r.id === updated.id)) {
+                setSavedReports(prev => [...prev, updated]);
+            }
+        }
+
+        setEditDialogOpen(false);
+        setEditingReport(null);
+    };
+
+    const filteredSavedReports = savedSearch
+        ? savedReports.filter(r => r.name.toLowerCase().includes(savedSearch.toLowerCase()))
+        : savedReports;
+
     return (
         <div className="space-y-8">
             <header>
@@ -92,6 +204,65 @@ export default function ReportsPage() {
                 </p>
             </header>
 
+            {/* Starred Reports */}
+            {starredReports.length > 0 && (
+                <section className="space-y-4">
+                    <h2 className="text-lg font-semibold text-foreground-secondary uppercase tracking-wider flex items-center gap-2">
+                        <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                        Starred Reports
+                    </h2>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {starredReports.map(report => (
+                            <SavedReportCard
+                                key={report.id}
+                                report={report}
+                                onToggleStar={handleToggleStar}
+                                onEdit={handleEdit}
+                                onDelete={handleDelete}
+                            />
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            {/* Your Saved Reports */}
+            {savedReports.length > 0 && (
+                <section className="space-y-4">
+                    <h2 className="text-lg font-semibold text-foreground-secondary uppercase tracking-wider">
+                        Your Saved Reports
+                    </h2>
+                    <div className="relative max-w-sm">
+                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input
+                            type="text"
+                            value={savedSearch}
+                            onChange={(e) => setSavedSearch(e.target.value)}
+                            placeholder="Search saved reports..."
+                            className="w-full pl-10 pr-3 py-2 bg-input-bg border border-border rounded-lg text-foreground text-sm placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                        />
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {filteredSavedReports.map(report => (
+                            <SavedReportCard
+                                key={report.id}
+                                report={report}
+                                onToggleStar={handleToggleStar}
+                                onEdit={handleEdit}
+                                onDelete={handleDelete}
+                            />
+                        ))}
+                    </div>
+                    {savedSearch && filteredSavedReports.length === 0 && (
+                        <p className="text-sm text-foreground-tertiary">No saved reports match your search.</p>
+                    )}
+                </section>
+            )}
+
+            {/* Base Reports by Category */}
             {CATEGORY_ORDER.map(category => {
                 const reports = reportsByCategory[category];
                 if (!reports || reports.length === 0) return null;
@@ -109,6 +280,20 @@ export default function ReportsPage() {
                     </section>
                 );
             })}
+
+            {/* Save Report Dialog (for editing) */}
+            <SaveReportDialog
+                isOpen={editDialogOpen}
+                onClose={() => {
+                    setEditDialogOpen(false);
+                    setEditingReport(null);
+                }}
+                onSave={handleSaveEdit}
+                baseReportType={editingReport?.baseReportType ?? ReportType.BALANCE_SHEET}
+                existingReport={editingReport}
+                currentConfig={editingReport?.config ?? {}}
+                currentFilters={editingReport?.filters ?? undefined}
+            />
         </div>
     );
 }
