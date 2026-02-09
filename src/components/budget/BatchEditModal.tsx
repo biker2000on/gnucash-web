@@ -71,24 +71,24 @@ export function BatchEditModal({
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title="Set All Periods">
             <div className="space-y-4">
-                <p className="text-neutral-300">
-                    Set the same amount for all {numPeriods} periods of <strong className="text-neutral-100">{accountName}</strong>
+                <p className="text-foreground-secondary">
+                    Set the same amount for all {numPeriods} periods of <strong className="text-foreground">{accountName}</strong>
                 </p>
 
                 <div>
-                    <label htmlFor="amount" className="block text-sm font-medium text-neutral-300 mb-1">
+                    <label htmlFor="amount" className="block text-sm font-medium text-foreground-secondary mb-1">
                         Amount per period
                     </label>
                     <div className="relative">
-                        <span className="absolute left-3 top-2 text-neutral-400">$</span>
+                        <span className="absolute left-3 top-2 text-foreground-secondary">$</span>
                         <input
                             id="amount"
                             type="text"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
                             placeholder="0.00"
-                            className={`w-full pl-7 pr-3 py-2 bg-neutral-800 border rounded-md text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
-                                error ? 'border-rose-500' : 'border-neutral-700'
+                            className={`w-full pl-7 pr-3 py-2 bg-background-tertiary border rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
+                                error ? 'border-rose-500' : 'border-border-hover'
                             }`}
                             autoFocus
                         />
@@ -107,7 +107,7 @@ export function BatchEditModal({
                 <div className="flex justify-end gap-3">
                     <button
                         onClick={handleClose}
-                        className="px-4 py-2 text-neutral-300 hover:bg-neutral-700 rounded-md transition-colors"
+                        className="px-4 py-2 text-foreground-secondary hover:bg-surface-hover rounded-md transition-colors"
                     >
                         Cancel
                     </button>

@@ -43,8 +43,8 @@ function LedgerContent() {
         <div className="space-y-6">
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-neutral-100">General Ledger</h1>
-                    <p className="text-neutral-500">View transactions and their splits across all accounts.</p>
+                    <h1 className="text-3xl font-bold text-foreground">General Ledger</h1>
+                    <p className="text-foreground-muted">View transactions and their splits across all accounts.</p>
                 </div>
                 <DateRangePicker
                     startDate={startDate}
@@ -54,14 +54,14 @@ function LedgerContent() {
             </header>
 
             {loading ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading transactions...</span>
+                        <span className="text-foreground-secondary">Loading transactions...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="text-rose-400">{error}</div>
                 </div>
             ) : (
@@ -80,13 +80,13 @@ export default function LedgerPage() {
         <Suspense fallback={
             <div className="space-y-6">
                 <header>
-                    <h1 className="text-3xl font-bold text-neutral-100">General Ledger</h1>
-                    <p className="text-neutral-500">View transactions and their splits across all accounts.</p>
+                    <h1 className="text-3xl font-bold text-foreground">General Ledger</h1>
+                    <p className="text-foreground-muted">View transactions and their splits across all accounts.</p>
                 </header>
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading...</span>
+                        <span className="text-foreground-secondary">Loading...</span>
                     </div>
                 </div>
             </div>

@@ -21,12 +21,12 @@ interface BudgetListProps {
 export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
     if (budgets.length === 0) {
         return (
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 text-center">
-                <svg className="w-16 h-16 mx-auto text-neutral-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 text-center">
+                <svg className="w-16 h-16 mx-auto text-foreground-muted mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                 </svg>
-                <h3 className="text-lg font-medium text-neutral-300 mb-2">No Budgets Yet</h3>
-                <p className="text-neutral-500 mb-6">
+                <h3 className="text-lg font-medium text-foreground-secondary mb-2">No Budgets Yet</h3>
+                <p className="text-foreground-muted mb-6">
                     Create your first budget to start tracking your financial goals.
                 </p>
             </div>
@@ -41,10 +41,10 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
     };
 
     return (
-        <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl overflow-hidden">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
             <table className="w-full">
                 <thead>
-                    <tr className="bg-neutral-900/50 text-neutral-400 text-xs uppercase tracking-widest">
+                    <tr className="bg-surface/50 text-foreground-secondary text-xs uppercase tracking-widest">
                         <th className="px-6 py-4 text-left font-semibold">Name</th>
                         <th className="px-6 py-4 text-left font-semibold">Period Type</th>
                         <th className="px-6 py-4 text-left font-semibold">Accounts</th>
@@ -52,7 +52,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                         <th className="px-6 py-4 text-right font-semibold">Actions</th>
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-800">
+                <tbody className="divide-y divide-border">
                     {budgets.map(budget => (
                         <tr
                             key={budget.guid}
@@ -61,7 +61,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                             <td className="px-6 py-4">
                                 <Link
                                     href={`/budgets/${budget.guid}`}
-                                    className="text-neutral-200 font-medium hover:text-cyan-400 transition-colors"
+                                    className="text-foreground font-medium hover:text-cyan-400 transition-colors"
                                 >
                                     {budget.name}
                                 </Link>
@@ -71,17 +71,17 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                                     {getPeriodLabel(budget.num_periods)}
                                 </span>
                             </td>
-                            <td className="px-6 py-4 text-sm text-neutral-400">
+                            <td className="px-6 py-4 text-sm text-foreground-secondary">
                                 {budget._count?.amounts || 0} allocations
                             </td>
-                            <td className="px-6 py-4 text-sm text-neutral-500 max-w-xs truncate">
+                            <td className="px-6 py-4 text-sm text-foreground-muted max-w-xs truncate">
                                 {budget.description || '—'}
                             </td>
                             <td className="px-6 py-4">
                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <Link
                                         href={`/budgets/${budget.guid}`}
-                                        className="p-2 rounded-lg hover:bg-cyan-500/20 text-neutral-500 hover:text-cyan-400 transition-colors"
+                                        className="p-2 rounded-lg hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
                                         title="View Budget"
                                     >
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -92,7 +92,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                                     {onEdit && (
                                         <button
                                             onClick={() => onEdit(budget)}
-                                            className="p-2 rounded-lg hover:bg-cyan-500/20 text-neutral-500 hover:text-cyan-400 transition-colors"
+                                            className="p-2 rounded-lg hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
                                             title="Edit Budget"
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -103,7 +103,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                                     {onDelete && (
                                         <button
                                             onClick={() => onDelete(budget)}
-                                            className="p-2 rounded-lg hover:bg-rose-500/20 text-neutral-500 hover:text-rose-400 transition-colors"
+                                            className="p-2 rounded-lg hover:bg-rose-500/20 text-foreground-muted hover:text-rose-400 transition-colors"
                                             title="Delete Budget"
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

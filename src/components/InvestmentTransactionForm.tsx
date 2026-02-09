@@ -573,7 +573,7 @@ export function InvestmentTransactionForm({
         placeholder: string
     ) => (
         <div>
-            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                 {label}
             </label>
             <select
@@ -582,7 +582,7 @@ export function InvestmentTransactionForm({
                     const account = accounts.find(a => a.guid === e.target.value);
                     if (account) onSelect(account);
                 }}
-                className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
             >
                 <option value="">{placeholder}</option>
                 {accounts.map(account => (
@@ -597,10 +597,10 @@ export function InvestmentTransactionForm({
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
             {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
+            <div className="flex items-center justify-between pb-4 border-b border-border">
                 <div>
-                    <h3 className="text-lg font-semibold text-neutral-100">Investment Transaction</h3>
-                    <p className="text-sm text-neutral-500">{accountName} ({commoditySymbol})</p>
+                    <h3 className="text-lg font-semibold text-foreground">Investment Transaction</h3>
+                    <p className="text-sm text-foreground-muted">{accountName} ({commoditySymbol})</p>
                 </div>
             </div>
 
@@ -617,7 +617,7 @@ export function InvestmentTransactionForm({
 
             {/* Action Selector */}
             <div>
-                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-2">
+                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
                     Transaction Type
                 </label>
                 <div className="grid grid-cols-5 gap-2">
@@ -629,7 +629,7 @@ export function InvestmentTransactionForm({
                             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                                 form.action === option.value
                                     ? 'bg-cyan-600 text-white'
-                                    : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200'
+                                    : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                             }`}
                             title={option.description}
                         >
@@ -641,14 +641,14 @@ export function InvestmentTransactionForm({
 
             {/* Date */}
             <div>
-                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                     Date
                 </label>
                 <input
                     type="date"
                     value={form.date}
                     onChange={(e) => handleChange('date', e.target.value)}
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                 />
             </div>
 
@@ -660,7 +660,7 @@ export function InvestmentTransactionForm({
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'shares'
                                     ? 'text-cyan-400'
-                                    : 'text-neutral-500'
+                                    : 'text-foreground-muted'
                             }`}>
                                 Shares {getCalculatedField() === 'shares' && '(auto)'}
                             </label>
@@ -674,7 +674,7 @@ export function InvestmentTransactionForm({
                                 className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
                                     getCalculatedField() === 'shares'
                                         ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
-                                        : 'bg-neutral-950/50 border-neutral-800 text-neutral-200'
+                                        : 'bg-input-bg border-border text-foreground'
                                 } focus:border-cyan-500/50`}
                             />
                         </div>
@@ -682,7 +682,7 @@ export function InvestmentTransactionForm({
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'price'
                                     ? 'text-cyan-400'
-                                    : 'text-neutral-500'
+                                    : 'text-foreground-muted'
                             }`}>
                                 Price per Share {getCalculatedField() === 'price' && '(auto)'}
                             </label>
@@ -696,7 +696,7 @@ export function InvestmentTransactionForm({
                                 className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
                                     getCalculatedField() === 'price'
                                         ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
-                                        : 'bg-neutral-950/50 border-neutral-800 text-neutral-200'
+                                        : 'bg-input-bg border-border text-foreground'
                                 } focus:border-cyan-500/50`}
                             />
                         </div>
@@ -704,7 +704,7 @@ export function InvestmentTransactionForm({
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'total'
                                     ? 'text-cyan-400'
-                                    : 'text-neutral-500'
+                                    : 'text-foreground-muted'
                             }`}>
                                 Total {getCalculatedField() === 'total' && '(auto)'}
                             </label>
@@ -718,7 +718,7 @@ export function InvestmentTransactionForm({
                                 className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
                                     getCalculatedField() === 'total'
                                         ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
-                                        : 'bg-neutral-950/50 border-neutral-800 text-neutral-200'
+                                        : 'bg-input-bg border-border text-foreground'
                                 } focus:border-cyan-500/50`}
                             />
                         </div>
@@ -726,7 +726,7 @@ export function InvestmentTransactionForm({
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 Commission/Fees (optional)
                             </label>
                             <input
@@ -736,7 +736,7 @@ export function InvestmentTransactionForm({
                                 value={form.commission}
                                 onChange={(e) => handleChange('commission', e.target.value)}
                                 placeholder="0.00"
-                                className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                             />
                         </div>
                         {renderAccountSelector(
@@ -764,7 +764,7 @@ export function InvestmentTransactionForm({
             {form.action === 'Dividend' && (
                 <>
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Dividend Amount
                         </label>
                         <input
@@ -774,7 +774,7 @@ export function InvestmentTransactionForm({
                             value={form.amount}
                             onChange={(e) => handleChange('amount', e.target.value)}
                             placeholder="0.00"
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                         />
                     </div>
 
@@ -803,7 +803,7 @@ export function InvestmentTransactionForm({
             {form.action === 'ReturnOfCapital' && (
                 <>
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Amount
                         </label>
                         <input
@@ -813,7 +813,7 @@ export function InvestmentTransactionForm({
                             value={form.amount}
                             onChange={(e) => handleChange('amount', e.target.value)}
                             placeholder="0.00"
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                         />
                     </div>
 
@@ -832,7 +832,7 @@ export function InvestmentTransactionForm({
             {form.action === 'Split' && (
                 <>
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             New Shares to Add
                         </label>
                         <input
@@ -842,16 +842,16 @@ export function InvestmentTransactionForm({
                             value={form.shares}
                             onChange={(e) => handleChange('shares', e.target.value)}
                             placeholder="0"
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                         />
-                        <p className="text-xs text-neutral-500 mt-1">
+                        <p className="text-xs text-foreground-muted mt-1">
                             Enter the number of additional shares you receive from the split.
                             For example, in a 2-for-1 split where you had 100 shares, enter 100 (you receive 100 new shares).
                         </p>
                     </div>
 
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Split Ratio (informational)
                         </label>
                         <input
@@ -859,7 +859,7 @@ export function InvestmentTransactionForm({
                             value={form.splitRatio}
                             onChange={(e) => handleChange('splitRatio', e.target.value)}
                             placeholder="e.g., 2-for-1"
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                         />
                     </div>
                 </>
@@ -867,7 +867,7 @@ export function InvestmentTransactionForm({
 
             {/* Memo (always shown) */}
             <div>
-                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                     Memo (optional)
                 </label>
                 <input
@@ -875,32 +875,32 @@ export function InvestmentTransactionForm({
                     value={form.memo}
                     onChange={(e) => handleChange('memo', e.target.value)}
                     placeholder="Additional notes..."
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
                 />
             </div>
 
             {/* Summary for Buy/Sell */}
             {(form.action === 'Buy' || form.action === 'Sell') && calculatedTotal > 0 && (
-                <div className="bg-neutral-900/50 border border-neutral-800 rounded-lg p-4">
-                    <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">Summary</div>
+                <div className="bg-surface/50 border border-border rounded-lg p-4">
+                    <div className="text-xs text-foreground-muted uppercase tracking-wider mb-2">Summary</div>
                     <div className="space-y-1 text-sm">
                         <div className="flex justify-between">
-                            <span className="text-neutral-400">
+                            <span className="text-foreground-secondary">
                                 {form.action === 'Buy' ? 'Cost' : 'Proceeds'}:
                             </span>
-                            <span className="font-mono text-neutral-200">${calculatedTotal.toFixed(2)}</span>
+                            <span className="font-mono text-foreground">${calculatedTotal.toFixed(2)}</span>
                         </div>
                         {parseFloat(form.commission) > 0 && (
                             <div className="flex justify-between">
-                                <span className="text-neutral-400">Commission:</span>
-                                <span className="font-mono text-neutral-200">${parseFloat(form.commission).toFixed(2)}</span>
+                                <span className="text-foreground-secondary">Commission:</span>
+                                <span className="font-mono text-foreground">${parseFloat(form.commission).toFixed(2)}</span>
                             </div>
                         )}
-                        <div className="flex justify-between pt-1 border-t border-neutral-700">
-                            <span className="text-neutral-300 font-medium">
+                        <div className="flex justify-between pt-1 border-t border-border-hover">
+                            <span className="text-foreground-secondary font-medium">
                                 {form.action === 'Buy' ? 'Total Cash Out' : 'Net Cash In'}:
                             </span>
-                            <span className="font-mono text-neutral-100 font-medium">
+                            <span className="font-mono text-foreground font-medium">
                                 ${(form.action === 'Buy'
                                     ? calculatedTotal + (parseFloat(form.commission) || 0)
                                     : calculatedTotal - (parseFloat(form.commission) || 0)
@@ -912,12 +912,12 @@ export function InvestmentTransactionForm({
             )}
 
             {/* Actions */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-neutral-800">
+            <div className="flex justify-end gap-3 pt-4 border-t border-border">
                 <button
                     type="button"
                     onClick={onCancel}
                     disabled={saving}
-                    className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors disabled:opacity-50"
+                    className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors disabled:opacity-50"
                 >
                     Cancel
                 </button>

@@ -99,7 +99,7 @@ export function AccountPickerModal({
                         placeholder="Search accounts..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full px-3 py-2 bg-neutral-800 border border-neutral-700 rounded-md text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                        className="w-full px-3 py-2 bg-background-tertiary border border-border-hover rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
                         autoFocus
                     />
                 </div>
@@ -110,28 +110,28 @@ export function AccountPickerModal({
                     </div>
                 )}
 
-                <div className="max-h-80 overflow-y-auto border border-neutral-700 rounded-md">
+                <div className="max-h-80 overflow-y-auto border border-border-hover rounded-md">
                     {isLoading ? (
-                        <div className="p-4 text-center text-neutral-400">Loading accounts...</div>
+                        <div className="p-4 text-center text-foreground-secondary">Loading accounts...</div>
                     ) : filteredAccounts.length === 0 ? (
-                        <div className="p-4 text-center text-neutral-400">
+                        <div className="p-4 text-center text-foreground-secondary">
                             {searchTerm ? 'No matching accounts found' : 'All accounts are already in the budget'}
                         </div>
                     ) : (
-                        <ul className="divide-y divide-neutral-700">
+                        <ul className="divide-y divide-border-hover">
                             {filteredAccounts.map((account) => (
                                 <li key={account.guid}>
                                     <button
                                         onClick={() => handleAddAccount(account)}
                                         disabled={isAdding}
-                                        className="w-full px-4 py-3 text-left hover:bg-neutral-700/50 transition-colors disabled:opacity-50"
+                                        className="w-full px-4 py-3 text-left hover:bg-surface-hover/50 transition-colors disabled:opacity-50"
                                     >
-                                        <div className="font-medium text-neutral-100">{account.name}</div>
-                                        <div className="text-sm text-neutral-400">
+                                        <div className="font-medium text-foreground">{account.name}</div>
+                                        <div className="text-sm text-foreground-secondary">
                                             {account.full_name && account.full_name !== account.name && (
                                                 <span className="mr-2">{account.full_name}</span>
                                             )}
-                                            <span className="inline-block px-2 py-0.5 bg-neutral-700 rounded text-xs text-neutral-300">
+                                            <span className="inline-block px-2 py-0.5 bg-background-secondary rounded text-xs text-foreground-secondary">
                                                 {account.account_type}
                                             </span>
                                         </div>
@@ -145,7 +145,7 @@ export function AccountPickerModal({
                 <div className="flex justify-end">
                     <button
                         onClick={onClose}
-                        className="px-4 py-2 text-neutral-300 hover:bg-neutral-700 rounded-md transition-colors"
+                        className="px-4 py-2 text-foreground-secondary hover:bg-surface-hover rounded-md transition-colors"
                     >
                         Cancel
                     </button>

@@ -86,7 +86,7 @@ export function TransactionModal({
         switch (state) {
             case 'y': return { label: 'Reconciled', color: 'text-emerald-400 bg-emerald-500/10' };
             case 'c': return { label: 'Cleared', color: 'text-amber-400 bg-amber-500/10' };
-            default: return { label: 'Not Reconciled', color: 'text-neutral-400 bg-neutral-500/10' };
+            default: return { label: 'Not Reconciled', color: 'text-foreground-secondary bg-surface/10' };
         }
     };
 
@@ -141,7 +141,7 @@ export function TransactionModal({
                 <div className="p-8 flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading transaction...</span>
+                        <span className="text-foreground-secondary">Loading transaction...</span>
                     </div>
                 </div>
             ) : error ? (
@@ -152,16 +152,16 @@ export function TransactionModal({
                     <div className="space-y-2">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <h3 className="text-xl font-semibold text-neutral-100">
+                                <h3 className="text-xl font-semibold text-foreground">
                                     {transaction.description}
                                 </h3>
                                 {transaction.num && (
-                                    <span className="text-sm text-neutral-500">#{transaction.num}</span>
+                                    <span className="text-sm text-foreground-muted">#{transaction.num}</span>
                                 )}
                             </div>
                             <div className="text-right shrink-0">
-                                <div className="text-sm text-neutral-400">Post Date</div>
-                                <div className="text-neutral-100 font-mono">
+                                <div className="text-sm text-foreground-secondary">Post Date</div>
+                                <div className="text-foreground font-mono">
                                     {new Date(transaction.post_date).toLocaleDateString('en-US', {
                                         weekday: 'short',
                                         year: 'numeric',
@@ -175,13 +175,13 @@ export function TransactionModal({
 
                     {/* Splits Table */}
                     <div>
-                        <h4 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider mb-3">
+                        <h4 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
                             Splits
                         </h4>
-                        <div className="bg-neutral-950/50 border border-neutral-800 rounded-xl overflow-hidden">
+                        <div className="bg-input-bg border border-border rounded-xl overflow-hidden">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="text-xs text-neutral-500 uppercase tracking-wider">
+                                    <tr className="text-xs text-foreground-muted uppercase tracking-wider">
                                         <th className="px-4 py-3 text-left">Account</th>
                                         <th className="px-4 py-3 text-left">Memo</th>
                                         <th className="px-4 py-3 text-center">Status</th>
@@ -189,27 +189,27 @@ export function TransactionModal({
                                         <th className="px-4 py-3 text-right">Credit</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-neutral-800">
+                                <tbody className="divide-y divide-border">
                                     {transaction.splits.map(split => {
                                         const amount = parseFloat(split.quantity_decimal);
                                         const debit = amount > 0 ? amount : 0;
                                         const credit = amount < 0 ? Math.abs(amount) : 0;
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
-                                            <tr key={split.guid} className="hover:bg-neutral-800/30">
+                                            <tr key={split.guid} className="hover:bg-surface-hover/30">
                                                 <td className="px-4 py-3 whitespace-nowrap">
                                                     <Link
                                                         href={`/accounts/${split.account_guid}`}
-                                                        className="text-neutral-200 hover:text-cyan-400 transition-colors"
+                                                        className="text-foreground hover:text-cyan-400 transition-colors"
                                                         onClick={onClose}
                                                     >
                                                         {formatAccountPath(split.account_fullname, split.account_name)}
                                                     </Link>
                                                     {split.action && (
-                                                        <span className="ml-2 text-xs text-neutral-500">({split.action})</span>
+                                                        <span className="ml-2 text-xs text-foreground-muted">({split.action})</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-neutral-500 italic max-w-[200px] truncate" title={split.memo || undefined}>
+                                                <td className="px-4 py-3 text-sm text-foreground-muted italic max-w-[200px] truncate" title={split.memo || undefined}>
                                                     {split.memo || '—'}
                                                 </td>
                                                 <td className="px-4 py-3 text-center whitespace-nowrap">
@@ -233,15 +233,15 @@ export function TransactionModal({
 
                     {/* Metadata */}
                     <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div className="bg-neutral-950/50 border border-neutral-800 rounded-xl p-4">
-                            <div className="text-neutral-500 text-xs uppercase tracking-wider mb-1">Enter Date</div>
-                            <div className="text-neutral-300 font-mono">
+                        <div className="bg-input-bg border border-border rounded-xl p-4">
+                            <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Enter Date</div>
+                            <div className="text-foreground-secondary font-mono">
                                 {new Date(transaction.enter_date).toLocaleString()}
                             </div>
                         </div>
-                        <div className="bg-neutral-950/50 border border-neutral-800 rounded-xl p-4">
-                            <div className="text-neutral-500 text-xs uppercase tracking-wider mb-1">Transaction ID</div>
-                            <div className="text-neutral-300 font-mono text-xs truncate" title={transaction.guid}>
+                        <div className="bg-input-bg border border-border rounded-xl p-4">
+                            <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Transaction ID</div>
+                            <div className="text-foreground-secondary font-mono text-xs truncate" title={transaction.guid}>
                                 {transaction.guid}
                             </div>
                         </div>
@@ -249,7 +249,7 @@ export function TransactionModal({
 
                     {/* Actions */}
                     {(onEdit || onDelete) && (
-                        <div className="flex justify-end gap-3 pt-4 border-t border-neutral-800">
+                        <div className="flex justify-end gap-3 pt-4 border-t border-border">
                             {onDelete && (
                                 <button
                                     onClick={handleDeleteClick}

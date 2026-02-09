@@ -290,10 +290,10 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
     if (loading) {
         return (
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-8 flex items-center justify-center">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 flex items-center justify-center">
                 <div className="flex items-center gap-3">
                     <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                    <span className="text-neutral-400">Loading investment data...</span>
+                    <span className="text-foreground-secondary">Loading investment data...</span>
                 </div>
             </div>
         );
@@ -301,7 +301,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
     if (error) {
         return (
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-8 text-center">
+            <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-8 text-center">
                 <div className="text-rose-400">{error}</div>
             </div>
         );
@@ -316,11 +316,11 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6">
                 <div className="flex items-start justify-between">
                     <div>
                         <div className="flex items-center gap-3">
-                            <h2 className="text-2xl font-bold text-neutral-100">
+                            <h2 className="text-2xl font-bold text-foreground">
                                 {commodity?.mnemonic || 'Unknown'}
                             </h2>
                             {commodity?.namespace && (
@@ -330,7 +330,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             )}
                         </div>
                         {commodity?.fullname && (
-                            <p className="text-neutral-500 mt-1">{commodity.fullname}</p>
+                            <p className="text-foreground-muted mt-1">{commodity.fullname}</p>
                         )}
                     </div>
                     <div className="flex items-center gap-2">
@@ -370,7 +370,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                 </div>
 
                 {holdings?.latestPrice && (
-                    <div className="mt-4 text-neutral-400">
+                    <div className="mt-4 text-foreground-secondary">
                         Last price: {formatCurrency(holdings.latestPrice.value, 'USD')} on{' '}
                         {new Date(holdings.latestPrice.date).toLocaleDateString('en-US', {
                             month: 'short',
@@ -384,26 +384,26 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             {/* Holdings Summary */}
             {holdings && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-4">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider">Shares</div>
-                        <div className="text-xl font-mono font-semibold text-neutral-100 mt-1">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider">Shares</div>
+                        <div className="text-xl font-mono font-semibold text-foreground mt-1">
                             {holdings.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                         </div>
                     </div>
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-4">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider">Cost Basis</div>
-                        <div className="text-xl font-mono font-semibold text-neutral-100 mt-1">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider">Cost Basis</div>
+                        <div className="text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(Math.abs(holdings.costBasis), 'USD')}
                         </div>
                     </div>
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-4">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider">Market Value</div>
-                        <div className="text-xl font-mono font-semibold text-neutral-100 mt-1">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider">Market Value</div>
+                        <div className="text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(holdings.marketValue, 'USD')}
                         </div>
                     </div>
-                    <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-4">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider">Gain/Loss</div>
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider">Gain/Loss</div>
                         <div className={`text-xl font-mono font-semibold mt-1 ${
                             holdings.gainLoss >= 0 ? 'text-emerald-400' : 'text-rose-400'
                         }`}>
@@ -418,9 +418,9 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             {/* Price History Chart */}
             {data?.priceHistory && data.priceHistory.length > 0 && (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6">
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-semibold text-neutral-100">Price History</h3>
+                        <h3 className="text-lg font-semibold text-foreground">Price History</h3>
                         <div className="flex items-center gap-2">
                             <div className="flex gap-1">
                                 {(['1M', '3M', '6M', '1Y', 'ALL'] as const).map(period => (
@@ -430,7 +430,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                                             selectedPeriod === period
                                                 ? 'bg-cyan-600 text-white'
-                                                : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200'
+                                                : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                         }`}
                                     >
                                         {period}
@@ -440,7 +440,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             {(zoomDomain.startIndex !== null || zoomDomain.endIndex !== null) && (
                                 <button
                                     onClick={handleZoomReset}
-                                    className="px-3 py-1 text-sm bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200 rounded-lg transition-colors flex items-center gap-1"
+                                    className="px-3 py-1 text-sm bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground rounded-lg transition-colors flex items-center gap-1"
                                 >
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -517,14 +517,14 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             {/* Transaction History */}
             {transactions && transactions.length > 0 && (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl overflow-hidden">
-                    <div className="p-4 border-b border-neutral-800">
-                        <h3 className="text-lg font-semibold text-neutral-100">Transaction History</h3>
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
+                    <div className="p-4 border-b border-border">
+                        <h3 className="text-lg font-semibold text-foreground">Transaction History</h3>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full">
                             <thead>
-                                <tr className="border-b border-neutral-800 text-neutral-400 text-sm uppercase tracking-wider">
+                                <tr className="border-b border-border text-foreground-secondary text-sm uppercase tracking-wider">
                                     <th className="py-3 px-4 text-left font-medium">Date</th>
                                     <th className="py-3 px-4 text-left font-medium">Description</th>
                                     <th className="py-3 px-4 text-left font-medium">Action</th>
@@ -532,16 +532,16 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     <th className="py-3 px-4 text-right font-medium">Amount</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-neutral-800/50">
+                            <tbody className="divide-y divide-border/50">
                                 {transactions.map(tx => (
-                                    <tr key={tx.guid} className="hover:bg-neutral-800/20 transition-colors">
-                                        <td className="py-2 px-4 text-neutral-300 font-mono text-sm">
+                                    <tr key={tx.guid} className="hover:bg-background-tertiary/20 transition-colors">
+                                        <td className="py-2 px-4 text-foreground-secondary font-mono text-sm">
                                             {tx.date}
                                         </td>
-                                        <td className="py-2 px-4 text-neutral-200">
+                                        <td className="py-2 px-4 text-foreground">
                                             {tx.description}
                                         </td>
-                                        <td className="py-2 px-4 text-neutral-400 text-sm">
+                                        <td className="py-2 px-4 text-foreground-secondary text-sm">
                                             {tx.action || '-'}
                                         </td>
                                         <td className="py-2 px-4 text-right font-mono">
@@ -565,7 +565,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             {/* Investment Transaction Modal */}
             {showTransactionModal && commodity && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <div className="bg-background-secondary border border-border rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
                         <InvestmentTransactionForm
                             accountGuid={data.account.guid}
                             accountName={data.account.name}
@@ -584,22 +584,22 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             {/* Add Price Modal */}
             {showPriceModal && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-6 w-full max-w-md mx-4">
-                        <h3 className="text-lg font-semibold text-neutral-100 mb-4">Add Price</h3>
+                    <div className="bg-background-secondary border border-border rounded-2xl p-6 w-full max-w-md mx-4">
+                        <h3 className="text-lg font-semibold text-foreground mb-4">Add Price</h3>
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                     Date
                                 </label>
                                 <input
                                     type="date"
                                     value={newPrice.date}
                                     onChange={e => setNewPrice(prev => ({ ...prev, date: e.target.value }))}
-                                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                     Price (USD)
                                 </label>
                                 <input
@@ -608,14 +608,14 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     value={newPrice.value}
                                     onChange={e => setNewPrice(prev => ({ ...prev, value: e.target.value }))}
                                     placeholder="0.00"
-                                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
                                 />
                             </div>
                         </div>
                         <div className="flex justify-end gap-3 mt-6">
                             <button
                                 onClick={() => setShowPriceModal(false)}
-                                className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                                className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                             >
                                 Cancel
                             </button>

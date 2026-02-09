@@ -74,22 +74,22 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
         <div className={`relative ${className}`} ref={dropdownRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 bg-neutral-900/50 border border-neutral-800 rounded-xl px-4 py-2 text-sm text-neutral-200 hover:border-emerald-500/50 transition-all"
+                className="flex items-center gap-2 bg-surface/50 border border-border rounded-xl px-4 py-2 text-sm text-foreground hover:border-emerald-500/50 transition-all"
             >
-                <svg className="w-4 h-4 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-foreground-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <span>{getCurrentLabel()}</span>
-                <svg className={`w-4 h-4 text-neutral-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className={`w-4 h-4 text-foreground-secondary transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
             </button>
 
             {isOpen && (
-                <div className="absolute top-full left-0 mt-2 w-80 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="absolute top-full left-0 mt-2 w-80 bg-background-secondary border border-border rounded-xl shadow-xl z-50 overflow-hidden">
                     {/* Presets */}
-                    <div className="p-2 border-b border-neutral-800">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider px-2 py-1">Quick Select</div>
+                    <div className="p-2 border-b border-border">
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider px-2 py-1">Quick Select</div>
                         <div className="grid grid-cols-2 gap-1">
                             {DATE_PRESETS.map((preset) => {
                                 const { startDate: ps, endDate: pe } = preset.getValue();
@@ -101,7 +101,7 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
                                         className={`px-3 py-2 text-sm rounded-lg text-left transition-colors ${
                                             isActive
                                                 ? 'bg-emerald-500/20 text-emerald-400'
-                                                : 'text-neutral-300 hover:bg-neutral-800'
+                                                : 'text-foreground-secondary hover:bg-surface-hover'
                                         }`}
                                     >
                                         {preset.label}
@@ -113,20 +113,20 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
 
                     {/* Custom Range */}
                     <div className="p-3">
-                        <div className="text-xs text-neutral-500 uppercase tracking-wider mb-2">Custom Range</div>
+                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-2">Custom Range</div>
                         <div className="flex gap-2 items-center mb-3">
                             <input
                                 type="date"
                                 value={customStart}
                                 onChange={(e) => setCustomStart(e.target.value)}
-                                className="flex-1 bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
+                                className="flex-1 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
                             />
-                            <span className="text-neutral-500">to</span>
+                            <span className="text-foreground-muted">to</span>
                             <input
                                 type="date"
                                 value={customEnd}
                                 onChange={(e) => setCustomEnd(e.target.value)}
-                                className="flex-1 bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
+                                className="flex-1 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
                             />
                         </div>
                         <button

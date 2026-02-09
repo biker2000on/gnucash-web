@@ -98,7 +98,7 @@ export function ReconciliationPanel({
                 </h3>
                 <button
                     onClick={onCancelReconcile}
-                    className="text-neutral-400 hover:text-neutral-200 transition-colors"
+                    className="text-foreground-secondary hover:text-foreground transition-colors"
                 >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -114,18 +114,18 @@ export function ReconciliationPanel({
 
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Statement Date
                     </label>
                     <input
                         type="date"
                         value={statementDate}
                         onChange={(e) => setStatementDate(e.target.value)}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-amber-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-amber-500/50"
                     />
                 </div>
                 <div>
-                    <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Statement Balance
                     </label>
                     <input
@@ -134,30 +134,30 @@ export function ReconciliationPanel({
                         value={statementBalance}
                         onChange={(e) => setStatementBalance(e.target.value)}
                         placeholder="0.00"
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-amber-500/50 font-mono text-right"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />
                 </div>
             </div>
 
             <div className="grid grid-cols-3 gap-4 text-sm">
-                <div className="bg-neutral-950/30 rounded-lg p-3">
-                    <div className="text-neutral-500 text-xs uppercase tracking-wider mb-1">
+                <div className="bg-background/30 rounded-lg p-3">
+                    <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">
                         Current Balance
                     </div>
-                    <div className="font-mono text-neutral-200">
+                    <div className="font-mono text-foreground">
                         {formatCurrency(currentBalance.toFixed(2), accountCurrency)}
                     </div>
                 </div>
-                <div className="bg-neutral-950/30 rounded-lg p-3">
-                    <div className="text-neutral-500 text-xs uppercase tracking-wider mb-1">
+                <div className="bg-background/30 rounded-lg p-3">
+                    <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">
                         Selected ({selectedSplits.size})
                     </div>
                     <div className="font-mono text-cyan-400">
                         {formatCurrency(selectedBalance.toFixed(2), accountCurrency)}
                     </div>
                 </div>
-                <div className="bg-neutral-950/30 rounded-lg p-3">
-                    <div className="text-neutral-500 text-xs uppercase tracking-wider mb-1">
+                <div className="bg-background/30 rounded-lg p-3">
+                    <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">
                         Difference
                     </div>
                     <div className={`font-mono ${Math.abs(difference) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
@@ -166,18 +166,18 @@ export function ReconciliationPanel({
                 </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-neutral-800">
+            <div className="flex items-center justify-between pt-2 border-t border-border">
                 <div className="flex items-center gap-2">
                     <button
                         onClick={onSelectAll}
-                        className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         Select All Unreconciled
                     </button>
-                    <span className="text-neutral-600">|</span>
+                    <span className="text-foreground-muted">|</span>
                     <button
                         onClick={onClearSelection}
-                        className="text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         Clear Selection
                     </button>

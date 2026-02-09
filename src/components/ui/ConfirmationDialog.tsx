@@ -69,15 +69,15 @@ export function ConfirmationDialog({
             closeOnEscape={!isLoading}
         >
             <div className="px-6 py-4">
-                <p className="text-neutral-300 leading-relaxed">{message}</p>
+                <p className="text-foreground-secondary leading-relaxed">{message}</p>
             </div>
 
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-neutral-800">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
                 <button
                     type="button"
                     onClick={onCancel}
                     disabled={isLoading}
-                    className="px-4 py-2 text-sm font-medium text-neutral-300 bg-neutral-800 border border-neutral-700 rounded-lg hover:bg-neutral-700 hover:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-neutral-600 focus:ring-offset-2 focus:ring-offset-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-foreground-secondary bg-background-tertiary border border-border-hover rounded-lg hover:bg-surface-hover hover:text-foreground focus:outline-none focus:ring-2 focus:ring-foreground-muted focus:ring-offset-2 focus:ring-offset-background-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     aria-label={cancelLabel}
                 >
                     {cancelLabel}
@@ -89,7 +89,7 @@ export function ConfirmationDialog({
                     disabled={isLoading}
                     className={`
                         px-4 py-2 text-sm font-medium text-white rounded-lg
-                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-neutral-900
+                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background-secondary
                         disabled:opacity-50 disabled:cursor-not-allowed
                         transition-colors
                         inline-flex items-center gap-2

@@ -33,13 +33,13 @@ function LineItemRow({ item, showComparison, currencyCode, expanded, toggleExpan
 
     return (
         <>
-            <tr className={`${item.isTotal ? 'bg-neutral-800/50 font-semibold' : item.isSubtotal ? 'bg-neutral-800/30' : 'hover:bg-neutral-800/20'} transition-colors`}>
+            <tr className={`${item.isTotal ? 'bg-background-tertiary/50 font-semibold' : item.isSubtotal ? 'bg-background-tertiary/30' : 'hover:bg-surface-hover/20'} transition-colors`}>
                 <td className="py-2 px-4">
                     <div className="flex items-center" style={{ paddingLeft: `${indent}px` }}>
                         {hasChildren && (
                             <button
                                 onClick={() => toggleExpanded(item.guid)}
-                                className="w-5 h-5 mr-2 flex items-center justify-center text-neutral-500 hover:text-neutral-300"
+                                className="w-5 h-5 mr-2 flex items-center justify-center text-foreground-muted hover:text-foreground-secondary"
                             >
                                 <svg
                                     className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
@@ -52,19 +52,19 @@ function LineItemRow({ item, showComparison, currencyCode, expanded, toggleExpan
                             </button>
                         )}
                         {!hasChildren && <span className="w-7" />}
-                        <span className={item.isTotal || item.isSubtotal ? 'text-neutral-100' : 'text-neutral-300'}>
+                        <span className={item.isTotal || item.isSubtotal ? 'text-foreground' : 'text-foreground-secondary'}>
                             {item.name}
                         </span>
                     </div>
                 </td>
                 <td className="py-2 px-4 text-right font-mono">
-                    <span className={item.amount >= 0 ? 'text-neutral-200' : 'text-rose-400'}>
+                    <span className={item.amount >= 0 ? 'text-foreground' : 'text-rose-400'}>
                         {formatCurrency(item.amount, currencyCode)}
                     </span>
                 </td>
                 {showComparison && (
                     <>
-                        <td className="py-2 px-4 text-right font-mono text-neutral-400">
+                        <td className="py-2 px-4 text-right font-mono text-foreground-secondary">
                             {item.previousAmount !== undefined
                                 ? formatCurrency(item.previousAmount, currencyCode)
                                 : '-'
@@ -165,10 +165,10 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
 
     return (
         <div>
-            <div className="flex justify-end items-center gap-2 p-2 border-b border-neutral-800">
+            <div className="flex justify-end items-center gap-2 p-2 border-b border-border">
                 {maxDepth > 0 && (
                     <div className="flex items-center gap-1 mr-2">
-                        <label className="text-xs text-neutral-500">Level:</label>
+                        <label className="text-xs text-foreground-muted">Level:</label>
                         <select
                             onChange={(e) => {
                                 const val = e.target.value;
@@ -176,7 +176,7 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
                                 else expandToLevel(Number(val));
                             }}
                             defaultValue="1"
-                            className="bg-neutral-800 border border-neutral-700 text-neutral-300 text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-neutral-500"
+                            className="bg-background-tertiary border border-border-hover text-foreground-secondary text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-foreground-muted"
                         >
                             {Array.from({ length: maxDepth + 1 }, (_, i) => (
                                 <option key={i} value={i}>
@@ -189,25 +189,25 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
                 )}
                 <button
                     onClick={expandAll}
-                    className="px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+                    className="px-2 py-1 text-xs text-foreground-secondary hover:text-foreground transition-colors"
                 >
                     Expand All
                 </button>
                 <button
                     onClick={collapseAll}
-                    className="px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 transition-colors"
+                    className="px-2 py-1 text-xs text-foreground-secondary hover:text-foreground transition-colors"
                 >
                     Collapse All
                 </button>
             </div>
             {sections.map(section => (
                 <div key={section.title} className="mb-6">
-                    <div className="bg-gradient-to-r from-neutral-800/50 to-transparent py-3 px-4 border-b border-neutral-700">
-                        <h3 className="text-lg font-semibold text-neutral-100">{section.title}</h3>
+                    <div className="bg-gradient-to-r from-background-tertiary/50 to-transparent py-3 px-4 border-b border-border-hover">
+                        <h3 className="text-lg font-semibold text-foreground">{section.title}</h3>
                     </div>
                     <table className="w-full">
                         <thead>
-                            <tr className="border-b border-neutral-700 text-neutral-400 text-sm uppercase tracking-wider">
+                            <tr className="border-b border-border-hover text-foreground-secondary text-sm uppercase tracking-wider">
                                 <th className="py-2 px-4 text-left font-medium">Account</th>
                                 <th className="py-2 px-4 text-right font-medium">Balance</th>
                                 {showComparison && (
@@ -218,7 +218,7 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
                                 )}
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-neutral-800/50">
+                        <tbody className="divide-y divide-border/50">
                             {section.items.map(item => (
                                 <LineItemRow
                                     key={item.guid}
@@ -231,16 +231,16 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
                             ))}
                         </tbody>
                         <tfoot>
-                            <tr className="border-t-2 border-neutral-600 bg-neutral-800/50">
-                                <td className="py-3 px-4 font-semibold text-neutral-100">
+                            <tr className="border-t-2 border-border-hover bg-background-tertiary/50">
+                                <td className="py-3 px-4 font-semibold text-foreground">
                                     Total {section.title}
                                 </td>
-                                <td className="py-3 px-4 text-right font-mono font-semibold text-neutral-100">
+                                <td className="py-3 px-4 text-right font-mono font-semibold text-foreground">
                                     {formatCurrency(section.total, currencyCode)}
                                 </td>
                                 {showComparison && (
                                     <>
-                                        <td className="py-3 px-4 text-right font-mono text-neutral-400">
+                                        <td className="py-3 px-4 text-right font-mono text-foreground-secondary">
                                             {section.previousTotal !== undefined
                                                 ? formatCurrency(section.previousTotal, currencyCode)
                                                 : '-'

@@ -225,14 +225,14 @@ export default function AccountLedger({
         switch (state) {
             case 'y': return { icon: 'Y', color: 'text-emerald-400 bg-emerald-500/10', label: 'Reconciled' };
             case 'c': return { icon: 'C', color: 'text-amber-400 bg-amber-500/10', label: 'Cleared' };
-            default: return { icon: 'N', color: 'text-neutral-500 bg-neutral-500/10', label: 'Not Reconciled' };
+            default: return { icon: 'N', color: 'text-foreground-muted bg-surface/10', label: 'Not Reconciled' };
         }
     };
 
     return (
-        <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl overflow-hidden shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
             {/* Top Bar: New Transaction + Reconciliation Panel */}
-            <div className="p-4 border-b border-neutral-800 flex justify-between items-center">
+            <div className="p-4 border-b border-border flex justify-between items-center">
                 <button
                     onClick={() => {
                         setEditingTransaction(null);
@@ -264,7 +264,7 @@ export default function AccountLedger({
             <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="bg-neutral-900/50 text-neutral-400 text-[10px] uppercase tracking-[0.2em] font-bold">
+                        <tr className="bg-background-secondary/50 text-foreground-secondary text-[10px] uppercase tracking-[0.2em] font-bold">
                             {isReconciling && <th className="px-4 py-4 w-10"></th>}
                             <th className="px-4 py-4 w-10">R</th>
                             <th className="px-6 py-4">Date</th>
@@ -274,7 +274,7 @@ export default function AccountLedger({
                             <th className="px-6 py-4 text-right">Balance</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-neutral-800/50">
+                    <tbody className="divide-y divide-border/50">
                         {transactions.map(tx => {
                             const isMultiSplit = (tx.splits?.length || 0) > 2;
                             const isExpanded = expandedTxs[tx.guid];
@@ -300,7 +300,7 @@ export default function AccountLedger({
                                                     type="checkbox"
                                                     checked={isSelected}
                                                     onChange={() => toggleSplitSelection(tx.account_split_guid)}
-                                                    className="w-4 h-4 rounded border-neutral-600 bg-neutral-800 text-amber-500 focus:ring-amber-500/50 cursor-pointer"
+                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
                                                 />
                                             )}
                                         </td>
@@ -313,18 +313,18 @@ export default function AccountLedger({
                                             {reconcileInfo.icon}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-xs text-neutral-400 align-top font-mono">
+                                    <td className="px-6 py-4 whitespace-nowrap text-xs text-foreground-secondary align-top font-mono">
                                         {new Date(tx.post_date).toLocaleDateString()}
                                     </td>
-                                    <td className="px-6 py-4 text-sm text-neutral-100 align-top">
+                                    <td className="px-6 py-4 text-sm text-foreground align-top">
                                         <div className="font-medium">{tx.description}</div>
-                                        {tx.num && <span className="text-[10px] text-neutral-500 font-mono">#{tx.num}</span>}
+                                        {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
                                     </td>
                                     <td className="px-6 py-4 text-sm align-top">
                                         {isMultiSplit && !isExpanded ? (
                                             <button
                                                 onClick={() => toggleExpand(tx.guid)}
-                                                className="text-neutral-500 hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
+                                                className="text-foreground-muted hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
                                             >
                                                 <span>-- Multiple Splits --</span>
                                                 <span className="text-[10px]">▼</span>
@@ -333,7 +333,7 @@ export default function AccountLedger({
                                             <div className="space-y-1">
                                                 {otherSplits.map((split, idx) => (
                                                     <div key={split.guid} className="flex justify-between items-center text-xs">
-                                                        <span className="text-neutral-400 truncate max-w-[180px]">
+                                                        <span className="text-foreground-secondary truncate max-w-[180px]">
                                                             {split.account_name}
                                                         </span>
                                                         {isExpanded && (
@@ -366,16 +366,16 @@ export default function AccountLedger({
                     </tbody>
                 </table>
 
-                <div ref={loader} className="p-8 flex justify-center border-t border-neutral-800/50">
+                <div ref={loader} className="p-8 flex justify-center border-t border-border/50">
                     {loading ? (
                         <div className="flex items-center gap-3">
                             <div className="w-4 h-4 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                            <span className="text-xs text-neutral-500 uppercase tracking-widest">Updating Ledger...</span>
+                            <span className="text-xs text-foreground-muted uppercase tracking-widest">Updating Ledger...</span>
                         </div>
                     ) : hasMore ? (
-                        <span className="text-xs text-neutral-600 uppercase tracking-widest animate-pulse">Scroll for history</span>
+                        <span className="text-xs text-foreground-muted uppercase tracking-widest animate-pulse">Scroll for history</span>
                     ) : (
-                        <span className="text-xs text-neutral-600 uppercase tracking-widest font-bold">End of Records</span>
+                        <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">End of Records</span>
                     )}
                 </div>
             </div>

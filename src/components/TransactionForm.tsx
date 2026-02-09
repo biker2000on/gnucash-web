@@ -511,18 +511,18 @@ export function TransactionForm({
             {/* Header Fields */}
             <div className="grid grid-cols-3 gap-4">
                 <div>
-                    <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Date
                     </label>
                     <input
                         type="date"
                         value={formData.post_date}
                         onChange={(e) => setFormData(f => ({ ...f, post_date: e.target.value }))}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>
                 <div className="col-span-2">
-                    <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Description
                     </label>
                     <DescriptionAutocomplete
@@ -537,7 +537,7 @@ export function TransactionForm({
             </div>
 
             <div>
-                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                     Number/Reference
                 </label>
                 <input
@@ -545,7 +545,7 @@ export function TransactionForm({
                     value={formData.num}
                     onChange={(e) => setFormData(f => ({ ...f, num: e.target.value }))}
                     placeholder="Check #, reference, etc."
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
                 />
             </div>
 
@@ -553,7 +553,7 @@ export function TransactionForm({
             {isSimpleMode ? (
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                        <label className="text-xs text-neutral-500 uppercase tracking-wider">
+                        <label className="text-xs text-foreground-muted uppercase tracking-wider">
                             Simple Transfer
                         </label>
                         <button
@@ -567,7 +567,7 @@ export function TransactionForm({
 
                     {/* Amount */}
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Amount
                         </label>
                         <input
@@ -576,14 +576,14 @@ export function TransactionForm({
                             value={simpleData.amount}
                             onChange={(e) => setSimpleData(prev => ({ ...prev, amount: e.target.value }))}
                             placeholder="0.00"
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
                         />
                     </div>
 
                     {/* From/To accounts */}
                     <div className="flex items-center gap-4">
                         <div className="flex-1">
-                            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 From Account
                             </label>
                             <AccountSelector
@@ -593,12 +593,12 @@ export function TransactionForm({
                             />
                         </div>
                         <div className="flex items-center justify-center pt-5">
-                            <svg className="w-6 h-6 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-6 h-6 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                             </svg>
                         </div>
                         <div className="flex-1">
-                            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 To Account
                             </label>
                             <AccountSelector
@@ -612,7 +612,7 @@ export function TransactionForm({
             ) : (
                 <div>
                     <div className="flex items-center justify-between mb-3">
-                        <label className="text-xs text-neutral-500 uppercase tracking-wider">
+                        <label className="text-xs text-foreground-muted uppercase tracking-wider">
                             Splits (Advanced)
                         </label>
                         <div className="flex items-center gap-2">
@@ -633,7 +633,7 @@ export function TransactionForm({
                             <button
                                 type="button"
                                 onClick={handleAddSplit}
-                                className="text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-200 px-3 py-1 rounded-lg transition-colors"
+                                className="text-xs bg-background-tertiary hover:bg-background-tertiary text-foreground px-3 py-1 rounded-lg transition-colors"
                             >
                                 + Add Split
                             </button>
@@ -641,7 +641,7 @@ export function TransactionForm({
                     </div>
 
                     {/* Column Headers */}
-                    <div className="grid grid-cols-12 gap-2 text-xs text-neutral-500 uppercase tracking-wider py-2 border-b border-neutral-700">
+                    <div className="grid grid-cols-12 gap-2 text-xs text-foreground-muted uppercase tracking-wider py-2 border-b border-border-hover">
                         <div className="col-span-5">Account</div>
                         <div className="col-span-2 text-right">Debit</div>
                         <div className="col-span-2 text-right">Credit</div>
@@ -650,7 +650,7 @@ export function TransactionForm({
                     </div>
 
                     {/* Split Rows */}
-                    <div className="bg-neutral-950/30 rounded-lg">
+                    <div className="bg-background/30 rounded-lg">
                         {formData.splits.map((split, index) => (
                             <SplitRow
                                 key={split.id}
@@ -665,8 +665,8 @@ export function TransactionForm({
                     </div>
 
                     {/* Totals */}
-                    <div className="grid grid-cols-12 gap-2 text-sm font-mono py-3 border-t border-neutral-700 mt-2">
-                        <div className="col-span-5 text-neutral-400 text-right pr-2">Totals:</div>
+                    <div className="grid grid-cols-12 gap-2 text-sm font-mono py-3 border-t border-border-hover mt-2">
+                        <div className="col-span-5 text-foreground-secondary text-right pr-2">Totals:</div>
                         <div className="col-span-2 text-right text-emerald-400">
                             {totalDebit.toFixed(2)}
                         </div>
@@ -687,15 +687,15 @@ export function TransactionForm({
             )}
 
             {/* Actions */}
-            <div className="flex justify-between items-center pt-4 border-t border-neutral-800">
-                <span className="text-xs text-neutral-500">
-                    Press <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Enter</kbd> to save
+            <div className="flex justify-between items-center pt-4 border-t border-border">
+                <span className="text-xs text-foreground-muted">
+                    Press <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> to save
                 </span>
                 <div className="flex gap-3">
                     <button
                         type="button"
                         onClick={onCancel}
-                        className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         Cancel
                     </button>

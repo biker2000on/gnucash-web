@@ -98,23 +98,23 @@ function AccountPageContent() {
         <div className="space-y-6">
             <header className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
                 <div>
-                    <nav className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-widest mb-2">
+                    <nav className="flex items-center gap-2 text-xs text-foreground-muted uppercase tracking-widest mb-2">
                         <Link href="/accounts" className="hover:text-emerald-400 transition-colors">Accounts</Link>
                         <span>/</span>
-                        <span className="text-neutral-400">{account?.name || 'Loading...'}</span>
+                        <span className="text-foreground-secondary">{account?.name || 'Loading...'}</span>
                     </nav>
-                    <h1 className="text-3xl font-bold text-neutral-100 flex items-center gap-3">
+                    <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
                         {account?.name || 'Loading...'}
-                        <span className="text-xs font-normal px-2 py-1 rounded bg-neutral-800 text-neutral-500 border border-neutral-700 uppercase tracking-tighter">Ledger</span>
+                        <span className="text-xs font-normal px-2 py-1 rounded bg-background-tertiary text-foreground-muted border border-border-hover uppercase tracking-tighter">Ledger</span>
                     </h1>
                     {/* Account Path Breadcrumb */}
                     {account?.fullname && (
-                        <div className="mt-2 flex items-center gap-1.5 text-xs text-neutral-500">
+                        <div className="mt-2 flex items-center gap-1.5 text-xs text-foreground-muted">
                             {breadcrumbSegments.map((segment, index) => (
                                 <div key={segment.guid} className="flex items-center gap-1.5">
-                                    {index > 0 && <span className="text-neutral-700">:</span>}
+                                    {index > 0 && <span className="text-border-hover">:</span>}
                                     {index === breadcrumbSegments.length - 1 ? (
-                                        <span className="text-neutral-400">{segment.name}</span>
+                                        <span className="text-foreground-secondary">{segment.name}</span>
                                     ) : (
                                         <Link
                                             href={`/accounts/${segment.guid}`}
@@ -135,7 +135,7 @@ function AccountPageContent() {
                         onChange={setDateFilter}
                     />
                     <div className="text-right pb-1">
-                        <p className="text-xs text-neutral-500 uppercase tracking-widest font-bold">Current Balance</p>
+                        <p className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Current Balance</p>
                         <p className={`text-2xl font-mono font-bold ${currentBalance && applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                             {currentBalance
                                 ? formatCurrency(applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal), commodityMnemonic)
@@ -152,14 +152,14 @@ function AccountPageContent() {
 
             {/* Transaction Ledger */}
             {loading ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading transactions...</span>
+                        <span className="text-foreground-secondary">Loading transactions...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="text-rose-400">{error}</div>
                 </div>
             ) : (
@@ -180,17 +180,17 @@ export default function AccountPage() {
         <Suspense fallback={
             <div className="space-y-6">
                 <header>
-                    <nav className="flex items-center gap-2 text-xs text-neutral-500 uppercase tracking-widest mb-2">
+                    <nav className="flex items-center gap-2 text-xs text-foreground-muted uppercase tracking-widest mb-2">
                         <span>Accounts</span>
                         <span>/</span>
-                        <span className="text-neutral-400">Loading...</span>
+                        <span className="text-foreground-secondary">Loading...</span>
                     </nav>
-                    <h1 className="text-3xl font-bold text-neutral-100">Loading...</h1>
+                    <h1 className="text-3xl font-bold text-foreground">Loading...</h1>
                 </header>
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading...</span>
+                        <span className="text-foreground-secondary">Loading...</span>
                     </div>
                 </div>
             </div>

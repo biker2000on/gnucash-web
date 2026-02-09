@@ -48,7 +48,7 @@ export function HoldingsTable({ holdings }: HoldingsTableProps) {
   const SortHeader = ({ label, sortKeyName }: { label: string; sortKeyName: SortKey }) => (
     <th
       onClick={() => handleSort(sortKeyName)}
-      className="px-4 py-3 text-left text-sm font-medium text-neutral-400 cursor-pointer hover:text-neutral-200"
+      className="px-4 py-3 text-left text-sm font-medium text-foreground-secondary cursor-pointer hover:text-foreground"
     >
       {label} {sortKey === sortKeyName && (sortDir === 'asc' ? '↑' : '↓')}
     </th>
@@ -56,21 +56,21 @@ export function HoldingsTable({ holdings }: HoldingsTableProps) {
 
   if (!holdings || holdings.length === 0) {
     return (
-      <div className="bg-neutral-900 rounded-lg p-6 border border-neutral-800">
-        <h3 className="text-lg font-semibold text-neutral-100 mb-4">Holdings</h3>
-        <p className="text-neutral-500">No holdings found</p>
+      <div className="bg-background-secondary rounded-lg p-6 border border-border">
+        <h3 className="text-lg font-semibold text-foreground mb-4">Holdings</h3>
+        <p className="text-foreground-muted">No holdings found</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-neutral-900 rounded-lg border border-neutral-800 overflow-hidden">
-      <div className="p-4 border-b border-neutral-800">
-        <h3 className="text-lg font-semibold text-neutral-100">Holdings</h3>
+    <div className="bg-background-secondary rounded-lg border border-border overflow-hidden">
+      <div className="p-4 border-b border-border">
+        <h3 className="text-lg font-semibold text-foreground">Holdings</h3>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-neutral-800/50">
+          <thead className="bg-background-tertiary/50">
             <tr>
               <SortHeader label="Symbol" sortKeyName="symbol" />
               <SortHeader label="Shares" sortKeyName="shares" />
@@ -80,20 +80,20 @@ export function HoldingsTable({ holdings }: HoldingsTableProps) {
               <SortHeader label="Gain %" sortKeyName="gainLossPercent" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-neutral-800">
+          <tbody className="divide-y divide-border">
             {sortedHoldings.map((holding) => (
               <tr
                 key={holding.accountGuid}
                 onClick={() => router.push(`/accounts/${holding.accountGuid}`)}
-                className="hover:bg-neutral-800/50 cursor-pointer transition-colors"
+                className="hover:bg-surface-hover/50 cursor-pointer transition-colors"
               >
                 <td className="px-4 py-3">
-                  <div className="font-medium text-neutral-100" title={holding.accountPath}>{holding.symbol}</div>
-                  <div className="text-sm text-neutral-500">{holding.accountName}</div>
+                  <div className="font-medium text-foreground" title={holding.accountPath}>{holding.symbol}</div>
+                  <div className="text-sm text-foreground-muted">{holding.accountName}</div>
                 </td>
-                <td className="px-4 py-3 text-neutral-300">{holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-                <td className="px-4 py-3 text-neutral-300">{formatCurrency(holding.costBasis)}</td>
-                <td className="px-4 py-3 text-neutral-300">{formatCurrency(holding.marketValue)}</td>
+                <td className="px-4 py-3 text-foreground-secondary">{holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.costBasis)}</td>
+                <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
                 <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {formatCurrency(holding.gainLoss)}
                 </td>

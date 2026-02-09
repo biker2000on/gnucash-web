@@ -24,22 +24,22 @@ export function PortfolioSummaryCards({
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div className="bg-neutral-900 rounded-lg p-4 border border-neutral-800">
-        <p className="text-neutral-500 text-sm">Total Value</p>
-        <p className="text-2xl font-bold text-neutral-100">{formatCurrency(totalValue)}</p>
+      <div className="bg-background-secondary rounded-lg p-4 border border-border">
+        <p className="text-foreground-muted text-sm">Total Value</p>
+        <p className="text-2xl font-bold text-foreground">{formatCurrency(totalValue)}</p>
       </div>
-      <div className="bg-neutral-900 rounded-lg p-4 border border-neutral-800">
-        <p className="text-neutral-500 text-sm">Cost Basis</p>
-        <p className="text-2xl font-bold text-neutral-100">{formatCurrency(totalCostBasis)}</p>
+      <div className="bg-background-secondary rounded-lg p-4 border border-border">
+        <p className="text-foreground-muted text-sm">Cost Basis</p>
+        <p className="text-2xl font-bold text-foreground">{formatCurrency(totalCostBasis)}</p>
       </div>
-      <div className="bg-neutral-900 rounded-lg p-4 border border-neutral-800">
-        <p className="text-neutral-500 text-sm">Total Gain/Loss</p>
+      <div className="bg-background-secondary rounded-lg p-4 border border-border">
+        <p className="text-foreground-muted text-sm">Total Gain/Loss</p>
         <p className={`text-2xl font-bold ${gainLossColor}`}>
           {formatCurrency(totalGainLoss)} ({totalGainLossPercent >= 0 ? '+' : ''}{totalGainLossPercent.toFixed(2)}%)
         </p>
       </div>
-      <div className="bg-neutral-900 rounded-lg p-4 border border-neutral-800">
-        <p className="text-neutral-500 text-sm">Day Change</p>
+      <div className="bg-background-secondary rounded-lg p-4 border border-border">
+        <p className="text-foreground-muted text-sm">Day Change</p>
         <p className={`text-2xl font-bold ${dayChangeColor}`}>
           {formatCurrency(dayChange)} ({dayChangePercent >= 0 ? '+' : ''}{dayChangePercent.toFixed(2)}%)
         </p>

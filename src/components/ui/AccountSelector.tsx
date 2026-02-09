@@ -199,9 +199,9 @@ export function AccountSelector({
     return (
         <div ref={containerRef} className={`relative ${className}`}>
             <div
-                className={`flex items-center bg-neutral-950/50 border rounded-lg px-3 py-2 cursor-pointer ${
-                    disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-neutral-700'
-                } ${isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800'}`}
+                className={`flex items-center bg-input-bg border rounded-lg px-3 py-2 cursor-pointer ${
+                    disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-border-hover'
+                } ${isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'}`}
                 onClick={() => !disabled && inputRef.current?.focus()}
             >
                 <input
@@ -213,10 +213,10 @@ export function AccountSelector({
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={disabled}
-                    className="flex-1 bg-transparent text-sm text-neutral-200 placeholder-neutral-500 focus:outline-none"
+                    className="flex-1 bg-transparent text-sm text-foreground placeholder-foreground-muted focus:outline-none"
                 />
                 <svg
-                    className={`w-4 h-4 text-neutral-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                    className={`w-4 h-4 text-foreground-muted transition-transform ${isOpen ? 'rotate-180' : ''}`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -229,14 +229,14 @@ export function AccountSelector({
                 <div
                     data-account-dropdown
                     style={dropdownStyle}
-                    className="bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl max-h-64 overflow-y-auto"
+                    className="bg-background-secondary border border-border rounded-lg shadow-xl max-h-64 overflow-y-auto"
                 >
                     {loading ? (
-                        <div className="px-3 py-4 text-center text-neutral-500 text-sm">
+                        <div className="px-3 py-4 text-center text-foreground-muted text-sm">
                             Loading accounts...
                         </div>
                     ) : filteredAccounts.length === 0 ? (
-                        <div className="px-3 py-4 text-center text-neutral-500 text-sm">
+                        <div className="px-3 py-4 text-center text-foreground-muted text-sm">
                             No accounts found
                         </div>
                     ) : (
@@ -244,7 +244,7 @@ export function AccountSelector({
                             let globalIndex = 0;
                             return Object.entries(groupedAccounts).map(([type, typeAccounts]) => (
                                 <div key={type}>
-                                    <div className="px-3 py-2 text-xs font-semibold text-neutral-500 uppercase tracking-wider bg-neutral-950/50 sticky top-0">
+                                    <div className="px-3 py-2 text-xs font-semibold text-foreground-muted uppercase tracking-wider bg-input-bg sticky top-0">
                                         {type}
                                     </div>
                                     {typeAccounts.map(account => {
@@ -253,10 +253,10 @@ export function AccountSelector({
                                             <div
                                                 key={account.guid}
                                                 ref={el => { itemRefs.current[currentIndex] = el; }}
-                                                className={`px-3 py-2 cursor-pointer hover:bg-neutral-800/50 ${
+                                                className={`px-3 py-2 cursor-pointer hover:bg-surface-hover/50 ${
                                                     currentIndex === focusedIndex ? 'bg-blue-100 dark:bg-blue-900' : ''
                                                 } ${
-                                                    account.guid === value ? 'bg-cyan-500/10 text-cyan-400' : 'text-neutral-200'
+                                                    account.guid === value ? 'bg-cyan-500/10 text-cyan-400' : 'text-foreground'
                                                 }`}
                                                 onClick={() => handleSelect(account)}
                                             >

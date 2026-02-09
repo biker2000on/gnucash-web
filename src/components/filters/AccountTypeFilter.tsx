@@ -41,7 +41,7 @@ export function AccountTypeFilter({ selectedTypes, onChange }: AccountTypeFilter
 
     return (
         <div>
-            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-2">
+            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
                 Account Types
             </label>
             <div className="flex flex-wrap gap-1.5">
@@ -54,7 +54,7 @@ export function AccountTypeFilter({ selectedTypes, onChange }: AccountTypeFilter
                             className={`px-2 py-1 text-xs rounded-lg border transition-all ${
                                 isSelected
                                     ? colorClasses[type.color]
-                                    : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:border-neutral-600'
+                                    : 'bg-background-tertiary/50 border-border-hover text-foreground-secondary hover:border-border-hover'
                             }`}
                         >
                             {type.label}

@@ -22,22 +22,22 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
 
     const colorClasses: Record<string, { selected: string; unselected: string }> = {
         neutral: {
-            selected: 'bg-neutral-500/20 border-neutral-500/50 text-neutral-300',
-            unselected: 'bg-neutral-800/50 border-neutral-700 text-neutral-500 hover:border-neutral-600',
+            selected: 'bg-surface/20 border-surface/50 text-foreground-secondary',
+            unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
         amber: {
             selected: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
-            unselected: 'bg-neutral-800/50 border-neutral-700 text-neutral-500 hover:border-neutral-600',
+            unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
         emerald: {
             selected: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400',
-            unselected: 'bg-neutral-800/50 border-neutral-700 text-neutral-500 hover:border-neutral-600',
+            unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
     };
 
     return (
         <div>
-            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-2">
+            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
                 Reconciliation Status
             </label>
             <div className="flex gap-2">

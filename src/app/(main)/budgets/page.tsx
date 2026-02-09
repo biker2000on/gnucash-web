@@ -114,8 +114,8 @@ export default function BudgetsPage() {
         <div className="space-y-6">
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-neutral-100">Budgets</h1>
-                    <p className="text-neutral-500">Create and manage your financial budgets.</p>
+                    <h1 className="text-3xl font-bold text-foreground">Budgets</h1>
+                    <p className="text-foreground-muted">Create and manage your financial budgets.</p>
                 </div>
                 <button
                     onClick={handleCreate}
@@ -129,14 +129,14 @@ export default function BudgetsPage() {
             </header>
 
             {loading ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading budgets...</span>
+                        <span className="text-foreground-secondary">Loading budgets...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
                     <div className="text-rose-400">{error}</div>
                 </div>
             ) : (
@@ -181,16 +181,16 @@ export default function BudgetsPage() {
                             {deleteError}
                         </div>
                     )}
-                    <p className="text-neutral-300">
-                        Are you sure you want to delete <strong className="text-neutral-100">{deleteConfirm?.name}</strong>?
+                    <p className="text-foreground-secondary">
+                        Are you sure you want to delete <strong className="text-foreground">{deleteConfirm?.name}</strong>?
                     </p>
-                    <p className="text-sm text-neutral-500">
+                    <p className="text-sm text-foreground-muted">
                         This will delete all budget allocations. This action cannot be undone.
                     </p>
                     <div className="flex justify-end gap-3 pt-4">
                         <button
                             onClick={() => setDeleteConfirm(null)}
-                            className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                            className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                         >
                             Cancel
                         </button>

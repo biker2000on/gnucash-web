@@ -70,10 +70,10 @@ export default function ProfilePage() {
     if (loading || prefsLoading) {
         return (
             <div className="max-w-2xl mx-auto">
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-8 shadow-2xl">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 shadow-2xl">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading profile...</span>
+                        <span className="text-foreground-secondary">Loading profile...</span>
                     </div>
                 </div>
             </div>
@@ -83,8 +83,8 @@ export default function ProfilePage() {
     if (!user) {
         return (
             <div className="max-w-2xl mx-auto">
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-8 shadow-2xl text-center">
-                    <p className="text-neutral-400">Please sign in to view your profile.</p>
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 shadow-2xl text-center">
+                    <p className="text-foreground-secondary">Please sign in to view your profile.</p>
                 </div>
             </div>
         );
@@ -93,34 +93,34 @@ export default function ProfilePage() {
     return (
         <div className="max-w-2xl mx-auto space-y-6">
             <header>
-                <h1 className="text-3xl font-bold text-neutral-100 flex items-center gap-3">
+                <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
                     Profile Settings
-                    <span className="text-xs font-normal px-2 py-1 rounded bg-neutral-800 text-neutral-500 border border-neutral-700 uppercase tracking-tighter">
+                    <span className="text-xs font-normal px-2 py-1 rounded bg-background-tertiary text-foreground-muted border border-border-hover uppercase tracking-tighter">
                         Preferences
                     </span>
                 </h1>
-                <p className="mt-2 text-neutral-500">
+                <p className="mt-2 text-foreground-muted">
                     Customize how GnuCash Web displays your financial data.
                 </p>
             </header>
 
             {/* User Info Card */}
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6 shadow-2xl">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
                 <div className="flex items-center gap-4">
                     <div className="w-16 h-16 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center text-white text-2xl font-bold">
                         {user.username.charAt(0).toUpperCase()}
                     </div>
                     <div>
-                        <h2 className="text-xl font-semibold text-neutral-100">{user.username}</h2>
-                        <p className="text-sm text-neutral-500">User ID: {user.id}</p>
+                        <h2 className="text-xl font-semibold text-foreground">{user.username}</h2>
+                        <p className="text-sm text-foreground-muted">User ID: {user.id}</p>
                     </div>
                 </div>
             </div>
 
             {/* Balance Display Settings */}
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6 shadow-2xl">
-                <h3 className="text-lg font-semibold text-neutral-100 mb-2">Balance Display</h3>
-                <p className="text-sm text-neutral-500 mb-6">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-foreground mb-2">Balance Display</h3>
+                <p className="text-sm text-foreground-muted mb-6">
                     Choose how account balances are displayed throughout the app. This affects the Accounts page, ledgers, and reports.
                 </p>
 
@@ -143,7 +143,7 @@ export default function ProfilePage() {
                             className={`block p-4 rounded-xl border cursor-pointer transition-all ${
                                 balanceReversal === option.value
                                     ? 'bg-emerald-500/10 border-emerald-500/50'
-                                    : 'bg-neutral-900/50 border-neutral-800 hover:border-neutral-700'
+                                    : 'bg-surface/50 border-border hover:border-border-hover'
                             }`}
                         >
                             <div className="flex items-start gap-3">
@@ -154,16 +154,16 @@ export default function ProfilePage() {
                                     checked={balanceReversal === option.value}
                                     onChange={() => handleBalanceReversalChange(option.value)}
                                     disabled={saving}
-                                    className="mt-1 w-4 h-4 text-emerald-500 bg-neutral-800 border-neutral-600 focus:ring-emerald-500/50"
+                                    className="mt-1 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
                                 />
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2">
-                                        <span className="font-medium text-neutral-100">{option.label}</span>
+                                        <span className="font-medium text-foreground">{option.label}</span>
                                         {saving && balanceReversal === option.value && (
                                             <div className="w-3 h-3 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
                                         )}
                                     </div>
-                                    <p className="text-sm text-neutral-500 mt-1">{option.description}</p>
+                                    <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
                                 </div>
                             </div>
                         </label>
@@ -172,17 +172,17 @@ export default function ProfilePage() {
             </div>
 
             {/* Help Section */}
-            <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6 shadow-2xl">
-                <h3 className="text-lg font-semibold text-neutral-100 mb-2">Understanding Balance Reversal</h3>
-                <div className="prose prose-sm prose-invert text-neutral-400">
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-foreground mb-2">Understanding Balance Reversal</h3>
+                <div className="prose prose-sm prose-invert text-foreground-secondary">
                     <p>
                         In double-entry accounting, some accounts naturally have credit balances (shown as negative in GnuCash).
                         These include:
                     </p>
                     <ul className="list-disc list-inside space-y-1 mt-2">
-                        <li><strong className="text-neutral-300">Income</strong> - Money you earn appears negative</li>
-                        <li><strong className="text-neutral-300">Liabilities</strong> - Debts you owe appear negative</li>
-                        <li><strong className="text-neutral-300">Equity</strong> - Net worth appears negative</li>
+                        <li><strong className="text-foreground-secondary">Income</strong> - Money you earn appears negative</li>
+                        <li><strong className="text-foreground-secondary">Liabilities</strong> - Debts you owe appear negative</li>
+                        <li><strong className="text-foreground-secondary">Equity</strong> - Net worth appears negative</li>
                     </ul>
                     <p className="mt-4">
                         The balance reversal setting lets you display these accounts with positive values for easier reading,

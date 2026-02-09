@@ -193,8 +193,8 @@ export function DescriptionAutocomplete({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         data-field="description"
-        className={`w-full bg-neutral-950/50 border rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none ${
-          isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800 focus:border-cyan-500/50'
+        className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none ${
+          isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border focus:border-cyan-500/50'
         }`}
       />
 
@@ -202,17 +202,17 @@ export function DescriptionAutocomplete({
         <div
           data-description-dropdown
           style={dropdownStyle}
-          className="bg-neutral-900 border border-neutral-800 rounded-lg shadow-xl max-h-64 overflow-y-auto"
+          className="bg-background-secondary border border-border rounded-lg shadow-xl max-h-64 overflow-y-auto"
         >
           {loading ? (
-            <div className="px-3 py-4 text-center text-neutral-500 text-sm">
+            <div className="px-3 py-4 text-center text-foreground-muted text-sm">
               <div className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-neutral-600 border-t-cyan-500 rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-foreground-muted border-t-cyan-500 rounded-full animate-spin" />
                 Loading suggestions...
               </div>
             </div>
           ) : suggestions.length === 0 ? (
-            <div className="px-3 py-4 text-center text-neutral-500 text-sm">
+            <div className="px-3 py-4 text-center text-foreground-muted text-sm">
               No suggestions found
             </div>
           ) : (
@@ -220,17 +220,17 @@ export function DescriptionAutocomplete({
               <div
                 key={index}
                 ref={el => { itemRefs.current[index] = el; }}
-                className={`px-3 py-2 cursor-pointer hover:bg-neutral-800/50 ${
+                className={`px-3 py-2 cursor-pointer hover:bg-surface-hover/50 ${
                   index === focusedIndex ? 'bg-blue-100 dark:bg-blue-900' : ''
                 }`}
                 onClick={() => handleSelect(suggestion)}
               >
                 <div className="flex items-center justify-between">
-                  <div className="text-sm text-neutral-200">{suggestion.description}</div>
-                  <div className="text-xs text-neutral-500">{formatDate(suggestion.lastUsed)}</div>
+                  <div className="text-sm text-foreground">{suggestion.description}</div>
+                  <div className="text-xs text-foreground-muted">{formatDate(suggestion.lastUsed)}</div>
                 </div>
                 {suggestion.splits.length === 2 && (
-                  <div className="text-xs text-neutral-500 mt-1">
+                  <div className="text-xs text-foreground-muted mt-1">
                     {Math.abs(suggestion.splits[0].amount).toFixed(2)} · {suggestion.splits[0].accountName} → {suggestion.splits[1].accountName}
                   </div>
                 )}

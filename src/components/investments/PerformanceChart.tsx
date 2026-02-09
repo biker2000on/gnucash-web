@@ -37,17 +37,17 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
 
   if (!data || data.length === 0) {
     return (
-      <div className="bg-neutral-900 rounded-lg p-6 border border-neutral-800">
-        <h3 className="text-lg font-semibold text-neutral-100 mb-4">Portfolio Performance</h3>
-        <p className="text-neutral-500">No performance data available</p>
+      <div className="bg-background-secondary rounded-lg p-6 border border-border">
+        <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Performance</h3>
+        <p className="text-foreground-muted">No performance data available</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-neutral-900 rounded-lg p-6 border border-neutral-800">
+    <div className="bg-background-secondary rounded-lg p-6 border border-border">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-neutral-100">Portfolio Performance</h3>
+        <h3 className="text-lg font-semibold text-foreground">Portfolio Performance</h3>
         <div className="flex gap-1">
           {periods.map(p => (
             <button
@@ -56,7 +56,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
               className={`px-3 py-1 text-sm rounded transition-colors ${
                 period === p
                   ? 'bg-cyan-600 text-white'
-                  : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
+                  : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
               {p}

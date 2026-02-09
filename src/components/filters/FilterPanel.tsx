@@ -18,7 +18,7 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
                 className={`flex items-center gap-2 px-4 py-2 text-sm rounded-xl border transition-all ${
                     activeFilterCount > 0
                         ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-400'
-                        : 'bg-neutral-900/50 border-neutral-800 text-neutral-300 hover:border-cyan-500/50'
+                        : 'bg-surface/50 border-border text-foreground-secondary hover:border-cyan-500/50'
                 }`}
             >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -36,18 +36,18 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
             </button>
 
             {isOpen && (
-                <div className="absolute top-full left-0 mt-2 w-80 bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="absolute top-full left-0 mt-2 w-80 bg-background-secondary border border-border rounded-xl shadow-xl z-50 overflow-hidden">
                     <div className="p-4 space-y-4">
                         {children}
                     </div>
                     {activeFilterCount > 0 && (
-                        <div className="px-4 py-3 bg-neutral-950/50 border-t border-neutral-800">
+                        <div className="px-4 py-3 bg-input-bg border-t border-border">
                             <button
                                 onClick={() => {
                                     onClearAll();
                                     setIsOpen(false);
                                 }}
-                                className="w-full text-sm text-neutral-400 hover:text-rose-400 transition-colors"
+                                className="w-full text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
                             >
                                 Clear all filters
                             </button>

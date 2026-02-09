@@ -101,30 +101,30 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
     };
 
     return (
-        <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-4">
+        <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4">
             <div className="flex flex-wrap gap-4 items-end">
                 {/* Date Range */}
                 <div className="flex gap-3">
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Start Date
                         </label>
                         <input
                             type="date"
                             value={localFilters.startDate || ''}
                             onChange={e => setLocalFilters(prev => ({ ...prev, startDate: e.target.value || null }))}
-                            className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                         />
                     </div>
                     <div>
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             End Date
                         </label>
                         <input
                             type="date"
                             value={localFilters.endDate || ''}
                             onChange={e => setLocalFilters(prev => ({ ...prev, endDate: e.target.value || null }))}
-                            className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                         />
                     </div>
                 </div>
@@ -138,7 +138,7 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                             className={`px-3 py-2 text-xs rounded-lg transition-colors ${
                                 isActive(preset)
                                     ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                    : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+                                    : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                             }`}
                         >
                             {preset.label}
@@ -153,9 +153,9 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                             type="checkbox"
                             checked={localFilters.compareToPrevious || false}
                             onChange={e => setLocalFilters(prev => ({ ...prev, compareToPrevious: e.target.checked }))}
-                            className="w-4 h-4 rounded border-neutral-700 bg-neutral-950 text-cyan-500 focus:ring-cyan-500/50"
+                            className="w-4 h-4 rounded border-border-hover bg-background text-cyan-500 focus:ring-cyan-500/50"
                         />
-                        <span className="text-sm text-neutral-400">Compare to previous period</span>
+                        <span className="text-sm text-foreground-secondary">Compare to previous period</span>
                     </label>
                 )}
 
@@ -163,7 +163,7 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                 <div className="flex gap-2 ml-auto">
                     <button
                         onClick={handleReset}
-                        className="px-3 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         Reset
                     </button>

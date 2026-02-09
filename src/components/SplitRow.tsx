@@ -84,7 +84,7 @@ export function SplitRow({
     };
 
     return (
-        <div className="py-2 border-b border-neutral-800 last:border-0">
+        <div className="py-2 border-b border-border last:border-0">
             <div className="grid grid-cols-12 gap-2 items-center">
                 {/* Account Selector */}
                 <div className="col-span-5">
@@ -103,7 +103,7 @@ export function SplitRow({
                         placeholder="Debit"
                         value={split.debit}
                         onChange={(e) => handleDebitChange(e.target.value)}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50 text-right font-mono"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
                     />
                 </div>
 
@@ -115,7 +115,7 @@ export function SplitRow({
                         placeholder="Credit"
                         value={split.credit}
                         onChange={(e) => handleCreditChange(e.target.value)}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50 text-right font-mono"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
                     />
                 </div>
 
@@ -126,7 +126,7 @@ export function SplitRow({
                         placeholder="Memo"
                         value={split.memo}
                         onChange={(e) => onChange(index, 'memo', e.target.value)}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 focus:outline-none focus:border-cyan-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>
 
@@ -136,7 +136,7 @@ export function SplitRow({
                         <button
                             type="button"
                             onClick={() => onRemove(index)}
-                            className="p-2 text-neutral-500 hover:text-rose-400 transition-colors"
+                            className="p-2 text-foreground-muted hover:text-rose-400 transition-colors"
                             title="Remove split"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -161,7 +161,7 @@ export function SplitRow({
                         className="w-28 px-2 py-1 bg-amber-950/30 border border-amber-600/50 rounded text-amber-200 text-xs font-mono focus:outline-none focus:border-amber-500"
                         placeholder="1.0000"
                     />
-                    <span className="text-xs text-neutral-500">
+                    <span className="text-xs text-foreground-muted">
                         (account currency to transaction currency)
                     </span>
                 </div>

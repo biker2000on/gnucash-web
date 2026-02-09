@@ -67,9 +67,9 @@ export default function IncomeStatementPage() {
                     />
 
                     {/* Net Income Summary */}
-                    <div className="border-t-2 border-neutral-600 bg-gradient-to-r from-neutral-800 to-neutral-800/50 p-4">
+                    <div className="border-t-2 border-border-hover bg-gradient-to-r from-background-tertiary to-background-tertiary/50 p-4">
                         <div className="flex items-center justify-between">
-                            <span className="text-lg font-bold text-neutral-100">Net Income</span>
+                            <span className="text-lg font-bold text-foreground">Net Income</span>
                             <div className="flex items-center gap-4">
                                 <span className={`text-xl font-mono font-bold ${
                                     (reportData.grandTotal || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -77,7 +77,7 @@ export default function IncomeStatementPage() {
                                     {formatCurrency(reportData.grandTotal || 0, 'USD')}
                                 </span>
                                 {filters.compareToPrevious && reportData.previousGrandTotal !== undefined && (
-                                    <span className="text-sm text-neutral-400">
+                                    <span className="text-sm text-foreground-secondary">
                                         vs {formatCurrency(reportData.previousGrandTotal, 'USD')}
                                     </span>
                                 )}

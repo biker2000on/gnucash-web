@@ -6,6 +6,7 @@ import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummary
 import { AllocationChart } from '@/components/investments/AllocationChart';
 import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
+import ExpandableChart from '@/components/charts/ExpandableChart';
 
 interface PortfolioData {
   summary: {
@@ -121,10 +122,10 @@ export default function InvestmentsPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="h-8 bg-neutral-800 rounded animate-pulse w-48" />
+        <div className="h-8 bg-background-tertiary rounded animate-pulse w-48" />
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map(i => (
-            <div key={i} className="h-32 bg-neutral-800 rounded-lg animate-pulse" />
+            <div key={i} className="h-32 bg-background-tertiary rounded-lg animate-pulse" />
           ))}
         </div>
       </div>
@@ -135,12 +136,12 @@ export default function InvestmentsPage() {
     return (
       <div className="space-y-6">
         <header>
-          <h1 className="text-3xl font-bold text-neutral-100">Investments</h1>
-          <p className="text-neutral-500 mt-1">Portfolio overview and performance</p>
+          <h1 className="text-3xl font-bold text-foreground">Investments</h1>
+          <p className="text-foreground-muted mt-1">Portfolio overview and performance</p>
         </header>
-        <div className="bg-neutral-900 rounded-lg p-8 border border-neutral-800 text-center">
-          <p className="text-neutral-400 text-lg mb-2">No investment accounts found</p>
-          <p className="text-neutral-500">
+        <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
+          <p className="text-foreground-secondary text-lg mb-2">No investment accounts found</p>
+          <p className="text-foreground-muted">
             Investment accounts (STOCK type) will appear here once you have them in GnuCash.
           </p>
         </div>
@@ -153,8 +154,8 @@ export default function InvestmentsPage() {
       {/* Header */}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-neutral-100">Investments</h1>
-          <p className="text-neutral-500 mt-1">Portfolio overview and performance</p>
+          <h1 className="text-3xl font-bold text-foreground">Investments</h1>
+          <p className="text-foreground-muted mt-1">Portfolio overview and performance</p>
         </div>
         <button
           onClick={handleFetchAllPrices}
@@ -181,7 +182,7 @@ export default function InvestmentsPage() {
           </svg>
           <div>
             <p className="text-amber-200 font-medium">Price API Not Configured</p>
-            <p className="text-amber-300/70 text-sm">Set FMP_API_KEY environment variable to enable automatic price fetching.</p>
+            <p className="text-amber-300/70 text-sm">Price service is not available. Check server logs for details.</p>
           </div>
         </div>
       )}
@@ -191,8 +192,14 @@ export default function InvestmentsPage() {
 
       {/* Charts Row */}
       <div className="grid md:grid-cols-2 gap-6">
-        {portfolio && <AllocationChart data={portfolio.allocation} />}
-        <PerformanceChart data={history} />
+        {portfolio && (
+          <ExpandableChart title="Portfolio Allocation">
+            <AllocationChart data={portfolio.allocation} />
+          </ExpandableChart>
+        )}
+        <ExpandableChart title="Portfolio Performance">
+          <PerformanceChart data={history} />
+        </ExpandableChart>
       </div>
 
       {/* Holdings Table */}

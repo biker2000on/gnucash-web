@@ -49,7 +49,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
 
             {/* Name */}
             <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Budget Name <span className="text-rose-400">*</span>
                 </label>
                 <input
@@ -57,21 +57,21 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                     required
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-cyan-500/50 transition-all"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all"
                     placeholder="e.g., 2024 Annual Budget"
                 />
             </div>
 
             {/* Description */}
             <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Description
                 </label>
                 <textarea
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     rows={3}
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-cyan-500/50 transition-all resize-none"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all resize-none"
                     placeholder="Optional description..."
                 />
             </div>
@@ -79,7 +79,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
             {/* Number of Periods - only for create mode */}
             {mode === 'create' && (
                 <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                         Number of Periods
                     </label>
                     <div className="flex items-center gap-4">
@@ -92,7 +92,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 ...prev,
                                 num_periods: Math.max(1, Math.min(60, parseInt(e.target.value) || 12))
                             }))}
-                            className="w-24 bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-cyan-500/50 transition-all"
+                            className="w-24 bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all"
                         />
                         <div className="flex gap-2">
                             <button
@@ -101,7 +101,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 12
                                         ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                        : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+                                        : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                                 }`}
                             >
                                 Monthly (12)
@@ -112,7 +112,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 4
                                         ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                        : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+                                        : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                                 }`}
                             >
                                 Quarterly (4)
@@ -123,25 +123,25 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 1
                                         ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
-                                        : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
+                                        : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                                 }`}
                             >
                                 Yearly (1)
                             </button>
                         </div>
                     </div>
-                    <p className="mt-2 text-xs text-neutral-500">
+                    <p className="mt-2 text-xs text-foreground-muted">
                         The number of budget periods. Cannot be changed after creation.
                     </p>
                 </div>
             )}
 
             {/* Actions */}
-            <div className="flex justify-end gap-3 pt-4 border-t border-neutral-800">
+            <div className="flex justify-end gap-3 pt-4 border-t border-border">
                 <button
                     type="button"
                     onClick={onCancel}
-                    className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                    className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                 >
                     Cancel
                 </button>

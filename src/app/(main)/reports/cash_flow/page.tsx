@@ -70,9 +70,9 @@ export default function CashFlowPage() {
                     />
 
                     {/* Net Cash Change Summary */}
-                    <div className="border-t-2 border-neutral-600 bg-gradient-to-r from-neutral-800 to-neutral-800/50 p-4">
+                    <div className="border-t-2 border-border-hover bg-gradient-to-r from-background-tertiary to-background-tertiary/50 p-4">
                         <div className="flex items-center justify-between">
-                            <span className="text-lg font-bold text-neutral-100">Net Change in Cash</span>
+                            <span className="text-lg font-bold text-foreground">Net Change in Cash</span>
                             <span className={`text-xl font-mono font-bold ${
                                 netCashChange >= 0 ? 'text-emerald-400' : 'text-rose-400'
                             }`}>

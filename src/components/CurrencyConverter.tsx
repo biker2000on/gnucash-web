@@ -127,13 +127,13 @@ export function CurrencyConverter({
     };
 
     return (
-        <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-neutral-100 mb-4">Currency Converter</h3>
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+            <h3 className="text-lg font-semibold text-foreground mb-4">Currency Converter</h3>
 
             <div className="space-y-4">
                 {/* Amount Input */}
                 <div>
-                    <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Amount
                     </label>
                     <input
@@ -141,20 +141,20 @@ export function CurrencyConverter({
                         value={amount}
                         onChange={e => setAmount(e.target.value)}
                         placeholder="Enter amount"
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-4 py-3 text-lg font-mono text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-4 py-3 text-lg font-mono text-foreground focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>
 
                 {/* Currency Selectors */}
                 <div className="flex items-center gap-2">
                     <div className="flex-1">
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             From
                         </label>
                         <select
                             value={fromCurrency}
                             onChange={e => setFromCurrency(e.target.value)}
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
                         >
                             {currencies.map(c => (
                                 <option key={c.guid} value={c.mnemonic}>
@@ -167,7 +167,7 @@ export function CurrencyConverter({
                     {/* Swap Button */}
                     <button
                         onClick={swapCurrencies}
-                        className="mt-5 p-2 text-neutral-400 hover:text-cyan-400 transition-colors"
+                        className="mt-5 p-2 text-foreground-secondary hover:text-cyan-400 transition-colors"
                         title="Swap currencies"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -176,13 +176,13 @@ export function CurrencyConverter({
                     </button>
 
                     <div className="flex-1">
-                        <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             To
                         </label>
                         <select
                             value={toCurrency}
                             onChange={e => setToCurrency(e.target.value)}
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
                         >
                             {currencies.map(c => (
                                 <option key={c.guid} value={c.mnemonic}>
@@ -201,7 +201,7 @@ export function CurrencyConverter({
                 ) : error ? (
                     <div className="py-4 text-center text-rose-400 text-sm">{error}</div>
                 ) : result ? (
-                    <div className="bg-neutral-800/50 rounded-lg p-4">
+                    <div className="bg-background-tertiary/50 rounded-lg p-4">
                         <div className="text-center">
                             <div className="text-2xl font-mono font-bold text-cyan-400">
                                 {result.convertedAmount.toLocaleString(undefined, {
@@ -209,13 +209,13 @@ export function CurrencyConverter({
                                     maximumFractionDigits: 4,
                                 })} {toCurrency}
                             </div>
-                            <div className="text-sm text-neutral-400 mt-2">
+                            <div className="text-sm text-foreground-secondary mt-2">
                                 1 {fromCurrency} = {result.rate.toLocaleString(undefined, {
                                     minimumFractionDigits: 4,
                                     maximumFractionDigits: 6,
                                 })} {toCurrency}
                             </div>
-                            <div className="text-xs text-neutral-500 mt-1">
+                            <div className="text-xs text-foreground-muted mt-1">
                                 Rate from {result.rateDate}
                                 {result.source && ` (${result.source})`}
                             </div>
@@ -265,13 +265,13 @@ export function CurrencySelector({
     return (
         <div className="relative">
             {label && (
-                <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                     {label}
                 </label>
             )}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-left text-neutral-200 focus:outline-none focus:border-cyan-500/50 flex items-center justify-between"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-left text-foreground focus:outline-none focus:border-cyan-500/50 flex items-center justify-between"
             >
                 <span>{selectedCurrency ? `${selectedCurrency.mnemonic} - ${selectedCurrency.fullname || selectedCurrency.mnemonic}` : 'Select currency'}</span>
                 <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -280,14 +280,14 @@ export function CurrencySelector({
             </button>
 
             {isOpen && (
-                <div className="absolute z-10 w-full mt-1 bg-neutral-900 border border-neutral-800 rounded-lg shadow-lg max-h-60 overflow-auto">
-                    <div className="p-2 border-b border-neutral-800">
+                <div className="absolute z-10 w-full mt-1 bg-background-secondary border border-border rounded-lg shadow-lg max-h-60 overflow-auto">
+                    <div className="p-2 border-b border-border">
                         <input
                             type="text"
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             placeholder="Search currencies..."
-                            className="w-full bg-neutral-950 border border-neutral-700 rounded px-2 py-1 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-background border border-border-hover rounded px-2 py-1 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                             onClick={e => e.stopPropagation()}
                         />
                     </div>
@@ -299,14 +299,14 @@ export function CurrencySelector({
                                 setIsOpen(false);
                                 setSearch('');
                             }}
-                            className="w-full px-3 py-2 text-left text-sm text-neutral-200 hover:bg-neutral-800 transition-colors"
+                            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-background-tertiary transition-colors"
                         >
                             <span className="font-mono">{c.mnemonic}</span>
-                            {c.fullname && <span className="text-neutral-500 ml-2">{c.fullname}</span>}
+                            {c.fullname && <span className="text-foreground-muted ml-2">{c.fullname}</span>}
                         </button>
                     ))}
                     {filteredCurrencies.length === 0 && (
-                        <div className="px-3 py-2 text-sm text-neutral-500">No currencies found</div>
+                        <div className="px-3 py-2 text-sm text-foreground-muted">No currencies found</div>
                     )}
                 </div>
             )}

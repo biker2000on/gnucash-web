@@ -56,21 +56,21 @@ function ReportCard({ report }: { report: ReportConfig }) {
     return (
         <Link
             href={`/reports/${report.type}`}
-            className="group block bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-xl p-6 hover:border-cyan-500/50 hover:bg-neutral-900/50 transition-all duration-200"
+            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-cyan-500/50 hover:bg-surface/50 transition-all duration-200"
         >
             <div className="flex items-start gap-4">
                 <div className="p-3 bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 rounded-xl text-cyan-400 group-hover:from-cyan-500/30 group-hover:to-emerald-500/30 transition-colors">
                     <ReportIcon icon={report.icon} />
                 </div>
                 <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-semibold text-neutral-100 group-hover:text-cyan-400 transition-colors">
+                    <h3 className="text-lg font-semibold text-foreground group-hover:text-cyan-400 transition-colors">
                         {report.name}
                     </h3>
-                    <p className="mt-1 text-sm text-neutral-500 line-clamp-2">
+                    <p className="mt-1 text-sm text-foreground-muted line-clamp-2">
                         {report.description}
                     </p>
                 </div>
-                <div className="text-neutral-600 group-hover:text-cyan-400 transition-colors">
+                <div className="text-foreground-muted group-hover:text-cyan-400 transition-colors">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
@@ -86,8 +86,8 @@ export default function ReportsPage() {
     return (
         <div className="space-y-8">
             <header>
-                <h1 className="text-3xl font-bold text-neutral-100">Reports</h1>
-                <p className="text-neutral-500 mt-1">
+                <h1 className="text-3xl font-bold text-foreground">Reports</h1>
+                <p className="text-foreground-muted mt-1">
                     Generate financial reports and analyze your data.
                 </p>
             </header>
@@ -98,7 +98,7 @@ export default function ReportsPage() {
 
                 return (
                     <section key={category} className="space-y-4">
-                        <h2 className="text-lg font-semibold text-neutral-300 uppercase tracking-wider">
+                        <h2 className="text-lg font-semibold text-foreground-secondary uppercase tracking-wider">
                             {CATEGORY_LABELS[category] || category}
                         </h2>
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -202,7 +202,7 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
 
             {/* Name */}
             <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Account Name <span className="text-rose-400">*</span>
                 </label>
                 <input
@@ -211,8 +211,8 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                     data-field="name"
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className={`w-full bg-neutral-950/50 border rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all ${
-                        fieldErrors.name ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800'
+                    className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all ${
+                        fieldErrors.name ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
                     }`}
                     placeholder="e.g., Checking Account"
                 />
@@ -224,14 +224,14 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
             {/* Account Type - only for create mode */}
             {mode === 'create' && (
                 <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                         Account Type <span className="text-rose-400">*</span>
                     </label>
                     <select
                         required
                         value={formData.account_type}
                         onChange={e => setFormData(prev => ({ ...prev, account_type: e.target.value }))}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
                     >
                         {Object.entries(groupedAccountTypes).map(([group, types]) => (
                             <optgroup key={group} label={group}>
@@ -249,13 +249,13 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
             {/* Parent Account - only for create mode */}
             {mode === 'create' && (
                 <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                         Parent Account
                     </label>
                     <select
                         value={formData.parent_guid || ''}
                         onChange={e => setFormData(prev => ({ ...prev, parent_guid: e.target.value || null }))}
-                        className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
                     >
                         <option value="">(Top Level)</option>
                         {accounts.map(acc => (
@@ -264,7 +264,7 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                             </option>
                         ))}
                     </select>
-                    <p className="mt-1 text-xs text-neutral-500">
+                    <p className="mt-1 text-xs text-foreground-muted">
                         Select a parent to create a sub-account, or leave empty for top-level.
                     </p>
                 </div>
@@ -273,7 +273,7 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
             {/* Currency/Commodity - only for create mode */}
             {mode === 'create' && (
                 <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-2">
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
                         Currency <span className="text-rose-400">*</span>
                     </label>
                     <select
@@ -281,8 +281,8 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                         data-field="commodity_guid"
                         value={formData.commodity_guid}
                         onChange={e => setFormData(prev => ({ ...prev, commodity_guid: e.target.value }))}
-                        className={`w-full bg-neutral-950/50 border rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer ${
-                            fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-neutral-800'
+                        className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer ${
+                            fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
                         }`}
                     >
                         {commodities.map(comm => (
@@ -299,31 +299,31 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
 
             {/* Account Code */}
             <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Account Code
                 </label>
                 <input
                     type="text"
                     value={formData.code}
                     onChange={e => setFormData(prev => ({ ...prev, code: e.target.value }))}
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
                     placeholder="e.g., 1010"
                 />
-                <p className="mt-1 text-xs text-neutral-500">
+                <p className="mt-1 text-xs text-foreground-muted">
                     Optional code for organization (e.g., chart of accounts number).
                 </p>
             </div>
 
             {/* Description */}
             <div>
-                <label className="block text-sm font-medium text-neutral-300 mb-2">
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
                     Description
                 </label>
                 <textarea
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     rows={3}
-                    className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-3 text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all resize-none"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all resize-none"
                     placeholder="Optional description..."
                 />
             </div>
@@ -335,9 +335,9 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                         type="checkbox"
                         checked={formData.hidden === 1}
                         onChange={e => setFormData(prev => ({ ...prev, hidden: e.target.checked ? 1 : 0 }))}
-                        className="w-5 h-5 rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-emerald-500/50"
+                        className="w-5 h-5 rounded border-border-hover bg-background text-emerald-500 focus:ring-emerald-500/50"
                     />
-                    <span className="text-sm text-neutral-300">Hidden</span>
+                    <span className="text-sm text-foreground-secondary">Hidden</span>
                 </label>
 
                 <label className="flex items-center gap-3 cursor-pointer">
@@ -345,26 +345,26 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                         type="checkbox"
                         checked={formData.placeholder === 1}
                         onChange={e => setFormData(prev => ({ ...prev, placeholder: e.target.checked ? 1 : 0 }))}
-                        className="w-5 h-5 rounded border-neutral-700 bg-neutral-950 text-emerald-500 focus:ring-emerald-500/50"
+                        className="w-5 h-5 rounded border-border-hover bg-background text-emerald-500 focus:ring-emerald-500/50"
                     />
-                    <span className="text-sm text-neutral-300">Placeholder</span>
+                    <span className="text-sm text-foreground-secondary">Placeholder</span>
                 </label>
             </div>
 
-            <p className="text-xs text-neutral-500">
+            <p className="text-xs text-foreground-muted">
                 Placeholder accounts are used for organization and cannot hold transactions directly.
             </p>
 
             {/* Actions */}
-            <div className="flex justify-between items-center pt-4 border-t border-neutral-800">
-                <span className="text-xs text-neutral-500">
-                    Press <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-neutral-800 rounded border border-neutral-700">Enter</kbd> to save
+            <div className="flex justify-between items-center pt-4 border-t border-border">
+                <span className="text-xs text-foreground-muted">
+                    Press <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> to save
                 </span>
                 <div className="flex gap-3">
                     <button
                         type="button"
                         onClick={onCancel}
-                        className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                        className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                     >
                         Cancel
                     </button>

@@ -129,7 +129,7 @@ function AccountNode({
     return (
         <>
             <div
-                className={`group flex items-center gap-2 py-2 px-3 cursor-pointer rounded-l-lg transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'} ${account.hidden ? 'opacity-50 grayscale' : ''}`}
+                className={`group flex items-center gap-2 py-2 px-3 cursor-pointer rounded-l-lg transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'} ${account.hidden ? 'opacity-50 grayscale' : ''}`}
                 style={{ paddingLeft: `${depth * 20 + 12}px` }}
                 onClick={handleToggle}
             >
@@ -140,14 +140,14 @@ function AccountNode({
                 )}
                 <Link
                     href={`/accounts/${account.guid}`}
-                    className={`text-neutral-300 font-medium truncate hover:text-emerald-400 transition-colors ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}
+                    className={`text-foreground-secondary font-medium truncate hover:text-emerald-400 transition-colors ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}
                     onClick={(e) => e.stopPropagation()}
                 >
                     {account.name}
                 </Link>
                 <Link
                     href={`/accounts/${account.guid}`}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-neutral-700 rounded text-neutral-500 hover:text-emerald-400 ml-1"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-border-hover rounded text-foreground-muted hover:text-emerald-400 ml-1"
                     title="View Ledger"
                     onClick={(e) => e.stopPropagation()}
                 >
@@ -156,7 +156,7 @@ function AccountNode({
                     </svg>
                 </Link>
                 {account.hidden === 1 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-500 border border-neutral-700 ml-2">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-background-tertiary text-foreground-muted border border-border-hover ml-2">
                         HIDDEN
                     </span>
                 )}
@@ -165,7 +165,7 @@ function AccountNode({
                     {onNewChild && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onNewChild(account); }}
-                            className="p-1 rounded hover:bg-emerald-500/20 text-neutral-500 hover:text-emerald-400 transition-colors"
+                            className="p-1 rounded hover:bg-emerald-500/20 text-foreground-muted hover:text-emerald-400 transition-colors"
                             title="Add Child Account"
                         >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -176,7 +176,7 @@ function AccountNode({
                     {onEdit && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onEdit(account); }}
-                            className="p-1 rounded hover:bg-cyan-500/20 text-neutral-500 hover:text-cyan-400 transition-colors"
+                            className="p-1 rounded hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
                             title="Edit Account"
                         >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -187,7 +187,7 @@ function AccountNode({
                     {onDelete && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onDelete(account); }}
-                            className="p-1 rounded hover:bg-rose-500/20 text-neutral-500 hover:text-rose-400 transition-colors"
+                            className="p-1 rounded hover:bg-rose-500/20 text-foreground-muted hover:text-rose-400 transition-colors"
                             title="Delete Account"
                         >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -197,24 +197,24 @@ function AccountNode({
                     )}
                 </div>
             </div>
-            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'}`} onClick={handleToggle}>
+            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'}`} onClick={handleToggle}>
                 {isInvestment && (
                     <>
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">{account.commodity_mnemonic || 'Shares'}</span>
-                        <span className="text-sm text-neutral-400">
+                        <span className="text-[10px] text-foreground-muted uppercase tracking-tighter">{account.commodity_mnemonic || 'Shares'}</span>
+                        <span className="text-sm text-foreground-secondary">
                             {new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(parseFloat(account.total_balance || '0'))}
                         </span>
                     </>
                 )}
             </div>
-            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'}`} onClick={handleToggle}>
-                <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Period</span>
+            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'}`} onClick={handleToggle}>
+                <span className="text-[10px] text-foreground-muted uppercase tracking-tighter">Period</span>
                 <span className={`text-sm ${aggPeriodUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                     {formatCurrency(aggPeriodUsd, 'USD')}
                 </span>
             </div>
-            <div className={`flex flex-col justify-center text-right py-2 pr-3 pl-4 font-mono rounded-r-lg transition-colors ${hasChildren ? 'hover:bg-neutral-800/50' : 'hover:bg-neutral-800/20'}`} onClick={handleToggle}>
-                <span className="text-[10px] text-neutral-500 uppercase tracking-tighter">Total</span>
+            <div className={`flex flex-col justify-center text-right py-2 pr-3 pl-4 font-mono rounded-r-lg transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'}`} onClick={handleToggle}>
+                <span className="text-[10px] text-foreground-muted uppercase tracking-tighter">Total</span>
                 <span className={`text-sm font-bold ${aggTotalUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                     {formatCurrency(aggTotalUsd, 'USD')}
                 </span>
@@ -410,10 +410,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     }, [modalMode, selectedAccount, invalidateAccounts, onRefresh]);
 
     return (
-        <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-6 shadow-2xl">
-            <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-neutral-800/50">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+            <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-border/50">
                 <div className="flex justify-between items-center">
-                    <h2 className="text-xl font-semibold text-neutral-100 flex items-center gap-2">
+                    <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
                         <span className="w-2 h-6 bg-emerald-500 rounded-full" />
                         Account Assets & Liabilities
                     </h2>
@@ -428,10 +428,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             New Account
                         </button>
                         <div className="flex items-center gap-3">
-                            <span className="text-sm text-neutral-400">Show Hidden</span>
+                            <span className="text-sm text-foreground-secondary">Show Hidden</span>
                             <button
                                 onClick={() => setShowHidden(!showHidden)}
-                                className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-neutral-700'
+                                className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-border-hover'
                                     }`}
                             >
                                 <div className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'
@@ -446,14 +446,14 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <input
                             type="text"
                             placeholder="Filter accounts..."
-                            className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl px-4 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all"
+                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
                             value={filterText}
                             onChange={(e) => setFilterText(e.target.value)}
                         />
                         {filterText && (
                             <button
                                 onClick={() => setFilterText('')}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary"
                             >
                                 ✕
                             </button>
@@ -462,14 +462,14 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
                     {/* Tree Expansion Controls */}
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-neutral-500 uppercase tracking-widest font-bold">Expand</span>
+                        <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Expand</span>
                         <div className="flex gap-1">
                             <button
                                 onClick={() => {
                                     setExpandToDepth(0);
                                     setExpandedNodes(new Set()); // Clear manual toggles
                                 }}
-                                className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800 hover:border-emerald-500/50 transition-all"
+                                className="bg-input-bg border border-border rounded-lg px-3 py-2 text-xs text-foreground-secondary hover:bg-surface-hover hover:border-emerald-500/50 transition-all"
                                 title="Collapse All"
                             >
                                 Collapse All
@@ -479,14 +479,14 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     setExpandToDepth(Infinity);
                                     setExpandedNodes(new Set()); // Clear manual toggles
                                 }}
-                                className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800 hover:border-emerald-500/50 transition-all"
+                                className="bg-input-bg border border-border rounded-lg px-3 py-2 text-xs text-foreground-secondary hover:bg-surface-hover hover:border-emerald-500/50 transition-all"
                                 title="Expand All"
                             >
                                 Expand All
                             </button>
                         </div>
                         <select
-                            className="bg-neutral-950/50 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-xs text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
                             value={expandToDepth === Infinity ? 'all' : expandToDepth}
                             onChange={(e) => {
                                 setExpandToDepth(e.target.value === 'all' ? Infinity : parseInt(e.target.value));
@@ -505,9 +505,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-neutral-500 uppercase tracking-widest font-bold">Sort By</span>
+                        <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Sort By</span>
                         <select
-                            className="bg-neutral-950/50 border border-neutral-800 rounded-xl px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                            className="bg-input-bg border border-border rounded-xl px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
                             value={sortKey}
                             onChange={(e) => setSortKey(e.target.value as SortKey)}
                         >
@@ -578,16 +578,16 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             {deleteError}
                         </div>
                     )}
-                    <p className="text-neutral-300">
-                        Are you sure you want to delete <strong className="text-neutral-100">{deleteConfirm?.name}</strong>?
+                    <p className="text-foreground-secondary">
+                        Are you sure you want to delete <strong className="text-foreground">{deleteConfirm?.name}</strong>?
                     </p>
-                    <p className="text-sm text-neutral-500">
+                    <p className="text-sm text-foreground-muted">
                         This action cannot be undone. Accounts with transactions cannot be deleted.
                     </p>
                     <div className="flex justify-end gap-3 pt-4">
                         <button
                             onClick={() => setDeleteConfirm(null)}
-                            className="px-4 py-2 text-sm text-neutral-400 hover:text-neutral-200 transition-colors"
+                            className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
                         >
                             Cancel
                         </button>

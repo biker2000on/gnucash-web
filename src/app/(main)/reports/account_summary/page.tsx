@@ -66,7 +66,7 @@ export default function AccountSummaryPage() {
                     showComparison={true}
                 />
             ) : reportData && reportData.sections.length === 0 ? (
-                <div className="p-8 text-center text-neutral-400">
+                <div className="p-8 text-center text-foreground-secondary">
                     No accounts with activity found for this period.
                 </div>
             ) : null}

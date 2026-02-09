@@ -24,8 +24,8 @@ function AccountsContent() {
         <div className="space-y-6">
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-neutral-100">Accounts</h1>
-                    <p className="text-neutral-500">Explore your GnuCash account structure.</p>
+                    <h1 className="text-3xl font-bold text-foreground">Accounts</h1>
+                    <p className="text-foreground-muted">Explore your GnuCash account structure.</p>
                 </div>
                 <DateRangePicker
                     startDate={startDate}
@@ -35,14 +35,14 @@ function AccountsContent() {
             </header>
 
             {isLoading ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading accounts...</span>
+                        <span className="text-foreground-secondary">Loading accounts...</span>
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="text-rose-400">{error instanceof Error ? error.message : 'An error occurred'}</div>
                 </div>
             ) : (
@@ -57,13 +57,13 @@ export default function AccountsPage() {
         <Suspense fallback={
             <div className="space-y-6">
                 <header>
-                    <h1 className="text-3xl font-bold text-neutral-100">Accounts</h1>
-                    <p className="text-neutral-500">Explore your GnuCash account structure.</p>
+                    <h1 className="text-3xl font-bold text-foreground">Accounts</h1>
+                    <p className="text-foreground-muted">Explore your GnuCash account structure.</p>
                 </header>
-                <div className="bg-neutral-900/30 backdrop-blur-xl border border-neutral-800 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
                         <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                        <span className="text-neutral-400">Loading...</span>
+                        <span className="text-foreground-secondary">Loading...</span>
                     </div>
                 </div>
             </div>

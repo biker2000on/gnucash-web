@@ -40,7 +40,7 @@ export function ThemeToggle({ className = '' }: ThemeToggleProps) {
     ];
 
     return (
-        <div className={`flex items-center gap-1 p-1 rounded-xl bg-neutral-200 dark:bg-neutral-800 transition-colors ${className}`}>
+        <div className={`flex items-center gap-1 p-1 rounded-xl bg-background-tertiary transition-colors ${className}`}>
             {themes.map(({ value, label, icon }) => (
                 <button
                     key={value}
@@ -49,8 +49,8 @@ export function ThemeToggle({ className = '' }: ThemeToggleProps) {
                         flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium
                         transition-all duration-200
                         ${theme === value
-                            ? 'bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 shadow-sm'
-                            : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-200'
+                            ? 'bg-surface text-foreground shadow-sm'
+                            : 'text-foreground-muted hover:text-foreground'
                         }
                     `}
                     title={label}
@@ -108,9 +108,9 @@ export function ThemeToggleCompact({ className = '' }: ThemeToggleProps) {
             onClick={cycleTheme}
             className={`
                 p-2 rounded-lg
-                text-neutral-600 dark:text-neutral-400
-                hover:bg-neutral-200 dark:hover:bg-neutral-800
-                hover:text-neutral-900 dark:hover:text-neutral-100
+                text-foreground-secondary
+                hover:bg-background-tertiary
+                hover:text-foreground
                 transition-all duration-200
                 ${className}
             `}
