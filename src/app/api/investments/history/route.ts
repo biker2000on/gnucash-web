@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma, { toDecimal } from '@/lib/prisma';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 interface HistoryPoint {
   date: string;
@@ -20,10 +21,14 @@ export async function GET(request: NextRequest) {
   startDate.setDate(startDate.getDate() - days);
 
   try {
-    // Get all STOCK accounts with non-CURRENCY commodities
+    // Get book account GUIDs for scoping
+    const bookAccountGuids = await getBookAccountGuids();
+
+    // Get all STOCK accounts with non-CURRENCY commodities in active book
     const accounts = await prisma.accounts.findMany({
       where: {
-        account_type: 'STOCK',
+        guid: { in: bookAccountGuids },
+        account_type: { in: ['STOCK', 'MUTUAL'] },
         commodity: {
           namespace: { not: 'CURRENCY' },
         },

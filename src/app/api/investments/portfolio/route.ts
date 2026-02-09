@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getAccountHoldings } from '@/lib/commodities';
+import { getBookAccountGuids } from '@/lib/book-scope';
 
 interface PortfolioResponse {
   summary: {
@@ -70,10 +71,14 @@ async function buildAccountPath(accountGuid: string): Promise<string> {
 
 export async function GET() {
   try {
-    // Get all STOCK accounts with non-CURRENCY commodities
+    // Get book account GUIDs for scoping
+    const bookAccountGuids = await getBookAccountGuids();
+
+    // Get all STOCK accounts with non-CURRENCY commodities in active book
     const stockAccounts = await prisma.accounts.findMany({
       where: {
-        account_type: 'STOCK',
+        guid: { in: bookAccountGuids },
+        account_type: { in: ['STOCK', 'MUTUAL'] },
         commodity: {
           namespace: { not: 'CURRENCY' },
         },
