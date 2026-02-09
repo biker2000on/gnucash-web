@@ -198,13 +198,15 @@ export async function getAccountHoldings(
     const pricePerShare = latestPrice?.value || 0;
 
     // Zero-share holdings should have zero cost basis and market value
-    const costBasis = shares === 0 ? 0 : rawCostBasis;
-    const marketValue = shares === 0 ? 0 : calculateMarketValue(shares, pricePerShare);
+    // Use tolerance for floating point comparison (shares < 0.0001 is effectively zero)
+    const isZeroShares = Math.abs(shares) < 0.0001;
+    const costBasis = isZeroShares ? 0 : rawCostBasis;
+    const marketValue = isZeroShares ? 0 : calculateMarketValue(shares, pricePerShare);
     const gainLoss = calculateGainLoss(marketValue, costBasis);
     const gainLossPercent = calculateGainLossPercent(gainLoss, costBasis);
 
     return {
-        shares,
+        shares: isZeroShares ? 0 : shares,
         costBasis,
         marketValue,
         gainLoss,

@@ -75,6 +75,10 @@ export function ReportViewer({
                     .text-right, [class*="text-right"] { text-align: right; }
                     .font-bold, [class*="font-bold"] { font-weight: 700; }
                     .font-semibold, [class*="font-semibold"] { font-weight: 600; }
+                    .font-mono, [class*="font-mono"] { font-family: 'Courier New', Courier, monospace; }
+                    td[class*="text-right"], th[class*="text-right"] { text-align: right; }
+                    tfoot td, tfoot th { font-weight: 600; border-top: 2px solid #333; }
+                    .text-center, [class*="text-center"] { text-align: center; }
                     button, [role="button"], .no-print { display: none !important; }
                     * {
                         color: #000 !important;

@@ -47,32 +47,34 @@ function extractAccountCategory(accountPath: string): string {
 }
 
 /**
- * Build account path by traversing parent relationships
+ * Build account path by traversing parent relationships using pre-fetched lookup
  */
-async function buildAccountPath(accountGuid: string): Promise<string> {
-  const pathSegments: string[] = [];
+function buildAccountPathFromMap(
+  accountGuid: string,
+  lookup: Map<string, { name: string; parent_guid: string | null }>
+): string {
+  const segments: string[] = [];
   let currentGuid: string | null = accountGuid;
-
   while (currentGuid) {
-    const account: { name: string; parent_guid: string | null } | null =
-      await prisma.accounts.findUnique({
-        where: { guid: currentGuid },
-        select: { name: true, parent_guid: true },
-      });
-
+    const account = lookup.get(currentGuid);
     if (!account) break;
-
-    pathSegments.unshift(account.name);
+    segments.unshift(account.name);
     currentGuid = account.parent_guid;
   }
-
-  return pathSegments.join(':');
+  return segments.join(':');
 }
 
 export async function GET() {
   try {
     // Get book account GUIDs for scoping
     const bookAccountGuids = await getBookAccountGuids();
+
+    // Pre-fetch all accounts for path building (eliminates N+1 queries)
+    const allBookAccounts = await prisma.accounts.findMany({
+      where: { guid: { in: bookAccountGuids } },
+      select: { guid: true, name: true, parent_guid: true },
+    });
+    const accountLookup = new Map(allBookAccounts.map(a => [a.guid, { name: a.name, parent_guid: a.parent_guid }]));
 
     // Get all STOCK accounts with non-CURRENCY commodities in active book
     const stockAccounts = await prisma.accounts.findMany({
@@ -97,7 +99,7 @@ export async function GET() {
     // Build holdings data for each account
     const holdingsPromises = stockAccounts.map(async (account) => {
       const holdings = await getAccountHoldings(account.guid);
-      const accountPath = await buildAccountPath(account.guid);
+      const accountPath = buildAccountPathFromMap(account.guid, accountLookup);
 
       return {
         accountGuid: account.guid,
@@ -116,7 +118,10 @@ export async function GET() {
       };
     });
 
-    const holdings = await Promise.all(holdingsPromises);
+    const allHoldings = await Promise.all(holdingsPromises);
+
+    // Filter out fully closed positions (zero shares AND zero market value)
+    const holdings = allHoldings.filter(h => Math.abs(h.shares) >= 0.0001 || Math.abs(h.marketValue) >= 0.01);
 
     // Calculate portfolio summary
     const summary = holdings.reduce(
