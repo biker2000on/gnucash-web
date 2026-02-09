@@ -6,12 +6,13 @@ import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { DateRange } from '@/lib/datePresets';
 import KPIGrid from '@/components/dashboard/KPIGrid';
 import NetWorthChart from '@/components/dashboard/NetWorthChart';
-import SankeyDiagram from '@/components/dashboard/SankeyDiagram';
+import SankeyDiagram, { SankeyHierarchyNode, SankeyResponseData } from '@/components/dashboard/SankeyDiagram';
 import ExpensePieChart from '@/components/dashboard/ExpensePieChart';
 import IncomePieChart from '@/components/dashboard/IncomePieChart';
 import TaxPieChart from '@/components/dashboard/TaxPieChart';
 import IncomeExpenseBarChart from '@/components/dashboard/IncomeExpenseBarChart';
 import NetProfitChart from '@/components/dashboard/NetProfitChart';
+import ExpandableChart from '@/components/charts/ExpandableChart';
 
 // ------------------------------------------------------------------
 // Types matching API responses
@@ -44,16 +45,6 @@ interface MonthlyData {
     netProfit: number;
 }
 
-interface SankeyNode {
-    name: string;
-}
-
-interface SankeyLink {
-    source: number;
-    target: number;
-    value: number;
-}
-
 interface CategoryData {
     name: string;
     value: number;
@@ -81,75 +72,34 @@ function buildQueryString(startDate: string | null, endDate: string | null): str
 }
 
 // ------------------------------------------------------------------
-// Derive pie chart data from sankey nodes/links
+// Derive pie chart data from sankey hierarchy tree
 // ------------------------------------------------------------------
 
-function deriveIncomeCategories(
-    nodes: SankeyNode[],
-    links: SankeyLink[]
-): CategoryData[] {
-    // Income nodes are those that appear as `source` in links
-    const sourceIndices = new Set(links.map(l => l.source));
-    const result: CategoryData[] = [];
-
-    for (const idx of sourceIndices) {
-        const node = nodes[idx];
-        if (!node) continue;
-        // Sum all outgoing link values for this source
-        const totalValue = links
-            .filter(l => l.source === idx)
-            .reduce((sum, l) => sum + l.value, 0);
-        if (totalValue > 0) {
-            result.push({ name: node.name, value: Math.round(totalValue * 100) / 100 });
-        }
-    }
-
-    return result.sort((a, b) => b.value - a.value);
+function deriveIncomeCategoriesFromTree(income: SankeyHierarchyNode[]): CategoryData[] {
+    return income
+        .filter(n => n.value > 0)
+        .map(n => ({ name: n.name, value: n.value }))
+        .sort((a, b) => b.value - a.value);
 }
 
-function deriveExpenseCategories(
-    nodes: SankeyNode[],
-    links: SankeyLink[]
-): CategoryData[] {
-    // Expense nodes are those that appear as `target` in links, excluding "Savings"
-    const targetIndices = new Set(links.map(l => l.target));
-    const result: CategoryData[] = [];
-
-    for (const idx of targetIndices) {
-        const node = nodes[idx];
-        if (!node || node.name === 'Savings') continue;
-        // Sum all incoming link values for this target
-        const totalValue = links
-            .filter(l => l.target === idx)
-            .reduce((sum, l) => sum + l.value, 0);
-        if (totalValue > 0) {
-            result.push({ name: node.name, value: Math.round(totalValue * 100) / 100 });
-        }
-    }
-
-    return result.sort((a, b) => b.value - a.value);
+function deriveExpenseCategoriesFromTree(expense: SankeyHierarchyNode[]): CategoryData[] {
+    return expense
+        .filter(n => n.value > 0)
+        .map(n => ({ name: n.name, value: n.value }))
+        .sort((a, b) => b.value - a.value);
 }
 
-function deriveTaxCategories(
-    nodes: SankeyNode[],
-    links: SankeyLink[]
-): CategoryData[] {
-    // Tax categories are expense targets whose name contains "Tax" (case-insensitive)
-    const targetIndices = new Set(links.map(l => l.target));
+function deriveTaxCategoriesFromTree(expense: SankeyHierarchyNode[]): CategoryData[] {
     const result: CategoryData[] = [];
-
-    for (const idx of targetIndices) {
-        const node = nodes[idx];
-        if (!node) continue;
-        if (!node.name.toLowerCase().includes('tax')) continue;
-        const totalValue = links
-            .filter(l => l.target === idx)
-            .reduce((sum, l) => sum + l.value, 0);
-        if (totalValue > 0) {
-            result.push({ name: node.name, value: Math.round(totalValue * 100) / 100 });
+    function traverse(nodes: SankeyHierarchyNode[]) {
+        for (const node of nodes) {
+            if (node.name.toLowerCase().includes('tax') && node.value > 0) {
+                result.push({ name: node.name, value: node.value });
+            }
+            traverse(node.children);
         }
     }
-
+    traverse(expense);
     return result.sort((a, b) => b.value - a.value);
 }
 
@@ -169,8 +119,7 @@ export default function DashboardPage() {
     const [kpiData, setKpiData] = useState<KPIData | null>(null);
     const [netWorthData, setNetWorthData] = useState<NetWorthDataPoint[]>([]);
     const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
-    const [sankeyNodes, setSankeyNodes] = useState<SankeyNode[]>([]);
-    const [sankeyLinks, setSankeyLinks] = useState<SankeyLink[]>([]);
+    const [sankeyData, setSankeyData] = useState<SankeyResponseData | null>(null);
 
     // Loading states
     const [kpiLoading, setKpiLoading] = useState(true);
@@ -238,8 +187,7 @@ export default function DashboardPage() {
             const res = await fetch(`/api/dashboard/sankey${qs}`);
             if (res.ok) {
                 const data = await res.json();
-                setSankeyNodes(data.nodes || []);
-                setSankeyLinks(data.links || []);
+                setSankeyData(data);
             }
         } catch {
             // silently fail
@@ -277,18 +225,18 @@ export default function DashboardPage() {
         fetchSankey(queryString);
     }, [queryString, hasBooks, checkingBooks, fetchKpis, fetchNetWorth, fetchIncomeExpense, fetchSankey]);
 
-    // Derive pie chart data from sankey data
+    // Derive pie chart data from sankey hierarchy
     const incomeCategories = useMemo(
-        () => deriveIncomeCategories(sankeyNodes, sankeyLinks),
-        [sankeyNodes, sankeyLinks]
+        () => sankeyData ? deriveIncomeCategoriesFromTree(sankeyData.income) : [],
+        [sankeyData]
     );
     const expenseCategories = useMemo(
-        () => deriveExpenseCategories(sankeyNodes, sankeyLinks),
-        [sankeyNodes, sankeyLinks]
+        () => sankeyData ? deriveExpenseCategoriesFromTree(sankeyData.expense) : [],
+        [sankeyData]
     );
     const taxCategories = useMemo(
-        () => deriveTaxCategories(sankeyNodes, sankeyLinks),
-        [sankeyNodes, sankeyLinks]
+        () => sankeyData ? deriveTaxCategoriesFromTree(sankeyData.expense) : [],
+        [sankeyData]
     );
 
     const handleDateChange = useCallback((range: DateRange) => {
@@ -396,28 +344,41 @@ export default function DashboardPage() {
             <KPIGrid data={kpiData} loading={kpiLoading} />
 
             {/* Net Worth Chart - full width */}
-            <NetWorthChart data={netWorthData} loading={netWorthLoading} />
+            <ExpandableChart title="Net Worth Over Time">
+                <NetWorthChart data={netWorthData} loading={netWorthLoading} />
+            </ExpandableChart>
 
             {/* Sankey + Expense Pie + Income Pie - 3 columns */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <SankeyDiagram
-                    nodes={sankeyNodes}
-                    links={sankeyLinks}
-                    loading={sankeyLoading}
-                />
-                <ExpensePieChart data={expenseCategories} loading={sankeyLoading} />
-                <IncomePieChart data={incomeCategories} loading={sankeyLoading} />
+                <ExpandableChart title="Income Flow">
+                    <SankeyDiagram
+                        data={sankeyData}
+                        loading={sankeyLoading}
+                    />
+                </ExpandableChart>
+                <ExpandableChart title="Expenses by Category">
+                    <ExpensePieChart data={expenseCategories} loading={sankeyLoading} />
+                </ExpandableChart>
+                <ExpandableChart title="Income by Category">
+                    <IncomePieChart data={incomeCategories} loading={sankeyLoading} />
+                </ExpandableChart>
             </div>
 
             {/* Income vs Expense Bar Chart - full width */}
-            <IncomeExpenseBarChart data={monthlyData} loading={monthlyLoading} />
+            <ExpandableChart title="Income vs Expenses">
+                <IncomeExpenseBarChart data={monthlyData} loading={monthlyLoading} />
+            </ExpandableChart>
 
             {/* Net Profit by Month - full width */}
-            <NetProfitChart data={monthlyData} loading={monthlyLoading} />
+            <ExpandableChart title="Net Profit by Month">
+                <NetProfitChart data={monthlyData} loading={monthlyLoading} />
+            </ExpandableChart>
 
             {/* Tax Pie - half width */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <TaxPieChart data={taxCategories} loading={sankeyLoading} />
+                <ExpandableChart title="Taxes by Category">
+                    <TaxPieChart data={taxCategories} loading={sankeyLoading} />
+                </ExpandableChart>
             </div>
         </div>
     );

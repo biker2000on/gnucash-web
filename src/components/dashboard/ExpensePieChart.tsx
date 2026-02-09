@@ -1,5 +1,6 @@
 'use client';
 
+import { useContext } from 'react';
 import {
     PieChart,
     Pie,
@@ -8,6 +9,7 @@ import {
     ResponsiveContainer,
 } from 'recharts';
 import type { PieLabelRenderProps } from 'recharts';
+import { ExpandedContext } from '@/components/charts/ExpandableChart';
 
 const COLORS = [
     '#34d399', '#22d3ee', '#818cf8', '#f472b6', '#fb923c',
@@ -94,11 +96,13 @@ function renderCustomLabel(props: PieLabelRenderProps) {
 }
 
 export default function ExpensePieChart({ data, loading }: ExpensePieChartProps) {
+    const expanded = useContext(ExpandedContext);
+
     if (loading) return <ChartSkeleton />;
 
     if (!data || data.length === 0) {
         return (
-            <div className="bg-surface border border-border rounded-xl p-6">
+            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Expenses by Category</h3>
                 <div className="h-[300px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No expense data available.</p>
@@ -108,9 +112,9 @@ export default function ExpensePieChart({ data, loading }: ExpensePieChartProps)
     }
 
     return (
-        <div className="bg-surface border border-border rounded-xl p-6">
+        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Expenses by Category</h3>
-            <ResponsiveContainer width="100%" height={300}>
+            <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
                 <PieChart>
                     <Pie
                         data={data}

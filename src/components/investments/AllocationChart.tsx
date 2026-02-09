@@ -1,7 +1,9 @@
 'use client';
 
+import { useContext } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { formatCurrency } from '@/lib/format';
+import { ExpandedContext } from '@/components/charts/ExpandableChart';
 
 interface AllocationChartProps {
   data: Array<{
@@ -14,9 +16,11 @@ interface AllocationChartProps {
 const COLORS = ['#06b6d4', '#10b981', '#a855f7', '#f59e0b', '#f43f5e', '#3b82f6', '#84cc16', '#ec4899'];
 
 export function AllocationChart({ data }: AllocationChartProps) {
+  const expanded = useContext(ExpandedContext);
+
   if (!data || data.length === 0) {
     return (
-      <div className="bg-background-secondary rounded-lg p-6 border border-border">
+      <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
         <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Allocation</h3>
         <p className="text-foreground-muted">No allocation data available</p>
       </div>
@@ -24,9 +28,9 @@ export function AllocationChart({ data }: AllocationChartProps) {
   }
 
   return (
-    <div className="bg-background-secondary rounded-lg p-6 border border-border">
+    <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
       <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Allocation</h3>
-      <ResponsiveContainer width="100%" height={300}>
+      <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
         <PieChart>
           <Pie
             data={data}

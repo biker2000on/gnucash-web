@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useContext } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { formatCurrency } from '@/lib/format';
+import { ExpandedContext } from '@/components/charts/ExpandableChart';
 
 interface PerformanceChartProps {
   data: Array<{
@@ -14,6 +15,7 @@ interface PerformanceChartProps {
 type Period = '1M' | '3M' | '6M' | '1Y' | 'ALL';
 
 export function PerformanceChart({ data }: PerformanceChartProps) {
+  const expanded = useContext(ExpandedContext);
   const [period, setPeriod] = useState<Period>('1Y');
 
   const filteredData = useMemo(() => {
@@ -37,7 +39,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
 
   if (!data || data.length === 0) {
     return (
-      <div className="bg-background-secondary rounded-lg p-6 border border-border">
+      <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
         <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Performance</h3>
         <p className="text-foreground-muted">No performance data available</p>
       </div>
@@ -45,7 +47,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
   }
 
   return (
-    <div className="bg-background-secondary rounded-lg p-6 border border-border">
+    <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-foreground">Portfolio Performance</h3>
         <div className="flex gap-1">
@@ -64,7 +66,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
           ))}
         </div>
       </div>
-      <ResponsiveContainer width="100%" height={300}>
+      <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
         <LineChart data={filteredData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#404040" />
           <XAxis

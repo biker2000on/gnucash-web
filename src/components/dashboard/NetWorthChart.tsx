@@ -1,5 +1,6 @@
 'use client';
 
+import { useContext } from 'react';
 import {
     LineChart,
     Line,
@@ -10,6 +11,7 @@ import {
     Legend,
     ResponsiveContainer,
 } from 'recharts';
+import { ExpandedContext } from '@/components/charts/ExpandableChart';
 
 interface NetWorthDataPoint {
     date: string;
@@ -99,11 +101,13 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 }
 
 export default function NetWorthChart({ data, loading }: NetWorthChartProps) {
+    const expanded = useContext(ExpandedContext);
+
     if (loading) return <ChartSkeleton />;
 
     if (!data || data.length === 0) {
         return (
-            <div className="bg-surface border border-border rounded-xl p-6">
+            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Net Worth Over Time</h3>
                 <div className="h-[350px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No net worth data available for this period.</p>
@@ -113,9 +117,9 @@ export default function NetWorthChart({ data, loading }: NetWorthChartProps) {
     }
 
     return (
-        <div className="bg-surface border border-border rounded-xl p-6">
+        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Net Worth Over Time</h3>
-            <ResponsiveContainer width="100%" height={350}>
+            <ResponsiveContainer width="100%" height={expanded ? "100%" : 350}>
                 <LineChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis

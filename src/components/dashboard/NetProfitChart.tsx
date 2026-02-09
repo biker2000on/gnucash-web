@@ -1,5 +1,6 @@
 'use client';
 
+import { useContext } from 'react';
 import {
     BarChart,
     Bar,
@@ -12,6 +13,7 @@ import {
     ReferenceLine,
     Cell,
 } from 'recharts';
+import { ExpandedContext } from '@/components/charts/ExpandableChart';
 
 interface MonthlyData {
     month: string;
@@ -102,11 +104,13 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 }
 
 export default function NetProfitChart({ data, loading }: NetProfitChartProps) {
+    const expanded = useContext(ExpandedContext);
+
     if (loading) return <ChartSkeleton />;
 
     if (!data || data.length === 0) {
         return (
-            <div className="bg-surface border border-border rounded-xl p-6">
+            <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Net Profit by Month</h3>
                 <div className="h-[350px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No profit data available for this period.</p>
@@ -116,9 +120,9 @@ export default function NetProfitChart({ data, loading }: NetProfitChartProps) {
     }
 
     return (
-        <div className="bg-surface border border-border rounded-xl p-6">
+        <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Net Profit by Month</h3>
-            <ResponsiveContainer width="100%" height={350}>
+            <ResponsiveContainer width="100%" height={expanded ? "100%" : 350}>
                 <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis

@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, ReactNode } from 'react';
+import { useState, createContext, ReactNode } from 'react';
 import { Modal } from '@/components/ui/Modal';
+
+export const ExpandedContext = createContext(false);
 
 interface ExpandableChartProps {
   title: string;
@@ -13,13 +15,17 @@ export default function ExpandableChart({ title, children }: ExpandableChartProp
 
   return (
     <div className="relative group">
-      {/* Normal view */}
-      {children}
+      {/* Normal view - hidden when expanded */}
+      <div className={expanded ? 'hidden' : ''}>
+        <ExpandedContext.Provider value={false}>
+          {children}
+        </ExpandedContext.Provider>
+      </div>
 
       {/* Expand button - visible on hover */}
       <button
         onClick={() => setExpanded(true)}
-        className="absolute top-2 right-2 p-1.5 rounded-lg bg-surface/80 backdrop-blur-sm border border-border opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-hover"
+        className="absolute top-2 right-2 p-1.5 rounded-lg bg-surface/80 backdrop-blur-sm border border-border opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-hover z-10"
         title="Expand chart"
       >
         {/* Expand SVG icon */}
@@ -31,9 +37,11 @@ export default function ExpandableChart({ title, children }: ExpandableChartProp
       {/* Fullscreen modal */}
       {expanded && (
         <Modal isOpen={expanded} onClose={() => setExpanded(false)} title={title} size="fullscreen">
-          <div className="w-full h-full min-h-[70vh] flex items-center justify-center">
-            {children}
-          </div>
+          <ExpandedContext.Provider value={true}>
+            <div className="w-full h-full min-h-[70vh] p-4">
+              {children}
+            </div>
+          </ExpandedContext.Provider>
         </Modal>
       )}
     </div>
