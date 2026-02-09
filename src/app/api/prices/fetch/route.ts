@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isFmpConfigured } from '@/lib/config';
 import { fetchAndStorePrices } from '@/lib/price-service';
 import { z } from 'zod';
 
 /**
  * POST /api/prices/fetch
  *
- * Trigger price fetching from FMP API
+ * Trigger price fetching from Yahoo Finance
  *
  * Request body (optional):
  * {
@@ -30,14 +29,6 @@ const FetchPricesSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  // Check if FMP is configured
-  if (!isFmpConfigured()) {
-    return NextResponse.json(
-      { error: 'FMP API key is not configured. Set FMP_API_KEY environment variable.' },
-      { status: 401 }
-    );
-  }
-
   try {
     // Parse request body
     let symbols: string[] | undefined;

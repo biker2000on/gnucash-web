@@ -1,18 +1,26 @@
 /**
  * Application Configuration
  *
- * Centralized configuration module for external API keys and service URLs.
+ * Centralized configuration module.
+ * Yahoo Finance requires no API key, so price service is always available.
  */
 
 export const config = {
-  fmpApiKey: process.env.FMP_API_KEY || '',
-  fmpBaseUrl: 'https://financialmodelingprep.com',
+  // Yahoo Finance requires no API key
 };
 
 /**
- * Check if FMP API is configured
- * @returns true if FMP_API_KEY environment variable is set
+ * Check if price service is configured
+ * @returns true - Yahoo Finance needs no API key
+ */
+export function isPriceServiceConfigured(): boolean {
+  return true;
+}
+
+/**
+ * @deprecated FMP is no longer used. Kept for backward compatibility.
+ * @returns false
  */
 export function isFmpConfigured(): boolean {
-  return config.fmpApiKey.length > 0;
+  return isPriceServiceConfigured();
 }
