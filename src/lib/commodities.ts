@@ -191,13 +191,15 @@ export async function getAccountHoldings(
     });
 
     const shares = calculateShares(splits);
-    const costBasis = calculateCostBasis(splits);
+    const rawCostBasis = calculateCostBasis(splits);
 
     // Get latest price
     const latestPrice = await getLatestPrice(account.commodity_guid!, undefined, asOfDate);
     const pricePerShare = latestPrice?.value || 0;
 
-    const marketValue = calculateMarketValue(shares, pricePerShare);
+    // Zero-share holdings should have zero cost basis and market value
+    const costBasis = shares === 0 ? 0 : rawCostBasis;
+    const marketValue = shares === 0 ? 0 : calculateMarketValue(shares, pricePerShare);
     const gainLoss = calculateGainLoss(marketValue, costBasis);
     const gainLossPercent = calculateGainLossPercent(gainLoss, costBasis);
 

@@ -27,6 +27,7 @@ export function HoldingsTable({ holdings }: HoldingsTableProps) {
   const router = useRouter();
   const [sortKey, setSortKey] = useState<SortKey>('marketValue');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [showZeroShares, setShowZeroShares] = useState(false);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -37,7 +38,12 @@ export function HoldingsTable({ holdings }: HoldingsTableProps) {
     }
   };
 
-  const sortedHoldings = [...holdings].sort((a, b) => {
+  // Filter out zero-share holdings if toggle is off
+  const filteredHoldings = showZeroShares
+    ? holdings
+    : holdings.filter(h => h.shares !== 0);
+
+  const sortedHoldings = [...filteredHoldings].sort((a, b) => {
     const aVal = a[sortKey];
     const bVal = b[sortKey];
     const mult = sortDir === 'asc' ? 1 : -1;
@@ -65,8 +71,18 @@ export function HoldingsTable({ holdings }: HoldingsTableProps) {
 
   return (
     <div className="bg-background-secondary rounded-lg border border-border overflow-hidden">
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border flex items-center justify-between">
         <h3 className="text-lg font-semibold text-foreground">Holdings</h3>
+        <button
+          onClick={() => setShowZeroShares(!showZeroShares)}
+          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+            showZeroShares
+              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+              : 'bg-background-tertiary text-foreground-secondary hover:bg-background-tertiary/80'
+          }`}
+        >
+          {showZeroShares ? 'Hide' : 'Show'} Closed Positions
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full">

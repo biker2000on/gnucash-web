@@ -104,13 +104,15 @@ export default function InvestmentsPage() {
       }
 
       if (data.stored > 0) {
-        success(`Updated ${data.stored} prices`);
+        success(
+          `Updated: ${data.backfilled} historical prices backfilled, ${data.gapsFilled} gap prices filled (${data.stored} total)`
+        );
         fetchPortfolio();
         fetchHistory();
       } else if (data.failed > 0) {
         warning(`Failed to fetch ${data.failed} prices`);
       } else {
-        warning('No prices to update');
+        success('All historical prices are up to date');
       }
     } catch {
       error('Network error fetching prices');

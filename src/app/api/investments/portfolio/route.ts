@@ -116,7 +116,7 @@ export async function GET() {
       };
     });
 
-    const holdings = (await Promise.all(holdingsPromises)).filter(h => h.shares !== 0);
+    const holdings = await Promise.all(holdingsPromises);
 
     // Calculate portfolio summary
     const summary = holdings.reduce(
