@@ -145,6 +145,39 @@ export interface TreasurerReportData {
   };
 }
 
+/** Saved report configuration stored in the database */
+export interface SavedReport {
+  id: number;
+  userId: number;
+  baseReportType: ReportType;
+  name: string;
+  description: string | null;
+  config: Record<string, unknown>;
+  filters: ReportFilters | null;
+  isStarred: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Treasurer-specific config stored in SavedReport.config */
+export interface TreasurerReportConfig {
+  accountGuids?: string[];
+  accountTypes?: string[];
+  organization?: string;
+  roleName?: string;
+  personName?: string;
+}
+
+/** Input for creating/updating a saved report */
+export interface SavedReportInput {
+  baseReportType: ReportType;
+  name: string;
+  description?: string;
+  config: Record<string, unknown>;
+  filters?: ReportFilters;
+  isStarred?: boolean;
+}
+
 // Group reports by category
 export function getReportsByCategory(): Record<string, ReportConfig[]> {
   return REPORTS.reduce((acc, report) => {

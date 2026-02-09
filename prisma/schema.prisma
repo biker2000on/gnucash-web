@@ -414,6 +414,7 @@ model gnucash_web_users {
 
   // Relations
   audit_logs       gnucash_web_audit[]
+  saved_reports    gnucash_web_saved_reports[]
 }
 
 model gnucash_web_audit {
@@ -428,4 +429,20 @@ model gnucash_web_audit {
 
   // Relations
   user        gnucash_web_users? @relation(fields: [user_id], references: [id])
+}
+
+model gnucash_web_saved_reports {
+  id               Int       @id @default(autoincrement())
+  user_id          Int?
+  base_report_type String    @db.VarChar(50)
+  name             String    @db.VarChar(255)
+  description      String?   @db.Text
+  config           Json      @default("{}")
+  filters          Json?
+  is_starred       Boolean   @default(false)
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  // Relations
+  user             gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
