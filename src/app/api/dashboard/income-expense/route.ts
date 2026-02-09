@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { getEffectiveStartDate } from '@/lib/date-utils';
+import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 
 /**
  * Build a full path for an account by traversing its parent chain.
@@ -39,9 +41,7 @@ export async function GET(request: NextRequest) {
 
         const now = new Date();
         const endDate = endDateParam ? new Date(endDateParam) : now;
-        const startDate = startDateParam
-            ? new Date(startDateParam)
-            : new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+        const startDate = await getEffectiveStartDate(startDateParam);
 
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();
@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
                 account_type: true,
                 parent_guid: true,
                 hidden: true,
+                commodity_guid: true,
             },
         });
 
@@ -86,6 +87,34 @@ export async function GET(request: NextRequest) {
         }
 
         const allRelevantGuids = [...incomeGuids, ...expenseGuids];
+
+        // Build currency map for income/expense accounts
+        const accountCurrencyMap = new Map<string, string>();
+        for (const acc of relevantAccounts) {
+            if (acc.commodity_guid) {
+                accountCurrencyMap.set(acc.guid, acc.commodity_guid);
+            }
+        }
+
+        // Get base currency and pre-fetch exchange rates
+        const baseCurrency = await getBaseCurrency();
+        if (!baseCurrency) {
+            return NextResponse.json({ error: 'No base currency found' }, { status: 500 });
+        }
+        const nonBaseCurrencyGuids = new Set<string>();
+        for (const currGuid of accountCurrencyMap.values()) {
+            if (currGuid !== baseCurrency.guid) {
+                nonBaseCurrencyGuids.add(currGuid);
+            }
+        }
+
+        const exchangeRates = new Map<string, number>();
+        for (const currGuid of nonBaseCurrencyGuids) {
+            const rate = await findExchangeRate(currGuid, baseCurrency.guid, endDate);
+            if (rate) {
+                exchangeRates.set(currGuid, rate.rate);
+            }
+        }
 
         // Fetch all splits for these accounts within date range
         const splits = await prisma.splits.findMany({
@@ -125,7 +154,11 @@ export async function GET(request: NextRequest) {
             const monthKey = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}`;
             const entry = monthlyData.get(monthKey) || { income: 0, expenses: 0, taxes: 0 };
 
-            const value = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
+            const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency.guid)
+                ? (exchangeRates.get(accountCurrGuid) || 1) : 1;
+            const value = rawValue * rate;
 
             if (incomeGuids.has(split.account_guid)) {
                 // Income splits are negative in GnuCash; negate to get positive income

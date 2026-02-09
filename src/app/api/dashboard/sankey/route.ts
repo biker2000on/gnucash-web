@@ -2,6 +2,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
 import { getActiveBookRootGuid } from '@/lib/book-scope';
+import { getEffectiveStartDate } from '@/lib/date-utils';
+import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+
+interface SankeyHierarchyNode {
+    guid: string;
+    name: string;
+    value: number;
+    depth: number;
+    children: SankeyHierarchyNode[];
+}
+
+function computeMaxDepth(nodes: SankeyHierarchyNode[]): number {
+    if (nodes.length === 0) return 0;
+    let max = 0;
+    for (const node of nodes) {
+        const childMax = computeMaxDepth(node.children);
+        max = Math.max(max, childMax);
+    }
+    return max + 1;
+}
 
 export async function GET(request: NextRequest) {
     try {
@@ -11,16 +31,23 @@ export async function GET(request: NextRequest) {
 
         const now = new Date();
         const endDate = endDateParam ? new Date(endDateParam) : now;
-        const startDate = startDateParam
-            ? new Date(startDateParam)
-            : new Date(now.getFullYear(), 0, 1); // Default: start of current year
+        const startDate = await getEffectiveStartDate(startDateParam);
+
+        const emptyResponse = {
+            income: [],
+            expense: [],
+            totalIncome: 0,
+            totalExpenses: 0,
+            savings: 0,
+            maxDepth: 0,
+        };
 
         // Get the active book's root GUID
         let rootGuid: string;
         try {
             rootGuid = await getActiveBookRootGuid();
         } catch {
-            return NextResponse.json({ nodes: [], links: [] });
+            return NextResponse.json(emptyResponse);
         }
 
         // Get top-level Income and Expense accounts (direct children of root-level Income/Expense)
@@ -34,6 +61,7 @@ export async function GET(request: NextRequest) {
                 guid: true,
                 name: true,
                 account_type: true,
+                commodity_guid: true,
             },
         });
 
@@ -41,32 +69,10 @@ export async function GET(request: NextRequest) {
         const expenseParent = topLevelAccounts.find(a => a.account_type === 'EXPENSE');
 
         if (!incomeParent || !expenseParent) {
-            return NextResponse.json({ nodes: [], links: [] });
+            return NextResponse.json(emptyResponse);
         }
 
-        // Get direct children of the Income and Expense parent accounts
-        const categoryAccounts = await prisma.accounts.findMany({
-            where: {
-                parent_guid: { in: [incomeParent.guid, expenseParent.guid] },
-                hidden: 0,
-            },
-            select: {
-                guid: true,
-                name: true,
-                account_type: true,
-                parent_guid: true,
-            },
-        });
-
-        const incomeCategories = categoryAccounts.filter(
-            a => a.parent_guid === incomeParent.guid
-        );
-        const expenseCategories = categoryAccounts.filter(
-            a => a.parent_guid === expenseParent.guid
-        );
-
-        // Get all descendant account guids for each category
-        // We need to recursively find all children to sum their splits
+        // Get ALL descendant accounts under Income and Expense (for hierarchy building)
         const allAccounts = await prisma.accounts.findMany({
             where: {
                 account_type: { in: ['INCOME', 'EXPENSE'] },
@@ -74,59 +80,64 @@ export async function GET(request: NextRequest) {
             },
             select: {
                 guid: true,
+                name: true,
                 parent_guid: true,
+                commodity_guid: true,
+                account_type: true,
             },
         });
 
         // Build parent -> children map
-        const childrenMap = new Map<string, string[]>();
+        const childrenMap = new Map<string, typeof allAccounts>();
         for (const acc of allAccounts) {
             if (acc.parent_guid) {
                 const children = childrenMap.get(acc.parent_guid) || [];
-                children.push(acc.guid);
+                children.push(acc);
                 childrenMap.set(acc.parent_guid, children);
             }
         }
 
         // Recursive function to get all descendant guids (including self)
-        function getDescendants(guid: string): string[] {
+        function getDescendantGuids(guid: string): string[] {
             const result = [guid];
             const children = childrenMap.get(guid) || [];
             for (const child of children) {
-                result.push(...getDescendants(child));
+                result.push(...getDescendantGuids(child.guid));
             }
             return result;
         }
 
-        // Build category -> descendant guids mapping
-        const incomeCategoryDescendants = new Map<string, string[]>();
-        for (const cat of incomeCategories) {
-            incomeCategoryDescendants.set(cat.guid, getDescendants(cat.guid));
+        // Collect all account guids under income and expense parents for split fetching
+        const allIncomeGuids = getDescendantGuids(incomeParent.guid);
+        const allExpenseGuids = getDescendantGuids(expenseParent.guid);
+
+        // Build currency map for all income/expense accounts
+        const accountCurrencyMap = new Map<string, string>();
+        for (const acc of [...allAccounts, incomeParent, expenseParent]) {
+            if (acc.commodity_guid) {
+                accountCurrencyMap.set(acc.guid, acc.commodity_guid);
+            }
         }
 
-        const expenseCategoryDescendants = new Map<string, string[]>();
-        for (const cat of expenseCategories) {
-            expenseCategoryDescendants.set(cat.guid, getDescendants(cat.guid));
+        // Get base currency and pre-fetch exchange rates
+        const baseCurrency = await getBaseCurrency();
+        if (!baseCurrency) {
+            return NextResponse.json({ error: 'No base currency found' }, { status: 500 });
+        }
+        const nonBaseCurrencyGuids = new Set<string>();
+        for (const currGuid of accountCurrencyMap.values()) {
+            if (currGuid !== baseCurrency.guid) {
+                nonBaseCurrencyGuids.add(currGuid);
+            }
         }
 
-        // Also include splits directly on the parent Income/Expense accounts
-        // that aren't part of any category
-        const allCategorizedIncomeGuids = new Set(
-            [...incomeCategoryDescendants.values()].flat()
-        );
-        const allCategorizedExpenseGuids = new Set(
-            [...expenseCategoryDescendants.values()].flat()
-        );
-
-        // Fetch all splits for income and expense accounts within date range
-        const allIncomeGuids = [
-            incomeParent.guid,
-            ...allCategorizedIncomeGuids,
-        ];
-        const allExpenseGuids = [
-            expenseParent.guid,
-            ...allCategorizedExpenseGuids,
-        ];
+        const exchangeRates = new Map<string, number>();
+        for (const currGuid of nonBaseCurrencyGuids) {
+            const rate = await findExchangeRate(currGuid, baseCurrency.guid, endDate);
+            if (rate) {
+                exchangeRates.set(currGuid, rate.rate);
+            }
+        }
 
         const splits = await prisma.splits.findMany({
             where: {
@@ -147,119 +158,90 @@ export async function GET(request: NextRequest) {
             },
         });
 
-        // Build a map of account_guid -> total value
+        // Build a map of account_guid -> total value (with currency conversion)
         const splitTotalsByAccount = new Map<string, number>();
         for (const split of splits) {
-            const value = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
+            const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency.guid)
+                ? (exchangeRates.get(accountCurrGuid) || 1) : 1;
+            const value = rawValue * rate;
             splitTotalsByAccount.set(
                 split.account_guid,
                 (splitTotalsByAccount.get(split.account_guid) || 0) + value
             );
         }
 
-        // Aggregate totals per category
-        function getCategoryTotal(descendantGuids: string[]): number {
-            let total = 0;
-            for (const guid of descendantGuids) {
-                total += splitTotalsByAccount.get(guid) || 0;
-            }
-            return total;
+        // Build recursive hierarchy bottom-up: each node's value = own splits + sum of children's values
+        function buildHierarchy(
+            parentGuid: string,
+            depth: number,
+            isIncome: boolean
+        ): SankeyHierarchyNode[] {
+            const children = childrenMap.get(parentGuid) || [];
+            return children
+                .map(child => {
+                    const subChildren = buildHierarchy(child.guid, depth + 1, isIncome);
+                    const ownRaw = splitTotalsByAccount.get(child.guid) || 0;
+                    const childrenTotal = subChildren.reduce((sum, n) => sum + n.value, 0);
+                    const rawTotal = ownRaw + (isIncome ? -childrenTotal : childrenTotal);
+                    const value = isIncome ? -rawTotal : rawTotal;
+                    return {
+                        guid: child.guid,
+                        name: child.name,
+                        value: Math.round(value * 100) / 100,
+                        depth,
+                        children: subChildren,
+                    };
+                })
+                .filter(n => n.value > 0);
         }
 
-        // Income categories (negate since income is negative in GnuCash)
-        const incomeTotals: Array<{ name: string; value: number }> = [];
-        for (const cat of incomeCategories) {
-            const descendants = incomeCategoryDescendants.get(cat.guid) || [];
-            const total = -getCategoryTotal(descendants); // negate to positive
-            if (total > 0) {
-                incomeTotals.push({ name: cat.name, value: Math.round(total * 100) / 100 });
-            }
-        }
+        const incomeTree = buildHierarchy(incomeParent.guid, 0, true);
+        const expenseTree = buildHierarchy(expenseParent.guid, 0, false);
+
+        // Calculate totals from top-level tree nodes
+        const totalIncome = incomeTree.reduce((sum, n) => sum + n.value, 0);
+        const totalExpenses = expenseTree.reduce((sum, n) => sum + n.value, 0);
 
         // Add uncategorized income (splits directly on the parent Income account)
         const uncategorizedIncome = -(splitTotalsByAccount.get(incomeParent.guid) || 0);
         if (uncategorizedIncome > 0) {
-            incomeTotals.push({ name: 'Other Income', value: Math.round(uncategorizedIncome * 100) / 100 });
-        }
-
-        // Expense categories (positive in GnuCash)
-        const expenseTotals: Array<{ name: string; value: number }> = [];
-        for (const cat of expenseCategories) {
-            const descendants = expenseCategoryDescendants.get(cat.guid) || [];
-            const total = getCategoryTotal(descendants);
-            if (total > 0) {
-                expenseTotals.push({ name: cat.name, value: Math.round(total * 100) / 100 });
-            }
+            incomeTree.push({
+                guid: 'uncategorized-income',
+                name: 'Other Income',
+                value: Math.round(uncategorizedIncome * 100) / 100,
+                depth: 0,
+                children: [],
+            });
         }
 
         // Add uncategorized expenses
         const uncategorizedExpense = splitTotalsByAccount.get(expenseParent.guid) || 0;
         if (uncategorizedExpense > 0) {
-            expenseTotals.push({ name: 'Other Expenses', value: Math.round(uncategorizedExpense * 100) / 100 });
+            expenseTree.push({
+                guid: 'uncategorized-expense',
+                name: 'Other Expenses',
+                value: Math.round(uncategorizedExpense * 100) / 100,
+                depth: 0,
+                children: [],
+            });
         }
 
-        // Calculate totals
-        const totalIncome = incomeTotals.reduce((sum, i) => sum + i.value, 0);
-        const totalExpenses = expenseTotals.reduce((sum, e) => sum + e.value, 0);
-        const savings = totalIncome - totalExpenses;
+        const finalTotalIncome = incomeTree.reduce((sum, n) => sum + n.value, 0);
+        const finalTotalExpenses = expenseTree.reduce((sum, n) => sum + n.value, 0);
+        const savings = Math.round((finalTotalIncome - finalTotalExpenses) * 100) / 100;
 
-        // Build Sankey nodes and links
-        // Nodes: [income categories..., "Savings" (if positive), expense categories...]
-        const nodes: Array<{ name: string }> = [];
-        const links: Array<{ source: number; target: number; value: number }> = [];
+        const maxDepth = Math.max(computeMaxDepth(incomeTree), computeMaxDepth(expenseTree));
 
-        // Add income nodes
-        for (const inc of incomeTotals) {
-            nodes.push({ name: inc.name });
-        }
-
-        // Add savings node if positive
-        const savingsNodeIndex = savings > 0 ? nodes.length : -1;
-        if (savings > 0) {
-            nodes.push({ name: 'Savings' });
-        }
-
-        // Add expense nodes
-        const expenseStartIndex = nodes.length;
-        for (const exp of expenseTotals) {
-            nodes.push({ name: exp.name });
-        }
-
-        // Build links: each income source proportionally funds each expense category + savings
-        if (totalIncome > 0) {
-            for (let i = 0; i < incomeTotals.length; i++) {
-                const incomeAmount = incomeTotals[i].value;
-
-                // Proportion of total income from this source
-                const proportion = incomeAmount / totalIncome;
-
-                // Link to each expense category (proportional)
-                for (let j = 0; j < expenseTotals.length; j++) {
-                    const linkValue = Math.round(expenseTotals[j].value * proportion * 100) / 100;
-                    if (linkValue > 0) {
-                        links.push({
-                            source: i,
-                            target: expenseStartIndex + j,
-                            value: linkValue,
-                        });
-                    }
-                }
-
-                // Link to savings (proportional)
-                if (savings > 0 && savingsNodeIndex >= 0) {
-                    const savingsLink = Math.round(savings * proportion * 100) / 100;
-                    if (savingsLink > 0) {
-                        links.push({
-                            source: i,
-                            target: savingsNodeIndex,
-                            value: savingsLink,
-                        });
-                    }
-                }
-            }
-        }
-
-        return NextResponse.json({ nodes, links });
+        return NextResponse.json({
+            income: incomeTree,
+            expense: expenseTree,
+            totalIncome: Math.round(finalTotalIncome * 100) / 100,
+            totalExpenses: Math.round(finalTotalExpenses * 100) / 100,
+            savings,
+            maxDepth,
+        });
     } catch (error) {
         console.error('Error fetching sankey data:', error);
         return NextResponse.json(
