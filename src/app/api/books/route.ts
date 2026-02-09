@@ -32,7 +32,8 @@ export async function GET() {
 
                 return {
                     guid: book.guid,
-                    name: rootAccount?.name || 'Unknown',
+                    name: book.name ?? rootAccount?.name ?? 'Unnamed Book',
+                    description: book.description,
                     rootAccountGuid: book.root_account_guid,
                     accountCount: Number(accountCount[0]?.count || 0),
                 };
@@ -53,7 +54,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { name } = body;
+        const { name, description } = body;
 
         if (!name || typeof name !== 'string' || name.trim().length === 0) {
             return NextResponse.json(
@@ -131,6 +132,8 @@ export async function POST(request: NextRequest) {
                     guid: bookGuid,
                     root_account_guid: rootAccountGuid,
                     root_template_guid: templateRootGuid,
+                    name: name.trim(),
+                    description: description || null,
                 },
             });
 
@@ -163,7 +166,7 @@ export async function POST(request: NextRequest) {
         });
 
         return NextResponse.json(
-            { guid: bookGuid, name: name.trim(), rootAccountGuid, accountCount: 5 },
+            { guid: bookGuid, name: name.trim(), description: description || null, rootAccountGuid, accountCount: 5 },
             { status: 201 }
         );
     } catch (error) {

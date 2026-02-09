@@ -5,8 +5,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const name = body.name || 'My Finances';
+    const description = body.description;
 
-    const bookGuid = await createDefaultBook(name);
+    const bookGuid = await createDefaultBook(name, description);
 
     return NextResponse.json({ success: true, bookGuid });
   } catch (error) {

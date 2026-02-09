@@ -159,9 +159,11 @@ model lots {
 // ============================================
 
 model books {
-  guid               String @id @db.VarChar(32)
-  root_account_guid  String @db.VarChar(32)
-  root_template_guid String @db.VarChar(32)
+  guid               String  @id @db.VarChar(32)
+  root_account_guid  String  @db.VarChar(32)
+  root_template_guid String  @db.VarChar(32)
+  name               String? @db.VarChar(255)
+  description        String? @db.Text
 }
 
 model billterms {

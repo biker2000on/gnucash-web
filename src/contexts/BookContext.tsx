@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 interface Book {
     guid: string;
     name: string;
+    description?: string | null;
     accountCount?: number;
 }
 

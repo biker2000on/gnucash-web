@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useBooks } from '@/contexts/BookContext';
+import BookEditorModal from '@/components/BookEditorModal';
 
 function IconBook({ className = "w-4 h-4" }: { className?: string }) {
     return (
@@ -35,8 +36,23 @@ function IconCheck({ className = "w-4 h-4" }: { className?: string }) {
     );
 }
 
+function IconPencil({ className = "w-4 h-4" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+        </svg>
+    );
+}
+
 interface BookSwitcherProps {
     collapsed?: boolean;
+}
+
+interface Book {
+    guid: string;
+    name: string;
+    description?: string | null;
+    accountCount?: number;
 }
 
 export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
@@ -45,6 +61,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
     const [creating, setCreating] = useState(false);
     const [newBookName, setNewBookName] = useState('');
     const [createError, setCreateError] = useState('');
+    const [editingBook, setEditingBook] = useState<Book | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     const activeBook = books.find(b => b.guid === activeBookGuid);
@@ -89,12 +106,12 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
         }
     };
 
-    // Don't render if only one book
-    if (books.length <= 1 && !loading) {
+    if (loading) {
         return null;
     }
 
-    if (loading) {
+    // If no books exist at all, don't render
+    if (books.length === 0) {
         return null;
     }
 
@@ -123,25 +140,49 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                 >
                     <div className="py-1 max-h-64 overflow-y-auto">
                         {books.map(book => (
-                            <button
+                            <div
                                 key={book.guid}
-                                onClick={async () => {
-                                    if (book.guid !== activeBookGuid) {
-                                        await switchBook(book.guid);
-                                    }
-                                    setOpen(false);
-                                }}
-                                className={`flex items-center w-full px-3 py-2 text-sm transition-colors
+                                className={`flex items-center w-full transition-colors
                                     ${book.guid === activeBookGuid
                                         ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
                                         : 'text-foreground-secondary hover:bg-surface-hover'
                                     }`}
                             >
-                                <span className="flex-1 text-left truncate">{book.name}</span>
-                                {book.guid === activeBookGuid && (
-                                    <IconCheck className="w-4 h-4 shrink-0 text-sidebar-text-active" />
-                                )}
-                            </button>
+                                <button
+                                    onClick={async () => {
+                                        if (book.guid !== activeBookGuid) {
+                                            await switchBook(book.guid);
+                                        }
+                                        setOpen(false);
+                                    }}
+                                    className="flex-1 flex items-start gap-2 px-3 py-2 text-sm text-left"
+                                >
+                                    <div className="flex-1 min-w-0">
+                                        <div className="truncate">{book.name}</div>
+                                        {book.description && (
+                                            <div className="text-xs text-foreground-tertiary truncate mt-0.5">
+                                                {book.description.length > 50
+                                                    ? `${book.description.substring(0, 50)}...`
+                                                    : book.description}
+                                            </div>
+                                        )}
+                                    </div>
+                                    {book.guid === activeBookGuid && (
+                                        <IconCheck className="w-4 h-4 shrink-0 text-sidebar-text-active mt-0.5" />
+                                    )}
+                                </button>
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingBook(book);
+                                        setOpen(false);
+                                    }}
+                                    className="p-2 hover:bg-surface-hover/50 transition-colors"
+                                    title="Edit book"
+                                >
+                                    <IconPencil className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
                         ))}
                     </div>
 
@@ -192,6 +233,18 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                         )}
                     </div>
                 </div>
+            )}
+
+            {editingBook && (
+                <BookEditorModal
+                    book={editingBook}
+                    isOpen={!!editingBook}
+                    onClose={() => setEditingBook(null)}
+                    onSaved={() => {
+                        setEditingBook(null);
+                        refreshBooks();
+                    }}
+                />
             )}
         </div>
     );

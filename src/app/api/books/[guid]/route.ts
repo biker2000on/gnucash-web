@@ -38,7 +38,8 @@ export async function GET(
 
         return NextResponse.json({
             guid: book.guid,
-            name: rootAccount?.name || 'Unknown',
+            name: book.name ?? rootAccount?.name ?? 'Unnamed Book',
+            description: book.description,
             rootAccountGuid: book.root_account_guid,
             rootTemplateGuid: book.root_template_guid,
             accountCount: Number(accountCount[0]?.count || 0),
@@ -51,7 +52,7 @@ export async function GET(
 
 /**
  * PUT /api/books/[guid]
- * Update book (rename root account name).
+ * Update book name and/or description.
  */
 export async function PUT(
     request: NextRequest,
@@ -60,10 +61,18 @@ export async function PUT(
     try {
         const { guid } = await params;
         const body = await request.json();
-        const { name } = body;
+        const { name, description } = body;
 
-        if (!name || typeof name !== 'string' || name.trim().length === 0) {
-            return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+        // Validate inputs
+        if (name !== undefined) {
+            if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 255) {
+                return NextResponse.json({ error: 'Name must be a non-empty string under 255 characters' }, { status: 400 });
+            }
+        }
+        if (description !== undefined && description !== null) {
+            if (typeof description !== 'string' || description.length > 2000) {
+                return NextResponse.json({ error: 'Description must be under 2000 characters' }, { status: 400 });
+            }
         }
 
         const book = await prisma.books.findUnique({
@@ -74,12 +83,28 @@ export async function PUT(
             return NextResponse.json({ error: 'Book not found' }, { status: 404 });
         }
 
-        await prisma.accounts.update({
-            where: { guid: book.root_account_guid },
-            data: { name: name.trim() },
+        // Update books table with name and description
+        await prisma.books.update({
+            where: { guid },
+            data: {
+                name: name ? name.trim() : undefined,
+                description: description !== undefined ? (description || null) : undefined,
+            },
         });
 
-        return NextResponse.json({ guid, name: name.trim() });
+        // If name is provided, also update root account name
+        if (name && typeof name === 'string' && name.trim().length > 0) {
+            await prisma.accounts.update({
+                where: { guid: book.root_account_guid },
+                data: { name: name.trim() },
+            });
+        }
+
+        return NextResponse.json({
+            guid,
+            name: name ? name.trim() : undefined,
+            description: description !== undefined ? (description || null) : undefined
+        });
     } catch (error) {
         console.error('Error updating book:', error);
         return NextResponse.json({ error: 'Failed to update book' }, { status: 500 });

@@ -84,7 +84,7 @@ const DEFAULT_HIERARCHY: DefaultAccountDef[] = [
   },
 ];
 
-export async function createDefaultBook(bookName: string = 'My Finances'): Promise<string> {
+export async function createDefaultBook(bookName: string = 'My Finances', bookDescription?: string): Promise<string> {
   // Ensure USD commodity exists
   let usdCommodity = await prisma.commodities.findFirst({
     where: { namespace: 'CURRENCY', mnemonic: 'USD' },
@@ -151,6 +151,8 @@ export async function createDefaultBook(bookName: string = 'My Finances'): Promi
         guid: bookGuid,
         root_account_guid: rootGuid,
         root_template_guid: templateRootGuid,
+        name: bookName,
+        description: bookDescription || null,
       },
     });
 
