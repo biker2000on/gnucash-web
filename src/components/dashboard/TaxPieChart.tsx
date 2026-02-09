@@ -120,7 +120,7 @@ export default function TaxPieChart({ data, loading }: TaxPieChartProps) {
                         data={data}
                         cx="50%"
                         cy="50%"
-                        outerRadius={90}
+                        outerRadius={expanded ? "80%" : 90}
                         dataKey="value"
                         label={renderCustomLabel}
                         labelLine={false}

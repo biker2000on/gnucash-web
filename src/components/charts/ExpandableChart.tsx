@@ -15,12 +15,14 @@ export default function ExpandableChart({ title, children }: ExpandableChartProp
 
   return (
     <div className="relative group">
-      {/* Normal view - hidden when expanded */}
-      <div className={expanded ? 'hidden' : ''}>
-        <ExpandedContext.Provider value={false}>
-          {children}
-        </ExpandedContext.Provider>
-      </div>
+      {/* Normal view - not rendered when expanded */}
+      {!expanded && (
+        <div>
+          <ExpandedContext.Provider value={false}>
+            {children}
+          </ExpandedContext.Provider>
+        </div>
+      )}
 
       {/* Expand button - visible on hover */}
       <button

@@ -60,13 +60,15 @@ export function AllocationChart({ data }: AllocationChartProps) {
               ];
             }}
           />
-          <Legend
-            formatter={(value, entry: any) => (
-              <span style={{ color: '#d4d4d4' }}>
-                {value} ({entry.payload.percent.toFixed(1)}%)
-              </span>
-            )}
-          />
+          {expanded && (
+            <Legend
+              formatter={(value, entry: any) => (
+                <span style={{ color: '#d4d4d4' }}>
+                  {value} ({entry.payload.percent.toFixed(1)}%)
+                </span>
+              )}
+            />
+          )}
         </PieChart>
       </ResponsiveContainer>
     </div>
