@@ -8,6 +8,7 @@ export enum ReportType {
   CASH_FLOW = 'cash_flow',
   ACCOUNT_SUMMARY = 'account_summary',
   TRANSACTION_REPORT = 'transaction_report',
+  TREASURER = 'treasurer',
 }
 
 export interface ReportConfig {
@@ -93,11 +94,55 @@ export const REPORTS: ReportConfig[] = [
     icon: 'list',
     category: 'transaction',
   },
+  {
+    type: ReportType.TREASURER,
+    name: "Treasurer's Report",
+    description: 'Monthly treasurer report with opening/closing balances, income and expense detail',
+    icon: 'account',
+    category: 'financial',
+  },
 ];
 
 // Get report config by type
 export function getReportConfig(type: ReportType): ReportConfig | undefined {
   return REPORTS.find(r => r.type === type);
+}
+
+export interface TreasurerReportData {
+  header: {
+    organization: string;
+    roleName: string;
+    personName: string;
+    reportDate: string;
+    periodStart: string;
+    periodEnd: string;
+  };
+  openingBalance: {
+    accounts: Array<{ name: string; balance: number }>;
+    total: number;
+  };
+  incomeSummary: {
+    transactions: Array<{
+      date: string;
+      description: string;
+      category: string;
+      amount: number;
+    }>;
+    total: number;
+  };
+  expenseSummary: {
+    transactions: Array<{
+      date: string;
+      description: string;
+      category: string;
+      amount: number;
+    }>;
+    total: number;
+  };
+  closingBalance: {
+    accounts: Array<{ name: string; balance: number }>;
+    total: number;
+  };
 }
 
 // Group reports by category

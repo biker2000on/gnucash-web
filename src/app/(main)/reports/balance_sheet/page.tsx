@@ -57,6 +57,7 @@ export default function BalanceSheetPage() {
             isLoading={isLoading}
             error={error}
             showCompare={true}
+            reportData={reportData ?? undefined}
         >
             {reportData && (
                 <ReportTable

@@ -1,8 +1,13 @@
 'use client';
 
-import { ReactNode } from 'react';
-import { ReportFilters as ReportFiltersType } from '@/lib/reports/types';
+import { ReactNode, useRef } from 'react';
+import { ReportFilters as ReportFiltersType, ReportData } from '@/lib/reports/types';
 import { ReportFilters } from './ReportFilters';
+import { generateCSV, downloadCSV } from '@/lib/reports/csv-export';
+
+function escapeHtml(s: string): string {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 
 interface ReportViewerProps {
     title: string;
@@ -13,6 +18,7 @@ interface ReportViewerProps {
     error?: string | null;
     children: ReactNode;
     showCompare?: boolean;
+    reportData?: ReportData;
 }
 
 export function ReportViewer({
@@ -24,14 +30,80 @@ export function ReportViewer({
     error,
     children,
     showCompare = true,
+    reportData,
 }: ReportViewerProps) {
+    const reportContentRef = useRef<HTMLDivElement>(null);
+
     const handlePrint = () => {
-        window.print();
+        if (!reportContentRef.current) return;
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        if (!printWindow) return;
+        const content = reportContentRef.current.innerHTML;
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${escapeHtml(title)}</title>
+                <style>
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        color: #000;
+                        background: #fff;
+                        margin: 20px;
+                        line-height: 1.5;
+                    }
+                    h1, h2, h3 { margin: 0.5em 0; }
+                    h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+                    h2 { font-size: 18px; color: #444; }
+                    h3 { font-size: 14px; color: #666; }
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin: 12px 0;
+                        font-size: 12px;
+                    }
+                    th, td {
+                        border: 1px solid #ddd;
+                        padding: 6px 10px;
+                        text-align: left;
+                    }
+                    th {
+                        background: #f5f5f5;
+                        font-weight: 600;
+                    }
+                    tr:nth-child(even) { background: #fafafa; }
+                    .text-right, [class*="text-right"] { text-align: right; }
+                    .font-bold, [class*="font-bold"] { font-weight: 700; }
+                    .font-semibold, [class*="font-semibold"] { font-weight: 600; }
+                    button, [role="button"], .no-print { display: none !important; }
+                    * {
+                        color: #000 !important;
+                        background-color: transparent !important;
+                        border-color: #ddd !important;
+                    }
+                    @media print {
+                        body { margin: 0; }
+                        @page { margin: 1.5cm; }
+                    }
+                </style>
+            </head>
+            <body>
+                <h1>${escapeHtml(title)}</h1>
+                ${content}
+            </body>
+            </html>
+        `);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+        printWindow.close();
     };
 
     const handleExport = (format: 'csv' | 'excel') => {
-        // TODO: Implement export functionality
-        console.log(`Export to ${format}`);
+        if (format === 'csv' && reportData) {
+            const csv = generateCSV(reportData);
+            downloadCSV(csv, `${title.replace(/\s+/g, '_')}_report.csv`);
+        }
     };
 
     return (
@@ -86,29 +158,10 @@ export function ReportViewer({
                     <div className="text-rose-400">{error}</div>
                 </div>
             ) : (
-                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden print:bg-white print:border-0">
+                <div ref={reportContentRef} className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
                     {children}
                 </div>
             )}
-
-            {/* Print Styles */}
-            <style jsx global>{`
-                @media print {
-                    body * {
-                        visibility: hidden;
-                    }
-                    .print\\:bg-white,
-                    .print\\:bg-white * {
-                        visibility: visible;
-                    }
-                    .print\\:bg-white {
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        width: 100%;
-                    }
-                }
-            `}</style>
         </div>
     );
 }

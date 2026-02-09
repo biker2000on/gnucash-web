@@ -59,6 +59,7 @@ export default function AccountSummaryPage() {
             isLoading={isLoading}
             error={error}
             showCompare={false}
+            reportData={reportData ?? undefined}
         >
             {reportData && reportData.sections.length > 0 ? (
                 <ReportTable

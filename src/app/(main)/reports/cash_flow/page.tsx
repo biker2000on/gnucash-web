@@ -61,6 +61,7 @@ export default function CashFlowPage() {
             isLoading={isLoading}
             error={error}
             showCompare={true}
+            reportData={reportData ?? undefined}
         >
             {reportData && (
                 <>
