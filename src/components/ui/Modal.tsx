@@ -8,7 +8,7 @@ interface ModalProps {
     onClose: () => void;
     title?: string;
     children: ReactNode;
-    size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+    size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'fullscreen';
     closeOnBackdrop?: boolean;
     closeOnEscape?: boolean;
 }
@@ -19,6 +19,7 @@ const sizeClasses = {
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
     '2xl': 'max-w-5xl',
+    fullscreen: 'max-w-[95vw] w-[95vw] h-[90vh]',
 };
 
 export function Modal({
@@ -115,20 +116,20 @@ export function Modal({
             {/* Modal */}
             <div
                 ref={modalRef}
-                className={`relative bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200`}
+                className={`relative bg-background-secondary border border-border rounded-2xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200`}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={title ? 'modal-title' : undefined}
             >
                 {/* Header */}
                 {title && (
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800">
-                        <h2 id="modal-title" className="text-lg font-semibold text-neutral-100">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                        <h2 id="modal-title" className="text-lg font-semibold text-foreground">
                             {title}
                         </h2>
                         <button
                             onClick={onClose}
-                            className="text-neutral-400 hover:text-neutral-200 transition-colors p-1 rounded-lg hover:bg-neutral-800"
+                            className="text-foreground-secondary hover:text-foreground transition-colors p-1 rounded-lg hover:bg-surface-hover"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
