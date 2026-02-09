@@ -28,14 +28,14 @@ export default function LoginPage() {
 
     if (checking) {
         return (
-            <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+            <div className="min-h-screen bg-background flex items-center justify-center">
                 <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-neutral-900 via-neutral-950 to-neutral-950 flex items-center justify-center p-4">
+        <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-background-secondary via-background to-background flex items-center justify-center p-4">
             <LoginForm
                 mode={mode}
                 onToggleMode={() => setMode(mode === 'login' ? 'register' : 'login')}
