@@ -78,8 +78,8 @@ async function computeBalances(
         },
         select: {
             account_guid: true,
-            value_num: true,
-            value_denom: true,
+            quantity_num: true,
+            quantity_denom: true,
         },
     });
 
@@ -105,7 +105,7 @@ async function computeBalances(
 
     for (const account of assetAccounts) {
         const accountSplits = splitsByAccount.get(account.guid) || [];
-        let balance = accountSplits.reduce((sum, s) => sum + toNumber(s.value_num, s.value_denom), 0);
+        let balance = accountSplits.reduce((sum, s) => sum + toNumber(s.quantity_num, s.quantity_denom), 0);
 
         // Currency conversion if needed
         if (account.commodity_guid && account.commodity_guid !== baseCurrencyGuid) {
@@ -192,7 +192,7 @@ async function getTransactionsByType(
         const account = accountMap.get(split.account_guid);
         if (!account) continue;
 
-        let amount = toNumber(split.value_num, split.value_denom);
+        let amount = toNumber(split.quantity_num, split.quantity_denom);
 
         // Currency conversion if needed (using pre-fetched rates)
         if (account.commodity_guid && account.commodity_guid !== baseCurrencyGuid) {

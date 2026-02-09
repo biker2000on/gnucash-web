@@ -90,8 +90,8 @@ export async function GET(request: NextRequest) {
             },
             select: {
                 account_guid: true,
-                value_num: true,
-                value_denom: true,
+                quantity_num: true,
+                quantity_denom: true,
                 transaction: {
                     select: {
                         post_date: true,
@@ -317,7 +317,7 @@ export async function GET(request: NextRequest) {
         for (const split of cashSplits) {
             const postDate = split.transaction.post_date;
             if (!postDate) continue;
-            const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
             const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
             const isBase = !accountCurrGuid || !baseCurrency || accountCurrGuid === baseCurrency.guid;
             processedCashSplits.push({

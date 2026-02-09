@@ -153,15 +153,15 @@ export async function GET(request: NextRequest) {
             },
             select: {
                 account_guid: true,
-                value_num: true,
-                value_denom: true,
+                quantity_num: true,
+                quantity_denom: true,
             },
         });
 
         // Build a map of account_guid -> total value (with currency conversion)
         const splitTotalsByAccount = new Map<string, number>();
         for (const split of splits) {
-            const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
             const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
             const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency.guid)
                 ? (exchangeRates.get(accountCurrGuid) || 1) : 1;

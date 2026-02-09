@@ -131,8 +131,8 @@ export async function GET(request: NextRequest) {
             },
             select: {
                 account_guid: true,
-                value_num: true,
-                value_denom: true,
+                quantity_num: true,
+                quantity_denom: true,
                 transaction: {
                     select: {
                         post_date: true,
@@ -154,7 +154,7 @@ export async function GET(request: NextRequest) {
             const monthKey = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}`;
             const entry = monthlyData.get(monthKey) || { income: 0, expenses: 0, taxes: 0 };
 
-            const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
             const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
             const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency.guid)
                 ? (exchangeRates.get(accountCurrGuid) || 1) : 1;

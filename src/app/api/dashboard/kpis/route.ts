@@ -73,8 +73,8 @@ export async function GET(request: NextRequest) {
             },
             select: {
                 account_guid: true,
-                value_num: true,
-                value_denom: true,
+                quantity_num: true,
+                quantity_denom: true,
                 transaction: {
                     select: {
                         post_date: true,
@@ -198,7 +198,7 @@ export async function GET(request: NextRequest) {
             for (const split of cashSplits) {
                 const postDate = split.transaction.post_date;
                 if (!postDate || postDate > asOf) continue;
-                const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+                const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
                 const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
                 const rate = (accountCurrGuid && baseCurrency && accountCurrGuid !== baseCurrency.guid)
                     ? (ratesForDate.get(accountCurrGuid) || 1)
@@ -313,8 +313,8 @@ export async function GET(request: NextRequest) {
             },
             select: {
                 account_guid: true,
-                value_num: true,
-                value_denom: true,
+                quantity_num: true,
+                quantity_denom: true,
             },
         });
 
@@ -323,7 +323,7 @@ export async function GET(request: NextRequest) {
         const expenseByAccount = new Map<string, number>();
 
         for (const split of iesplits) {
-            const rawValue = parseFloat(toDecimal(split.value_num, split.value_denom));
+            const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
             const accountCurrGuid = ieAccountCurrencyMap.get(split.account_guid);
             const rate = (accountCurrGuid && accountCurrGuid !== baseCurrency?.guid)
                 ? (exchangeRates.get(accountCurrGuid) || 1) : 1;
