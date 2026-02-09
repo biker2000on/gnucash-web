@@ -56,10 +56,12 @@ export default function SankeyChart({
   nodes,
   links,
   width: propWidth,
-  height: propHeight = 600,
+  height: propHeight,
 }: SankeyChartProps) {
+  const minHeight = Math.max(propHeight ?? 600, nodes.length * 25);
+  const defaultHeight = minHeight;
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: propWidth || 800, height: propHeight });
+  const [dimensions, setDimensions] = useState({ width: propWidth || 800, height: defaultHeight });
   const [tooltip, setTooltip] = useState<TooltipState>({
     visible: false,
     x: 0,
@@ -68,14 +70,17 @@ export default function SankeyChart({
   });
   const [hoveredLink, setHoveredLink] = useState<number | null>(null);
 
-  // Measure container width using ResizeObserver
+  // Measure container dimensions using ResizeObserver
   useEffect(() => {
     if (!containerRef.current || propWidth) return;
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const { width } = entry.contentRect;
-        setDimensions({ width, height: propHeight });
+        const { width, height } = entry.contentRect;
+        setDimensions({
+          width,
+          height: propHeight === undefined ? Math.max(height, 300) : propHeight,
+        });
       }
     });
 
@@ -143,7 +148,7 @@ export default function SankeyChart({
   };
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+    <div ref={containerRef} style={{ position: 'relative', width: '100%', height: propHeight === undefined ? '100%' : undefined }}>
       <svg width={dimensions.width} height={dimensions.height}>
         <defs>
           {sankeyData.links.map((link, i) => {
