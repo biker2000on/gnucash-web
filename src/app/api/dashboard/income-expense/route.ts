@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
         const endDateParam = searchParams.get('endDate');
 
         const now = new Date();
-        const endDate = endDateParam ? new Date(endDateParam) : now;
+        const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
         const startDate = await getEffectiveStartDate(startDateParam);
 
         // Get book account GUIDs for scoping
