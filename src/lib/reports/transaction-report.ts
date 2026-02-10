@@ -1,14 +1,6 @@
 import prisma from '@/lib/prisma';
-import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
-import { buildAccountPathMap } from './utils';
-
-/**
- * Convert GnuCash fraction to decimal number
- */
-function toDecimal(num: bigint | null, denom: bigint | null): number {
-    if (num === null || denom === null || denom === 0n) return 0;
-    return Number(num) / Number(denom);
-}
+import { ReportType, ReportData, ReportFilters } from './types';
+import { buildAccountPathMap, toDecimal } from './utils';
 
 export interface TransactionReportItem {
     guid: string;

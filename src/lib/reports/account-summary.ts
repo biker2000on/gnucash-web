@@ -1,46 +1,7 @@
 import prisma from '@/lib/prisma';
 import { getLatestPrice } from '@/lib/commodities';
-import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
-
-/**
- * Convert GnuCash fraction to decimal number
- */
-function toDecimal(num: bigint | null, denom: bigint | null): number {
-    if (num === null || denom === null || denom === 0n) return 0;
-    return Number(num) / Number(denom);
-}
-
-interface AccountWithBalances {
-    guid: string;
-    name: string;
-    account_type: string;
-    parent_guid: string | null;
-    commodity_guid: string | null;
-    closingBalance: number;
-    openingBalance: number;
-}
-
-/**
- * Build hierarchical line items from flat account list
- */
-function buildHierarchy(accounts: AccountWithBalances[], parentGuid: string | null = null, depth = 0): LineItem[] {
-    const children = accounts.filter(a => a.parent_guid === parentGuid);
-
-    return children.map(account => {
-        const childItems = buildHierarchy(accounts, account.guid, depth + 1);
-        const childrenClosingTotal = childItems.reduce((sum, item) => sum + item.amount, 0);
-        const childrenOpeningTotal = childItems.reduce((sum, item) => sum + (item.previousAmount || 0), 0);
-
-        return {
-            guid: account.guid,
-            name: account.name,
-            amount: account.closingBalance + childrenClosingTotal,
-            previousAmount: account.openingBalance + childrenOpeningTotal,
-            children: childItems.length > 0 ? childItems : undefined,
-            depth,
-        };
-    });
-}
+import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
+import { toDecimal, buildHierarchy, resolveRootGuid, AccountWithBalance } from './utils';
 
 /**
  * Generate Account Summary report
@@ -53,26 +14,7 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
     const investmentTypes = ['STOCK', 'MUTUAL'];
 
     // Determine root GUID from book scoping or fallback
-    let rootGuid: string | null = null;
-    if (filters.bookAccountGuids && filters.bookAccountGuids.length > 0) {
-        const rootAccount = await prisma.accounts.findFirst({
-            where: {
-                guid: { in: filters.bookAccountGuids },
-                account_type: 'ROOT',
-            },
-            select: { guid: true }
-        });
-        rootGuid = rootAccount?.guid || null;
-    } else {
-        const rootAccount = await prisma.accounts.findFirst({
-            where: {
-                account_type: 'ROOT',
-                name: { startsWith: 'Root' }
-            },
-            select: { guid: true }
-        });
-        rootGuid = rootAccount?.guid || null;
-    }
+    const rootGuid = await resolveRootGuid(filters.bookAccountGuids);
 
     // Get all non-hidden accounts
     const accounts = await prisma.accounts.findMany({
@@ -90,7 +32,7 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
     });
 
     // Get balances for each account
-    const accountBalances: AccountWithBalances[] = await Promise.all(
+    const accountBalances: AccountWithBalance[] = await Promise.all(
         accounts.map(async (account) => {
             const isInvestment = investmentTypes.includes(account.account_type) && account.commodity_guid;
 
@@ -140,8 +82,8 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
 
             return {
                 ...account,
-                openingBalance,
-                closingBalance,
+                balance: closingBalance,
+                previousBalance: openingBalance,
             };
         })
     );
@@ -152,15 +94,6 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
     const incomeTypes = ['INCOME'];
     const expenseTypes = ['EXPENSE'];
     const equityTypes = ['EQUITY'];
-
-    function getTopLevelCategory(type: string): string | null {
-        if (assetTypes.includes(type)) return 'Assets';
-        if (liabilityTypes.includes(type)) return 'Liabilities';
-        if (incomeTypes.includes(type)) return 'Income';
-        if (expenseTypes.includes(type)) return 'Expenses';
-        if (equityTypes.includes(type)) return 'Equity';
-        return null;
-    }
 
     // Build sections by top-level category with hierarchy
     const categoryConfigs = [

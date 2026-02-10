@@ -19,6 +19,14 @@ const VALID_REPORT_TYPES = new Set<string>([
   'account_summary',
   'transaction_report',
   'treasurer',
+  'equity_statement',
+  'trial_balance',
+  'general_journal',
+  'general_ledger',
+  'investment_portfolio',
+  'reconciliation',
+  'net_worth_chart',
+  'income_expense_chart',
 ]);
 
 /**
