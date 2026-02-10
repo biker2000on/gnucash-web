@@ -10,6 +10,11 @@ interface Budget {
     name: string;
     description: string | null;
     num_periods: number;
+    recurrence?: {
+        period_type: string;
+        mult: number;
+        period_start: string;
+    } | null;
     _count?: {
         amounts: number;
     };
@@ -53,8 +58,20 @@ export default function BudgetsPage() {
         setModalOpen(true);
     };
 
-    const handleEdit = (budget: Budget) => {
-        setSelectedBudget(budget);
+    const handleEdit = async (budget: Budget) => {
+        // Fetch full budget details to get recurrence info
+        try {
+            const res = await fetch(`/api/budgets/${budget.guid}`);
+            if (res.ok) {
+                const fullBudget = await res.json();
+                setSelectedBudget(fullBudget);
+            } else {
+                setSelectedBudget(budget);
+            }
+        } catch (err) {
+            console.error('Error fetching budget details:', err);
+            setSelectedBudget(budget);
+        }
         setModalMode('edit');
         setModalOpen(true);
     };
@@ -161,6 +178,7 @@ export default function BudgetsPage() {
                             name: selectedBudget.name,
                             description: selectedBudget.description || '',
                             num_periods: selectedBudget.num_periods,
+                            recurrence_period_type: selectedBudget.recurrence?.period_type,
                         } : undefined}
                         onSave={handleSave}
                         onCancel={() => setModalOpen(false)}

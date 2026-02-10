@@ -66,7 +66,8 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     const [showTransactionModal, setShowTransactionModal] = useState(false);
 
     // Time period selection
-    const [selectedPeriod, setSelectedPeriod] = useState<'1M' | '3M' | '6M' | '1Y' | 'ALL'>('3M');
+    const [selectedPeriod, setSelectedPeriod] = useState<'1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'ALL'>('3M');
+    const [chartMode, setChartMode] = useState<'price' | 'percentChange'>('price');
 
     // Index-based zoom state
     interface ZoomDomain {
@@ -103,6 +104,12 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             case '1Y':
                 cutoffDate.setFullYear(now.getFullYear() - 1);
                 break;
+            case '3Y':
+                cutoffDate.setFullYear(now.getFullYear() - 3);
+                break;
+            case '5Y':
+                cutoffDate.setFullYear(now.getFullYear() - 5);
+                break;
             case 'ALL':
                 return priceHistory;
         }
@@ -122,6 +129,16 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
         const end = zoomDomain.endIndex ?? filteredPriceHistory.length;
         return filteredPriceHistory.slice(start, end + 1);
     }, [filteredPriceHistory, zoomDomain.startIndex, zoomDomain.endIndex]);
+
+    const displayChartData = useMemo(() => {
+        if (chartMode === 'price' || chartData.length === 0) return chartData;
+        const firstValue = chartData[0].value;
+        if (firstValue === 0) return chartData;
+        return chartData.map(point => ({
+            ...point,
+            value: ((point.value - firstValue) / firstValue) * 100,
+        }));
+    }, [chartData, chartMode]);
 
     // Mouse down handler - start drag selection
     const handleMouseDown = useCallback<CategoricalChartFunc>((nextState) => {
@@ -187,7 +204,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     }, []);
 
     // Period change handler - resets zoom
-    const handlePeriodChange = useCallback((period: '1M' | '3M' | '6M' | '1Y' | 'ALL') => {
+    const handlePeriodChange = useCallback((period: '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'ALL') => {
         setSelectedPeriod(period);
         setZoomDomain({ startIndex: null, endIndex: null });
     }, []);
@@ -195,7 +212,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const res = await fetch(`/api/accounts/${accountGuid}/valuation?days=365`);
+            const res = await fetch(`/api/accounts/${accountGuid}/valuation?days=36500`);
             if (!res.ok) throw new Error('Failed to fetch valuation');
             const json = await res.json();
             setData(json);
@@ -423,7 +440,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <h3 className="text-lg font-semibold text-foreground">Price History</h3>
                         <div className="flex items-center gap-2">
                             <div className="flex gap-1">
-                                {(['1M', '3M', '6M', '1Y', 'ALL'] as const).map(period => (
+                                {(['1M', '3M', '6M', '1Y', '3Y', '5Y', 'ALL'] as const).map(period => (
                                     <button
                                         key={period}
                                         onClick={() => handlePeriodChange(period)}
@@ -436,6 +453,28 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         {period}
                                     </button>
                                 ))}
+                            </div>
+                            <div className="flex gap-1 ml-2 border-l border-border pl-2">
+                                <button
+                                    onClick={() => setChartMode('price')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                                        chartMode === 'price'
+                                            ? 'bg-cyan-600 text-white'
+                                            : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
+                                    }`}
+                                >
+                                    $
+                                </button>
+                                <button
+                                    onClick={() => setChartMode('percentChange')}
+                                    className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                                        chartMode === 'percentChange'
+                                            ? 'bg-cyan-600 text-white'
+                                            : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
+                                    }`}
+                                >
+                                    %
+                                </button>
                             </div>
                             {(zoomDomain.startIndex !== null || zoomDomain.endIndex !== null) && (
                                 <button
@@ -457,7 +496,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                     >
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart
-                                data={chartData}
+                                data={displayChartData}
                                 onMouseDown={handleMouseDown}
                                 onMouseMove={handleMouseMove}
                                 onMouseUp={handleMouseUp}
@@ -471,7 +510,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 />
                                 <YAxis
                                     tick={{ fill: '#737373', fontSize: 12 }}
-                                    tickFormatter={(value) => `$${Number(value).toFixed(2)}`}
+                                    tickFormatter={(value) => chartMode === 'percentChange' ? `${Number(value).toFixed(1)}%` : `$${Number(value).toFixed(2)}`}
                                     stroke="#404040"
                                     domain={['auto', 'auto']}
                                     width={70}
@@ -483,7 +522,12 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         borderRadius: '8px'
                                     }}
                                     labelStyle={{ color: '#a3a3a3' }}
-                                    formatter={(value: number | undefined) => [`$${Number(value).toFixed(2)}`, 'Price']}
+                                    formatter={(value: number | undefined) => [
+                                        chartMode === 'percentChange'
+                                            ? `${Number(value).toFixed(2)}%`
+                                            : `$${Number(value).toFixed(2)}`,
+                                        chartMode === 'percentChange' ? '% Change' : 'Price'
+                                    ]}
                                     labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', {
                                         weekday: 'short',
                                         month: 'short',

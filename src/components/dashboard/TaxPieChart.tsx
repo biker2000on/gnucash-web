@@ -60,7 +60,9 @@ function CustomTooltip({ active, payload }: CustomTooltipProps) {
     return (
         <div className="bg-background border border-border rounded-lg p-3 shadow-xl">
             <p className="text-sm font-medium text-foreground">{entry.name}</p>
-            <p className="text-sm text-foreground-secondary">{formatCurrency(entry.value)}</p>
+            <p className="text-sm text-foreground-secondary">
+                {formatCurrency(entry.value)} ({((entry.payload?.percent ?? 0) * 100).toFixed(1)}%)
+            </p>
         </div>
     );
 }

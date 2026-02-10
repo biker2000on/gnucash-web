@@ -34,6 +34,11 @@ interface Budget {
     name: string;
     description: string | null;
     num_periods: number;
+    recurrence: {
+        period_type: string;
+        mult: number;
+        period_start: string;
+    } | null;
     amounts: BudgetAmount[];
 }
 
@@ -534,12 +539,37 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     };
 
     const getPeriodLabel = (num: number, index: number) => {
+        const periodType = budget?.recurrence?.period_type;
+        const periodStart = budget?.recurrence?.period_start;
+
+        if (periodType === 'year') {
+            if (periodStart) {
+                const startYear = new Date(periodStart).getFullYear();
+                return `${startYear + index}`;
+            }
+            return num === 1 ? 'Annual' : `Year ${index + 1}`;
+        }
+
+        if (periodType === 'month') {
+            if (num === 12) {
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                return months[index];
+            }
+            if (num === 4) {
+                return `Q${index + 1}`;
+            }
+        }
+
+        // Fallback: use existing heuristic behavior
         if (num === 12) {
             const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
             return months[index];
         }
         if (num === 4) {
             return `Q${index + 1}`;
+        }
+        if (num === 1) {
+            return 'Annual';
         }
         return `P${index + 1}`;
     };

@@ -50,6 +50,7 @@ export class BudgetService {
     const budget = await prisma.budgets.findUnique({
       where: { guid },
       include: {
+        recurrences: true,
         amounts: {
           include: {
             account: {
@@ -71,8 +72,14 @@ export class BudgetService {
     }
 
     // Transform to include computed decimals and hierarchy info
+    const recurrence = budget.recurrences?.[0] || null;
     return serializeBigInts({
       ...budget,
+      recurrence: recurrence ? {
+        period_type: recurrence.recurrence_period_type,
+        mult: recurrence.recurrence_mult,
+        period_start: recurrence.recurrence_period_start,
+      } : null,
       amounts: budget.amounts.map(amount => ({
         ...amount,
         amount_decimal: toDecimal(amount.amount_num, amount.amount_denom),

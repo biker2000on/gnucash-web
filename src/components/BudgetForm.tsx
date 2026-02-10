@@ -6,6 +6,7 @@ interface BudgetFormData {
     name: string;
     description: string;
     num_periods: number;
+    recurrence_period_type?: string;
 }
 
 interface BudgetFormProps {
@@ -20,6 +21,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
         name: initialData?.name || '',
         description: initialData?.description || '',
         num_periods: initialData?.num_periods || 12,
+        recurrence_period_type: initialData?.recurrence_period_type,
     });
 
     const [saving, setSaving] = useState(false);
@@ -76,24 +78,43 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                 />
             </div>
 
-            {/* Number of Periods - only for create mode */}
-            {mode === 'create' && (
-                <div>
-                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Number of Periods
-                    </label>
-                    <div className="flex items-center gap-4">
+            {/* Period Settings */}
+            <div>
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                    Period Settings
+                </label>
+                {mode === 'edit' && (
+                    <p className="mb-2 text-xs text-amber-400">
+                        Period settings are read-only after creation.
+                    </p>
+                )}
+                <div className="flex items-center gap-4">
+                    <div>
+                        <span className="text-xs text-foreground-muted block mb-1">Number of Periods</span>
                         <input
                             type="number"
                             min={1}
                             max={60}
                             value={formData.num_periods}
+                            disabled={mode === 'edit'}
                             onChange={e => setFormData(prev => ({
                                 ...prev,
                                 num_periods: Math.max(1, Math.min(60, parseInt(e.target.value) || 12))
                             }))}
-                            className="w-24 bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all"
+                            className="w-24 bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         />
+                    </div>
+                    {mode === 'edit' && formData.recurrence_period_type && (
+                        <div>
+                            <span className="text-xs text-foreground-muted block mb-1">Period Length</span>
+                            <span className="text-foreground px-4 py-3 inline-block">
+                                {formData.recurrence_period_type === 'month' ? 'Monthly' :
+                                 formData.recurrence_period_type === 'year' ? 'Yearly' :
+                                 formData.recurrence_period_type}
+                            </span>
+                        </div>
+                    )}
+                    {mode === 'create' && (
                         <div className="flex gap-2">
                             <button
                                 type="button"
@@ -129,12 +150,14 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 Yearly (1)
                             </button>
                         </div>
-                    </div>
-                    <p className="mt-2 text-xs text-foreground-muted">
-                        The number of budget periods. Cannot be changed after creation.
-                    </p>
+                    )}
                 </div>
-            )}
+                <p className="mt-2 text-xs text-foreground-muted">
+                    {mode === 'create'
+                        ? 'The number of budget periods. Cannot be changed after creation.'
+                        : `This budget has ${formData.num_periods} ${formData.recurrence_period_type || ''} period${formData.num_periods !== 1 ? 's' : ''}.`}
+                </p>
+            </div>
 
             {/* Actions */}
             <div className="flex justify-end gap-3 pt-4 border-t border-border">

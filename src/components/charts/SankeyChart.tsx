@@ -9,6 +9,7 @@ import {
   SankeyNode as D3SankeyNode,
   SankeyLink as D3SankeyLink,
 } from 'd3-sankey';
+import { formatCurrency } from '@/lib/format';
 
 interface SankeyNode {
   name: string;
@@ -120,7 +121,7 @@ export default function SankeyChart({
       visible: true,
       x: event.clientX,
       y: event.clientY,
-      content: `${node.name}: ${value.toFixed(2)}`,
+      content: `${node.name}: ${formatCurrency(value)}`,
     });
   };
 
@@ -138,7 +139,7 @@ export default function SankeyChart({
       visible: true,
       x: event.clientX,
       y: event.clientY,
-      content: `${sourceName} → ${targetName}: ${link.value.toFixed(2)}`,
+      content: `${sourceName} → ${targetName}: ${formatCurrency(link.value)}`,
     });
   };
 

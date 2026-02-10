@@ -12,7 +12,7 @@ interface PerformanceChartProps {
   }>;
 }
 
-type Period = '1M' | '3M' | '6M' | '1Y' | 'ALL';
+type Period = '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'ALL';
 
 export function PerformanceChart({ data }: PerformanceChartProps) {
   const expanded = useContext(ExpandedContext);
@@ -30,12 +30,14 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
       case '3M': cutoffDate.setMonth(now.getMonth() - 3); break;
       case '6M': cutoffDate.setMonth(now.getMonth() - 6); break;
       case '1Y': cutoffDate.setFullYear(now.getFullYear() - 1); break;
+      case '3Y': cutoffDate.setFullYear(now.getFullYear() - 3); break;
+      case '5Y': cutoffDate.setFullYear(now.getFullYear() - 5); break;
     }
 
     return data.filter(d => new Date(d.date) >= cutoffDate);
   }, [data, period]);
 
-  const periods: Period[] = ['1M', '3M', '6M', '1Y', 'ALL'];
+  const periods: Period[] = ['1M', '3M', '6M', '1Y', '3Y', '5Y', 'ALL'];
 
   if (!data || data.length === 0) {
     return (

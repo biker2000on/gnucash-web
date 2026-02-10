@@ -70,7 +70,7 @@ export default function InvestmentsPage() {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch('/api/investments/history?days=365');
+      const res = await fetch('/api/investments/history?days=36500');
       const data = await res.json();
       if (res.ok) {
         setHistory(data.history || []);

@@ -36,22 +36,22 @@ export async function GET(request: NextRequest) {
         const endDateParam = searchParams.get('endDate');
 
         const now = new Date();
+
+        // Get book account GUIDs for scoping (moved up for use in getEffectiveStartDate)
+        const bookAccountGuids = await getBookAccountGuids();
+
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
-        const startDate = await getEffectiveStartDate(startDateParam);
+        const startDate = await getEffectiveStartDate(startDateParam, bookAccountGuids);
 
         const datePoints = generateMonthlyDatePoints(startDate, endDate);
-
-        // Get book account GUIDs for scoping
-        const bookAccountGuids = await getBookAccountGuids();
 
         // Fetch base currency for conversions
         const baseCurrency = await getBaseCurrency();
 
-        // Fetch all non-hidden accounts of relevant types in active book
+        // Fetch all accounts of relevant types in active book (including hidden)
         const accounts = await prisma.accounts.findMany({
             where: {
                 guid: { in: bookAccountGuids },
-                hidden: 0,
                 account_type: {
                     in: [...ASSET_TYPES, ...LIABILITY_TYPES, ...INVESTMENT_TYPES],
                 },
@@ -288,7 +288,8 @@ export async function GET(request: NextRequest) {
                     return p.value;
                 }
             }
-            return 0;
+            // All prices are after asOf; use the oldest available price as fallback
+            return prices[prices.length - 1].value;
         }
 
         // Compute time series using a pointer-based running-total approach.
