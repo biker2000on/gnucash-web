@@ -11,7 +11,7 @@ interface HistoryPoint {
  * GET /api/investments/history?days=365
  *
  * Returns daily portfolio value over time period.
- * Calculates value using current shares and historical prices.
+ * Calculates value using point-in-time share counts and historical prices.
  */
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -43,21 +43,39 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ history: [] });
     }
 
-    // Get current shares for each account (sum of split quantities)
-    const accountSharesMap = new Map<string, number>();
+    // Fetch ALL splits for all investment accounts with their transaction post_dates
+    interface SplitWithDate {
+      account_guid: string;
+      commodity_guid: string;
+      quantity: number;
+      postDate: Date;
+    }
+
+    const allSplits: SplitWithDate[] = [];
 
     for (const account of accounts) {
       const splits = await prisma.splits.findMany({
         where: { account_guid: account.guid },
-        select: { quantity_num: true, quantity_denom: true },
+        select: {
+          quantity_num: true,
+          quantity_denom: true,
+          transaction: { select: { post_date: true } },
+        },
       });
 
-      const totalShares = splits.reduce((sum: number, split) => {
-        return sum + parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
-      }, 0);
-
-      accountSharesMap.set(account.guid, totalShares);
+      for (const split of splits) {
+        if (!split.transaction.post_date) continue;
+        allSplits.push({
+          account_guid: account.guid,
+          commodity_guid: account.commodity_guid!,
+          quantity: parseFloat(toDecimal(split.quantity_num, split.quantity_denom)),
+          postDate: split.transaction.post_date,
+        });
+      }
     }
+
+    // Sort splits by date ascending for pointer-based accumulation
+    allSplits.sort((a, b) => a.postDate.getTime() - b.postDate.getTime());
 
     // Get all unique commodity GUIDs
     const commodityGuids = [...new Set(accounts.map(a => a.commodity_guid).filter(Boolean))];
@@ -77,6 +95,27 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    // Initialize forward-fill with latest prices BEFORE startDate for each commodity
+    const latestPricesByCommodity = new Map<string, number>();
+
+    for (const commodityGuid of commodityGuids) {
+      const latestBefore = await prisma.prices.findFirst({
+        where: {
+          commodity_guid: commodityGuid as string,
+          date: { lt: startDate },
+        },
+        orderBy: { date: 'desc' },
+        select: { value_num: true, value_denom: true },
+      });
+
+      if (latestBefore) {
+        latestPricesByCommodity.set(
+          commodityGuid as string,
+          parseFloat(toDecimal(latestBefore.value_num, latestBefore.value_denom))
+        );
+      }
+    }
+
     // Build a map of commodity -> latest price by date
     const pricesByDateByCommodity = new Map<string, Map<string, number>>();
 
@@ -91,20 +130,33 @@ export async function GET(request: NextRequest) {
       pricesByDateByCommodity.get(price.commodity_guid)!.set(dateStr, priceValue);
     }
 
-    // Build portfolio value time series
+    // Build portfolio value time series with point-in-time share counts
     const portfolioValueByDate = new Map<string, number>();
-
-    // Create forward-filled price map (carry forward last known price)
-    const latestPricesByCommodity = new Map<string, number>();
 
     // Get all unique dates and sort
     const allDates = new Set<string>();
     prices.forEach(p => allDates.add(p.date.toISOString().split('T')[0]));
     const sortedDates = Array.from(allDates).sort();
 
-    // For each date, calculate portfolio value
+    // Running share totals per account (accumulated over time)
+    const sharesByAccount = new Map<string, number>();
+    let splitPointer = 0;
+
+    // For each date, calculate portfolio value with point-in-time shares
     for (const dateStr of sortedDates) {
-      // Update latest known prices for this date
+      const dateEnd = new Date(dateStr + 'T23:59:59Z');
+
+      // Advance pointer: accumulate splits with postDate <= dateEnd
+      while (splitPointer < allSplits.length && allSplits[splitPointer].postDate <= dateEnd) {
+        const split = allSplits[splitPointer];
+        sharesByAccount.set(
+          split.account_guid,
+          (sharesByAccount.get(split.account_guid) || 0) + split.quantity
+        );
+        splitPointer++;
+      }
+
+      // Update latest known prices for this date (forward-fill)
       for (const [commodityGuid, pricesByDate] of pricesByDateByCommodity) {
         const priceOnDate = pricesByDate.get(dateStr);
         if (priceOnDate !== undefined) {
@@ -112,11 +164,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Calculate total portfolio value with latest known prices
+      // Calculate total portfolio value with point-in-time shares and latest known prices
       let portfolioValue = 0;
 
       for (const account of accounts) {
-        const shares = accountSharesMap.get(account.guid) || 0;
+        const shares = sharesByAccount.get(account.guid) || 0;
         const price = latestPricesByCommodity.get(account.commodity_guid!) || 0;
         portfolioValue += shares * price;
       }
