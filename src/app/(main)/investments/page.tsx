@@ -193,7 +193,7 @@ export default function InvestmentsPage() {
       {portfolio && <PortfolioSummaryCards {...portfolio.summary} />}
 
       {/* Charts Row */}
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-2 gap-6 items-stretch">
         {portfolio && (
           <ExpandableChart title="Portfolio Allocation">
             <AllocationChart data={portfolio.allocation} />

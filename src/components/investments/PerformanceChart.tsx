@@ -51,11 +51,13 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
 
   const zeroOffset = useMemo(() => computeZeroOffset(displayData), [displayData]);
 
-  const periods: Period[] = ['1M', '3M', '6M', '1Y', '3Y', '5Y', 'ALL'];
+  const allPeriods: Period[] = ['1M', '3M', '6M', '1Y', '3Y', '5Y', 'ALL'];
+  // In compact view, show fewer period options to avoid overflow
+  const periods = expanded ? allPeriods : (['1M', '6M', '1Y', 'ALL'] as Period[]);
 
   if (!data || data.length === 0) {
     return (
-      <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
+      <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
         <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Performance</h3>
         <p className="text-foreground-muted">No performance data available</p>
       </div>
@@ -63,16 +65,16 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
   }
 
   return (
-    <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-foreground">Portfolio Performance</h3>
-        <div className="flex items-center">
+    <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <h3 className="text-lg font-semibold text-foreground shrink-0">Portfolio Performance</h3>
+        <div className="flex items-center gap-1 flex-wrap justify-end">
           <div className="flex gap-1">
             {periods.map(p => (
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
-                className={`px-3 py-1 text-sm rounded transition-colors ${
+                className={`px-2 py-1 text-xs rounded transition-colors ${
                   period === p
                     ? 'bg-cyan-600 text-white'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
@@ -82,10 +84,10 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
               </button>
             ))}
           </div>
-          <div className="flex gap-1 ml-2 border-l border-border pl-2">
+          <div className="flex gap-1 border-l border-border pl-1">
             <button
               onClick={() => setChartMode('value')}
-              className={`px-3 py-1 text-sm rounded transition-colors ${
+              className={`px-2 py-1 text-xs rounded transition-colors ${
                 chartMode === 'value'
                   ? 'bg-cyan-600 text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
@@ -95,7 +97,7 @@ export function PerformanceChart({ data }: PerformanceChartProps) {
             </button>
             <button
               onClick={() => setChartMode('percentChange')}
-              className={`px-3 py-1 text-sm rounded transition-colors ${
+              className={`px-3 py-1 text-xs rounded transition-colors ${
                 chartMode === 'percentChange'
                   ? 'bg-cyan-600 text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'

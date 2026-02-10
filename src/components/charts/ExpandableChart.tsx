@@ -14,10 +14,10 @@ export default function ExpandableChart({ title, children }: ExpandableChartProp
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="relative group">
+    <div className="relative group h-full">
       {/* Normal view - not rendered when expanded */}
       {!expanded && (
-        <div>
+        <div className="h-full">
           <ExpandedContext.Provider value={false}>
             {children}
           </ExpandedContext.Provider>

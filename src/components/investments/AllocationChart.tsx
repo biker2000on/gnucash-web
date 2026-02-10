@@ -20,7 +20,7 @@ export function AllocationChart({ data }: AllocationChartProps) {
 
   if (!data || data.length === 0) {
     return (
-      <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
+      <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
         <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Allocation</h3>
         <p className="text-foreground-muted">No allocation data available</p>
       </div>
@@ -28,7 +28,7 @@ export function AllocationChart({ data }: AllocationChartProps) {
   }
 
   return (
-    <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full' : ''}`}>
+    <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
       <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Allocation</h3>
       <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
         <PieChart>
