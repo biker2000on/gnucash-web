@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
 import type { CategoricalChartFunc } from 'recharts/types/chart/types';
+import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
 
 interface PriceData {
     guid: string;
@@ -139,6 +140,11 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             value: ((point.value - firstValue) / firstValue) * 100,
         }));
     }, [chartData, chartMode]);
+
+    const zeroOffset = useMemo(() => {
+        if (chartMode !== 'percentChange') return 0.5;
+        return computeZeroOffset(displayChartData);
+    }, [displayChartData, chartMode]);
 
     // Mouse down handler - start drag selection
     const handleMouseDown = useCallback<CategoricalChartFunc>((nextState) => {
@@ -495,65 +501,141 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         onWheel={handleWheel}
                     >
                         <ResponsiveContainer width="100%" height="100%">
-                            <LineChart
-                                data={displayChartData}
-                                onMouseDown={handleMouseDown}
-                                onMouseMove={handleMouseMove}
-                                onMouseUp={handleMouseUp}
-                                onMouseLeave={handleMouseUp}
-                            >
-                                <XAxis
-                                    dataKey="date"
-                                    tick={{ fill: '#737373', fontSize: 12 }}
-                                    tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                    stroke="#404040"
-                                />
-                                <YAxis
-                                    tick={{ fill: '#737373', fontSize: 12 }}
-                                    tickFormatter={(value) => chartMode === 'percentChange' ? `${Number(value).toFixed(1)}%` : `$${Number(value).toFixed(2)}`}
-                                    stroke="#404040"
-                                    domain={['auto', 'auto']}
-                                    width={70}
-                                />
-                                <Tooltip
-                                    contentStyle={{
-                                        backgroundColor: '#171717',
-                                        border: '1px solid #404040',
-                                        borderRadius: '8px'
-                                    }}
-                                    labelStyle={{ color: '#a3a3a3' }}
-                                    formatter={(value: number | undefined) => [
-                                        chartMode === 'percentChange'
-                                            ? `${Number(value).toFixed(2)}%`
-                                            : `$${Number(value).toFixed(2)}`,
-                                        chartMode === 'percentChange' ? '% Change' : 'Price'
-                                    ]}
-                                    labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', {
-                                        weekday: 'short',
-                                        month: 'short',
-                                        day: 'numeric',
-                                        year: 'numeric'
-                                    })}
-                                />
-                                <Line
-                                    type="monotone"
-                                    dataKey="value"
-                                    stroke="#06b6d4"
-                                    strokeWidth={2}
-                                    dot={false}
-                                    activeDot={{ r: 4, fill: '#06b6d4' }}
-                                    animationDuration={300}
-                                />
-                                {isDragging && dragStart !== null && dragEnd !== null && (
-                                    <ReferenceArea
-                                        x1={chartData[Math.min(dragStart, dragEnd)]?.date}
-                                        x2={chartData[Math.max(dragStart, dragEnd)]?.date}
-                                        strokeOpacity={0.3}
-                                        fill="#06b6d4"
-                                        fillOpacity={0.3}
+                            {chartMode === 'percentChange' ? (
+                                <AreaChart
+                                    data={displayChartData}
+                                    onMouseDown={handleMouseDown}
+                                    onMouseMove={handleMouseMove}
+                                    onMouseUp={handleMouseUp}
+                                    onMouseLeave={handleMouseUp}
+                                >
+                                    <defs>
+                                        <linearGradient id="investFillGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor={CHART_COLORS.green} stopOpacity={GRADIENT_FILL_OPACITY} />
+                                            <stop offset={`${zeroOffset * 100}%`} stopColor={CHART_COLORS.green} stopOpacity={GRADIENT_FILL_OPACITY} />
+                                            <stop offset={`${zeroOffset * 100}%`} stopColor={CHART_COLORS.red} stopOpacity={GRADIENT_FILL_OPACITY} />
+                                            <stop offset="100%" stopColor={CHART_COLORS.red} stopOpacity={GRADIENT_FILL_OPACITY} />
+                                        </linearGradient>
+                                        <linearGradient id="investStrokeGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor={CHART_COLORS.green} stopOpacity={1} />
+                                            <stop offset={`${zeroOffset * 100}%`} stopColor={CHART_COLORS.green} stopOpacity={1} />
+                                            <stop offset={`${zeroOffset * 100}%`} stopColor={CHART_COLORS.red} stopOpacity={1} />
+                                            <stop offset="100%" stopColor={CHART_COLORS.red} stopOpacity={1} />
+                                        </linearGradient>
+                                    </defs>
+                                    <XAxis
+                                        dataKey="date"
+                                        tick={{ fill: '#737373', fontSize: 12 }}
+                                        tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                        stroke="#404040"
                                     />
-                                )}
-                            </LineChart>
+                                    <YAxis
+                                        tick={{ fill: '#737373', fontSize: 12 }}
+                                        tickFormatter={(value) => `${Number(value).toFixed(1)}%`}
+                                        stroke="#404040"
+                                        domain={['auto', 'auto']}
+                                        width={70}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{
+                                            backgroundColor: '#171717',
+                                            border: '1px solid #404040',
+                                            borderRadius: '8px'
+                                        }}
+                                        labelStyle={{ color: '#a3a3a3' }}
+                                        formatter={(value: number | undefined) => [
+                                            `${Number(value).toFixed(2)}%`,
+                                            '% Change'
+                                        ]}
+                                        labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', {
+                                            weekday: 'short',
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric'
+                                        })}
+                                    />
+                                    <ReferenceLine y={0} stroke="#737373" strokeDasharray="3 3" />
+                                    <Area
+                                        type="monotone"
+                                        dataKey="value"
+                                        stroke="url(#investStrokeGradient)"
+                                        fill="url(#investFillGradient)"
+                                        fillOpacity={1}
+                                        strokeWidth={2}
+                                        dot={false}
+                                        activeDot={{ r: 4, fill: CHART_COLORS.green }}
+                                        animationDuration={300}
+                                        baseValue={0}
+                                    />
+                                    {isDragging && dragStart !== null && dragEnd !== null && (
+                                        <ReferenceArea
+                                            x1={chartData[Math.min(dragStart, dragEnd)]?.date}
+                                            x2={chartData[Math.max(dragStart, dragEnd)]?.date}
+                                            strokeOpacity={0.3}
+                                            fill="#06b6d4"
+                                            fillOpacity={0.3}
+                                        />
+                                    )}
+                                </AreaChart>
+                            ) : (
+                                <LineChart
+                                    data={displayChartData}
+                                    onMouseDown={handleMouseDown}
+                                    onMouseMove={handleMouseMove}
+                                    onMouseUp={handleMouseUp}
+                                    onMouseLeave={handleMouseUp}
+                                >
+                                    <XAxis
+                                        dataKey="date"
+                                        tick={{ fill: '#737373', fontSize: 12 }}
+                                        tickFormatter={(date) => new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                        stroke="#404040"
+                                    />
+                                    <YAxis
+                                        tick={{ fill: '#737373', fontSize: 12 }}
+                                        tickFormatter={(value) => `$${Number(value).toFixed(2)}`}
+                                        stroke="#404040"
+                                        domain={['auto', 'auto']}
+                                        width={70}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{
+                                            backgroundColor: '#171717',
+                                            border: '1px solid #404040',
+                                            borderRadius: '8px'
+                                        }}
+                                        labelStyle={{ color: '#a3a3a3' }}
+                                        formatter={(value: number | undefined) => [
+                                            `$${Number(value).toFixed(2)}`,
+                                            'Price'
+                                        ]}
+                                        labelFormatter={(date) => new Date(date).toLocaleDateString('en-US', {
+                                            weekday: 'short',
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric'
+                                        })}
+                                    />
+                                    <Line
+                                        type="monotone"
+                                        dataKey="value"
+                                        stroke="#06b6d4"
+                                        strokeWidth={2}
+                                        dot={false}
+                                        activeDot={{ r: 4, fill: '#06b6d4' }}
+                                        animationDuration={300}
+                                    />
+                                    {isDragging && dragStart !== null && dragEnd !== null && (
+                                        <ReferenceArea
+                                            x1={chartData[Math.min(dragStart, dragEnd)]?.date}
+                                            x2={chartData[Math.max(dragStart, dragEnd)]?.date}
+                                            strokeOpacity={0.3}
+                                            fill="#06b6d4"
+                                            fillOpacity={0.3}
+                                        />
+                                    )}
+                                </LineChart>
+                            )}
                         </ResponsiveContainer>
                     </div>
                 </div>
