@@ -91,15 +91,39 @@ function deriveExpenseCategoriesFromTree(expense: SankeyHierarchyNode[]): Catego
 
 function deriveTaxCategoriesFromTree(expense: SankeyHierarchyNode[]): CategoryData[] {
     const result: CategoryData[] = [];
-    function traverse(nodes: SankeyHierarchyNode[]) {
+    function collectTaxNodes(nodes: SankeyHierarchyNode[]) {
         for (const node of nodes) {
             if (node.name.toLowerCase().includes('tax') && node.value > 0) {
-                result.push({ name: node.name, value: node.value });
+                if (node.children.length > 0) {
+                    // Parent tax node: expand into children instead of showing aggregate.
+                    // Recursively apply the same logic to handle nested tax parents.
+                    const childrenSum = node.children.reduce((s, c) => s + c.value, 0);
+                    for (const child of node.children) {
+                        if (child.value > 0) {
+                            if (child.children.length > 0 && child.name.toLowerCase().includes('tax')) {
+                                // Nested tax parent — recurse
+                                collectTaxNodes([child]);
+                            } else {
+                                result.push({ name: child.name, value: child.value });
+                            }
+                        }
+                    }
+                    // If parent has direct transactions beyond children, capture remainder
+                    const remainder = Math.round((node.value - childrenSum) * 100) / 100;
+                    if (remainder > 0.01) {
+                        result.push({ name: `${node.name} (Other)`, value: remainder });
+                    }
+                } else {
+                    // Leaf tax node (e.g. "Property Tax" under Home)
+                    result.push({ name: node.name, value: node.value });
+                }
+            } else {
+                // Non-tax node: recurse to find tax descendants
+                collectTaxNodes(node.children);
             }
-            traverse(node.children);
         }
     }
-    traverse(expense);
+    collectTaxNodes(expense);
     return result.sort((a, b) => b.value - a.value);
 }
 
