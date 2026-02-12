@@ -14,6 +14,8 @@ interface InvestmentDataContextType {
   fetchPortfolio: () => Promise<void>;
   fetchHistory: () => Promise<void>;
   handleFetchAllPrices: () => Promise<void>;
+  fetchAccountHistory: (accountGuids: string[]) => Promise<void>;
+  getAccountHistory: (accountGuids: string[]) => Array<{ date: string; value: number }>;
 }
 
 const InvestmentDataContext = createContext<InvestmentDataContextType | null>(null);
@@ -27,6 +29,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [apiConfigured, setApiConfigured] = useState(true);
+  const [accountHistoryMap, setAccountHistoryMap] = useState<Record<string, Array<{ date: string; value: number }>>>({});
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -71,6 +74,27 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
+  const fetchAccountHistory = useCallback(async (accountGuids: string[]) => {
+    const key = accountGuids.sort().join(',');
+    // Skip if already cached
+    if (accountHistoryMap[key]) return;
+
+    try {
+      const res = await fetch(`/api/investments/history?days=36500&accountGuids=${accountGuids.join(',')}`);
+      const data = await res.json();
+      if (res.ok) {
+        setAccountHistoryMap(prev => ({ ...prev, [key]: data.history || [] }));
+      }
+    } catch (err) {
+      console.error('Failed to load account history:', err);
+    }
+  }, [accountHistoryMap]);
+
+  const getAccountHistory = useCallback((accountGuids: string[]) => {
+    const key = accountGuids.sort().join(',');
+    return accountHistoryMap[key] || [];
+  }, [accountHistoryMap]);
+
   const handleFetchAllPrices = useCallback(async () => {
     setFetchingPrices(true);
     try {
@@ -112,6 +136,8 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
         fetchPortfolio,
         fetchHistory,
         handleFetchAllPrices,
+        fetchAccountHistory,
+        getAccountHistory,
       }}
     >
       {children}

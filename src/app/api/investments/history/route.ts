@@ -17,14 +17,20 @@ interface InvestmentHistoryResponse {
 }
 
 /**
- * GET /api/investments/history?days=365
+ * GET /api/investments/history?days=365&accountGuids=guid1,guid2
  *
  * Returns daily portfolio value over time period.
  * Calculates value using point-in-time share counts and historical prices.
+ *
+ * Query params:
+ * - days: number of days to look back (default: 365)
+ * - accountGuids: optional comma-separated account GUIDs to filter (default: all investment accounts)
  */
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const days = parseInt(searchParams.get('days') || '365', 10);
+  const accountGuidsParam = searchParams.get('accountGuids');
+  const filterAccountGuids = accountGuidsParam ? accountGuidsParam.split(',') : null;
 
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
@@ -48,7 +54,12 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    if (accounts.length === 0) {
+    // Filter to specific accounts if provided
+    const filteredAccounts = filterAccountGuids
+      ? accounts.filter(a => filterAccountGuids.includes(a.guid))
+      : accounts;
+
+    if (filteredAccounts.length === 0) {
       return NextResponse.json({ history: [] });
     }
 
@@ -62,7 +73,7 @@ export async function GET(request: NextRequest) {
 
     const allSplits: SplitWithDate[] = [];
 
-    for (const account of accounts) {
+    for (const account of filteredAccounts) {
       const splits = await prisma.splits.findMany({
         where: { account_guid: account.guid },
         select: {
@@ -87,7 +98,7 @@ export async function GET(request: NextRequest) {
     allSplits.sort((a, b) => a.postDate.getTime() - b.postDate.getTime());
 
     // Get all unique commodity GUIDs
-    const commodityGuids = [...new Set(accounts.map(a => a.commodity_guid).filter(Boolean))];
+    const commodityGuids = [...new Set(filteredAccounts.map(a => a.commodity_guid).filter(Boolean))];
 
     // Fetch all prices in date range for these commodities
     const prices = await prisma.prices.findMany({
@@ -176,7 +187,7 @@ export async function GET(request: NextRequest) {
       // Calculate total portfolio value with point-in-time shares and latest known prices
       let portfolioValue = 0;
 
-      for (const account of accounts) {
+      for (const account of filteredAccounts) {
         const shares = sharesByAccount.get(account.guid) || 0;
         const price = latestPricesByCommodity.get(account.commodity_guid!) || 0;
         portfolioValue += shares * price;
@@ -192,20 +203,22 @@ export async function GET(request: NextRequest) {
       .map(([date, value]) => ({ date, value }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Fetch market index data for the same date range
+    // Fetch market index data for the same date range (only for portfolio-wide requests)
     let indices: InvestmentHistoryResponse['indices'] = { sp500: [], djia: [] };
-    try {
-      const [sp500Raw, djiaRaw] = await Promise.all([
-        getIndexHistory('^GSPC', startDate),
-        getIndexHistory('^DJI', startDate),
-      ]);
+    if (!filterAccountGuids) {
+      try {
+        const [sp500Raw, djiaRaw] = await Promise.all([
+          getIndexHistory('^GSPC', startDate),
+          getIndexHistory('^DJI', startDate),
+        ]);
 
-      indices = {
-        sp500: normalizeToPercent(sp500Raw, startDate),
-        djia: normalizeToPercent(djiaRaw, startDate),
-      };
-    } catch (err) {
-      console.warn('Failed to fetch market index data for history:', err);
+        indices = {
+          sp500: normalizeToPercent(sp500Raw, startDate),
+          djia: normalizeToPercent(djiaRaw, startDate),
+        };
+      } catch (err) {
+        console.warn('Failed to fetch market index data for history:', err);
+      }
     }
 
     return NextResponse.json({ history, indices });

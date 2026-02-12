@@ -9,7 +9,7 @@ import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummary
 import ExpandableChart from '@/components/charts/ExpandableChart';
 
 export default function AccountsPage() {
-  const { portfolio, history, indices, loading } = useInvestmentData();
+  const { portfolio, indices, loading, fetchAccountHistory, getAccountHistory } = useInvestmentData();
   const [selectedAccount, setSelectedAccount] = useState<string>('');
 
   // Build unique parent accounts list from holdings
@@ -82,6 +82,21 @@ export default function AccountsPage() {
     }));
   }, [filteredHoldings]);
 
+  // Get account GUIDs for selected parent account
+  const filteredAccountGuids = useMemo(() => {
+    return filteredHoldings.map(h => h.accountGuid);
+  }, [filteredHoldings]);
+
+  // Trigger fetch when account selection changes
+  useEffect(() => {
+    if (filteredAccountGuids.length > 0) {
+      fetchAccountHistory(filteredAccountGuids);
+    }
+  }, [filteredAccountGuids, fetchAccountHistory]);
+
+  // Get the cached account history
+  const accountHistory = getAccountHistory(filteredAccountGuids);
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -138,15 +153,10 @@ export default function AccountsPage() {
         <ExpandableChart title="Account Allocation">
           <AllocationChart data={filteredAllocation} />
         </ExpandableChart>
-        <ExpandableChart title="Portfolio Performance">
-          <PerformanceChart data={history} indices={indices} />
+        <ExpandableChart title="Account Performance">
+          <PerformanceChart data={accountHistory} indices={indices} />
         </ExpandableChart>
       </div>
-
-      {/* Note about portfolio-wide performance */}
-      <p className="text-xs text-foreground-muted">
-        Note: Performance chart shows portfolio-wide data. Per-account performance history is not yet available.
-      </p>
 
       {/* Filtered holdings table */}
       <HoldingsTable holdings={filteredHoldings} />
