@@ -122,7 +122,7 @@ export async function getExistingPriceDates(
 
 /**
  * Fetch historical closing prices from Yahoo Finance.
- * Uses yahooFinance.historical() -- never real-time quotes.
+ * Uses yahooFinance.chart() (migrated from deprecated historical() endpoint).
  *
  * @param symbol Stock ticker symbol
  * @param startDate Start date (inclusive)
@@ -136,15 +136,18 @@ export async function fetchHistoricalPrices(
 ): Promise<HistoricalPriceRow[]> {
   const yahooFinance = new YahooFinance();
 
-  const rows = await yahooFinance.historical(symbol, {
+  const result = await yahooFinance.chart(symbol, {
     period1: startDate,
     period2: endDate,
     interval: '1d',
   });
 
-  return rows
-    .filter((r) => typeof r.close === 'number' && r.close > 0)
-    .map((r) => ({ date: r.date, close: r.close }));
+  // chart() returns { quotes: Array<{ date, open, high, low, close, volume }> }
+  // Map to the same HistoricalPriceRow interface used by all callers
+  const quotes = result.quotes ?? [];
+  return quotes
+    .filter((q) => typeof q.close === 'number' && q.close > 0)
+    .map((q) => ({ date: q.date, close: q.close as number }));
 }
 
 /**
