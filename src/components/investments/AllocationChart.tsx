@@ -28,8 +28,9 @@ export function AllocationChart({ data }: AllocationChartProps) {
   }
 
   return (
-    <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
+    <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full flex flex-col' : 'h-full'}`}>
       <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Allocation</h3>
+      <div className={expanded ? 'flex-1 min-h-0' : ''}>
       <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
         <PieChart>
           <Pie
@@ -38,7 +39,7 @@ export function AllocationChart({ data }: AllocationChartProps) {
             nameKey="category"
             cx="50%"
             cy="50%"
-            outerRadius={100}
+            outerRadius={expanded ? "80%" : 100}
           >
             {data.map((entry, index) => (
               <Cell key={entry.category} fill={COLORS[index % COLORS.length]} />
@@ -62,6 +63,7 @@ export function AllocationChart({ data }: AllocationChartProps) {
           />
           {expanded && (
             <Legend
+              wrapperStyle={{ maxHeight: '120px', overflowY: 'auto' }}
               formatter={(value, entry: any) => (
                 <span style={{ color: '#d4d4d4' }}>
                   {value} ({entry.payload.percent.toFixed(1)}%)
@@ -71,6 +73,7 @@ export function AllocationChart({ data }: AllocationChartProps) {
           )}
         </PieChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }
