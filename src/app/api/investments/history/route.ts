@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma, { toDecimal } from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { getIndexHistory, normalizeToPercent, IndexPriceData } from '@/lib/market-index-service';
 
 interface HistoryPoint {
   date: string;
   value: number;
+}
+
+interface InvestmentHistoryResponse {
+  history: HistoryPoint[];
+  indices: {
+    sp500: IndexPriceData[];
+    djia: IndexPriceData[];
+  };
 }
 
 /**
@@ -183,7 +192,23 @@ export async function GET(request: NextRequest) {
       .map(([date, value]) => ({ date, value }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    return NextResponse.json({ history });
+    // Fetch market index data for the same date range
+    let indices: InvestmentHistoryResponse['indices'] = { sp500: [], djia: [] };
+    try {
+      const [sp500Raw, djiaRaw] = await Promise.all([
+        getIndexHistory('^GSPC', startDate),
+        getIndexHistory('^DJI', startDate),
+      ]);
+
+      indices = {
+        sp500: normalizeToPercent(sp500Raw, startDate),
+        djia: normalizeToPercent(djiaRaw, startDate),
+      };
+    } catch (err) {
+      console.warn('Failed to fetch market index data for history:', err);
+    }
+
+    return NextResponse.json({ history, indices });
   } catch (error) {
     console.error('Error fetching history:', error);
     return NextResponse.json(
