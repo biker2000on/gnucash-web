@@ -223,6 +223,57 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    const commodityMetadataTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_commodity_metadata (
+            id SERIAL PRIMARY KEY,
+            commodity_guid VARCHAR(32) NOT NULL,
+            mnemonic VARCHAR(50) NOT NULL,
+            sector VARCHAR(255),
+            industry VARCHAR(255),
+            sector_weights JSONB,
+            asset_class VARCHAR(50),
+            last_updated TIMESTAMP NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE(commodity_guid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_commodity_metadata_mnemonic ON gnucash_web_commodity_metadata(mnemonic);
+    `;
+
+    const depreciationSchedulesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_depreciation_schedules (
+            id SERIAL PRIMARY KEY,
+            account_guid VARCHAR(32) NOT NULL,
+            purchase_price DECIMAL(15, 2) NOT NULL,
+            purchase_date DATE NOT NULL,
+            useful_life_years INTEGER NOT NULL,
+            salvage_value DECIMAL(15, 2) NOT NULL DEFAULT 0,
+            method VARCHAR(30) NOT NULL,
+            decline_rate DECIMAL(5, 4),
+            contra_account_guid VARCHAR(32) NOT NULL,
+            frequency VARCHAR(20) NOT NULL DEFAULT 'monthly',
+            is_appreciation BOOLEAN NOT NULL DEFAULT FALSE,
+            last_transaction_date DATE,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            notes TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE(account_guid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_depreciation_schedules_account ON gnucash_web_depreciation_schedules(account_guid);
+    `;
+
+    const userPreferencesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_user_preferences (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+            preference_key VARCHAR(100) NOT NULL,
+            preference_value TEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE(user_id, preference_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON gnucash_web_user_preferences(user_id);
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -230,6 +281,9 @@ async function createExtensionTables() {
         await query(addBooksColumnsDDL);
         await query(savedReportsTableDDL);
         await query(savedReportsTriggerDDL);
+        await query(commodityMetadataTableDDL);
+        await query(depreciationSchedulesTableDDL);
+        await query(userPreferencesTableDDL);
         console.log('✓ Extension tables created/verified successfully');
     } catch (error) {
         console.error('Error creating extension tables:', error);

@@ -415,6 +415,7 @@ model gnucash_web_users {
   // Relations
   audit_logs       gnucash_web_audit[]
   saved_reports    gnucash_web_saved_reports[]
+  preferences      gnucash_web_user_preferences[]
 }
 
 model gnucash_web_audit {
@@ -445,4 +446,55 @@ model gnucash_web_saved_reports {
 
   // Relations
   user             gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model gnucash_web_commodity_metadata {
+  id               Int       @id @default(autoincrement())
+  commodity_guid   String    @db.VarChar(32)
+  mnemonic         String    @db.VarChar(50)
+  sector           String?   @db.VarChar(255)
+  industry         String?   @db.VarChar(255)
+  sector_weights   Json?     // For ETFs/funds: { "Technology": 25.5, "Healthcare": 15.2, ... }
+  asset_class      String?   @db.VarChar(50)  // "stock", "etf", "mutual_fund", "bond"
+  last_updated     DateTime  @default(now())
+  created_at       DateTime  @default(now())
+
+  @@unique([commodity_guid])
+  @@index([mnemonic])
+}
+
+model gnucash_web_depreciation_schedules {
+  id                    Int       @id @default(autoincrement())
+  account_guid          String    @db.VarChar(32)
+  purchase_price        Decimal   @db.Decimal(15, 2)
+  purchase_date         DateTime  @db.Date
+  useful_life_years     Int
+  salvage_value         Decimal   @db.Decimal(15, 2) @default(0)
+  method                String    @db.VarChar(30)  // "straight-line", "declining-balance"
+  decline_rate          Decimal?  @db.Decimal(5, 4)  // For declining balance, e.g., 0.2000
+  contra_account_guid   String    @db.VarChar(32)
+  frequency             String    @db.VarChar(20) @default("monthly")  // "monthly", "quarterly", "yearly"
+  is_appreciation       Boolean   @default(false)
+  last_transaction_date DateTime? @db.Date
+  enabled               Boolean   @default(true)
+  notes                 String?   @db.Text
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @default(now())
+
+  @@unique([account_guid])
+  @@index([account_guid])
+}
+
+model gnucash_web_user_preferences {
+  id               Int       @id @default(autoincrement())
+  user_id          Int
+  preference_key   String    @db.VarChar(100)
+  preference_value String    @db.Text
+  updated_at       DateTime  @default(now())
+
+  // Relations
+  user             gnucash_web_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, preference_key])
+  @@index([user_id])
 }
