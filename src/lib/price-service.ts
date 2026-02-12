@@ -21,3 +21,15 @@ export type {
   QuotableCommodity,
   FetchAndStoreResult,
 } from './yahoo-price-service';
+
+export {
+  ensureIndexCommodities,
+  fetchIndexPrices,
+  getIndexHistory,
+  normalizeToPercent,
+} from './market-index-service';
+
+export type {
+  IndexPriceData,
+  IndexHistoryResult,
+} from './market-index-service';
