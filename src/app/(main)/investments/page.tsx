@@ -4,9 +4,67 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummaryCards';
 import { AllocationChart } from '@/components/investments/AllocationChart';
+import { IndustryExposureChart } from '@/components/investments/IndustryExposureChart';
 import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
+import { CashAllocationCard } from '@/components/investments/CashAllocationCard';
 import ExpandableChart from '@/components/charts/ExpandableChart';
+
+interface CashByAccount {
+  parentGuid: string;
+  parentName: string;
+  parentPath: string;
+  cashBalance: number;
+  investmentValue: number;
+  cashPercent: number;
+}
+
+interface OverallCash {
+  totalCashBalance: number;
+  totalInvestmentValue: number;
+  totalValue: number;
+  cashPercent: number;
+}
+
+interface SectorExposure {
+  sector: string;
+  value: number;
+  percent: number;
+}
+
+interface ConsolidatedHolding {
+  commodityGuid: string;
+  symbol: string;
+  fullname: string;
+  totalShares: number;
+  totalCostBasis: number;
+  totalMarketValue: number;
+  totalGainLoss: number;
+  totalGainLossPercent: number;
+  latestPrice: number;
+  priceDate: string;
+  accounts: Array<{
+    accountGuid: string;
+    accountName: string;
+    accountPath: string;
+    shares: number;
+    costBasis: number;
+    marketValue: number;
+    gainLoss: number;
+    gainLossPercent: number;
+  }>;
+}
+
+interface IndexDataPoint {
+  date: string;
+  value: number;
+  percentChange: number;
+}
+
+interface IndicesData {
+  sp500: IndexDataPoint[];
+  djia: IndexDataPoint[];
+}
 
 interface PortfolioData {
   summary: {
@@ -37,10 +95,15 @@ interface PortfolioData {
     value: number;
     percent: number;
   }>;
+  cashByAccount: CashByAccount[];
+  overallCash: OverallCash;
+  sectorExposure: SectorExposure[];
+  consolidatedHoldings: ConsolidatedHolding[];
 }
 
 interface HistoryData {
   history: Array<{ date: string; value: number }>;
+  indices: IndicesData;
 }
 
 export default function InvestmentsPage() {
@@ -48,9 +111,11 @@ export default function InvestmentsPage() {
 
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [history, setHistory] = useState<HistoryData['history']>([]);
+  const [indices, setIndices] = useState<IndicesData>({ sp500: [], djia: [] });
   const [loading, setLoading] = useState(true);
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [apiConfigured, setApiConfigured] = useState(true);
+  const [allocationTab, setAllocationTab] = useState<'account' | 'sector'>('account');
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -74,6 +139,9 @@ export default function InvestmentsPage() {
       const data = await res.json();
       if (res.ok) {
         setHistory(data.history || []);
+        if (data.indices) {
+          setIndices(data.indices);
+        }
       }
     } catch (err) {
       console.error('Failed to load history:', err);
@@ -192,20 +260,62 @@ export default function InvestmentsPage() {
       {/* Summary Cards */}
       {portfolio && <PortfolioSummaryCards {...portfolio.summary} />}
 
+      {/* Cash Allocation */}
+      {portfolio && portfolio.cashByAccount && portfolio.cashByAccount.length > 0 && (
+        <CashAllocationCard
+          cashByAccount={portfolio.cashByAccount}
+          overallCash={portfolio.overallCash}
+        />
+      )}
+
       {/* Charts Row */}
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
         {portfolio && (
-          <ExpandableChart title="Portfolio Allocation">
-            <AllocationChart data={portfolio.allocation} />
-          </ExpandableChart>
+          <div className="flex flex-col gap-0">
+            {/* Allocation tab selector */}
+            <div className="flex gap-1 mb-2">
+              <button
+                onClick={() => setAllocationTab('account')}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  allocationTab === 'account'
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+                }`}
+              >
+                By Account
+              </button>
+              <button
+                onClick={() => setAllocationTab('sector')}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  allocationTab === 'sector'
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+                }`}
+              >
+                By Sector
+              </button>
+            </div>
+            <ExpandableChart title={allocationTab === 'account' ? 'Portfolio Allocation' : 'Sector Exposure'}>
+              {allocationTab === 'account' ? (
+                <AllocationChart data={portfolio.allocation} />
+              ) : (
+                <IndustryExposureChart data={portfolio.sectorExposure} />
+              )}
+            </ExpandableChart>
+          </div>
         )}
         <ExpandableChart title="Portfolio Performance">
-          <PerformanceChart data={history} />
+          <PerformanceChart data={history} indices={indices} />
         </ExpandableChart>
       </div>
 
       {/* Holdings Table */}
-      {portfolio && <HoldingsTable holdings={portfolio.holdings} />}
+      {portfolio && (
+        <HoldingsTable
+          holdings={portfolio.holdings}
+          consolidatedHoldings={portfolio.consolidatedHoldings}
+        />
+      )}
     </div>
   );
 }

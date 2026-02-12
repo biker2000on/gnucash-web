@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchAndStorePrices } from '@/lib/price-service';
+import { fetchAndStorePrices, ensureIndexCommodities, fetchIndexPrices } from '@/lib/price-service';
 import { z } from 'zod';
 
 /**
@@ -55,11 +55,22 @@ export async function POST(request: NextRequest) {
     // Fetch and store historical prices
     const result = await fetchAndStorePrices(symbols, force);
 
+    // Fetch market index prices (S&P 500, DJIA) in the background
+    let indexWarning: string | undefined;
+    try {
+      await ensureIndexCommodities();
+      await fetchIndexPrices();
+    } catch (err) {
+      console.warn('Failed to fetch index prices:', err);
+      indexWarning = 'Market index prices could not be updated';
+    }
+
     return NextResponse.json({
       stored: result.stored,
       backfilled: result.backfilled,
       gapsFilled: result.gapsFilled,
       failed: result.failed,
+      ...(indexWarning ? { indexWarning } : {}),
       results: result.results.map(r => ({
         symbol: r.symbol,
         pricesStored: r.pricesStored,
