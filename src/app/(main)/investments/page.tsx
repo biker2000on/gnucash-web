@@ -1,193 +1,32 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useToast } from '@/contexts/ToastContext';
+import { useState } from 'react';
+import { useInvestmentData } from '@/contexts/InvestmentDataContext';
 import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummaryCards';
 import { AllocationChart } from '@/components/investments/AllocationChart';
 import { IndustryExposureChart } from '@/components/investments/IndustryExposureChart';
 import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
-import { CashAllocationCard } from '@/components/investments/CashAllocationCard';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 
-interface CashByAccount {
-  parentGuid: string;
-  parentName: string;
-  parentPath: string;
-  cashBalance: number;
-  investmentValue: number;
-  cashPercent: number;
-}
+type AllocationTab = 'holdings' | 'cash' | 'sector';
 
-interface OverallCash {
-  totalCashBalance: number;
-  totalInvestmentValue: number;
-  totalValue: number;
-  cashPercent: number;
-}
+export default function HoldingsPage() {
+  const {
+    portfolio, history, indices, loading, fetchingPrices,
+    apiConfigured, handleFetchAllPrices
+  } = useInvestmentData();
 
-interface SectorExposure {
-  sector: string;
-  value: number;
-  percent: number;
-}
+  const [allocationTab, setAllocationTab] = useState<AllocationTab>('holdings');
 
-interface ConsolidatedHolding {
-  commodityGuid: string;
-  symbol: string;
-  fullname: string;
-  totalShares: number;
-  totalCostBasis: number;
-  totalMarketValue: number;
-  totalGainLoss: number;
-  totalGainLossPercent: number;
-  latestPrice: number;
-  priceDate: string;
-  accounts: Array<{
-    accountGuid: string;
-    accountName: string;
-    accountPath: string;
-    shares: number;
-    costBasis: number;
-    marketValue: number;
-    gainLoss: number;
-    gainLossPercent: number;
-  }>;
-}
-
-interface IndexDataPoint {
-  date: string;
-  value: number;
-  percentChange: number;
-}
-
-interface IndicesData {
-  sp500: IndexDataPoint[];
-  djia: IndexDataPoint[];
-}
-
-interface PortfolioData {
-  summary: {
-    totalValue: number;
-    totalCostBasis: number;
-    totalGainLoss: number;
-    totalGainLossPercent: number;
-    dayChange: number;
-    dayChangePercent: number;
-  };
-  holdings: Array<{
-    accountGuid: string;
-    accountName: string;
-    accountPath: string;
-    commodityGuid: string;
-    symbol: string;
-    fullname: string;
-    shares: number;
-    costBasis: number;
-    marketValue: number;
-    gainLoss: number;
-    gainLossPercent: number;
-    latestPrice: number;
-    priceDate: string;
-  }>;
-  allocation: Array<{
-    category: string;
-    value: number;
-    percent: number;
-  }>;
-  cashByAccount: CashByAccount[];
-  overallCash: OverallCash;
-  sectorExposure: SectorExposure[];
-  consolidatedHoldings: ConsolidatedHolding[];
-}
-
-interface HistoryData {
-  history: Array<{ date: string; value: number }>;
-  indices: IndicesData;
-}
-
-export default function InvestmentsPage() {
-  const { success, error, warning } = useToast();
-
-  const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
-  const [history, setHistory] = useState<HistoryData['history']>([]);
-  const [indices, setIndices] = useState<IndicesData>({ sp500: [], djia: [] });
-  const [loading, setLoading] = useState(true);
-  const [fetchingPrices, setFetchingPrices] = useState(false);
-  const [apiConfigured, setApiConfigured] = useState(true);
-  const [allocationTab, setAllocationTab] = useState<'account' | 'sector'>('account');
-
-  const fetchPortfolio = useCallback(async () => {
-    try {
-      const res = await fetch('/api/investments/portfolio');
-      const data = await res.json();
-      if (res.ok) {
-        setPortfolio(data);
-      } else {
-        error('Failed to load portfolio data');
-      }
-    } catch {
-      error('Failed to load portfolio data');
-    } finally {
-      setLoading(false);
-    }
-  }, [error]);
-
-  const fetchHistory = useCallback(async () => {
-    try {
-      const res = await fetch('/api/investments/history?days=36500');
-      const data = await res.json();
-      if (res.ok) {
-        setHistory(data.history || []);
-        if (data.indices) {
-          setIndices(data.indices);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load history:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchPortfolio();
-    fetchHistory();
-  }, [fetchPortfolio, fetchHistory]);
-
-  useEffect(() => {
-    fetch('/api/investments/status')
-      .then(res => res.json())
-      .then(data => setApiConfigured(data.configured))
-      .catch(() => {});
-  }, []);
-
-  const handleFetchAllPrices = async () => {
-    setFetchingPrices(true);
-    try {
-      const res = await fetch('/api/prices/fetch', { method: 'POST' });
-      const data = await res.json();
-
-      if (!res.ok) {
-        error(data.error || 'Failed to fetch prices');
-        return;
-      }
-
-      if (data.stored > 0) {
-        success(
-          `Updated: ${data.backfilled} historical prices backfilled, ${data.gapsFilled} gap prices filled (${data.stored} total)`
-        );
-        fetchPortfolio();
-        fetchHistory();
-      } else if (data.failed > 0) {
-        warning(`Failed to fetch ${data.failed} prices`);
-      } else {
-        success('All historical prices are up to date');
-      }
-    } catch {
-      error('Network error fetching prices');
-    } finally {
-      setFetchingPrices(false);
-    }
-  };
+  // Build cash pie data from cashByAccount
+  const cashPieData = portfolio?.cashByAccount?.map(a => ({
+    category: a.parentName,
+    value: a.cashBalance,
+    percent: portfolio.overallCash.totalCashBalance > 0
+      ? (a.cashBalance / portfolio.overallCash.totalCashBalance) * 100
+      : 0,
+  })) ?? [];
 
   if (loading) {
     return (
@@ -202,7 +41,7 @@ export default function InvestmentsPage() {
     );
   }
 
-  if (!loading && (!portfolio || portfolio.holdings.length === 0)) {
+  if (!portfolio || portfolio.holdings.length === 0) {
     return (
       <div className="space-y-6">
         <header>
@@ -218,6 +57,18 @@ export default function InvestmentsPage() {
       </div>
     );
   }
+
+  const allocationTabs: { key: AllocationTab; label: string }[] = [
+    { key: 'holdings', label: 'Holdings' },
+    { key: 'cash', label: 'Cash' },
+    { key: 'sector', label: 'Sector' },
+  ];
+
+  const allocationTitle = allocationTab === 'holdings'
+    ? 'Portfolio Allocation'
+    : allocationTab === 'cash'
+      ? 'Cash Allocation'
+      : 'Sector Exposure';
 
   return (
     <div className="space-y-6">
@@ -258,64 +109,47 @@ export default function InvestmentsPage() {
       )}
 
       {/* Summary Cards */}
-      {portfolio && <PortfolioSummaryCards {...portfolio.summary} />}
-
-      {/* Cash Allocation */}
-      {portfolio && portfolio.cashByAccount && portfolio.cashByAccount.length > 0 && (
-        <CashAllocationCard
-          cashByAccount={portfolio.cashByAccount}
-          overallCash={portfolio.overallCash}
-        />
-      )}
+      <PortfolioSummaryCards {...portfolio.summary} />
 
       {/* Charts Row */}
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
-        {portfolio && (
-          <div className="flex flex-col gap-0">
-            {/* Allocation tab selector */}
-            <div className="flex gap-1 mb-2">
+        <div className="flex flex-col gap-0">
+          {/* Allocation tab selector */}
+          <div className="flex gap-1 mb-2">
+            {allocationTabs.map(tab => (
               <button
-                onClick={() => setAllocationTab('account')}
+                key={tab.key}
+                onClick={() => setAllocationTab(tab.key)}
                 className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                  allocationTab === 'account'
+                  allocationTab === tab.key
                     ? 'bg-cyan-600 text-white'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
               >
-                By Account
+                {tab.label}
               </button>
-              <button
-                onClick={() => setAllocationTab('sector')}
-                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                  allocationTab === 'sector'
-                    ? 'bg-cyan-600 text-white'
-                    : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
-                }`}
-              >
-                By Sector
-              </button>
-            </div>
-            <ExpandableChart title={allocationTab === 'account' ? 'Portfolio Allocation' : 'Sector Exposure'}>
-              {allocationTab === 'account' ? (
-                <AllocationChart data={portfolio.allocation} />
-              ) : (
-                <IndustryExposureChart data={portfolio.sectorExposure} />
-              )}
-            </ExpandableChart>
+            ))}
           </div>
-        )}
+          <ExpandableChart title={allocationTitle}>
+            {allocationTab === 'holdings' ? (
+              <AllocationChart data={portfolio.allocation} />
+            ) : allocationTab === 'cash' ? (
+              <AllocationChart data={cashPieData} />
+            ) : (
+              <IndustryExposureChart data={portfolio.sectorExposure} />
+            )}
+          </ExpandableChart>
+        </div>
         <ExpandableChart title="Portfolio Performance">
           <PerformanceChart data={history} indices={indices} />
         </ExpandableChart>
       </div>
 
       {/* Holdings Table */}
-      {portfolio && (
-        <HoldingsTable
-          holdings={portfolio.holdings}
-          consolidatedHoldings={portfolio.consolidatedHoldings}
-        />
-      )}
+      <HoldingsTable
+        holdings={portfolio.holdings}
+        consolidatedHoldings={portfolio.consolidatedHoldings}
+      />
     </div>
   );
 }
