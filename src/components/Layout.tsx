@@ -73,6 +73,14 @@ function IconArrowUpDown({ className = "w-5 h-5" }: { className?: string }) {
     );
 }
 
+function IconBuilding({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
+        </svg>
+    );
+}
+
 function IconChevronLeft({ className = "w-5 h-5" }: { className?: string }) {
     return (
         <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -109,6 +117,7 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
     PiggyBank: IconPiggyBank,
     BarChart3: IconBarChart3,
     ArrowUpDown: IconArrowUpDown,
+    Building: IconBuilding,
 };
 
 // ---------------------------------------------------------------------------
@@ -120,6 +129,7 @@ const navItems = [
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
     { name: 'Investments', href: '/investments', icon: 'TrendingUp' },
+    { name: 'Assets', href: '/assets', icon: 'Building' },
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
     { name: 'Import/Export', href: '/import-export', icon: 'ArrowUpDown' },
