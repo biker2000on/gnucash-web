@@ -12,6 +12,7 @@ interface AccountSelectorProps {
     disabled?: boolean;
     className?: string;
     hasError?: boolean;
+    accountTypes?: string[];
 }
 
 // Strip "Root Account:" prefix from account paths
@@ -31,6 +32,7 @@ export function AccountSelector({
     disabled = false,
     className = '',
     hasError = false,
+    accountTypes,
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -116,6 +118,9 @@ export function AccountSelector({
     const filteredAccounts = accounts.filter(account => {
         // Exclude ROOT account type
         if (account.account_type === 'ROOT') return false;
+
+        // Filter by account types if provided
+        if (accountTypes && !accountTypes.includes(account.account_type)) return false;
 
         const searchLower = search.toLowerCase();
         const displayName = formatAccountPath(account.fullname, account.name);

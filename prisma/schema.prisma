@@ -415,6 +415,7 @@ model gnucash_web_users {
   // Relations
   audit_logs       gnucash_web_audit[]
   saved_reports    gnucash_web_saved_reports[]
+  tool_configs     gnucash_web_tool_config[]
 }
 
 model gnucash_web_audit {
@@ -445,4 +446,20 @@ model gnucash_web_saved_reports {
 
   // Relations
   user             gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model gnucash_web_tool_config {
+  id           Int       @id @default(autoincrement())
+  user_id      Int?
+  book_guid    String    @db.VarChar(32)
+  tool_type    String    @db.VarChar(50)
+  name         String    @db.VarChar(255)
+  account_guid String?   @db.VarChar(32)
+  config       Json      @default("{}")
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  user         gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, book_guid, tool_type])
 }

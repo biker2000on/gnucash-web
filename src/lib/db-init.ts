@@ -223,6 +223,40 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Migration: Add tool_config table
+    const toolConfigTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_tool_config (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+            book_guid VARCHAR(32) NOT NULL,
+            tool_type VARCHAR(50) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            account_guid VARCHAR(32),
+            config JSONB NOT NULL DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tool_config_user_id ON gnucash_web_tool_config(user_id);
+        CREATE INDEX IF NOT EXISTS idx_tool_config_tool_type ON gnucash_web_tool_config(tool_type);
+        CREATE INDEX IF NOT EXISTS idx_tool_config_user_book ON gnucash_web_tool_config(user_id, book_guid, tool_type);
+    `;
+
+    const toolConfigTriggerDDL = `
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_trigger
+                WHERE tgname = 'update_tool_config_updated_at'
+            ) THEN
+                CREATE TRIGGER update_tool_config_updated_at
+                BEFORE UPDATE ON gnucash_web_tool_config
+                FOR EACH ROW
+                EXECUTE FUNCTION update_updated_at_column();
+            END IF;
+        END $$;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -230,6 +264,8 @@ async function createExtensionTables() {
         await query(addBooksColumnsDDL);
         await query(savedReportsTableDDL);
         await query(savedReportsTriggerDDL);
+        await query(toolConfigTableDDL);
+        await query(toolConfigTriggerDDL);
         console.log('✓ Extension tables created/verified successfully');
     } catch (error) {
         console.error('Error creating extension tables:', error);
