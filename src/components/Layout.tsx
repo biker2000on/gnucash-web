@@ -121,14 +121,45 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
 };
 
 // ---------------------------------------------------------------------------
+// Chevron icon for expandable items
+// ---------------------------------------------------------------------------
+
+function IconChevronDown({ className = "w-4 h-4" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Nav items
 // ---------------------------------------------------------------------------
 
-const navItems = [
+interface NavItem {
+    name: string;
+    href: string;
+    icon: string;
+    children?: Array<{
+        name: string;
+        href: string;
+    }>;
+}
+
+const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
-    { name: 'Investments', href: '/investments', icon: 'TrendingUp' },
+    {
+        name: 'Investments',
+        href: '/investments',
+        icon: 'TrendingUp',
+        children: [
+            { name: 'Holdings', href: '/investments' },
+            { name: 'Cash', href: '/investments/cash' },
+            { name: 'Accounts', href: '/investments/accounts' },
+        ],
+    },
     { name: 'Assets', href: '/assets', icon: 'Building' },
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
@@ -157,6 +188,28 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     // Mobile open/close state
     const [mobileOpen, setMobileOpen] = useState(false);
+
+    // Expandable nav sections (e.g. Investments sub-items)
+    const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+    // Auto-expand nav sections when pathname matches a child route
+    useEffect(() => {
+        navItems.forEach((item) => {
+            if (item.children) {
+                const matchesChild = item.children.some(
+                    (child) => pathname === child.href || pathname?.startsWith(child.href + '/')
+                );
+                if (matchesChild) {
+                    setExpandedSections((prev) => {
+                        if (prev.has(item.name)) return prev;
+                        const next = new Set(prev);
+                        next.add(item.name);
+                        return next;
+                    });
+                }
+            }
+        });
+    }, [pathname]);
 
     // Hydrate collapsed state from localStorage on mount
     useEffect(() => {
@@ -193,44 +246,92 @@ export default function Layout({ children }: { children: ReactNode }) {
     // Sidebar content (shared between desktop and mobile)
     // -----------------------------------------------------------------------
 
-    function renderNavItem(item: (typeof navItems)[number]) {
+    function renderNavItem(item: NavItem) {
         const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href + '/'));
         const Icon = iconMap[item.icon];
+        const isSectionExpanded = expandedSections.has(item.name);
+        const isCollapsed = collapsed && hydrated;
+
+        const handleParentClick = (e: React.MouseEvent) => {
+            if (item.children && !isCollapsed) {
+                // Toggle expand/collapse of sub-items
+                setExpandedSections((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(item.name)) {
+                        next.delete(item.name);
+                    } else {
+                        next.add(item.name);
+                    }
+                    return next;
+                });
+            }
+            setMobileOpen(false);
+        };
 
         return (
-            <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setMobileOpen(false)}
-                className={`relative flex items-center rounded-xl transition-all duration-200 group
-                    ${collapsed && hydrated ? 'justify-center px-0 py-3' : 'px-4 py-3'}
-                    ${isActive
-                        ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-emerald-500/10'
-                        : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
-                    }`}
-            >
-                {Icon && (
-                    <span className={collapsed && hydrated ? '' : 'mr-3'}>
-                        <Icon className="w-5 h-5 shrink-0" />
-                    </span>
-                )}
-                {/* Label: hidden when collapsed on desktop, always visible on mobile overlay */}
-                <span
-                    className={`font-medium whitespace-nowrap transition-opacity duration-200
-                        ${collapsed && hydrated ? 'hidden' : 'block'}`}
+            <div key={item.href}>
+                <Link
+                    href={item.href}
+                    onClick={handleParentClick}
+                    className={`relative flex items-center rounded-xl transition-all duration-200 group
+                        ${isCollapsed ? 'justify-center px-0 py-3' : 'px-4 py-3'}
+                        ${isActive
+                            ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-emerald-500/10'
+                            : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
+                        }`}
                 >
-                    {item.name}
-                </span>
-                {isActive && !(collapsed && hydrated) && (
-                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
-                )}
-                {/* Tooltip when collapsed */}
-                {collapsed && hydrated && (
-                    <span className="absolute left-full ml-2 px-2 py-1 rounded-md bg-surface-elevated text-foreground text-xs font-medium whitespace-nowrap shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
+                    {Icon && (
+                        <span className={isCollapsed ? '' : 'mr-3'}>
+                            <Icon className="w-5 h-5 shrink-0" />
+                        </span>
+                    )}
+                    {/* Label: hidden when collapsed on desktop */}
+                    <span
+                        className={`font-medium whitespace-nowrap transition-opacity duration-200
+                            ${isCollapsed ? 'hidden' : 'block'}`}
+                    >
                         {item.name}
                     </span>
+                    {/* Chevron for expandable items */}
+                    {item.children && !isCollapsed && (
+                        <IconChevronDown
+                            className={`ml-auto w-4 h-4 transition-transform duration-200 ${isSectionExpanded ? '' : '-rotate-90'}`}
+                        />
+                    )}
+                    {/* Active dot (only for items without children) */}
+                    {isActive && !item.children && !isCollapsed && (
+                        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
+                    )}
+                    {/* Tooltip when collapsed */}
+                    {isCollapsed && (
+                        <span className="absolute left-full ml-2 px-2 py-1 rounded-md bg-surface-elevated text-foreground text-xs font-medium whitespace-nowrap shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
+                            {item.name}
+                        </span>
+                    )}
+                </Link>
+                {/* Sub-items (desktop expanded only) */}
+                {item.children && isSectionExpanded && !isCollapsed && (
+                    <div className="ml-8 mt-1 space-y-0.5">
+                        {item.children.map((child) => {
+                            const isChildActive = pathname === child.href;
+                            return (
+                                <Link
+                                    key={child.href}
+                                    href={child.href}
+                                    onClick={() => setMobileOpen(false)}
+                                    className={`block px-3 py-1.5 text-sm rounded-lg transition-colors
+                                        ${isChildActive
+                                            ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
+                                            : 'text-foreground-muted hover:text-foreground-secondary hover:bg-sidebar-hover/50'
+                                        }`}
+                                >
+                                    {child.name}
+                                </Link>
+                            );
+                        })}
+                    </div>
                 )}
-            </Link>
+            </div>
         );
     }
 
@@ -317,23 +418,69 @@ export default function Layout({ children }: { children: ReactNode }) {
                     {navItems.map((item) => {
                         const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href + '/'));
                         const Icon = iconMap[item.icon];
+                        const isSectionExpanded = expandedSections.has(item.name);
+
+                        const handleMobileParentClick = (e: React.MouseEvent) => {
+                            if (item.children) {
+                                setExpandedSections((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(item.name)) {
+                                        next.delete(item.name);
+                                    } else {
+                                        next.add(item.name);
+                                    }
+                                    return next;
+                                });
+                            }
+                            setMobileOpen(false);
+                        };
+
                         return (
-                            <Link
-                                key={item.href}
-                                href={item.href}
-                                onClick={() => setMobileOpen(false)}
-                                className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200
-                                    ${isActive
-                                        ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-emerald-500/10'
-                                        : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
-                                    }`}
-                            >
-                                {Icon && <Icon className="w-5 h-5 mr-3 shrink-0" />}
-                                <span className="font-medium">{item.name}</span>
-                                {isActive && (
-                                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
+                            <div key={item.href}>
+                                <Link
+                                    href={item.href}
+                                    onClick={handleMobileParentClick}
+                                    className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200
+                                        ${isActive
+                                            ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-emerald-500/10'
+                                            : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
+                                        }`}
+                                >
+                                    {Icon && <Icon className="w-5 h-5 mr-3 shrink-0" />}
+                                    <span className="font-medium">{item.name}</span>
+                                    {item.children ? (
+                                        <IconChevronDown
+                                            className={`ml-auto w-4 h-4 transition-transform duration-200 ${isSectionExpanded ? '' : '-rotate-90'}`}
+                                        />
+                                    ) : (
+                                        isActive && (
+                                            <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
+                                        )
+                                    )}
+                                </Link>
+                                {/* Mobile sub-items */}
+                                {item.children && isSectionExpanded && (
+                                    <div className="ml-8 mt-1 space-y-0.5">
+                                        {item.children.map((child) => {
+                                            const isChildActive = pathname === child.href;
+                                            return (
+                                                <Link
+                                                    key={child.href}
+                                                    href={child.href}
+                                                    onClick={() => setMobileOpen(false)}
+                                                    className={`block px-3 py-1.5 text-sm rounded-lg transition-colors
+                                                        ${isChildActive
+                                                            ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
+                                                            : 'text-foreground-muted hover:text-foreground-secondary hover:bg-sidebar-hover/50'
+                                                        }`}
+                                                >
+                                                    {child.name}
+                                                </Link>
+                                            );
+                                        })}
+                                    </div>
                                 )}
-                            </Link>
+                            </div>
                         );
                     })}
                 </nav>
