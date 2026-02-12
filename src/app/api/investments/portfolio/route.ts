@@ -2,6 +2,47 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getAccountHoldings } from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { getCachedMetadata, getPortfolioSectorExposure } from '@/lib/commodity-metadata';
+import type { SectorExposure } from '@/lib/commodity-metadata';
+
+interface CashByAccount {
+  parentGuid: string;
+  parentName: string;
+  parentPath: string;
+  cashBalance: number;
+  investmentValue: number;
+  cashPercent: number;
+}
+
+interface OverallCash {
+  totalCashBalance: number;
+  totalInvestmentValue: number;
+  totalValue: number;
+  cashPercent: number;
+}
+
+interface ConsolidatedHolding {
+  commodityGuid: string;
+  symbol: string;
+  fullname: string;
+  totalShares: number;
+  totalCostBasis: number;
+  totalMarketValue: number;
+  totalGainLoss: number;
+  totalGainLossPercent: number;
+  latestPrice: number;
+  priceDate: string;
+  accounts: Array<{
+    accountGuid: string;
+    accountName: string;
+    accountPath: string;
+    shares: number;
+    costBasis: number;
+    marketValue: number;
+    gainLoss: number;
+    gainLossPercent: number;
+  }>;
+}
 
 interface PortfolioResponse {
   summary: {
@@ -32,6 +73,10 @@ interface PortfolioResponse {
     value: number;
     percent: number;
   }>;
+  cashByAccount: CashByAccount[];
+  overallCash: OverallCash;
+  sectorExposure: SectorExposure[];
+  consolidatedHoldings: ConsolidatedHolding[];
 }
 
 /**
@@ -72,7 +117,7 @@ export async function GET() {
     // Pre-fetch all accounts for path building (eliminates N+1 queries)
     const allBookAccounts = await prisma.accounts.findMany({
       where: { guid: { in: bookAccountGuids } },
-      select: { guid: true, name: true, parent_guid: true },
+      select: { guid: true, name: true, parent_guid: true, account_type: true },
     });
     const accountLookup = new Map(allBookAccounts.map(a => [a.guid, { name: a.name, parent_guid: a.parent_guid }]));
 
@@ -115,6 +160,7 @@ export async function GET() {
         gainLossPercent: holdings.gainLossPercent,
         latestPrice: holdings.latestPrice?.value || 0,
         priceDate: holdings.latestPrice?.date.toISOString() || '',
+        parentGuid: account.parent_guid,
       };
     });
 
@@ -167,10 +213,150 @@ export async function GET() {
     // Sort allocation by value descending
     allocation.sort((a, b) => b.value - a.value);
 
+    // ===== T2.1: Cash Detection =====
+    // Find parent accounts of STOCK/MUTUAL accounts and detect cash siblings
+    const parentGuids = new Set<string>();
+    for (const h of holdings) {
+      if (h.parentGuid) parentGuids.add(h.parentGuid);
+    }
+
+    // For each parent, find sibling BANK/ASSET/CASH accounts
+    const cashByAccount: CashByAccount[] = [];
+    const cashAccountTypes = ['BANK', 'ASSET', 'CASH'];
+
+    for (const parentGuid of parentGuids) {
+      // Find cash siblings under this parent
+      const cashSiblings = allBookAccounts.filter(
+        a => a.parent_guid === parentGuid && cashAccountTypes.includes(a.account_type)
+      );
+
+      // Sum cash balances from splits
+      let cashBalance = 0;
+      for (const cashAccount of cashSiblings) {
+        const splits = await prisma.splits.findMany({
+          where: { account_guid: cashAccount.guid },
+          select: { value_num: true, value_denom: true },
+        });
+        for (const split of splits) {
+          const num = Number(split.value_num);
+          const denom = Number(split.value_denom);
+          if (denom !== 0) cashBalance += num / denom;
+        }
+      }
+
+      // Sum investment value for holdings under this parent
+      const investmentValue = holdings
+        .filter(h => h.parentGuid === parentGuid)
+        .reduce((sum, h) => sum + h.marketValue, 0);
+
+      const parentPath = buildAccountPathFromMap(parentGuid, accountLookup);
+      const parentAccount = accountLookup.get(parentGuid);
+      const totalAccountValue = cashBalance + investmentValue;
+
+      cashByAccount.push({
+        parentGuid,
+        parentName: parentAccount?.name || 'Unknown',
+        parentPath,
+        cashBalance: Math.round(cashBalance * 100) / 100,
+        investmentValue: Math.round(investmentValue * 100) / 100,
+        cashPercent: totalAccountValue > 0
+          ? Math.round((cashBalance / totalAccountValue) * 10000) / 100
+          : 0,
+      });
+    }
+
+    // Calculate overall cash totals
+    const totalCashBalance = cashByAccount.reduce((sum, c) => sum + c.cashBalance, 0);
+    const totalInvestmentValue = cashByAccount.reduce((sum, c) => sum + c.investmentValue, 0);
+    const totalPortfolioValue = totalCashBalance + totalInvestmentValue;
+
+    const overallCash: OverallCash = {
+      totalCashBalance: Math.round(totalCashBalance * 100) / 100,
+      totalInvestmentValue: Math.round(totalInvestmentValue * 100) / 100,
+      totalValue: Math.round(totalPortfolioValue * 100) / 100,
+      cashPercent: totalPortfolioValue > 0
+        ? Math.round((totalCashBalance / totalPortfolioValue) * 10000) / 100
+        : 0,
+    };
+
+    // ===== T2.2: Sector Exposure =====
+    // Build holdings input for sector calculation
+    const holdingsForSector = holdings.map(h => ({
+      commodityGuid: h.commodityGuid,
+      marketValue: h.marketValue,
+    }));
+
+    let sectorExposure: SectorExposure[] = [];
+    try {
+      sectorExposure = await getPortfolioSectorExposure(holdingsForSector);
+    } catch (err) {
+      console.warn('Failed to compute sector exposure:', err);
+    }
+
+    // Trigger background refresh for commodities without metadata
+    const uniqueCommodityGuids = [...new Set(holdings.map(h => h.commodityGuid))];
+    refreshMissingMetadata(uniqueCommodityGuids, stockAccounts).catch(() => {});
+
+    // ===== T2.3: Commodity Deduplication =====
+    const commodityGroups = new Map<string, typeof holdings>();
+    for (const h of holdings) {
+      const existing = commodityGroups.get(h.commodityGuid) || [];
+      existing.push(h);
+      commodityGroups.set(h.commodityGuid, existing);
+    }
+
+    const consolidatedHoldings: ConsolidatedHolding[] = [];
+    for (const [commodityGuid, group] of commodityGroups) {
+      const totalShares = group.reduce((s, h) => s + h.shares, 0);
+      const totalCostBasis = group.reduce((s, h) => s + h.costBasis, 0);
+      const totalMarketValue = group.reduce((s, h) => s + h.marketValue, 0);
+      const totalGainLoss = totalMarketValue - totalCostBasis;
+      const totalGainLossPercent = totalCostBasis !== 0
+        ? (totalGainLoss / Math.abs(totalCostBasis)) * 100
+        : 0;
+
+      // Use the first holding's price info (same commodity = same price)
+      const first = group[0];
+
+      consolidatedHoldings.push({
+        commodityGuid,
+        symbol: first.symbol,
+        fullname: first.fullname,
+        totalShares: Math.round(totalShares * 10000) / 10000,
+        totalCostBasis: Math.round(totalCostBasis * 100) / 100,
+        totalMarketValue: Math.round(totalMarketValue * 100) / 100,
+        totalGainLoss: Math.round(totalGainLoss * 100) / 100,
+        totalGainLossPercent: Math.round(totalGainLossPercent * 100) / 100,
+        latestPrice: first.latestPrice,
+        priceDate: first.priceDate,
+        accounts: group.map(h => ({
+          accountGuid: h.accountGuid,
+          accountName: h.accountName,
+          accountPath: h.accountPath,
+          shares: h.shares,
+          costBasis: h.costBasis,
+          marketValue: h.marketValue,
+          gainLoss: h.gainLoss,
+          gainLossPercent: h.gainLossPercent,
+        })),
+      });
+    }
+
+    // Sort consolidated holdings by market value descending
+    consolidatedHoldings.sort((a, b) => b.totalMarketValue - a.totalMarketValue);
+
+    // Strip parentGuid from holdings response (internal field)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const holdingsResponse = holdings.map(({ parentGuid: _pg, ...rest }) => rest);
+
     const response: PortfolioResponse = {
       summary,
-      holdings,
+      holdings: holdingsResponse,
       allocation,
+      cashByAccount,
+      overallCash,
+      sectorExposure,
+      consolidatedHoldings,
     };
 
     return NextResponse.json(response);
@@ -180,5 +366,28 @@ export async function GET() {
       { error: 'Failed to fetch portfolio data' },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Trigger background refresh for commodities missing metadata.
+ * Does not block the response.
+ */
+async function refreshMissingMetadata(
+  commodityGuids: string[],
+  stockAccounts: Array<{ commodity_guid: string | null; commodity: { mnemonic: string } | null }>
+) {
+  const { refreshMetadata } = await import('@/lib/commodity-metadata');
+
+  for (const guid of commodityGuids) {
+    const cached = await getCachedMetadata(guid);
+    if (cached) continue;
+
+    // Find the symbol for this commodity
+    const account = stockAccounts.find(a => a.commodity_guid === guid);
+    const symbol = account?.commodity?.mnemonic;
+    if (symbol) {
+      await refreshMetadata(guid, symbol).catch(() => {});
+    }
   }
 }
