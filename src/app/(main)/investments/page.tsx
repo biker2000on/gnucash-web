@@ -9,7 +9,7 @@ import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 
-type AllocationTab = 'holdings' | 'cash' | 'sector';
+type AllocationTab = 'holdings' | 'cashPct' | 'cashAcct' | 'sector';
 
 export default function HoldingsPage() {
   const {
@@ -19,8 +19,22 @@ export default function HoldingsPage() {
 
   const [allocationTab, setAllocationTab] = useState<AllocationTab>('holdings');
 
-  // Build cash pie data from cashByAccount
-  const cashPieData = portfolio?.cashByAccount?.map(a => ({
+  // Cash as % of total portfolio (2-slice pie: Cash vs Investments)
+  const cashPctOfPortfolio = portfolio?.overallCash ? [
+    {
+      category: 'Cash',
+      value: portfolio.overallCash.totalCashBalance,
+      percent: portfolio.overallCash.cashPercent,
+    },
+    {
+      category: 'Investments',
+      value: portfolio.overallCash.totalInvestmentValue,
+      percent: 100 - portfolio.overallCash.cashPercent,
+    },
+  ] : [];
+
+  // Cash distribution by account (which account holds what share of total cash)
+  const cashByAccountPie = portfolio?.cashByAccount?.map(a => ({
     category: a.parentName,
     value: a.cashBalance,
     percent: portfolio.overallCash.totalCashBalance > 0
@@ -60,15 +74,18 @@ export default function HoldingsPage() {
 
   const allocationTabs: { key: AllocationTab; label: string }[] = [
     { key: 'holdings', label: 'Holdings' },
-    { key: 'cash', label: 'Cash' },
+    { key: 'cashPct', label: 'Cash %' },
+    { key: 'cashAcct', label: 'Cash by Account' },
     { key: 'sector', label: 'Sector' },
   ];
 
   const allocationTitle = allocationTab === 'holdings'
     ? 'Portfolio Allocation'
-    : allocationTab === 'cash'
-      ? 'Cash Allocation'
-      : 'Sector Exposure';
+    : allocationTab === 'cashPct'
+      ? 'Cash % of Portfolio'
+      : allocationTab === 'cashAcct'
+        ? 'Cash by Account'
+        : 'Sector Exposure';
 
   return (
     <div className="space-y-6">
@@ -133,8 +150,10 @@ export default function HoldingsPage() {
           <ExpandableChart title={allocationTitle}>
             {allocationTab === 'holdings' ? (
               <AllocationChart data={portfolio.allocation} />
-            ) : allocationTab === 'cash' ? (
-              <AllocationChart data={cashPieData} />
+            ) : allocationTab === 'cashPct' ? (
+              <AllocationChart data={cashPctOfPortfolio} />
+            ) : allocationTab === 'cashAcct' ? (
+              <AllocationChart data={cashByAccountPie} />
             ) : (
               <IndustryExposureChart data={portfolio.sectorExposure} />
             )}
