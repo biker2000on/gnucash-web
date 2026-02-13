@@ -292,6 +292,55 @@ async function createExtensionTables() {
 }
 
 /**
+ * Creates performance indexes on core GnuCash tables if they don't exist.
+ * These indexes are critical for query performance - without them, tables like
+ * prices get full sequential scans on every currency/price lookup.
+ *
+ * See sql/001-performance-indexes.sql for the standalone version with full documentation.
+ */
+async function createPerformanceIndexes() {
+    const indexes = [
+        // PRICES - Critical: eliminates full table scans on every price/currency lookup
+        `CREATE INDEX IF NOT EXISTS idx_prices_commodity_currency_date
+            ON prices (commodity_guid, currency_guid, date DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_prices_commodity_date
+            ON prices (commodity_guid, date DESC)`,
+
+        // ACCOUNTS - High: recursive CTE performance for account hierarchies
+        `CREATE INDEX IF NOT EXISTS idx_accounts_parent_guid
+            ON accounts (parent_guid)`,
+        `CREATE INDEX IF NOT EXISTS idx_accounts_account_type
+            ON accounts (account_type)`,
+        `CREATE INDEX IF NOT EXISTS idx_accounts_commodity_guid
+            ON accounts (commodity_guid)`,
+
+        // TRANSACTIONS - Medium: search and sort optimization
+        `CREATE INDEX IF NOT EXISTS idx_transactions_post_date_enter
+            ON transactions (post_date DESC, enter_date DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_transactions_description
+            ON transactions USING btree (description varchar_pattern_ops)`,
+        `CREATE INDEX IF NOT EXISTS idx_transactions_currency_guid
+            ON transactions (currency_guid)`,
+
+        // SPLITS - Low: reconciliation workflow optimization
+        `CREATE INDEX IF NOT EXISTS idx_splits_account_reconcile
+            ON splits (account_guid, reconcile_state)`,
+    ];
+
+    try {
+        for (const ddl of indexes) {
+            await query(ddl);
+        }
+        // Update planner statistics so indexes are used immediately
+        await query('ANALYZE');
+        console.log('✓ Performance indexes created/verified successfully');
+    } catch (error) {
+        console.error('Error creating performance indexes:', error);
+        // Don't throw - indexes are an optimization, not required for functionality
+    }
+}
+
+/**
  * Initializes the database schema by creating required views and tables.
  * This should be called once when the application starts.
  */
@@ -300,6 +349,7 @@ export async function initializeDatabase() {
         console.log('Initializing database schema...');
         await createAccountHierarchyView();
         await createExtensionTables();
+        await createPerformanceIndexes();
         console.log('✓ Database initialization complete');
     } catch (error) {
         console.error('Database initialization failed:', error);
