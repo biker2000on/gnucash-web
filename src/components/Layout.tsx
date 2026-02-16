@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation';
 import { ReactNode, ReactElement, useState, useEffect, useCallback } from 'react';
 import { UserMenu } from './UserMenu';
 import BookSwitcher from './BookSwitcher';
+import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
+import { GlobalShortcuts } from './GlobalShortcuts';
 
 // ---------------------------------------------------------------------------
 // Inline SVG icon components (no external icon library)
@@ -337,6 +339,8 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     return (
         <div className="flex h-screen bg-background text-foreground font-sans">
+            <GlobalShortcuts />
+            <KeyboardShortcutHelp />
             {/* ============================================================= */}
             {/* Desktop Sidebar                                                */}
             {/* ============================================================= */}
