@@ -93,6 +93,33 @@ export function TransactionFormModal({
         }
     };
 
+    const handleSaveAndAnother = async (data: CreateTransactionRequest) => {
+        setError(null);
+
+        try {
+            const response = await fetch('/api/transactions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Failed to create transaction');
+            }
+
+            onSuccess(); // Refresh the list
+            // Don't call onClose - modal stays open, form resets
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+            setError(errorMessage);
+            showError(errorMessage);
+            throw new Error(errorMessage);
+        }
+    };
+
     const handleCancel = () => {
         setError(null);
         onClose();
@@ -127,6 +154,7 @@ export function TransactionFormModal({
                         onSave={handleSave}
                         onCancel={handleCancel}
                         defaultFromAccount={defaultAccountGuid}
+                        onSaveAndAnother={!isEditMode ? handleSaveAndAnother : undefined}
                     />
                 )}
             </div>
