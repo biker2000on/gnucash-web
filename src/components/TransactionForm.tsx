@@ -8,8 +8,11 @@ import { AccountSelector } from './ui/AccountSelector';
 import { DescriptionAutocomplete } from './ui/DescriptionAutocomplete';
 import { TransactionSuggestion } from '@/app/api/transactions/descriptions/route';
 import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
+import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useToast } from '@/contexts/ToastContext';
 import { useAccounts } from '@/lib/hooks/useAccounts';
+import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -19,6 +22,7 @@ interface TransactionFormProps {
     simpleMode?: boolean;
     defaultFromAccount?: string;
     defaultToAccount?: string;
+    onSaveAndAnother?: (data: CreateTransactionRequest) => Promise<void>;
 }
 
 const createEmptySplit = (): SplitFormData => ({
@@ -39,6 +43,7 @@ export function TransactionForm({
     simpleMode = true,
     defaultFromAccount = '',
     defaultToAccount = '',
+    onSaveAndAnother,
 }: TransactionFormProps) {
     const [formData, setFormData] = useState<TransactionFormData>({
         post_date: new Date().toISOString().split('T')[0],
@@ -58,6 +63,7 @@ export function TransactionForm({
     });
     const formRef = useRef<HTMLDivElement>(null);
     const { success } = useToast();
+    const { defaultTaxRate } = useUserPreferences();
 
     // Fetch accounts for commodity info (used for multi-currency detection)
     const { data: accounts = [] } = useAccounts({ flat: true });
@@ -316,6 +322,29 @@ export function TransactionForm({
         setIsSimpleMode(true);
     };
 
+    const handleAmountBlur = () => {
+        const result = evaluateMathExpression(simpleData.amount);
+        if (result !== null) {
+            setSimpleData(prev => ({ ...prev, amount: result.toFixed(2) }));
+        }
+    };
+
+    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 't' || e.key === 'T')) {
+            e.preventDefault();
+            if (defaultTaxRate <= 0) {
+                success('No tax rate configured. Set it in Profile settings.');
+                return;
+            }
+            const currentValue = parseFloat(simpleData.amount);
+            if (isNaN(currentValue) || currentValue === 0) return;
+
+            const withTax = Math.round(currentValue * (1 + defaultTaxRate) * 100) / 100;
+            setSimpleData(prev => ({ ...prev, amount: withTax.toFixed(2) }));
+            success(`Tax applied: ${currentValue.toFixed(2)} + ${(defaultTaxRate * 100).toFixed(2)}% = ${withTax.toFixed(2)}`);
+        }
+    };
+
     const validateForm = (): { valid: boolean; errors: string[]; fieldErrors: Record<string, string> } => {
         const errors: string[] = [];
         const fieldErrors: Record<string, string> = {};
@@ -366,28 +395,11 @@ export function TransactionForm({
         return { valid: errors.length === 0, errors, fieldErrors };
     };
 
-    const handleSubmit = async (e?: React.FormEvent) => {
-        if (e) e.preventDefault();
-
-        const validation = validateForm();
-        setErrors(validation.errors);
-        setFieldErrors(validation.fieldErrors);
-
-        if (!validation.valid) {
-            // Focus first invalid field
-            const firstErrorField = Object.keys(validation.fieldErrors)[0];
-            if (firstErrorField) {
-                const element = document.querySelector(`[data-field="${firstErrorField}"]`) as HTMLElement;
-                element?.focus();
-            }
-            return;
-        }
-
+    const buildApiData = (): CreateTransactionRequest | null => {
         // Prepare splits - either from simple mode or advanced mode
         let submissionSplits: SplitFormData[];
 
         if (isSimpleMode) {
-
             // Generate splits from simple data
             const amount = parseFloat(simpleData.amount);
             submissionSplits = [
@@ -415,7 +427,7 @@ export function TransactionForm({
         }
 
         // Convert form data to API format
-        const apiData: CreateTransactionRequest = {
+        return {
             currency_guid: formData.currency_guid,
             num: formData.num || undefined,
             post_date: formData.post_date,
@@ -454,6 +466,61 @@ export function TransactionForm({
                     };
                 }),
         };
+    };
+
+    const resetForm = () => {
+        // Keep the current date but clear everything else
+        setFormData(prev => ({
+            ...prev,
+            description: '',
+            num: '',
+            splits: [createEmptySplit(), createEmptySplit()],
+        }));
+        setSimpleData({
+            amount: '',
+            fromAccountGuid: defaultFromAccount,
+            toAccountGuid: defaultToAccount,
+        });
+        setErrors([]);
+        setFieldErrors({});
+    };
+
+    const handleDateKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === '+' || e.key === '=') {
+            e.preventDefault();
+            const current = new Date(formData.post_date + 'T12:00:00');
+            current.setDate(current.getDate() + 1);
+            setFormData(f => ({ ...f, post_date: current.toISOString().split('T')[0] }));
+        } else if (e.key === '-') {
+            e.preventDefault();
+            const current = new Date(formData.post_date + 'T12:00:00');
+            current.setDate(current.getDate() - 1);
+            setFormData(f => ({ ...f, post_date: current.toISOString().split('T')[0] }));
+        } else if (e.key === 't' || e.key === 'T') {
+            e.preventDefault();
+            setFormData(f => ({ ...f, post_date: new Date().toISOString().split('T')[0] }));
+        }
+    };
+
+    const handleSubmit = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+
+        const validation = validateForm();
+        setErrors(validation.errors);
+        setFieldErrors(validation.fieldErrors);
+
+        if (!validation.valid) {
+            // Focus first invalid field
+            const firstErrorField = Object.keys(validation.fieldErrors)[0];
+            if (firstErrorField) {
+                const element = document.querySelector(`[data-field="${firstErrorField}"]`) as HTMLElement;
+                element?.focus();
+            }
+            return;
+        }
+
+        const apiData = buildApiData();
+        if (!apiData) return;
 
         setSaving(true);
         try {
@@ -469,12 +536,66 @@ export function TransactionForm({
         }
     };
 
+    const handleSaveAndAnother = async () => {
+        const validation = validateForm();
+        setErrors(validation.errors);
+        setFieldErrors(validation.fieldErrors);
+
+        if (!validation.valid) {
+            // Focus first invalid field
+            const firstErrorField = Object.keys(validation.fieldErrors)[0];
+            if (firstErrorField) {
+                const element = document.querySelector(`[data-field="${firstErrorField}"]`) as HTMLElement;
+                element?.focus();
+            }
+            return;
+        }
+
+        const apiData = buildApiData();
+        if (!apiData || !onSaveAndAnother) return;
+
+        setSaving(true);
+        try {
+            await onSaveAndAnother(apiData);
+            resetForm();
+            success('Transaction saved. Ready for next.');
+        } catch (error) {
+            if (error instanceof Error) {
+                setErrors([error.message]);
+            } else {
+                setErrors(['An error occurred while saving']);
+            }
+        } finally {
+            setSaving(false);
+        }
+    };
+
     const { totalDebit, totalCredit, difference } = calculateBalance();
 
-    // Setup keyboard shortcut
+    // Setup keyboard shortcut (Ctrl+Enter for save)
     useFormKeyboardShortcuts(formRef, () => handleSubmit(), {
         validate: () => validateForm().valid
     });
+
+    // Setup Ctrl+Shift+Enter for save and another
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
+                e.preventDefault();
+                if (onSaveAndAnother) {
+                    handleSaveAndAnother();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onSaveAndAnother, handleSaveAndAnother]);
+
+    // Register date field shortcuts for help modal
+    useKeyboardShortcut('date-plus', '+', 'Next day', () => {}, 'date-field');
+    useKeyboardShortcut('date-minus', '-', 'Previous day', () => {}, 'date-field');
+    useKeyboardShortcut('date-today', 't', 'Set to today', () => {}, 'date-field');
 
     return (
         <div ref={formRef}>
@@ -518,6 +639,7 @@ export function TransactionForm({
                         type="date"
                         value={formData.post_date}
                         onChange={(e) => setFormData(f => ({ ...f, post_date: e.target.value }))}
+                        onKeyDown={handleDateKeyDown}
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>
@@ -570,14 +692,21 @@ export function TransactionForm({
                         <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Amount
                         </label>
-                        <input
-                            type="number"
-                            step="0.01"
-                            value={simpleData.amount}
-                            onChange={(e) => setSimpleData(prev => ({ ...prev, amount: e.target.value }))}
-                            placeholder="0.00"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
-                        />
+                        <div className="relative">
+                            <input
+                                type="text"
+                                inputMode="decimal"
+                                value={simpleData.amount}
+                                onChange={(e) => setSimpleData(prev => ({ ...prev, amount: e.target.value }))}
+                                onBlur={handleAmountBlur}
+                                onKeyDown={handleAmountKeyDown}
+                                placeholder="0.00"
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                            />
+                            {containsMathExpression(simpleData.amount) && (
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                            )}
+                        </div>
                     </div>
 
                     {/* From/To accounts */}
@@ -689,7 +818,10 @@ export function TransactionForm({
             {/* Actions */}
             <div className="flex justify-between items-center pt-4 border-t border-border">
                 <span className="text-xs text-foreground-muted">
-                    Press <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> to save
+                    <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> save
+                    {onSaveAndAnother && (
+                        <> | <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl+Shift</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> save & new</>
+                    )}
                 </span>
                 <div className="flex gap-3">
                     <button
@@ -699,6 +831,16 @@ export function TransactionForm({
                     >
                         Cancel
                     </button>
+                    {onSaveAndAnother && (
+                        <button
+                            type="button"
+                            onClick={handleSaveAndAnother}
+                            disabled={saving}
+                            className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 text-white rounded-lg transition-colors"
+                        >
+                            Save & New
+                        </button>
+                    )}
                     <button
                         type="submit"
                         disabled={saving}

@@ -3,6 +3,9 @@
 import { SplitFormData } from '@/lib/types';
 import { AccountSelector } from './ui/AccountSelector';
 import { useState, useEffect } from 'react';
+import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { useToast } from '@/contexts/ToastContext';
 
 interface SplitRowProps {
     split: SplitFormData;
@@ -23,6 +26,8 @@ export function SplitRow({
 }: SplitRowProps) {
     const [showExchangeRate, setShowExchangeRate] = useState(false);
     const [accountCommodity, setAccountCommodity] = useState<string | null>(null);
+    const { defaultTaxRate } = useUserPreferences();
+    const { success } = useToast();
 
     // Check for multi-currency when account is selected
     useEffect(() => {
@@ -83,6 +88,38 @@ export function SplitRow({
         }
     };
 
+    const handleDebitBlur = () => {
+        const result = evaluateMathExpression(split.debit);
+        if (result !== null) {
+            onChange(index, 'debit', result.toFixed(2));
+        }
+    };
+
+    const handleCreditBlur = () => {
+        const result = evaluateMathExpression(split.credit);
+        if (result !== null) {
+            onChange(index, 'credit', result.toFixed(2));
+        }
+    };
+
+    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, field: 'debit' | 'credit') => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 't' || e.key === 'T')) {
+            e.preventDefault();
+            if (defaultTaxRate <= 0) {
+                success('No tax rate configured. Set it in Profile settings.');
+                return;
+            }
+            const currentStr = split[field];
+            if (!currentStr) return;
+            const currentValue = parseFloat(currentStr);
+            if (isNaN(currentValue) || currentValue === 0) return;
+
+            const withTax = Math.round(currentValue * (1 + defaultTaxRate) * 100) / 100;
+            onChange(index, field, withTax.toFixed(2));
+            success(`Tax applied: ${currentValue.toFixed(2)} + ${(defaultTaxRate * 100).toFixed(2)}% = ${withTax.toFixed(2)}`);
+        }
+    };
+
     return (
         <div className="py-2 border-b border-border last:border-0">
             <div className="grid grid-cols-12 gap-2 items-center">
@@ -96,27 +133,37 @@ export function SplitRow({
                 </div>
 
                 {/* Debit */}
-                <div className="col-span-2">
+                <div className="col-span-2 relative">
                     <input
-                        type="number"
-                        step="0.01"
+                        type="text"
+                        inputMode="decimal"
                         placeholder="Debit"
                         value={split.debit}
                         onChange={(e) => handleDebitChange(e.target.value)}
+                        onBlur={handleDebitBlur}
+                        onKeyDown={(e) => handleAmountKeyDown(e, 'debit')}
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
                     />
+                    {containsMathExpression(split.debit) && (
+                        <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                    )}
                 </div>
 
                 {/* Credit */}
-                <div className="col-span-2">
+                <div className="col-span-2 relative">
                     <input
-                        type="number"
-                        step="0.01"
+                        type="text"
+                        inputMode="decimal"
                         placeholder="Credit"
                         value={split.credit}
                         onChange={(e) => handleCreditChange(e.target.value)}
+                        onBlur={handleCreditBlur}
+                        onKeyDown={(e) => handleAmountKeyDown(e, 'credit')}
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
                     />
+                    {containsMathExpression(split.credit) && (
+                        <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                    )}
                 </div>
 
                 {/* Memo */}
