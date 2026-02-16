@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { BalanceReversal } from '@/lib/format';
-import { getAllPreferences, setPreferences, getChartDefaults } from '@/lib/user-preferences';
+import { getAllPreferences, setPreferences, getChartDefaults, getPreference, setPreference } from '@/lib/user-preferences';
 
 const VALID_BALANCE_REVERSALS: BalanceReversal[] = ['none', 'credit', 'income_expense'];
 
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ preferences: prefs });
         }
 
-        // Default: return legacy balanceReversal
+        // Default: return legacy balanceReversal and tax rate
         const user = await prisma.gnucash_web_users.findUnique({
             where: { id: currentUser.id },
             select: {
@@ -48,8 +48,12 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
+        // Fetch tax rate from key-value preferences
+        const taxRatePref = await getPreference(currentUser.id, 'default_tax_rate', 0);
+
         return NextResponse.json({
             balanceReversal: user.balance_reversal || 'none',
+            defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
         });
     } catch (error) {
         console.error('Error fetching user preferences:', error);
@@ -70,7 +74,7 @@ export async function PATCH(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { balanceReversal } = body;
+        const { balanceReversal, defaultTaxRate } = body;
 
         // Validate balance reversal value
         if (balanceReversal !== undefined) {
@@ -82,18 +86,47 @@ export async function PATCH(request: NextRequest) {
             }
         }
 
-        const updatedUser = await prisma.gnucash_web_users.update({
+        // Validate tax rate value
+        if (defaultTaxRate !== undefined) {
+            const rate = parseFloat(defaultTaxRate);
+            if (isNaN(rate) || rate < 0 || rate > 1) {
+                return NextResponse.json(
+                    { error: 'Invalid defaultTaxRate value. Must be a number between 0 and 1' },
+                    { status: 400 }
+                );
+            }
+        }
+
+        // Update balance reversal if provided
+        let updatedBalanceReversal = balanceReversal;
+        if (balanceReversal !== undefined) {
+            const updatedUser = await prisma.gnucash_web_users.update({
+                where: { id: currentUser.id },
+                data: {
+                    balance_reversal: balanceReversal,
+                },
+                select: {
+                    balance_reversal: true,
+                },
+            });
+            updatedBalanceReversal = updatedUser.balance_reversal;
+        }
+
+        // Update tax rate if provided
+        if (defaultTaxRate !== undefined) {
+            await setPreference(currentUser.id, 'default_tax_rate', parseFloat(defaultTaxRate));
+        }
+
+        // Fetch current values for response
+        const user = await prisma.gnucash_web_users.findUnique({
             where: { id: currentUser.id },
-            data: {
-                balance_reversal: balanceReversal,
-            },
-            select: {
-                balance_reversal: true,
-            },
+            select: { balance_reversal: true },
         });
+        const taxRatePref = await getPreference(currentUser.id, 'default_tax_rate', 0);
 
         return NextResponse.json({
-            balanceReversal: updatedUser.balance_reversal,
+            balanceReversal: updatedBalanceReversal || user?.balance_reversal || 'none',
+            defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
         });
     } catch (error) {
         console.error('Error updating user preferences:', error);

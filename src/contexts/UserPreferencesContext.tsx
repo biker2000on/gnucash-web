@@ -6,6 +6,8 @@ import { BalanceReversal } from '@/lib/format';
 interface UserPreferencesContextType {
     balanceReversal: BalanceReversal;
     setBalanceReversal: (value: BalanceReversal) => Promise<void>;
+    defaultTaxRate: number;
+    setDefaultTaxRate: (rate: number) => Promise<void>;
     loading: boolean;
 }
 
@@ -19,6 +21,7 @@ interface UserPreferencesProviderProps {
 
 export function UserPreferencesProvider({ children }: UserPreferencesProviderProps) {
     const [balanceReversal, setBalanceReversalState] = useState<BalanceReversal>('none');
+    const [defaultTaxRate, setDefaultTaxRateState] = useState<number>(0);
     const [loading, setLoading] = useState(true);
 
     // Load preferences from API on mount
@@ -33,6 +36,9 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         if (parsed.balanceReversal) {
                             setBalanceReversalState(parsed.balanceReversal);
                         }
+                        if (parsed.defaultTaxRate !== undefined) {
+                            setDefaultTaxRateState(parsed.defaultTaxRate);
+                        }
                     } catch {
                         // Invalid cache, ignore
                     }
@@ -43,6 +49,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                 if (res.ok) {
                     const data = await res.json();
                     setBalanceReversalState(data.balanceReversal || 'none');
+                    setDefaultTaxRateState(data.defaultTaxRate || 0);
                     // Update cache
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 }
@@ -84,11 +91,39 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         }
     }, []);
 
+    const setDefaultTaxRate = useCallback(async (value: number) => {
+        // Optimistically update state
+        setDefaultTaxRateState(value);
+
+        // Update cache
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, defaultTaxRate: value }));
+
+        // Persist to API
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ defaultTaxRate: value }),
+            });
+
+            if (!res.ok) {
+                throw new Error('Failed to save tax rate');
+            }
+        } catch (error) {
+            console.error('Failed to save tax rate:', error);
+            throw error;
+        }
+    }, []);
+
     const value = useMemo<UserPreferencesContextType>(() => ({
         balanceReversal,
         setBalanceReversal,
+        defaultTaxRate,
+        setDefaultTaxRate,
         loading,
-    }), [balanceReversal, setBalanceReversal, loading]);
+    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, loading]);
 
     return (
         <UserPreferencesContext.Provider value={value}>
