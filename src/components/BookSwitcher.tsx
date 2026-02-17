@@ -106,7 +106,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
 
             {open && (
                 <div className={`absolute z-50 mt-1 bg-surface-elevated border border-border rounded-xl shadow-lg overflow-hidden
-                    ${collapsed ? 'left-full ml-2 top-0 w-56' : 'left-0 right-0 w-full'}`}
+                    ${collapsed ? 'left-full ml-2 top-0 w-max min-w-56 max-w-80' : 'left-0 w-max min-w-full max-w-80'}`}
                 >
                     <div className="py-1 max-h-64 overflow-y-auto">
                         {books.map(book => (
@@ -128,9 +128,9 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                     className="flex-1 flex items-start gap-2 px-3 py-2 text-sm text-left"
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <div className="truncate">{book.name}</div>
+                                        <div className="whitespace-nowrap">{book.name}</div>
                                         {book.description && (
-                                            <div className="text-xs text-foreground-tertiary truncate mt-0.5">
+                                            <div className="text-xs text-foreground-tertiary whitespace-nowrap mt-0.5">
                                                 {book.description.length > 50
                                                     ? `${book.description.substring(0, 50)}...`
                                                     : book.description}
