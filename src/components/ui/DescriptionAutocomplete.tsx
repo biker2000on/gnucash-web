@@ -165,7 +165,7 @@ export function DescriptionAutocomplete({
       case 'Tab':
         if (focusedIndex !== null && suggestions[focusedIndex]) {
           handleSelect(suggestions[focusedIndex]);
-          e.preventDefault();
+          // Don't preventDefault - let browser move focus to next field
         }
         break;
       case 'Escape':
