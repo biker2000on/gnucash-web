@@ -227,3 +227,69 @@ export function normalizeToPercent(
         : 0,
   }));
 }
+
+/**
+ * Backfill index prices to the earliest transaction date.
+ * Fetches historical data for the gap between earliest transaction
+ * and earliest stored index price.
+ */
+export async function backfillIndexPrices(): Promise<{ symbol: string; stored: number; dateRange: string }[]> {
+  const { default: prisma } = await import('@/lib/prisma');
+
+  // Find the earliest transaction date across all books
+  const earliest = await prisma.transactions.findFirst({
+    orderBy: { post_date: 'asc' },
+    select: { post_date: true },
+  });
+  if (!earliest || !earliest.post_date) return [];
+
+  const earliestDate = new Date(earliest.post_date);
+  earliestDate.setUTCHours(0, 0, 0, 0);
+
+  const indexGuids = await ensureIndexCommodities();
+  const results: { symbol: string; stored: number; dateRange: string }[] = [];
+
+  for (const [symbol, commodityGuid] of indexGuids) {
+    let stored = 0;
+
+    // Find earliest stored price for this index
+    const earliestPrice = await prisma.prices.findFirst({
+      where: { commodity_guid: commodityGuid },
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    });
+
+    const endDate = earliestPrice
+      ? new Date(earliestPrice.date)
+      : new Date();
+
+    // Only backfill if there's a gap
+    if (earliestDate < endDate) {
+      try {
+        const prices = await fetchHistoricalPrices(symbol, earliestDate, endDate);
+        const existingDates = await getExistingPriceDates(commodityGuid, earliestDate, endDate);
+
+        for (const row of prices) {
+          const dateStr = formatDateYMD(row.date);
+          if (!existingDates.has(dateStr)) {
+            const result = await storeFetchedPrice(commodityGuid, symbol, row.close, row.date);
+            if (result) {
+              stored++;
+              existingDates.add(dateStr);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to backfill ${symbol}:`, error);
+      }
+    }
+
+    results.push({
+      symbol,
+      stored,
+      dateRange: `${formatDateYMD(earliestDate)} to ${formatDateYMD(endDate)}`,
+    });
+  }
+
+  return results;
+}
