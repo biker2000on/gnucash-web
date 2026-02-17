@@ -12,6 +12,7 @@ import IncomePieChart from '@/components/dashboard/IncomePieChart';
 import TaxPieChart from '@/components/dashboard/TaxPieChart';
 import IncomeExpenseBarChart from '@/components/dashboard/IncomeExpenseBarChart';
 import NetProfitChart from '@/components/dashboard/NetProfitChart';
+import CashFlowChart from '@/components/charts/CashFlowChart';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 
 // ------------------------------------------------------------------
@@ -396,6 +397,11 @@ export default function DashboardPage() {
             {/* Net Profit by Month - full width */}
             <ExpandableChart title="Net Profit by Month">
                 <NetProfitChart data={monthlyData} loading={monthlyLoading} />
+            </ExpandableChart>
+
+            {/* Cash Flow Chart - full width */}
+            <ExpandableChart title="Cash Flow">
+                <CashFlowChart />
             </ExpandableChart>
 
             {/* Tax Pie - half width */}
