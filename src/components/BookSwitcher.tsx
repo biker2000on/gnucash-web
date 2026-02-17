@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useBooks } from '@/contexts/BookContext';
 import BookEditorModal from '@/components/BookEditorModal';
+import NewBookWizard from '@/components/NewBookWizard';
 
 function IconBook({ className = "w-4 h-4" }: { className?: string }) {
     return (
@@ -58,9 +59,7 @@ interface Book {
 export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
     const { activeBookGuid, books, switchBook, refreshBooks, loading } = useBooks();
     const [open, setOpen] = useState(false);
-    const [creating, setCreating] = useState(false);
-    const [newBookName, setNewBookName] = useState('');
-    const [createError, setCreateError] = useState('');
+    const [wizardOpen, setWizardOpen] = useState(false);
     const [editingBook, setEditingBook] = useState<Book | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -71,40 +70,11 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
         function handleClickOutside(event: MouseEvent) {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
                 setOpen(false);
-                setCreating(false);
-                setCreateError('');
             }
         }
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
-
-    const handleCreateBook = async () => {
-        if (!newBookName.trim()) {
-            setCreateError('Name is required');
-            return;
-        }
-        setCreateError('');
-        try {
-            const res = await fetch('/api/books/default', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: newBookName.trim() }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setNewBookName('');
-                setCreating(false);
-                await refreshBooks();
-                await switchBook(data.bookGuid);
-            } else {
-                const data = await res.json();
-                setCreateError(data.error || 'Failed to create book');
-            }
-        } catch {
-            setCreateError('Failed to create book');
-        }
-    };
 
     if (loading) {
         return null;
@@ -187,50 +157,13 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                     </div>
 
                     <div className="border-t border-border">
-                        {creating ? (
-                            <div className="p-2">
-                                <input
-                                    type="text"
-                                    value={newBookName}
-                                    onChange={e => setNewBookName(e.target.value)}
-                                    onKeyDown={e => {
-                                        if (e.key === 'Enter') handleCreateBook();
-                                        if (e.key === 'Escape') {
-                                            setCreating(false);
-                                            setCreateError('');
-                                        }
-                                    }}
-                                    placeholder="Book name..."
-                                    className="w-full px-2 py-1.5 text-sm bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-1 focus:ring-accent-primary"
-                                    autoFocus
-                                />
-                                {createError && (
-                                    <p className="text-xs text-red-400 mt-1">{createError}</p>
-                                )}
-                                <div className="flex gap-1 mt-1.5">
-                                    <button
-                                        onClick={handleCreateBook}
-                                        className="flex-1 px-2 py-1 text-xs font-medium text-white bg-accent-primary rounded-md hover:bg-accent-primary/80 transition-colors"
-                                    >
-                                        Create
-                                    </button>
-                                    <button
-                                        onClick={() => { setCreating(false); setCreateError(''); }}
-                                        className="flex-1 px-2 py-1 text-xs font-medium text-foreground-secondary bg-surface-hover rounded-md hover:bg-surface-hover/80 transition-colors"
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            <button
-                                onClick={() => setCreating(true)}
-                                className="flex items-center w-full px-3 py-2 text-sm text-foreground-secondary hover:bg-surface-hover transition-colors gap-2"
-                            >
-                                <IconPlus className="w-4 h-4" />
-                                <span>New Book</span>
-                            </button>
-                        )}
+                        <button
+                            onClick={() => { setWizardOpen(true); setOpen(false); }}
+                            className="flex items-center w-full px-3 py-2 text-sm text-foreground-secondary hover:bg-surface-hover transition-colors gap-2"
+                        >
+                            <IconPlus className="w-4 h-4" />
+                            <span>New Book</span>
+                        </button>
                     </div>
                 </div>
             )}
@@ -246,6 +179,16 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                     }}
                 />
             )}
+
+            <NewBookWizard
+                isOpen={wizardOpen}
+                onClose={() => setWizardOpen(false)}
+                onSuccess={async (bookGuid) => {
+                    setWizardOpen(false);
+                    await refreshBooks();
+                    await switchBook(bookGuid);
+                }}
+            />
         </div>
     );
 }
