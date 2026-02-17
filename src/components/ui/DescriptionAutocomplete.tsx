@@ -32,6 +32,7 @@ export function DescriptionAutocomplete({
   const inputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isFocusedRef = useRef(false);
 
   // Debounced API call
   useEffect(() => {
@@ -60,7 +61,7 @@ export function DescriptionAutocomplete({
         const response = await fetch(`/api/transactions/descriptions?${params.toString()}`);
         const data = await response.json();
         setSuggestions(data.suggestions || []);
-        if (data.suggestions && data.suggestions.length > 0) {
+        if (data.suggestions && data.suggestions.length > 0 && isFocusedRef.current) {
           setIsOpen(true);
           setFocusedIndex(0);
         } else {
@@ -73,7 +74,7 @@ export function DescriptionAutocomplete({
       } finally {
         setLoading(false);
       }
-    }, 300);
+    }, 200);
 
     return () => {
       if (debounceTimerRef.current) {
@@ -190,6 +191,16 @@ export function DescriptionAutocomplete({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={() => {
+          isFocusedRef.current = true;
+          if (suggestions.length > 0) setIsOpen(true);
+        }}
+        onBlur={() => {
+          isFocusedRef.current = false;
+          setTimeout(() => {
+            if (!isFocusedRef.current) setIsOpen(false);
+          }, 200);
+        }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         data-field="description"
