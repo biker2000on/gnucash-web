@@ -1,7 +1,5 @@
 import { useEffect } from 'react'
-import { useKeyboardShortcuts } from '@/contexts/KeyboardShortcutContext'
-
-type ShortcutScope = 'global' | 'transaction-form' | 'date-field' | 'amount-field'
+import { useKeyboardShortcuts, type ShortcutScope } from '@/contexts/KeyboardShortcutContext'
 
 export function useKeyboardShortcut(
   id: string,

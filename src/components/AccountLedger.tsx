@@ -59,6 +59,16 @@ export default function AccountLedger({
     const [deletingGuid, setDeletingGuid] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
 
+    // Listen for global 'n' key shortcut to open new transaction
+    useEffect(() => {
+        const handler = () => {
+            setEditingTransaction(null);
+            setIsEditModalOpen(true);
+        };
+        window.addEventListener('open-new-transaction', handler);
+        return () => window.removeEventListener('open-new-transaction', handler);
+    }, []);
+
     const toggleSplitSelection = useCallback((splitGuid: string) => {
         setSelectedSplits(prev => {
             const newSet = new Set(prev);

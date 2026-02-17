@@ -51,6 +51,16 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
+    // Listen for global 'n' key shortcut to open new transaction
+    useEffect(() => {
+        const handler = () => {
+            setEditingTransaction(null);
+            setIsEditModalOpen(true);
+        };
+        window.addEventListener('open-new-transaction', handler);
+        return () => window.removeEventListener('open-new-transaction', handler);
+    }, []);
+
     // Reconcile warning state
     const [reconcileWarningOpen, setReconcileWarningOpen] = useState(false);
     const [pendingAction, setPendingAction] = useState<'edit' | 'delete' | null>(null);

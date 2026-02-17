@@ -597,6 +597,9 @@ export function TransactionForm({
     useKeyboardShortcut('date-minus', '-', 'Previous day', () => {}, 'date-field');
     useKeyboardShortcut('date-today', 't', 'Set to today', () => {}, 'date-field');
 
+    // Register tax shortcut for help modal
+    useKeyboardShortcut('tax-apply', 'Ctrl+T', 'Apply tax rate', () => {}, 'amount-field');
+
     return (
         <div ref={formRef}>
             <form onSubmit={handleSubmit} className="space-y-6">

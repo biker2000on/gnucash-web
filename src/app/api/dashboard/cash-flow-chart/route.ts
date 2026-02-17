@@ -8,12 +8,27 @@ import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 export async function GET(request: NextRequest) {
     try {
         const searchParams = request.nextUrl.searchParams;
-        const startDateParam = searchParams.get('startDate');
-        const endDateParam = searchParams.get('endDate');
+        const periodParam = searchParams.get('period') || '1Y';
 
         const now = new Date();
-        const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
-        const startDate = await getEffectiveStartDate(startDateParam);
+        const endDate = now;
+
+        let startDate: Date;
+        switch (periodParam) {
+            case '6M':
+                startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+                break;
+            case '2Y':
+                startDate = new Date(now.getFullYear() - 2, now.getMonth(), 1);
+                break;
+            case 'ALL':
+                startDate = await getEffectiveStartDate(null);
+                break;
+            case '1Y':
+            default:
+                startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+                break;
+        }
 
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();

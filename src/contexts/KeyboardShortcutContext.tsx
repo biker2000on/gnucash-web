@@ -1,8 +1,8 @@
 'use client'
 
-import { createContext, useContext, useCallback, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useCallback, useState, useEffect, useRef, ReactNode } from 'react'
 
-type ShortcutScope = 'global' | 'transaction-form' | 'date-field' | 'amount-field'
+export type ShortcutScope = 'global' | 'transaction-form' | 'date-field' | 'amount-field'
 
 interface ShortcutRegistration {
   id: string
@@ -41,7 +41,7 @@ function matchShortcutKey(event: KeyboardEvent, key: string): boolean {
   }
 
   if (key === '?') {
-    return event.key === '?' && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
+    return event.key === '?' && !event.ctrlKey && !event.metaKey && !event.altKey
   }
 
   // Handle Ctrl+Enter and Ctrl+Shift+Enter
@@ -75,8 +75,8 @@ function isInInputField(target: EventTarget | null): boolean {
 export function KeyboardShortcutProvider({ children }: { children: ReactNode }) {
   const [shortcuts, setShortcuts] = useState<Map<string, ShortcutRegistration>>(new Map())
   const [isHelpOpen, setHelpOpen] = useState(false)
-  const [chordPrefix, setChordPrefix] = useState<string | null>(null)
-  const [chordTimer, setChordTimer] = useState<NodeJS.Timeout | null>(null)
+  const chordPrefixRef = useRef<string | null>(null)
+  const chordTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   const register = useCallback(
     (
@@ -137,9 +137,9 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
       }
 
       // Handle chord shortcuts (g d, g a, etc.)
-      if (chordPrefix) {
+      if (chordPrefixRef.current) {
         // We're waiting for the second key in a chord
-        const chordKey = `${chordPrefix} ${event.key}`
+        const chordKey = `${chordPrefixRef.current} ${event.key}`
 
         // Look for matching chord shortcut
         for (const shortcut of shortcuts.values()) {
@@ -150,20 +150,20 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
           ) {
             event.preventDefault()
             shortcut.handler()
-            setChordPrefix(null)
-            if (chordTimer) {
-              clearTimeout(chordTimer)
-              setChordTimer(null)
+            chordPrefixRef.current = null
+            if (chordTimerRef.current) {
+              clearTimeout(chordTimerRef.current)
+              chordTimerRef.current = null
             }
             return
           }
         }
 
         // No match - clear chord state
-        setChordPrefix(null)
-        if (chordTimer) {
-          clearTimeout(chordTimer)
-          setChordTimer(null)
+        chordPrefixRef.current = null
+        if (chordTimerRef.current) {
+          clearTimeout(chordTimerRef.current)
+          chordTimerRef.current = null
         }
         return
       }
@@ -177,14 +177,14 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
 
         if (hasChordShortcuts) {
           event.preventDefault()
-          setChordPrefix('g')
+          chordPrefixRef.current = 'g'
 
           // Set 500ms timeout for chord completion
           const timer = setTimeout(() => {
-            setChordPrefix(null)
-            setChordTimer(null)
+            chordPrefixRef.current = null
+            chordTimerRef.current = null
           }, 500)
-          setChordTimer(timer)
+          chordTimerRef.current = timer
           return
         }
       }
@@ -206,11 +206,11 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
-      if (chordTimer) {
-        clearTimeout(chordTimer)
+      if (chordTimerRef.current) {
+        clearTimeout(chordTimerRef.current)
       }
     }
-  }, [shortcuts, chordPrefix, chordTimer])
+  }, [shortcuts])
 
   return (
     <KeyboardShortcutContext.Provider
