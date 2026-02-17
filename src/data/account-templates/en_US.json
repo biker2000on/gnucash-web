@@ -1,0 +1,220 @@
+{
+  "templates": [
+    {
+      "locale": "en_US",
+      "id": "personal",
+      "name": "Personal Accounts",
+      "description": "A comprehensive set of accounts for personal finance tracking, including common US expense categories, tax withholdings, and investment placeholders.",
+      "currency": "USD",
+      "accounts": [
+        {
+          "name": "Assets",
+          "type": "ASSET",
+          "placeholder": true,
+          "children": [
+            {
+              "name": "Current Assets",
+              "type": "ASSET",
+              "placeholder": true,
+              "children": [
+                { "name": "Checking Account", "type": "BANK" },
+                { "name": "Savings Account", "type": "BANK" }
+              ]
+            },
+            {
+              "name": "Fixed Assets",
+              "type": "ASSET",
+              "placeholder": true,
+              "children": [
+                { "name": "House", "type": "ASSET" },
+                { "name": "Vehicle", "type": "ASSET" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Liabilities",
+          "type": "LIABILITY",
+          "placeholder": true,
+          "children": [
+            { "name": "Credit Card", "type": "CREDIT" },
+            { "name": "Mortgage", "type": "LIABILITY" },
+            { "name": "Student Loan", "type": "LIABILITY" }
+          ]
+        },
+        {
+          "name": "Income",
+          "type": "INCOME",
+          "placeholder": true,
+          "children": [
+            { "name": "Salary", "type": "INCOME" },
+            { "name": "Interest Income", "type": "INCOME" },
+            { "name": "Dividends", "type": "INCOME" }
+          ]
+        },
+        {
+          "name": "Expenses",
+          "type": "EXPENSE",
+          "placeholder": true,
+          "children": [
+            {
+              "name": "Auto",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Gas", "type": "EXPENSE" },
+                { "name": "Insurance", "type": "EXPENSE" },
+                { "name": "Repair & Maintenance", "type": "EXPENSE" }
+              ]
+            },
+            { "name": "Bank Charges", "type": "EXPENSE" },
+            { "name": "Books", "type": "EXPENSE" },
+            { "name": "Clothing", "type": "EXPENSE" },
+            { "name": "Dining", "type": "EXPENSE" },
+            { "name": "Education", "type": "EXPENSE" },
+            { "name": "Entertainment", "type": "EXPENSE" },
+            { "name": "Gifts", "type": "EXPENSE" },
+            { "name": "Groceries", "type": "EXPENSE" },
+            {
+              "name": "Healthcare",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Doctor", "type": "EXPENSE" },
+                { "name": "Medicine", "type": "EXPENSE" }
+              ]
+            },
+            {
+              "name": "Household",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Rent/Mortgage Payment", "type": "EXPENSE" },
+                { "name": "Home Insurance", "type": "EXPENSE" },
+                { "name": "Maintenance", "type": "EXPENSE" },
+                { "name": "Utilities", "type": "EXPENSE" }
+              ]
+            },
+            { "name": "Internet", "type": "EXPENSE" },
+            { "name": "Phone", "type": "EXPENSE" },
+            { "name": "Subscriptions", "type": "EXPENSE" },
+            {
+              "name": "Taxes",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Federal", "type": "EXPENSE" },
+                { "name": "State", "type": "EXPENSE" },
+                { "name": "Social Security", "type": "EXPENSE" },
+                { "name": "Medicare", "type": "EXPENSE" }
+              ]
+            },
+            { "name": "Transportation", "type": "EXPENSE" }
+          ]
+        },
+        {
+          "name": "Equity",
+          "type": "EQUITY",
+          "placeholder": true,
+          "children": [
+            { "name": "Opening Balances", "type": "EQUITY" }
+          ]
+        }
+      ]
+    },
+    {
+      "locale": "en_US",
+      "id": "business",
+      "name": "Business Accounts",
+      "description": "A standard chart of accounts for a small business, including receivables, payables, payroll, and common business expense categories.",
+      "currency": "USD",
+      "accounts": [
+        {
+          "name": "Assets",
+          "type": "ASSET",
+          "placeholder": true,
+          "children": [
+            {
+              "name": "Current Assets",
+              "type": "ASSET",
+              "placeholder": true,
+              "children": [
+                { "name": "Business Checking", "type": "BANK" },
+                { "name": "Business Savings", "type": "BANK" },
+                { "name": "Accounts Receivable", "type": "RECEIVABLE" },
+                { "name": "Inventory", "type": "ASSET" }
+              ]
+            },
+            {
+              "name": "Fixed Assets",
+              "type": "ASSET",
+              "placeholder": true,
+              "children": [
+                { "name": "Equipment", "type": "ASSET" },
+                { "name": "Furniture", "type": "ASSET" },
+                { "name": "Vehicles", "type": "ASSET" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Liabilities",
+          "type": "LIABILITY",
+          "placeholder": true,
+          "children": [
+            { "name": "Accounts Payable", "type": "PAYABLE" },
+            { "name": "Business Credit Card", "type": "CREDIT" },
+            { "name": "Business Loan", "type": "LIABILITY" }
+          ]
+        },
+        {
+          "name": "Income",
+          "type": "INCOME",
+          "placeholder": true,
+          "children": [
+            { "name": "Sales Revenue", "type": "INCOME" },
+            { "name": "Service Revenue", "type": "INCOME" },
+            { "name": "Interest Income", "type": "INCOME" }
+          ]
+        },
+        {
+          "name": "Expenses",
+          "type": "EXPENSE",
+          "placeholder": true,
+          "children": [
+            { "name": "Advertising", "type": "EXPENSE" },
+            { "name": "Bank Charges", "type": "EXPENSE" },
+            { "name": "Depreciation", "type": "EXPENSE" },
+            { "name": "Insurance", "type": "EXPENSE" },
+            { "name": "Legal & Professional", "type": "EXPENSE" },
+            { "name": "Office Supplies", "type": "EXPENSE" },
+            {
+              "name": "Payroll",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Salaries", "type": "EXPENSE" },
+                { "name": "Benefits", "type": "EXPENSE" },
+                { "name": "Payroll Taxes", "type": "EXPENSE" }
+              ]
+            },
+            { "name": "Rent", "type": "EXPENSE" },
+            { "name": "Repairs & Maintenance", "type": "EXPENSE" },
+            { "name": "Taxes", "type": "EXPENSE" },
+            { "name": "Travel", "type": "EXPENSE" },
+            { "name": "Utilities", "type": "EXPENSE" }
+          ]
+        },
+        {
+          "name": "Equity",
+          "type": "EQUITY",
+          "placeholder": true,
+          "children": [
+            { "name": "Owner's Equity", "type": "EQUITY" },
+            { "name": "Retained Earnings", "type": "EQUITY" }
+          ]
+        }
+      ]
+    }
+  ]
+}
