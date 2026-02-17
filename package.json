@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "worker": "tsx worker.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.3.0",
