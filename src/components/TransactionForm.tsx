@@ -62,6 +62,7 @@ export function TransactionForm({
         toAccountGuid: defaultToAccount,
     });
     const formRef = useRef<HTMLDivElement>(null);
+    const dateInputRef = useRef<HTMLInputElement>(null);
     const { success } = useToast();
     const { defaultTaxRate } = useUserPreferences();
 
@@ -195,6 +196,14 @@ export function TransactionForm({
                 .catch(console.error);
         }
     }, [defaultCurrencyGuid, transaction]);
+
+    // Auto-focus date field on mount
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            dateInputRef.current?.focus();
+        }, 50);
+        return () => clearTimeout(timer);
+    }, []);
 
     const handleDescriptionSelect = (suggestion: TransactionSuggestion) => {
         // In simple mode, try to auto-fill accounts if there are exactly 2 splits
@@ -639,10 +648,12 @@ export function TransactionForm({
                         Date
                     </label>
                     <input
+                        ref={dateInputRef}
                         type="date"
                         value={formData.post_date}
                         onChange={(e) => setFormData(f => ({ ...f, post_date: e.target.value }))}
                         onKeyDown={handleDateKeyDown}
+                        data-field="post_date"
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>
