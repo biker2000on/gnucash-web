@@ -150,8 +150,14 @@ export function AccountSelector({
     };
 
     const handleInputFocus = () => {
-        setIsOpen(true);
-        setSearch('');
+        if (value) {
+            // Has existing value - don't open dropdown, select text for easy replacement
+            inputRef.current?.select();
+        } else {
+            // No value - open dropdown to browse
+            setIsOpen(true);
+            setSearch('');
+        }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -208,7 +214,10 @@ export function AccountSelector({
                     ref={inputRef}
                     type="text"
                     value={isOpen ? search : selectedName}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => {
+                        setSearch(e.target.value);
+                        if (!isOpen) setIsOpen(true);
+                    }}
                     onFocus={handleInputFocus}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
