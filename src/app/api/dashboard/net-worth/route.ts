@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency } from '@/lib/currency';
+import { cacheGet, cacheSet } from '@/lib/cache';
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
@@ -42,6 +43,16 @@ export async function GET(request: NextRequest) {
 
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
         const startDate = await getEffectiveStartDate(startDateParam, bookAccountGuids);
+
+        // Build cache key from book guid + metric + date params
+        const bookGuid = await getActiveBookGuid();
+        const cacheKey = `cache:${bookGuid}:net-worth:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+
+        // Check cache first
+        const cached = await cacheGet(cacheKey);
+        if (cached) {
+            return NextResponse.json(cached);
+        }
 
         const datePoints = generateMonthlyDatePoints(startDate, endDate);
 
@@ -448,7 +459,12 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        return NextResponse.json({ timeSeries });
+        const responseData = { timeSeries };
+
+        // Cache the result (24 hour TTL)
+        await cacheSet(cacheKey, responseData, 86400);
+
+        return NextResponse.json(responseData);
     } catch (error) {
         console.error('Error fetching net worth data:', error);
         return NextResponse.json(

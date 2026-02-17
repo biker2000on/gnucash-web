@@ -6,7 +6,8 @@ import { validateTransaction } from '@/lib/validation';
 import { Prisma } from '@prisma/client';
 import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 /**
  * @openapi
@@ -363,6 +364,16 @@ export async function POST(request: Request) {
             is_multi_currency: isMultiCurrency,
             trading_splits_added: isMultiCurrency ? totalSplitsCount - body.splits.length : 0,
         });
+
+        // Invalidate caches from the transaction date forward
+        try {
+            const bookGuid = await getActiveBookGuid();
+            const txDate = new Date(body.post_date);
+            await cacheInvalidateFrom(bookGuid, txDate);
+        } catch (err) {
+            // Cache invalidation failure should not break the transaction operation
+            console.warn('Cache invalidation failed:', err);
+        }
 
         // Transform to response format
         const result = {

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { getActiveBookRootGuid } from '@/lib/book-scope';
+import { getActiveBookRootGuid, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+import { cacheGet, cacheSet } from '@/lib/cache';
 
 interface SankeyHierarchyNode {
     guid: string;
@@ -41,6 +42,16 @@ export async function GET(request: NextRequest) {
             savings: 0,
             maxDepth: 0,
         };
+
+        // Build cache key from book guid + metric + date params
+        const bookGuid = await getActiveBookGuid();
+        const cacheKey = `cache:${bookGuid}:sankey:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+
+        // Check cache first
+        const cached = await cacheGet(cacheKey);
+        if (cached) {
+            return NextResponse.json(cached);
+        }
 
         // Get the active book's root GUID
         let rootGuid: string;
@@ -234,14 +245,19 @@ export async function GET(request: NextRequest) {
 
         const maxDepth = Math.max(computeMaxDepth(incomeTree), computeMaxDepth(expenseTree));
 
-        return NextResponse.json({
+        const responseData = {
             income: incomeTree,
             expense: expenseTree,
             totalIncome: Math.round(finalTotalIncome * 100) / 100,
             totalExpenses: Math.round(finalTotalExpenses * 100) / 100,
             savings,
             maxDepth,
-        });
+        };
+
+        // Cache the result (24 hour TTL)
+        await cacheSet(cacheKey, responseData, 86400);
+
+        return NextResponse.json(responseData);
     } catch (error) {
         console.error('Error fetching sankey data:', error);
         return NextResponse.json(

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+import { cacheGet, cacheSet } from '@/lib/cache';
 
 /**
  * Build a full path for an account by traversing its parent chain.
@@ -45,6 +46,16 @@ export async function GET(request: NextRequest) {
         const now = new Date();
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
         const startDate = await getEffectiveStartDate(startDateParam);
+
+        // Build cache key from book guid + metric + date params
+        const bookGuid = await getActiveBookGuid();
+        const cacheKey = `cache:${bookGuid}:income-expense:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+
+        // Check cache first
+        const cached = await cacheGet(cacheKey);
+        if (cached) {
+            return NextResponse.json(cached);
+        }
 
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();
@@ -205,7 +216,12 @@ export async function GET(request: NextRequest) {
             current.setMonth(current.getMonth() + 1);
         }
 
-        return NextResponse.json({ monthly });
+        const responseData = { monthly };
+
+        // Cache the result (24 hour TTL)
+        await cacheSet(cacheKey, responseData, 86400);
+
+        return NextResponse.json(responseData);
     } catch (error) {
         console.error('Error fetching income/expense data:', error);
         return NextResponse.json(

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+import { cacheGet, cacheSet } from '@/lib/cache';
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
@@ -18,6 +19,16 @@ export async function GET(request: NextRequest) {
         const now = new Date();
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
         const startDate = await getEffectiveStartDate(startDateParam);
+
+        // Build cache key from book guid + metric + date params
+        const bookGuid = await getActiveBookGuid();
+        const cacheKey = `cache:${bookGuid}:kpis:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+
+        // Check cache first
+        const cached = await cacheGet(cacheKey);
+        if (cached) {
+            return NextResponse.json(cached);
+        }
 
         // ========== NET WORTH CALCULATION ==========
 
@@ -394,7 +405,7 @@ export async function GET(request: NextRequest) {
             ? ((totalIncome - totalExpenses) / totalIncome) * 100
             : 0;
 
-        return NextResponse.json({
+        const responseData = {
             netWorth: Math.round(netWorthEnd * 100) / 100,
             netWorthChange: Math.round(netWorthChange * 100) / 100,
             netWorthChangePercent: Math.round(netWorthChangePercent * 100) / 100,
@@ -404,7 +415,12 @@ export async function GET(request: NextRequest) {
             topExpenseCategory,
             topExpenseAmount: Math.round(topExpenseAmount * 100) / 100,
             investmentValue: Math.round(endNW.investmentValue * 100) / 100,
-        });
+        };
+
+        // Cache the result (24 hour TTL)
+        await cacheSet(cacheKey, responseData, 86400);
+
+        return NextResponse.json(responseData);
     } catch (error) {
         console.error('Error fetching KPI data:', error);
         return NextResponse.json(

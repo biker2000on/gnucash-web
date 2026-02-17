@@ -5,7 +5,8 @@ import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 export async function GET(
     request: Request,
@@ -224,6 +225,16 @@ export async function PUT(
             trading_splits_added: isMultiCurrency ? totalSplitsCount - body.splits.length : 0,
         });
 
+        // Invalidate caches from the transaction date forward
+        try {
+            const bookGuid = await getActiveBookGuid();
+            const txDate = new Date(body.post_date);
+            await cacheInvalidateFrom(bookGuid, txDate);
+        } catch (err) {
+            // Cache invalidation failure should not break the transaction operation
+            console.warn('Cache invalidation failed:', err);
+        }
+
         // Transform to response format
         const result = {
             guid: transaction.guid,
@@ -296,6 +307,18 @@ export async function DELETE(
             post_date: existingTx.post_date,
             splits_count: existingTx.splits.length,
         }, null);
+
+        // Invalidate caches from the transaction date forward
+        try {
+            const bookGuid = await getActiveBookGuid();
+            if (existingTx.post_date) {
+                const txDate = new Date(existingTx.post_date);
+                await cacheInvalidateFrom(bookGuid, txDate);
+            }
+        } catch (err) {
+            // Cache invalidation failure should not break the transaction operation
+            console.warn('Cache invalidation failed:', err);
+        }
 
         return NextResponse.json({ success: true, deleted: guid });
     } catch (error) {
