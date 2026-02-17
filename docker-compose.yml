@@ -1,0 +1,57 @@
+# GnuCash Web - Docker Compose Configuration
+#
+# This composition runs:
+# - app: Next.js web application
+# - worker: Background job processor
+# - redis: Job queue and cache
+#
+# Required environment variables (create .env file):
+# - DATABASE_URL: PostgreSQL connection string
+# - NEXTAUTH_SECRET: NextAuth.js secret key
+# - NEXTAUTH_URL: Public URL (defaults to http://localhost:3000)
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose logs -f app    # View app logs
+#   docker compose logs -f worker # View worker logs
+#   docker compose down           # Stop all services
+
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["npx", "tsx", "worker.ts"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+volumes:
+  redis-data:
