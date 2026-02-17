@@ -338,19 +338,34 @@ export function TransactionForm({
         }
     };
 
-    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if ((e.ctrlKey || e.metaKey) && (e.key === 't' || e.key === 'T')) {
-            e.preventDefault();
-            if (defaultTaxRate <= 0) {
-                success('No tax rate configured. Set it in Profile settings.');
-                return;
-            }
-            const currentValue = parseFloat(simpleData.amount);
-            if (isNaN(currentValue) || currentValue === 0) return;
+    const applyTax = () => {
+        if (defaultTaxRate <= 0) {
+            success('No tax rate configured. Set it in Settings.');
+            return;
+        }
 
-            const withTax = Math.round(currentValue * (1 + defaultTaxRate) * 100) / 100;
-            setSimpleData(prev => ({ ...prev, amount: withTax.toFixed(2) }));
-            success(`Tax applied: ${currentValue.toFixed(2)} + ${(defaultTaxRate * 100).toFixed(2)}% = ${withTax.toFixed(2)}`);
+        // Evaluate any math expression first
+        let currentValue: number;
+        const evaluated = evaluateMathExpression(simpleData.amount);
+        if (evaluated !== null) {
+            currentValue = evaluated;
+        } else {
+            currentValue = parseFloat(simpleData.amount);
+        }
+
+        if (isNaN(currentValue) || currentValue === 0) return;
+
+        const withTax = Math.round(currentValue * (1 + defaultTaxRate) * 100) / 100;
+        setSimpleData(prev => ({ ...prev, amount: withTax.toFixed(2) }));
+        success(`Tax applied: ${currentValue.toFixed(2)} + ${(defaultTaxRate * 100).toFixed(1)}% = ${withTax.toFixed(2)}`);
+    };
+
+    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 't' || e.key === 'T') {
+            // Don't intercept if modifier keys are held (let browser handle Ctrl+T etc.)
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            e.preventDefault();
+            applyTax();
         }
     };
 
@@ -607,7 +622,7 @@ export function TransactionForm({
     useKeyboardShortcut('date-today', 't', 'Set to today', () => {}, 'date-field');
 
     // Register tax shortcut for help modal
-    useKeyboardShortcut('tax-apply', 'Ctrl+T', 'Apply tax rate', () => {}, 'amount-field');
+    useKeyboardShortcut('tax-apply', 't', 'Apply tax rate', () => {}, 'amount-field');
 
     return (
         <div ref={formRef}>
@@ -706,19 +721,33 @@ export function TransactionForm({
                         <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Amount
                         </label>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                inputMode="decimal"
-                                value={simpleData.amount}
-                                onChange={(e) => setSimpleData(prev => ({ ...prev, amount: e.target.value }))}
-                                onBlur={handleAmountBlur}
-                                onKeyDown={handleAmountKeyDown}
-                                placeholder="0.00"
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
-                            />
-                            {containsMathExpression(simpleData.amount) && (
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                        <div className="flex gap-1.5 items-center">
+                            <div className="relative flex-1">
+                                <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={simpleData.amount}
+                                    onChange={(e) => setSimpleData(prev => ({ ...prev, amount: e.target.value }))}
+                                    onBlur={handleAmountBlur}
+                                    onKeyDown={handleAmountKeyDown}
+                                    placeholder="0.00"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                                />
+                                {containsMathExpression(simpleData.amount) && (
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                                )}
+                            </div>
+                            {defaultTaxRate > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={applyTax}
+                                    className="p-2 rounded-lg bg-input-bg border border-border text-foreground-muted hover:text-foreground hover:border-border-hover transition-colors"
+                                    title={`Apply tax (${(defaultTaxRate * 100).toFixed(1)}%)`}
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" d="M19 5L5 19M6.5 9a2.5 2.5 0 100-5 2.5 2.5 0 000 5zM17.5 20a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                                    </svg>
+                                </button>
                             )}
                         </div>
                     </div>
