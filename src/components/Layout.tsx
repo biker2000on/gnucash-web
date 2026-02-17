@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ReactNode, ReactElement, useState, useEffect, useCallback } from 'react';
+import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef } from 'react';
 import { UserMenu } from './UserMenu';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
@@ -184,6 +184,10 @@ const navItems: NavItem[] = [
 // ---------------------------------------------------------------------------
 
 const SIDEBAR_COLLAPSED_KEY = 'sidebar-collapsed';
+const SIDEBAR_WIDTH_KEY = 'sidebar-width';
+const DEFAULT_SIDEBAR_WIDTH = 256;
+const MIN_SIDEBAR_WIDTH = 150;
+const MAX_SIDEBAR_WIDTH = 500;
 
 // ---------------------------------------------------------------------------
 // Layout component
@@ -198,12 +202,20 @@ export default function Layout({ children }: { children: ReactNode }) {
     // Desktop collapsed state -- initialised to false, hydrated from localStorage
     const [collapsed, setCollapsed] = useState(false);
     const [hydrated, setHydrated] = useState(false);
+    const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+    const [isDragging, setIsDragging] = useState(false);
+    const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
 
     // Mobile open/close state
     const [mobileOpen, setMobileOpen] = useState(false);
 
     // Expandable nav sections (e.g. Investments sub-items)
     const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+    // Keep sidebarWidthRef in sync with sidebarWidth state
+    useEffect(() => {
+        sidebarWidthRef.current = sidebarWidth;
+    }, [sidebarWidth]);
 
     // Auto-expand nav sections when pathname matches a child route
     useEffect(() => {
@@ -231,6 +243,13 @@ export default function Layout({ children }: { children: ReactNode }) {
             if (stored === 'true') {
                 setCollapsed(true);
             }
+            const storedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+            if (storedWidth) {
+                const w = parseInt(storedWidth, 10);
+                if (w >= MIN_SIDEBAR_WIDTH && w <= MAX_SIDEBAR_WIDTH) {
+                    setSidebarWidth(w);
+                }
+            }
         } catch {
             // SSR or access denied -- ignore
         }
@@ -249,6 +268,47 @@ export default function Layout({ children }: { children: ReactNode }) {
             return next;
         });
     }, []);
+
+    const handleDragStart = useCallback((e: React.PointerEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = sidebarWidthRef.current;
+        setIsDragging(true);
+
+        const handleMove = (moveEvent: PointerEvent) => {
+            const newWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (moveEvent.clientX - startX)));
+            setSidebarWidth(newWidth);
+        };
+
+        const handleUp = () => {
+            setIsDragging(false);
+            document.removeEventListener('pointermove', handleMove);
+            document.removeEventListener('pointerup', handleUp);
+            try {
+                localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidthRef.current));
+            } catch {
+                // ignore
+            }
+        };
+
+        document.addEventListener('pointermove', handleMove);
+        document.addEventListener('pointerup', handleUp);
+    }, []);
+
+    // Apply global cursor/select styles while dragging
+    useEffect(() => {
+        if (isDragging) {
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
+        } else {
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+        }
+        return () => {
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+        };
+    }, [isDragging]);
 
     // Close mobile sidebar on pathname change
     useEffect(() => {
@@ -356,8 +416,9 @@ export default function Layout({ children }: { children: ReactNode }) {
             {/* Desktop Sidebar                                                */}
             {/* ============================================================= */}
             <aside
-                className={`hidden md:flex flex-col border-r border-sidebar-border bg-sidebar-bg transition-all duration-300 shrink-0
-                    ${collapsed && hydrated ? 'w-16' : 'w-64'}`}
+                className={`hidden md:flex flex-col border-r border-sidebar-border bg-sidebar-bg shrink-0 relative
+                    ${!isDragging ? 'transition-all duration-300' : ''}`}
+                style={collapsed && hydrated ? { width: '4rem' } : { width: `${sidebarWidth}px` }}
             >
                 {/* Header with title + collapse button */}
                 <div className={`flex items-center border-b border-sidebar-border transition-all duration-300
@@ -390,6 +451,15 @@ export default function Layout({ children }: { children: ReactNode }) {
                     ${collapsed && hydrated ? 'px-2 py-4' : 'px-4 py-4'}`}>
                     {navItems.map(renderNavItem)}
                 </nav>
+
+                {/* Drag handle */}
+                {!(collapsed && hydrated) && (
+                    <div
+                        onPointerDown={handleDragStart}
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-cyan-500/30 active:bg-cyan-500/50 transition-colors z-10"
+                        title="Drag to resize sidebar"
+                    />
+                )}
             </aside>
 
             {/* ============================================================= */}
