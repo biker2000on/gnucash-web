@@ -202,6 +202,7 @@ export function TransactionEditModal({
                                         year: 'numeric',
                                         month: 'short',
                                         day: 'numeric',
+                                        timeZone: 'UTC',
                                     })}
                                 </div>
                             </div>
