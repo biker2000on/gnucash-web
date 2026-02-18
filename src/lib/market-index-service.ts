@@ -293,3 +293,69 @@ export async function backfillIndexPrices(): Promise<{ symbol: string; stored: n
 
   return results;
 }
+
+/**
+ * Get coverage info for index price data.
+ * Returns earliest/latest dates and whether backfill is needed.
+ */
+export async function getIndexCoverage(): Promise<{
+  earliestTransaction: string | null;
+  indices: { symbol: string; name: string; count: number; earliest: string | null; latest: string | null }[];
+  isUpToDate: boolean;
+}> {
+  const { default: prisma } = await import('@/lib/prisma');
+
+  // Find earliest transaction date
+  const earliestTx = await prisma.transactions.findFirst({
+    orderBy: { post_date: 'asc' },
+    select: { post_date: true },
+  });
+  const earliestTransaction = earliestTx?.post_date
+    ? formatDateYMD(new Date(earliestTx.post_date))
+    : null;
+
+  const indexGuids = await ensureIndexCommodities();
+  const indices: { symbol: string; name: string; count: number; earliest: string | null; latest: string | null }[] = [];
+  let isUpToDate = true;
+
+  const nameMap: Record<string, string> = {
+    '^GSPC': 'S&P 500',
+    '^DJI': 'Dow Jones',
+  };
+
+  for (const [symbol, commodityGuid] of indexGuids) {
+    const count = await prisma.prices.count({
+      where: { commodity_guid: commodityGuid },
+    });
+
+    const earliestPrice = await prisma.prices.findFirst({
+      where: { commodity_guid: commodityGuid },
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    });
+
+    const latestPrice = await prisma.prices.findFirst({
+      where: { commodity_guid: commodityGuid },
+      orderBy: { date: 'desc' },
+      select: { date: true },
+    });
+
+    const earliest = earliestPrice ? formatDateYMD(new Date(earliestPrice.date)) : null;
+    const latest = latestPrice ? formatDateYMD(new Date(latestPrice.date)) : null;
+
+    // Check if there's a gap to backfill
+    if (earliestTransaction && (!earliest || earliestTransaction < earliest)) {
+      isUpToDate = false;
+    }
+
+    indices.push({
+      symbol,
+      name: nameMap[symbol] || symbol,
+      count,
+      earliest,
+      latest,
+    });
+  }
+
+  return { earliestTransaction, indices, isUpToDate };
+}

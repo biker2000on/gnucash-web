@@ -9,6 +9,12 @@ interface ScheduleSettings {
   intervalHours: number;
 }
 
+interface IndexCoverage {
+  earliestTransaction: string | null;
+  indices: { symbol: string; name: string; count: number; earliest: string | null; latest: string | null }[];
+  isUpToDate: boolean;
+}
+
 const INTERVAL_OPTIONS = [
   { value: 24, label: 'Daily' },
   { value: 12, label: 'Every 12 Hours' },
@@ -24,6 +30,7 @@ export default function SettingsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [indexCoverage, setIndexCoverage] = useState<IndexCoverage | null>(null);
 
   // Load schedule settings
   useEffect(() => {
@@ -41,6 +48,21 @@ export default function SettingsPage() {
       }
     }
     loadSchedule();
+  }, []);
+
+  // Load index coverage
+  useEffect(() => {
+    async function loadCoverage() {
+      try {
+        const res = await fetch('/api/investments/index-coverage');
+        if (res.ok) {
+          setIndexCoverage(await res.json());
+        }
+      } catch (err) {
+        console.error('Failed to load index coverage:', err);
+      }
+    }
+    loadCoverage();
   }, []);
 
   const handleScheduleToggle = async (enabled: boolean) => {
@@ -113,6 +135,12 @@ export default function SettingsPage() {
         .map((r: { symbol: string; stored: number }) => `${r.symbol}: ${r.stored}`)
         .join(', ');
       success(`Backfilled ${data.totalStored} index prices (${resultSummary})`);
+
+      // Refresh coverage info
+      const coverageRes = await fetch('/api/investments/index-coverage');
+      if (coverageRes.ok) {
+        setIndexCoverage(await coverageRes.json());
+      }
     } catch (err) {
       showError('Failed to backfill index data');
     } finally {
@@ -206,12 +234,36 @@ export default function SettingsPage() {
 
         <div className="space-y-4">
           <p className="text-sm text-foreground-muted">
-            Backfill historical price data for market indices (S&P 500, DJIA) used in performance charts.
+            Historical price data for market indices (S&P 500, DJIA) used in performance charts.
           </p>
+
+          {indexCoverage && (
+            <div className="space-y-2">
+              {indexCoverage.indices.map((idx) => (
+                <div key={idx.symbol} className="flex items-center justify-between text-sm py-1.5 px-3 bg-background-tertiary rounded-lg">
+                  <span className="font-medium text-foreground">{idx.name}</span>
+                  <span className="text-foreground-secondary">
+                    {idx.count > 0
+                      ? `${idx.earliest} — ${idx.latest} (${Number(idx.count).toLocaleString()} prices)`
+                      : 'No data'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {indexCoverage?.isUpToDate && (
+            <p className="text-sm text-emerald-500 flex items-center gap-1.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Index data is up to date
+            </p>
+          )}
 
           <button
             onClick={handleBackfillIndices}
-            disabled={backfilling}
+            disabled={backfilling || (indexCoverage?.isUpToDate ?? false)}
             className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {backfilling && (
