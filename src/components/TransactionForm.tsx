@@ -153,7 +153,7 @@ export function TransactionForm({
             }) || [createEmptySplit(), createEmptySplit()];
 
             setFormData({
-                post_date: new Date(transaction.post_date).toISOString().split('T')[0],
+                post_date: transaction.post_date.toString().split('T')[0],
                 description: transaction.description,
                 num: transaction.num || '',
                 currency_guid: transaction.currency_guid,
@@ -583,6 +583,8 @@ export function TransactionForm({
             await onSaveAndAnother(apiData);
             resetForm();
             success('Transaction saved. Ready for next.');
+            // Focus date field for the next transaction
+            setTimeout(() => dateInputRef.current?.focus(), 0);
         } catch (error) {
             if (error instanceof Error) {
                 setErrors([error.message]);

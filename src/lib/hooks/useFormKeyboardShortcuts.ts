@@ -12,7 +12,7 @@ export function useFormKeyboardShortcuts(
     if (options?.enabled === false) return;
 
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'Enter') {
         e.preventDefault();
         if (!options?.validate || options.validate()) {
           onSubmit();

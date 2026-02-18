@@ -324,7 +324,7 @@ export default function AccountLedger({
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-xs text-foreground-secondary align-top font-mono">
-                                        {new Date(tx.post_date).toLocaleDateString()}
+                                        {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                     </td>
                                     <td className="px-6 py-4 text-sm text-foreground align-top">
                                         <div className="font-medium">{tx.description}</div>
@@ -412,6 +412,7 @@ export default function AccountLedger({
                     setEditingTransaction(null);
                     fetchTransactions();
                 }}
+                onRefresh={fetchTransactions}
             />
 
             <ConfirmationDialog

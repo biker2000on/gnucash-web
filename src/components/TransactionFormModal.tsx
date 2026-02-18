@@ -12,6 +12,7 @@ interface TransactionFormModalProps {
     transaction?: Transaction | null;
     defaultAccountGuid?: string;
     onSuccess: () => void;
+    onRefresh?: () => void;
 }
 
 export function TransactionFormModal({
@@ -20,6 +21,7 @@ export function TransactionFormModal({
     transaction,
     defaultAccountGuid,
     onSuccess,
+    onRefresh,
 }: TransactionFormModalProps) {
     const { success, error: showError } = useToast();
     const [fullTransaction, setFullTransaction] = useState<Transaction | null>(null);
@@ -110,8 +112,10 @@ export function TransactionFormModal({
                 throw new Error(errorData.error || 'Failed to create transaction');
             }
 
-            onSuccess(); // Refresh the list
-            // Don't call onClose - modal stays open, form resets
+            // Refresh the list without closing the modal
+            if (onRefresh) {
+                onRefresh();
+            }
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);

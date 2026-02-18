@@ -435,7 +435,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             transactions.map(tx => (
                                 <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground-secondary align-top">
-                                        {new Date(tx.post_date).toLocaleDateString()}
+                                        {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                     </td>
                                     <td className="px-6 py-4 text-sm text-foreground align-top max-w-xs">
                                         <div className="font-medium">{tx.description}</div>
@@ -499,6 +499,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     setEditingTransaction(null);
                     fetchTransactions();
                 }}
+                onRefresh={fetchTransactions}
             />
 
             {/* Reconcile Warning Dialog */}
