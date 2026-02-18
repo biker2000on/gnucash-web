@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 
 interface Book {
@@ -67,8 +67,13 @@ export function BookProvider({ children }: { children: ReactNode }) {
         }
     }, [router]);
 
+    const value = useMemo(
+        () => ({ activeBookGuid, books, switchBook, refreshBooks, loading }),
+        [activeBookGuid, books, switchBook, refreshBooks, loading]
+    );
+
     return (
-        <BookContext.Provider value={{ activeBookGuid, books, switchBook, refreshBooks, loading }}>
+        <BookContext.Provider value={value}>
             {children}
         </BookContext.Provider>
     );

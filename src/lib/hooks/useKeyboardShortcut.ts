@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useKeyboardShortcuts, type ShortcutScope } from '@/contexts/KeyboardShortcutContext'
 
 export function useKeyboardShortcut(
@@ -10,11 +10,13 @@ export function useKeyboardShortcut(
   enabled: boolean = true
 ) {
   const { register } = useKeyboardShortcuts()
+  const handlerRef = useRef(handler)
+  handlerRef.current = handler
 
   useEffect(() => {
     if (!enabled) return
 
-    const cleanup = register(id, key, description, handler, scope, enabled)
+    const cleanup = register(id, key, description, () => handlerRef.current(), scope, enabled)
     return cleanup
-  }, [id, key, description, handler, scope, enabled, register])
+  }, [id, key, description, scope, enabled, register])
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useCallback, useState, useEffect, useRef, ReactNode } from 'react'
+import { createContext, useContext, useCallback, useState, useEffect, useRef, useMemo, ReactNode } from 'react'
 
 export type ShortcutScope = 'global' | 'transaction-form' | 'date-field' | 'amount-field'
 
@@ -212,10 +212,13 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
     }
   }, [shortcuts])
 
+  const value = useMemo(
+    () => ({ register, unregister, shortcuts, isHelpOpen, setHelpOpen }),
+    [register, unregister, shortcuts, isHelpOpen, setHelpOpen]
+  )
+
   return (
-    <KeyboardShortcutContext.Provider
-      value={{ register, unregister, shortcuts, isHelpOpen, setHelpOpen }}
-    >
+    <KeyboardShortcutContext.Provider value={value}>
       {children}
     </KeyboardShortcutContext.Provider>
   )
