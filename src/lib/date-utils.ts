@@ -12,7 +12,7 @@ export async function getEffectiveStartDate(
   if (startDateParam) {
     const parsed = new Date(startDateParam);
     if (isNaN(parsed.getTime())) {
-      return new Date(2000, 0, 1); // fallback for invalid date
+      return new Date('2000-01-01T00:00:00Z'); // fallback for invalid date
     }
     return parsed;
   }
@@ -33,14 +33,14 @@ export async function getEffectiveStartDate(
       WHERE t.post_date IS NOT NULL
         AND s.account_guid = ANY(${bookAccountGuids})
     `;
-    cachedEarliestDate = result[0]?.post_date || new Date(2000, 0, 1);
+    cachedEarliestDate = result[0]?.post_date || new Date('2000-01-01T00:00:00Z');
   } else {
     const earliest = await prisma.transactions.findFirst({
       orderBy: { post_date: 'asc' },
       where: { post_date: { not: null } },
       select: { post_date: true },
     });
-    cachedEarliestDate = earliest?.post_date || new Date(2000, 0, 1);
+    cachedEarliestDate = earliest?.post_date || new Date('2000-01-01T00:00:00Z');
   }
 
   cachedAt = now;

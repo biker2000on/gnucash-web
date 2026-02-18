@@ -16,15 +16,15 @@ const LIABILITY_TYPES = ['LIABILITY', 'CREDIT', 'PAYABLE'];
  */
 function generateMonthlyDatePoints(start: Date, end: Date): Date[] {
     const points: Date[] = [];
-    const current = new Date(start.getFullYear(), start.getMonth(), 1);
-    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+    const current = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+    const endMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
 
     while (current <= endMonth) {
         // End of this month
-        const endOfMonth = new Date(current.getFullYear(), current.getMonth() + 1, 0, 23, 59, 59, 999);
+        const endOfMonth = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 0, 23, 59, 59, 999));
         // Cap at the end date
         points.push(endOfMonth > end ? new Date(end) : endOfMonth);
-        current.setMonth(current.getMonth() + 1);
+        current.setUTCMonth(current.getUTCMonth() + 1);
     }
 
     return points;

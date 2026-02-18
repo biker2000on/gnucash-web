@@ -11,7 +11,7 @@ import { toDecimal, buildHierarchy, resolveRootGuid } from './utils';
  * - Closing Equity (balance at endDate)
  */
 export async function generateEquityStatement(filters: ReportFilters): Promise<ReportData> {
-    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(new Date().getFullYear(), 0, 1);
+    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
 
     // Determine root GUID from book scoping or fallback

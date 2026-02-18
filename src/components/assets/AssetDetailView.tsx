@@ -335,7 +335,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                   fontSize={12}
                   tickFormatter={(val) => {
                     const d = new Date(val);
-                    return `${d.getMonth() + 1}/${d.getFullYear().toString().slice(2)}`;
+                    return `${d.getUTCMonth() + 1}/${d.getUTCFullYear().toString().slice(2)}`;
                   }}
                 />
                 <YAxis

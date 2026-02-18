@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
             const postDate = split.transaction.post_date;
             if (!postDate) continue;
 
-            const monthKey = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}`;
+            const monthKey = `${postDate.getUTCFullYear()}-${String(postDate.getUTCMonth() + 1).padStart(2, '0')}`;
             const entry = monthlyData.get(monthKey) || { income: 0, expenses: 0, taxes: 0 };
 
             const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
@@ -198,11 +198,11 @@ export async function GET(request: NextRequest) {
             netProfit: number;
         }> = [];
 
-        const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-        const endMonth = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+        const current = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 1));
+        const endMonth = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1));
 
         while (current <= endMonth) {
-            const monthKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+            const monthKey = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, '0')}`;
             const data = monthlyData.get(monthKey) || { income: 0, expenses: 0, taxes: 0 };
 
             monthly.push({
@@ -213,7 +213,7 @@ export async function GET(request: NextRequest) {
                 netProfit: Math.round((data.income - data.expenses) * 100) / 100,
             });
 
-            current.setMonth(current.getMonth() + 1);
+            current.setUTCMonth(current.getUTCMonth() + 1);
         }
 
         const responseData = { monthly };

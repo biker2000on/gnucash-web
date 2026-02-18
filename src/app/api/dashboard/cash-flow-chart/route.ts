@@ -16,17 +16,17 @@ export async function GET(request: NextRequest) {
         let startDate: Date;
         switch (periodParam) {
             case '6M':
-                startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+                startDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, 1));
                 break;
             case '2Y':
-                startDate = new Date(now.getFullYear() - 2, now.getMonth(), 1);
+                startDate = new Date(Date.UTC(now.getUTCFullYear() - 2, now.getUTCMonth(), 1));
                 break;
             case 'ALL':
                 startDate = await getEffectiveStartDate(null);
                 break;
             case '1Y':
             default:
-                startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
+                startDate = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), 1));
                 break;
         }
 
@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
             const postDate = split.transaction.post_date;
             if (!postDate) continue;
 
-            const monthKey = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}`;
+            const monthKey = `${postDate.getUTCFullYear()}-${String(postDate.getUTCMonth() + 1).padStart(2, '0')}`;
             const entry = monthlyData.get(monthKey) || { income: 0, expenses: 0 };
 
             const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
@@ -149,11 +149,11 @@ export async function GET(request: NextRequest) {
         const expenses: number[] = [];
         const netCashFlow: number[] = [];
 
-        const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-        const endMonth = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+        const current = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 1));
+        const endMonth = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1));
 
         while (current <= endMonth) {
-            const monthKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+            const monthKey = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, '0')}`;
             const data = monthlyData.get(monthKey) || { income: 0, expenses: 0 };
 
             const incomeValue = Math.round(data.income * 100) / 100;
@@ -165,7 +165,7 @@ export async function GET(request: NextRequest) {
             expenses.push(expensesValue);
             netCashFlow.push(netValue);
 
-            current.setMonth(current.getMonth() + 1);
+            current.setUTCMonth(current.getUTCMonth() + 1);
         }
 
         return NextResponse.json({ months, income, expenses, netCashFlow });

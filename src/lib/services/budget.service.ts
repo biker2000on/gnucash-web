@@ -314,7 +314,7 @@ export class BudgetService {
   static async getHistoricalAverage(accountGuid: string, months: number = 12) {
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - months);
+    startDate.setUTCMonth(startDate.getUTCMonth() - months);
 
     const splits = await prisma.splits.findMany({
       where: {

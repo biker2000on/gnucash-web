@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   const filterAccountGuids = accountGuidsParam ? accountGuidsParam.split(',') : null;
 
   const startDate = new Date();
-  startDate.setDate(startDate.getDate() - days);
+  startDate.setUTCDate(startDate.getUTCDate() - days);
 
   try {
     // Get book account GUIDs for scoping

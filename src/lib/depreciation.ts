@@ -42,13 +42,13 @@ function advanceDate(date: Date, frequency: DepreciationConfig['frequency']): Da
   const next = new Date(date);
   switch (frequency) {
     case 'monthly':
-      next.setMonth(next.getMonth() + 1);
+      next.setUTCMonth(next.getUTCMonth() + 1);
       break;
     case 'quarterly':
-      next.setMonth(next.getMonth() + 3);
+      next.setUTCMonth(next.getUTCMonth() + 3);
       break;
     case 'yearly':
-      next.setFullYear(next.getFullYear() + 1);
+      next.setUTCFullYear(next.getUTCFullYear() + 1);
       break;
   }
   return next;
@@ -198,10 +198,10 @@ export function getPeriodAmount(config: DepreciationConfig, periodDate: Date): n
 function datesMatchPeriod(a: Date, b: Date, frequency: DepreciationConfig['frequency']): boolean {
   switch (frequency) {
     case 'monthly':
-      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+      return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth();
     case 'quarterly':
-      return a.getFullYear() === b.getFullYear() && Math.floor(a.getMonth() / 3) === Math.floor(b.getMonth() / 3);
+      return a.getUTCFullYear() === b.getUTCFullYear() && Math.floor(a.getUTCMonth() / 3) === Math.floor(b.getUTCMonth() / 3);
     case 'yearly':
-      return a.getFullYear() === b.getFullYear();
+      return a.getUTCFullYear() === b.getUTCFullYear();
   }
 }

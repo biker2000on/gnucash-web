@@ -79,7 +79,7 @@ export async function getPriceHistory(
     days = 30
 ): Promise<PriceData[]> {
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
+    startDate.setUTCDate(startDate.getUTCDate() - days);
 
     const where: {
         commodity_guid: string;

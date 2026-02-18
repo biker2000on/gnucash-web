@@ -9,7 +9,7 @@ import { buildAccountPathMap, toDecimal } from './utils';
  */
 export async function generateGeneralJournal(filters: ReportFilters): Promise<GeneralJournalData> {
     const now = new Date();
-    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(now.getFullYear(), 0, 1);
+    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
 
     // Get transactions with splits, scoped to book if bookAccountGuids provided

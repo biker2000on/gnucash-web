@@ -33,7 +33,7 @@ function getCashFlowCategory(accountType: string): 'operating' | 'investing' | '
  */
 export async function generateCashFlow(filters: ReportFilters): Promise<ReportData> {
     const now = new Date();
-    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(now.getFullYear(), 0, 1);
+    const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
 
     const investmentTypes = ['STOCK', 'MUTUAL'];
