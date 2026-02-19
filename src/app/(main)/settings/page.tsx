@@ -27,6 +27,8 @@ interface SimpleFinAccount {
   gnucashAccountGuid: string | null;
   lastSyncAt: string | null;
   isMapped: boolean;
+  hasHoldings: boolean;
+  isInvestment: boolean;
 }
 
 interface SyncResult {
@@ -118,7 +120,14 @@ export default function SettingsPage() {
       const res = await fetch('/api/simplefin/accounts');
       if (res.ok) {
         const data = await res.json();
-        setSfAccounts(data.accounts || []);
+        const accounts = (data.accounts || []).map((a: SimpleFinAccount) => ({
+          ...a,
+          // Auto-detect: suggest investment mode for NEW unmapped accounts with holdings.
+          // Once an account has a mapping row (isMapped or explicitly toggled), respect
+          // the DB value. This prevents overriding a user's explicit disable on every page load.
+          isInvestment: a.isInvestment || (a.hasHoldings && !a.isMapped),
+        }));
+        setSfAccounts(accounts);
       }
     } catch {
       // Silently fail
@@ -303,6 +312,7 @@ export default function SettingsPage() {
             simpleFinAccountName: sfAccount.name,
             simpleFinInstitution: sfAccount.institution,
             gnucashAccountGuid: gnucashGuid || null,
+            isInvestment: sfAccount.isInvestment,
           }],
         }),
       });
@@ -318,6 +328,33 @@ export default function SettingsPage() {
       }
     } catch {
       showError('Failed to update mapping');
+    }
+  };
+
+  const handleSfToggleInvestment = async (sfAccountId: string, isInvestment: boolean, sfAccount: SimpleFinAccount) => {
+    try {
+      const res = await fetch('/api/simplefin/accounts/map', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mappings: [{
+            simpleFinAccountId: sfAccountId,
+            simpleFinAccountName: sfAccount.name,
+            simpleFinInstitution: sfAccount.institution,
+            gnucashAccountGuid: sfAccount.gnucashAccountGuid,
+            isInvestment,
+          }],
+        }),
+      });
+      if (res.ok) {
+        setSfAccounts(prev => prev.map(a =>
+          a.id === sfAccountId ? { ...a, isInvestment } : a
+        ));
+      } else {
+        showError('Failed to update investment setting');
+      }
+    } catch {
+      showError('Failed to update investment setting');
     }
   };
 
@@ -694,6 +731,19 @@ export default function SettingsPage() {
                             onChange={(guid) => handleSfMapAccount(account.id, guid, account)}
                             placeholder="Select account..."
                           />
+                          {account.isMapped && (
+                            <label className="flex items-center gap-1.5 mt-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={account.isInvestment}
+                                onChange={(e) => handleSfToggleInvestment(account.id, e.target.checked, account)}
+                                className="w-3 h-3 text-cyan-500 bg-background-tertiary border-border-hover rounded focus:ring-cyan-500/50"
+                              />
+                              <span className="text-[10px] text-foreground-muted">
+                                Investment (routes to child accounts by symbol)
+                              </span>
+                            </label>
+                          )}
                         </td>
                         <td className="px-4 py-2">
                           {account.isMapped ? (
