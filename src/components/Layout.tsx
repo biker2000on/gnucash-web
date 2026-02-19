@@ -182,6 +182,7 @@ const navItems: NavItem[] = [
         icon: 'Settings',
         children: [
             { name: 'General', href: '/settings' },
+            { name: 'Connections', href: '/settings/connections' },
             { name: 'Users', href: '/settings/users' },
         ],
     },
