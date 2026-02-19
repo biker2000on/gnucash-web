@@ -6,13 +6,15 @@
  */
 
 import prisma, { generateGuid } from '@/lib/prisma';
-import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError } from './simplefin.service';
+import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
+import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 
 export interface SyncResult {
   accountsProcessed: number;
   transactionsImported: number;
   transactionsSkipped: number;
+  investmentTransactionsImported: number;
   errors: { account: string; error: string }[];
 }
 
@@ -24,6 +26,7 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     accountsProcessed: 0,
     transactionsImported: 0,
     transactionsSkipped: 0,
+    investmentTransactionsImported: 0,
     errors: [],
   };
 
@@ -59,8 +62,9 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     simplefin_account_name: string | null;
     gnucash_account_guid: string;
     last_sync_at: Date | null;
+    is_investment: boolean;
   }[]>`
-    SELECT id, simplefin_account_id, simplefin_account_name, gnucash_account_guid, last_sync_at
+    SELECT id, simplefin_account_id, simplefin_account_name, gnucash_account_guid, last_sync_at, is_investment
     FROM gnucash_web_simplefin_account_map
     WHERE connection_id = ${connectionId} AND gnucash_account_guid IS NOT NULL
   `;
@@ -111,7 +115,29 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   // Process each mapped account
   for (const mappedAccount of mappedAccounts) {
     const sfAccount = sfAccountMap.get(mappedAccount.simplefin_account_id);
-    if (!sfAccount || !sfAccount.transactions) {
+    if (!sfAccount) {
+      continue;
+    }
+
+    // Investment accounts with holdings but no transactions should still be processed
+    // to ensure child accounts are created from holdings data
+    if (!sfAccount.transactions || sfAccount.transactions.length === 0) {
+      if (mappedAccount.is_investment && sfAccount.holdings && sfAccount.holdings.length > 0) {
+        // Pre-create child accounts from holdings so they appear in the account tree
+        const holdingsSymbolSet = buildSymbolSet(sfAccount.holdings);
+        for (const [symbol, desc] of holdingsSymbolSet) {
+          try {
+            await getOrCreateChildAccount(mappedAccount.gnucash_account_guid, symbol, desc);
+          } catch (err) {
+            result.errors.push({
+              account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
+              error: `Failed to create child account for ${symbol}: ${err}`,
+            });
+          }
+        }
+        await getOrCreateCashChild(mappedAccount.gnucash_account_guid);
+        result.accountsProcessed++;
+      }
       continue;
     }
 
@@ -152,6 +178,16 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
       const currencyGuid = gnucashAccount.commodity_guid;
       const currencyMnemonic = gnucashAccount.commodity?.mnemonic || 'USD';
 
+      // Build holdings symbol set if investment account
+      const sfHoldings: SimpleFinHolding[] = sfAccount.holdings || [];
+      const symbolSet = mappedAccount.is_investment ? buildSymbolSet(sfHoldings) : new Map<string, string>();
+
+      // Pre-resolve Cash child guid for investment accounts (avoids repeated lookups)
+      let cashChildGuid: string | undefined;
+      if (mappedAccount.is_investment) {
+        cashChildGuid = await getOrCreateCashChild(mappedAccount.gnucash_account_guid);
+      }
+
       for (const sfTxn of sfAccount.transactions) {
         // Dedup by SimpleFin transaction ID
         if (existingIds.has(sfTxn.id)) {
@@ -160,13 +196,47 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
         }
 
         try {
-          await importTransaction(
-            sfTxn,
-            mappedAccount.gnucash_account_guid,
-            currencyGuid,
-            currencyMnemonic,
-            bookGuid
-          );
+          if (mappedAccount.is_investment) {
+            // Investment mode: route to child account by symbol
+            const match = parseSymbol(sfTxn.description || '', symbolSet);
+            let targetAccountGuid: string;
+            let isSymbolMatched: boolean;
+
+            if (match) {
+              const holdingDesc = symbolSet.get(match.symbol) || match.symbol;
+              targetAccountGuid = await getOrCreateChildAccount(
+                mappedAccount.gnucash_account_guid,
+                match.symbol,
+                holdingDesc,
+              );
+              isSymbolMatched = true;
+            } else {
+              // No symbol match -- route to Cash child
+              targetAccountGuid = cashChildGuid!;
+              isSymbolMatched = false;
+            }
+
+            await importInvestmentTransaction(
+              sfTxn,
+              targetAccountGuid,
+              cashChildGuid!,
+              isSymbolMatched,
+              currencyGuid,
+              currencyMnemonic,
+              bookGuid,
+              mappedAccount.gnucash_account_guid,
+            );
+            result.investmentTransactionsImported++;
+          } else {
+            // Normal mode: route directly to mapped account
+            await importTransaction(
+              sfTxn,
+              mappedAccount.gnucash_account_guid,
+              currencyGuid,
+              currencyMnemonic,
+              bookGuid
+            );
+          }
           result.transactionsImported++;
           existingIds.add(sfTxn.id); // Prevent re-import within same sync
         } catch (err) {
@@ -391,6 +461,245 @@ async function getOrCreateImbalanceAccount(
 }
 
 /**
+ * Find or create a child account under the parent for a given stock symbol.
+ * Creates the commodity if it doesn't exist, then creates a STOCK child account.
+ */
+async function getOrCreateChildAccount(
+  parentGuid: string,
+  symbol: string,
+  holdingDescription: string,
+): Promise<string> {
+  // Look for existing child with a commodity matching this symbol
+  const existingChildren = await prisma.$queryRaw<{
+    guid: string;
+    commodity_guid: string;
+  }[]>`
+    SELECT a.guid, a.commodity_guid
+    FROM accounts a
+    JOIN commodities c ON c.guid = a.commodity_guid
+    WHERE a.parent_guid = ${parentGuid}
+      AND UPPER(c.mnemonic) = ${symbol.toUpperCase()}
+  `;
+
+  if (existingChildren.length > 0) {
+    return existingChildren[0].guid;
+  }
+
+  // Look up or create the commodity
+  let commodity = await prisma.commodities.findFirst({
+    where: { mnemonic: symbol.toUpperCase() },
+  });
+
+  if (!commodity) {
+    const commodityGuid = generateGuid();
+    await prisma.commodities.create({
+      data: {
+        guid: commodityGuid,
+        namespace: 'UNKNOWN',
+        mnemonic: symbol.toUpperCase(),
+        fullname: holdingDescription || symbol.toUpperCase(),
+        cusip: '',
+        fraction: 10000,
+        quote_flag: 1,
+        quote_source: 'yahoo_json',
+        quote_tz: '',
+      },
+    });
+    commodity = await prisma.commodities.findUnique({ where: { guid: commodityGuid } });
+  }
+
+  if (!commodity) throw new Error(`Failed to create commodity for ${symbol}`);
+
+  // Create the STOCK child account
+  const childGuid = generateGuid();
+  await prisma.accounts.create({
+    data: {
+      guid: childGuid,
+      name: symbol.toUpperCase(),
+      account_type: 'STOCK',
+      commodity_guid: commodity.guid,
+      commodity_scu: commodity.fraction,
+      non_std_scu: 0,
+      parent_guid: parentGuid,
+      code: '',
+      description: holdingDescription || `Auto-created for ${symbol}`,
+      hidden: 0,
+      placeholder: 0,
+    },
+  });
+
+  return childGuid;
+}
+
+/**
+ * Find or create a Cash child account under the parent.
+ * Uses the parent's commodity (USD) and account type.
+ */
+async function getOrCreateCashChild(
+  parentGuid: string,
+): Promise<string> {
+  const existing = await prisma.accounts.findFirst({
+    where: { parent_guid: parentGuid, name: 'Cash' },
+  });
+  if (existing) return existing.guid;
+
+  const parent = await prisma.accounts.findUnique({
+    where: { guid: parentGuid },
+  });
+  if (!parent) throw new Error(`Parent account ${parentGuid} not found`);
+
+  const childGuid = generateGuid();
+  await prisma.accounts.create({
+    data: {
+      guid: childGuid,
+      name: 'Cash',
+      account_type: parent.account_type,
+      commodity_guid: parent.commodity_guid!,
+      commodity_scu: parent.commodity_scu,
+      non_std_scu: 0,
+      parent_guid: parentGuid,
+      code: '',
+      description: 'Cash balance (auto-created for SimpleFin)',
+      hidden: 0,
+      placeholder: 0,
+    },
+  });
+
+  return childGuid;
+}
+
+/**
+ * Import a single SimpleFin transaction into GnuCash for an INVESTMENT account.
+ *
+ * This differs from `importTransaction` in two key ways:
+ * 1. The counter-account for symbol-matched transactions is the Cash child
+ *    (representing the brokerage sweep/cash account), NOT guessCategory.
+ * 2. For unmatched transactions routed to Cash child, guessCategory IS used
+ *    as the counter-account (same as normal import behavior).
+ *
+ * NOTE: Phase 1 limitation - quantity is stored in dollar terms, not shares.
+ * SimpleFin does not provide per-transaction share quantities. Both value_num
+ * and quantity_num are set to the dollar amount for ALL splits, including
+ * STOCK child account splits. This is technically incorrect for STOCK accounts
+ * where quantity should represent shares, but it still achieves the primary
+ * goal of organizing transactions by security symbol.
+ *
+ * // TODO Phase 2: compute share quantities from holdings price data.
+ * // SimpleFin provides shares and market_value per holding. Combined with
+ * // daily price data from yahoo-finance2 price backfill, share quantities
+ * // could be derived: shares = dollar_amount / price_per_share_on_date.
+ *
+ * NOTE: We intentionally do NOT use processMultiCurrencySplits() from
+ * src/lib/trading-accounts.ts here. That utility is for multi-CURRENCY
+ * transactions (e.g., USD to EUR). GnuCash desktop's default behavior
+ * for stock purchases does not create trading account entries. Since
+ * Phase 1 stores value == quantity in dollar terms, there is no quantity
+ * imbalance that trading accounts would need to resolve.
+ */
+async function importInvestmentTransaction(
+  sfTxn: SimpleFinTransaction,
+  targetAccountGuid: string,
+  cashChildGuid: string,
+  isSymbolMatched: boolean,
+  currencyGuid: string,
+  currencyMnemonic: string,
+  bookGuid: string,
+  bankAccountGuid: string,
+): Promise<void> {
+  const amount = parseFloat(sfTxn.amount);
+  if (isNaN(amount) || amount === 0) return;
+
+  // Determine the counter-account:
+  // - Symbol-matched (STOCK child): counter = Cash child (brokerage sweep)
+  // - Unmatched (Cash child): counter = guessCategory (same as normal import)
+  let counterAccountGuid: string;
+  if (isSymbolMatched) {
+    counterAccountGuid = cashChildGuid;
+  } else {
+    counterAccountGuid = await guessCategory(
+      bankAccountGuid,
+      sfTxn.description || sfTxn.payee || '',
+      currencyMnemonic,
+      bookGuid
+    );
+  }
+
+  const postDate = new Date(sfTxn.posted * 1000);
+  const description = sfTxn.description || sfTxn.payee || 'SimpleFin Import';
+  const memo = sfTxn.pending ? '(Pending) ' + (sfTxn.memo || '') : (sfTxn.memo || '');
+
+  const txGuid = generateGuid();
+  const split1Guid = generateGuid();
+  const split2Guid = generateGuid();
+
+  // NOTE: Phase 1 limitation - dollar amount used for both value and quantity.
+  // For STOCK accounts, quantity should be in shares, but SimpleFin lacks
+  // per-transaction share data. Both value and quantity are in dollar terms.
+  const { num: absNum, denom } = toNumDenom(Math.abs(amount));
+  const targetValueNum = amount > 0 ? absNum : -absNum;
+  const counterValueNum = amount > 0 ? -absNum : absNum;
+
+  await prisma.$transaction(async (tx) => {
+    // Create transaction
+    await tx.transactions.create({
+      data: {
+        guid: txGuid,
+        currency_guid: currencyGuid,
+        num: '',
+        post_date: postDate,
+        enter_date: new Date(),
+        description,
+      },
+    });
+
+    // Target account split (STOCK child or Cash child)
+    // NOTE: quantity_num == value_num (dollar terms) - see Phase 1 limitation above
+    await tx.splits.create({
+      data: {
+        guid: split1Guid,
+        tx_guid: txGuid,
+        account_guid: targetAccountGuid,
+        memo: memo,
+        action: '',
+        reconcile_state: 'n',
+        reconcile_date: null,
+        value_num: BigInt(targetValueNum),
+        value_denom: BigInt(denom),
+        quantity_num: BigInt(targetValueNum),   // Phase 1: dollar amount, not shares
+        quantity_denom: BigInt(denom),           // Phase 1: dollar denom, not share denom
+        lot_guid: null,
+      },
+    });
+
+    // Counter-account split (Cash child for STOCK txns, guessCategory for Cash txns)
+    await tx.splits.create({
+      data: {
+        guid: split2Guid,
+        tx_guid: txGuid,
+        account_guid: counterAccountGuid,
+        memo: '',
+        action: '',
+        reconcile_state: 'n',
+        reconcile_date: null,
+        value_num: BigInt(counterValueNum),
+        value_denom: BigInt(denom),
+        quantity_num: BigInt(counterValueNum),
+        quantity_denom: BigInt(denom),
+        lot_guid: null,
+      },
+    });
+
+    // Insert transaction meta (reviewed=false for imports)
+    await prisma.$executeRaw`
+      INSERT INTO gnucash_web_transaction_meta
+        (transaction_guid, source, reviewed, simplefin_transaction_id, confidence)
+      VALUES
+        (${txGuid}, 'simplefin', FALSE, ${sfTxn.id}, ${isSymbolMatched ? 'medium' : (counterAccountGuid.includes('Imbalance') ? 'low' : 'medium')})
+    `;
+  });
+}
+
+/**
  * Sync all active connections (used by the worker process).
  */
 export async function syncAllConnections(): Promise<SyncResult[]> {
@@ -413,6 +722,7 @@ export async function syncAllConnections(): Promise<SyncResult[]> {
         accountsProcessed: 0,
         transactionsImported: 0,
         transactionsSkipped: 0,
+        investmentTransactionsImported: 0,
         errors: [{ account: 'connection', error: `Sync failed: ${error}` }],
       });
     }
