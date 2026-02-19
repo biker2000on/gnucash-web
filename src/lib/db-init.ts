@@ -368,6 +368,11 @@ async function createExtensionTables() {
         );
     `;
 
+    const simpleFinAccountMapAddInvestmentDDL = `
+        ALTER TABLE gnucash_web_simplefin_account_map
+        ADD COLUMN IF NOT EXISTS is_investment BOOLEAN NOT NULL DEFAULT FALSE;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -384,6 +389,7 @@ async function createExtensionTables() {
         await query(invitationsTableDDL);
         await query(simpleFinConnectionsTableDDL);
         await query(simpleFinAccountMapTableDDL);
+        await query(simpleFinAccountMapAddInvestmentDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

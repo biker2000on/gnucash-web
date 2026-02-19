@@ -72,6 +72,18 @@ export interface SimpleFinTransaction {
   pending?: boolean;
 }
 
+export interface SimpleFinHolding {
+  id?: string;
+  created?: number;
+  currency?: string;
+  cost_basis?: string;
+  description?: string;
+  market_value?: string;
+  purchase_price?: string;
+  shares?: string;
+  symbol?: string;
+}
+
 export interface SimpleFinAccount {
   id: string;
   name: string;
@@ -85,6 +97,7 @@ export interface SimpleFinAccount {
     'sfin-url'?: string;
   };
   transactions?: SimpleFinTransaction[];
+  holdings?: SimpleFinHolding[];
 }
 
 export interface SimpleFinAccountSet {
@@ -202,6 +215,10 @@ export async function fetchAccountsChunked(
         // Update balance to latest
         existing.balance = account.balance;
         existing['available-balance'] = account['available-balance'];
+        // Preserve holdings (take latest non-empty)
+        if (account.holdings && account.holdings.length > 0) {
+          existing.holdings = account.holdings;
+        }
       } else {
         allAccounts.set(account.id, { ...account });
       }
