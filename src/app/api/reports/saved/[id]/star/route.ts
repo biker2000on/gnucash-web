@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { toggleStar } from '@/lib/reports/saved-reports';
 
 export async function PATCH(
@@ -7,10 +7,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
 
     const { id } = await params;
     const reportId = parseInt(id, 10);
@@ -18,7 +16,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid ID' }, { status: 400 });
     }
 
-    const result = await toggleStar(reportId, user.id);
+    const result = await toggleStar(reportId, roleResult.user.id);
     if (!result) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }

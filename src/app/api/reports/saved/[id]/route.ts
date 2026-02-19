@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { getSavedReport, updateSavedReport, deleteSavedReport } from '@/lib/reports/saved-reports';
 
 /**
@@ -11,10 +11,8 @@ export async function GET(
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const { id } = await params;
         const reportId = parseInt(id, 10);
@@ -22,7 +20,7 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid report ID' }, { status: 400 });
         }
 
-        const report = await getSavedReport(reportId, user.id);
+        const report = await getSavedReport(reportId, roleResult.user.id);
         if (!report) {
             return NextResponse.json({ error: 'Report not found' }, { status: 404 });
         }
@@ -43,10 +41,8 @@ export async function PUT(
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const { id } = await params;
         const reportId = parseInt(id, 10);
@@ -65,7 +61,7 @@ export async function PUT(
         if (filters !== undefined) input.filters = filters;
         if (isStarred !== undefined) input.isStarred = isStarred;
 
-        const report = await updateSavedReport(reportId, user.id, input);
+        const report = await updateSavedReport(reportId, roleResult.user.id, input);
         if (!report) {
             return NextResponse.json({ error: 'Report not found' }, { status: 404 });
         }
@@ -87,10 +83,8 @@ export async function DELETE(
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const { id } = await params;
         const reportId = parseInt(id, 10);
@@ -98,7 +92,7 @@ export async function DELETE(
             return NextResponse.json({ error: 'Invalid report ID' }, { status: 400 });
         }
 
-        const deleted = await deleteSavedReport(reportId, user.id);
+        const deleted = await deleteSavedReport(reportId, roleResult.user.id);
         if (!deleted) {
             return NextResponse.json({ error: 'Report not found' }, { status: 404 });
         }
