@@ -29,18 +29,19 @@ export async function PUT(request: NextRequest) {
 
     // Upsert each mapping
     for (const mapping of mappings) {
-      const { simpleFinAccountId, simpleFinAccountName, simpleFinInstitution, simpleFinLast4, gnucashAccountGuid } = mapping;
+      const { simpleFinAccountId, simpleFinAccountName, simpleFinInstitution, simpleFinLast4, gnucashAccountGuid, isInvestment } = mapping;
 
       if (!simpleFinAccountId) continue;
 
       await prisma.$executeRaw`
         INSERT INTO gnucash_web_simplefin_account_map
-          (connection_id, simplefin_account_id, simplefin_account_name, simplefin_institution, simplefin_last4, gnucash_account_guid)
+          (connection_id, simplefin_account_id, simplefin_account_name, simplefin_institution, simplefin_last4, gnucash_account_guid, is_investment)
         VALUES
-          (${connectionId}, ${simpleFinAccountId}, ${simpleFinAccountName || null}, ${simpleFinInstitution || null}, ${simpleFinLast4 || null}, ${gnucashAccountGuid || null})
+          (${connectionId}, ${simpleFinAccountId}, ${simpleFinAccountName || null}, ${simpleFinInstitution || null}, ${simpleFinLast4 || null}, ${gnucashAccountGuid || null}, ${isInvestment ?? false})
         ON CONFLICT (connection_id, simplefin_account_id)
         DO UPDATE SET
           gnucash_account_guid = ${gnucashAccountGuid || null},
+          is_investment = ${isInvestment ?? false},
           simplefin_account_name = COALESCE(${simpleFinAccountName || null}, gnucash_web_simplefin_account_map.simplefin_account_name),
           simplefin_institution = COALESCE(${simpleFinInstitution || null}, gnucash_web_simplefin_account_map.simplefin_institution),
           simplefin_last4 = COALESCE(${simpleFinLast4 || null}, gnucash_web_simplefin_account_map.simplefin_last4)
