@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { BudgetService } from '@/lib/services/budget.service';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 // GET - List all accounts for budget tree building
 export async function GET(
@@ -9,6 +10,9 @@ export async function GET(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify budget exists
@@ -49,6 +53,9 @@ export async function POST(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const body = await request.json();
         const { account_guid } = body;

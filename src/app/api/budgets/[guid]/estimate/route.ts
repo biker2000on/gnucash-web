@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService } from '@/lib/services/budget.service';
+import { requireRole } from '@/lib/auth';
 
 // GET - Get historical average for an account
 export async function GET(
@@ -7,6 +8,9 @@ export async function GET(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         await params; // Budget guid not needed for estimate, but kept for route consistency
         const { searchParams } = new URL(request.url);
         const accountGuid = searchParams.get('account_guid');

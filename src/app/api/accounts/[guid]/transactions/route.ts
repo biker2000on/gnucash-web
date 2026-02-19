@@ -3,12 +3,16 @@ import prisma, { toDecimal } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { Prisma } from '@prisma/client';
 import { isAccountInActiveBook } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { searchParams } = new URL(request.url);
         const limit = parseInt(searchParams.get('limit') || '100');
         const offset = parseInt(searchParams.get('offset') || '0');
@@ -133,6 +137,19 @@ export async function GET(
             return NextResponse.json([]);
         }
 
+        // 3b. Fetch transaction meta (reviewed status, source) for these transactions
+        const txGuids = transactions.map(tx => tx.guid);
+        const transactionMeta = await prisma.$queryRaw<{
+            transaction_guid: string;
+            source: string;
+            reviewed: boolean;
+        }[]>`
+            SELECT transaction_guid, source, reviewed
+            FROM gnucash_web_transaction_meta
+            WHERE transaction_guid = ANY(${txGuids}::text[])
+        `;
+        const metaMap = new Map(transactionMeta.map(m => [m.transaction_guid, m]));
+
         // 4. Get account mnemonic
         const account = await prisma.accounts.findUnique({
             where: { guid: accountGuid },
@@ -169,6 +186,7 @@ export async function GET(
                 ? Number(accountSplit.quantity_num) / Number(accountSplit.quantity_denom)
                 : 0;
 
+            const meta = metaMap.get(tx.guid);
             const row = {
                 guid: tx.guid,
                 currency_guid: tx.currency_guid,
@@ -182,6 +200,9 @@ export async function GET(
                 commodity_mnemonic: accountMnemonic,
                 account_split_guid: accountSplit?.guid || '',
                 account_split_reconcile_state: accountSplit?.reconcile_state || 'n',
+                // Transaction meta: reviewed status and source
+                reviewed: meta?.reviewed ?? true, // default to reviewed if no meta row
+                source: meta?.source ?? 'manual',
             };
 
             currentRunningBalance -= splitValue;

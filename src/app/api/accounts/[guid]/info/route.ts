@@ -2,12 +2,16 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { isAccountInActiveBook } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify account belongs to active book

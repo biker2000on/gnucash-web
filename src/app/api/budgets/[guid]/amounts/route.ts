@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService } from '@/lib/services/budget.service';
+import { requireRole } from '@/lib/auth';
 
 // PATCH - Update a single budget amount (inline cell edit)
 export async function PATCH(
@@ -7,6 +8,9 @@ export async function PATCH(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const body = await request.json();
         const { account_guid, period_num, amount } = body;
@@ -35,6 +39,9 @@ export async function DELETE(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const { searchParams } = new URL(request.url);
         const accountGuid = searchParams.get('account_guid');

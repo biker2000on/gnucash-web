@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AccountService } from '@/lib/services/account.service';
 import { z } from 'zod';
 import { isAccountInActiveBook } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 const MoveAccountSchema = z.object({
     newParentGuid: z.string().length(32).nullable(),
@@ -43,6 +44,9 @@ export async function PUT(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify account belongs to active book
