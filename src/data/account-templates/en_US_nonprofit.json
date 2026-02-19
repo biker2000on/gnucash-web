@@ -1,0 +1,151 @@
+{
+  "templates": [
+    {
+      "locale": "en_US",
+      "id": "nonprofit",
+      "name": "Non-Profit Organization",
+      "description": "A chart of accounts for non-profit organizations, including fund accounting categories, grant tracking, program expenses, and donor-related income.",
+      "currency": "USD",
+      "accounts": [
+        {
+          "name": "Assets",
+          "type": "ASSET",
+          "placeholder": true,
+          "children": [
+            {
+              "name": "Current Assets",
+              "type": "ASSET",
+              "placeholder": true,
+              "children": [
+                { "name": "Operating Checking", "type": "BANK" },
+                { "name": "Savings", "type": "BANK" },
+                { "name": "Petty Cash", "type": "CASH" },
+                { "name": "Grants Receivable", "type": "RECEIVABLE" },
+                { "name": "Pledges Receivable", "type": "RECEIVABLE" },
+                { "name": "Prepaid Expenses", "type": "ASSET" }
+              ]
+            },
+            {
+              "name": "Fixed Assets",
+              "type": "ASSET",
+              "placeholder": true,
+              "children": [
+                { "name": "Equipment", "type": "ASSET" },
+                { "name": "Furniture & Fixtures", "type": "ASSET" },
+                { "name": "Vehicles", "type": "ASSET" },
+                { "name": "Accumulated Depreciation", "type": "ASSET" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Liabilities",
+          "type": "LIABILITY",
+          "placeholder": true,
+          "children": [
+            { "name": "Accounts Payable", "type": "PAYABLE" },
+            { "name": "Accrued Expenses", "type": "LIABILITY" },
+            { "name": "Deferred Revenue", "type": "LIABILITY" },
+            { "name": "Payroll Liabilities", "type": "LIABILITY" },
+            { "name": "Credit Card", "type": "CREDIT" }
+          ]
+        },
+        {
+          "name": "Income",
+          "type": "INCOME",
+          "placeholder": true,
+          "children": [
+            {
+              "name": "Contributions",
+              "type": "INCOME",
+              "placeholder": true,
+              "children": [
+                { "name": "Individual Donations", "type": "INCOME" },
+                { "name": "Corporate Donations", "type": "INCOME" },
+                { "name": "Foundation Grants", "type": "INCOME" },
+                { "name": "Government Grants", "type": "INCOME" }
+              ]
+            },
+            {
+              "name": "Earned Revenue",
+              "type": "INCOME",
+              "placeholder": true,
+              "children": [
+                { "name": "Program Fees", "type": "INCOME" },
+                { "name": "Membership Dues", "type": "INCOME" },
+                { "name": "Event Revenue", "type": "INCOME" }
+              ]
+            },
+            { "name": "Interest Income", "type": "INCOME" },
+            { "name": "In-Kind Donations", "type": "INCOME" }
+          ]
+        },
+        {
+          "name": "Expenses",
+          "type": "EXPENSE",
+          "placeholder": true,
+          "children": [
+            {
+              "name": "Program Expenses",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Program Salaries", "type": "EXPENSE" },
+                { "name": "Program Supplies", "type": "EXPENSE" },
+                { "name": "Program Travel", "type": "EXPENSE" },
+                { "name": "Grants to Others", "type": "EXPENSE" },
+                { "name": "Participant Costs", "type": "EXPENSE" }
+              ]
+            },
+            {
+              "name": "Administrative Expenses",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Admin Salaries", "type": "EXPENSE" },
+                { "name": "Office Supplies", "type": "EXPENSE" },
+                { "name": "Rent", "type": "EXPENSE" },
+                { "name": "Utilities", "type": "EXPENSE" },
+                { "name": "Insurance", "type": "EXPENSE" },
+                { "name": "Professional Fees", "type": "EXPENSE" },
+                { "name": "Bank Charges", "type": "EXPENSE" },
+                { "name": "Depreciation", "type": "EXPENSE" }
+              ]
+            },
+            {
+              "name": "Fundraising Expenses",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Fundraising Salaries", "type": "EXPENSE" },
+                { "name": "Event Costs", "type": "EXPENSE" },
+                { "name": "Printing & Postage", "type": "EXPENSE" },
+                { "name": "Marketing & Advertising", "type": "EXPENSE" }
+              ]
+            },
+            {
+              "name": "Payroll Taxes",
+              "type": "EXPENSE",
+              "placeholder": true,
+              "children": [
+                { "name": "Social Security", "type": "EXPENSE" },
+                { "name": "Medicare", "type": "EXPENSE" },
+                { "name": "Unemployment Tax", "type": "EXPENSE" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Equity",
+          "type": "EQUITY",
+          "placeholder": true,
+          "children": [
+            { "name": "Unrestricted Net Assets", "type": "EQUITY" },
+            { "name": "Temporarily Restricted Net Assets", "type": "EQUITY" },
+            { "name": "Permanently Restricted Net Assets", "type": "EQUITY" }
+          ]
+        }
+      ]
+    }
+  ]
+}

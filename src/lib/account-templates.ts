@@ -7,6 +7,7 @@
 
 import enUS from '@/data/account-templates/en_US.json';
 import enGB from '@/data/account-templates/en_GB.json';
+import enUSNonProfit from '@/data/account-templates/en_US_nonprofit.json';
 
 export type GnuCashAccountType =
   | 'ASSET' | 'BANK' | 'CASH' | 'CREDIT'
@@ -50,7 +51,10 @@ const locales: TemplateLocale[] = [
   {
     code: 'en_US',
     name: 'English (US)',
-    templates: (enUS as { templates: TemplateFile[] }).templates,
+    templates: [
+      ...(enUS as { templates: TemplateFile[] }).templates,
+      ...(enUSNonProfit as { templates: TemplateFile[] }).templates,
+    ],
   },
   {
     code: 'en_GB',

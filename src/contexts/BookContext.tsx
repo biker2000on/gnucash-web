@@ -16,6 +16,7 @@ interface BookContextType {
     switchBook: (guid: string) => Promise<void>;
     refreshBooks: () => Promise<void>;
     loading: boolean;
+    hasNoBooks: boolean;
 }
 
 const BookContext = createContext<BookContextType | null>(null);
@@ -67,9 +68,11 @@ export function BookProvider({ children }: { children: ReactNode }) {
         }
     }, [router]);
 
+    const hasNoBooks = !loading && books.length === 0;
+
     const value = useMemo(
-        () => ({ activeBookGuid, books, switchBook, refreshBooks, loading }),
-        [activeBookGuid, books, switchBook, refreshBooks, loading]
+        () => ({ activeBookGuid, books, switchBook, refreshBooks, loading, hasNoBooks }),
+        [activeBookGuid, books, switchBook, refreshBooks, loading, hasNoBooks]
     );
 
     return (

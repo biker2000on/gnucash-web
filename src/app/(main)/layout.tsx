@@ -2,6 +2,7 @@ import Layout from "@/components/Layout";
 import { initializeDatabase } from "@/lib/db-init";
 import { Providers } from "@/app/providers";
 import { BookProvider } from "@/contexts/BookContext";
+import { OnboardingGuard } from "@/components/OnboardingGuard";
 
 export default async function MainLayout({
     children,
@@ -14,7 +15,9 @@ export default async function MainLayout({
     return (
         <Providers>
             <BookProvider>
-                <Layout>{children}</Layout>
+                <OnboardingGuard>
+                    <Layout>{children}</Layout>
+                </OnboardingGuard>
             </BookProvider>
         </Providers>
     );
