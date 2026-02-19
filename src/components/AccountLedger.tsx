@@ -8,7 +8,9 @@ import { ReconciliationPanel } from './ReconciliationPanel';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
+import { InlineEditRow } from './InlineEditRow';
 import { useToast } from '@/contexts/ToastContext';
+import { toNumDenom } from '@/lib/validation';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -16,6 +18,8 @@ export interface AccountTransaction extends Transaction {
     commodity_mnemonic: string;
     account_split_guid: string;
     account_split_reconcile_state: string;
+    reviewed?: boolean;
+    source?: string;
 }
 
 interface AccountLedgerProps {
@@ -58,6 +62,14 @@ export default function AccountLedger({
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingGuid, setDeletingGuid] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+
+    // Keyboard navigation state
+    const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
+    const [editingGuid, setEditingGuid] = useState<string | null>(null);
+    const tableRef = useRef<HTMLTableElement>(null);
+
+    // Reviewed filter state
+    const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
 
     // Listen for global 'n' key shortcut to open new transaction
     useEffect(() => {
@@ -181,6 +193,165 @@ export default function AccountLedger({
         }
     }, [deletingGuid, fetchTransactions, success, error]);
 
+    // Inline edit save handler
+    const handleInlineSave = useCallback(async (guid: string, data: {
+        post_date: string;
+        description: string;
+        accountGuid: string;
+        amount: string;
+        original_enter_date?: string;
+    }) => {
+        try {
+            // Build a PUT request to update the transaction
+            // We need to find the current transaction to get the currency_guid
+            const tx = transactions.find(t => t.guid === guid);
+            if (!tx) return;
+
+            const amountValue = parseFloat(data.amount);
+            const { num: valueNum, denom: valueDenom } = toNumDenom(amountValue);
+            const { num: negValueNum, denom: negValueDenom } = toNumDenom(-amountValue);
+
+            const body: Record<string, unknown> = {
+                currency_guid: tx.currency_guid,
+                post_date: data.post_date,
+                description: data.description,
+                splits: [
+                    {
+                        account_guid: accountGuid,
+                        value_num: parseFloat(tx.account_split_value) >= 0 ? valueNum : negValueNum,
+                        value_denom: valueDenom,
+                        quantity_num: parseFloat(tx.account_split_value) >= 0 ? valueNum : negValueNum,
+                        quantity_denom: valueDenom,
+                        reconcile_state: tx.account_split_reconcile_state || 'n',
+                    },
+                    {
+                        account_guid: data.accountGuid,
+                        value_num: parseFloat(tx.account_split_value) >= 0 ? negValueNum : valueNum,
+                        value_denom: negValueDenom,
+                        quantity_num: parseFloat(tx.account_split_value) >= 0 ? negValueNum : valueNum,
+                        quantity_denom: negValueDenom,
+                        reconcile_state: 'n',
+                    },
+                ],
+            };
+
+            if (data.original_enter_date) {
+                body.original_enter_date = data.original_enter_date;
+            }
+
+            const res = await fetch(`/api/transactions/${guid}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+            if (res.status === 409) {
+                error('Transaction was modified by another user. Refreshing...');
+                await fetchTransactions();
+                setEditingGuid(null);
+                return;
+            }
+
+            if (!res.ok) throw new Error('Failed to update');
+
+            success('Transaction updated');
+            setEditingGuid(null);
+            await fetchTransactions();
+        } catch (err) {
+            console.error('Inline save failed:', err);
+            error('Failed to update transaction');
+        }
+    }, [transactions, accountGuid, fetchTransactions, success, error]);
+
+    // Toggle reviewed status
+    const toggleReviewed = useCallback(async (transactionGuid: string) => {
+        try {
+            const res = await fetch(`/api/transactions/${transactionGuid}/review`, {
+                method: 'PATCH',
+            });
+            if (!res.ok) throw new Error('Failed to toggle reviewed status');
+            const { reviewed } = await res.json();
+            setTransactions(prev => prev.map(tx =>
+                tx.guid === transactionGuid ? { ...tx, reviewed } : tx
+            ));
+        } catch (err) {
+            console.error('Failed to toggle reviewed:', err);
+            error('Failed to toggle reviewed status');
+        }
+    }, [error]);
+
+    // Filter transactions based on reviewed filter
+    const displayTransactions = useMemo(() => {
+        if (!showUnreviewedOnly) return transactions;
+        return transactions.filter(tx => tx.reviewed === false);
+    }, [transactions, showUnreviewedOnly]);
+
+    // Keyboard navigation handler
+    const handleTableKeyDown = useCallback((e: KeyboardEvent) => {
+        if (editingGuid) return; // Let InlineEditRow handle keys during edit
+        if (isEditModalOpen || isViewModalOpen || deleteConfirmOpen) return; // Don't navigate when modals are open
+
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
+
+        switch (e.key) {
+            case 'ArrowDown':
+            case 'j':
+                e.preventDefault();
+                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                break;
+            case 'ArrowUp':
+            case 'k':
+                e.preventDefault();
+                setFocusedRowIndex(i => Math.max(i - 1, 0));
+                break;
+            case 'Enter':
+                if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                    e.preventDefault();
+                    const tx = displayTransactions[focusedRowIndex];
+                    const isMultiSplit = (tx.splits?.length || 0) > 2;
+                    if (isMultiSplit) {
+                        handleRowClick(tx.guid);
+                    } else {
+                        setEditingGuid(tx.guid);
+                    }
+                }
+                break;
+            case 'Delete':
+            case 'Backspace':
+                if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                    e.preventDefault();
+                    const tx = displayTransactions[focusedRowIndex];
+                    setDeletingGuid(tx.guid);
+                    setDeleteConfirmOpen(true);
+                }
+                break;
+            case 'r':
+                if (focusedRowIndex >= 0) {
+                    e.preventDefault();
+                    toggleReviewed(displayTransactions[focusedRowIndex].guid);
+                }
+                break;
+            case 'Escape':
+                setFocusedRowIndex(-1);
+                break;
+        }
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, transactions, displayTransactions, handleRowClick, toggleReviewed]);
+
+    // Attach keyboard listener
+    useEffect(() => {
+        window.addEventListener('keydown', handleTableKeyDown);
+        return () => window.removeEventListener('keydown', handleTableKeyDown);
+    }, [handleTableKeyDown]);
+
+    // Scroll focused row into view
+    useEffect(() => {
+        if (focusedRowIndex >= 0 && tableRef.current) {
+            const rows = tableRef.current.querySelectorAll('tbody tr');
+            rows[focusedRowIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }, [focusedRowIndex]);
+
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
         setTransactions(initialTransactions);
@@ -243,15 +414,27 @@ export default function AccountLedger({
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
             {/* Top Bar: New Transaction + Reconciliation Panel */}
             <div className="p-4 border-b border-border flex justify-between items-center">
-                <button
-                    onClick={() => {
-                        setEditingTransaction(null);
-                        setIsEditModalOpen(true);
-                    }}
-                    className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
-                >
-                    New Transaction
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => {
+                            setEditingTransaction(null);
+                            setIsEditModalOpen(true);
+                        }}
+                        className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
+                    >
+                        New Transaction
+                    </button>
+                    <button
+                        onClick={() => setShowUnreviewedOnly(prev => !prev)}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                            showUnreviewedOnly
+                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                                : 'border-border text-foreground-muted hover:text-foreground'
+                        }`}
+                    >
+                        {showUnreviewedOnly ? 'Showing Unreviewed' : 'Show Unreviewed Only'}
+                    </button>
+                </div>
                 <ReconciliationPanel
                     accountGuid={accountGuid}
                     accountCurrency={accountCurrency}
@@ -272,7 +455,7 @@ export default function AccountLedger({
             </div>
 
             <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table ref={tableRef} className="w-full text-left border-collapse">
                     <thead>
                         <tr className="bg-background-secondary/50 text-foreground-secondary text-[10px] uppercase tracking-[0.2em] font-bold">
                             {isReconciling && <th className="px-4 py-4 w-10"></th>}
@@ -285,18 +468,33 @@ export default function AccountLedger({
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                        {transactions.map(tx => {
+                        {displayTransactions.map((tx, index) => {
                             const isMultiSplit = (tx.splits?.length || 0) > 2;
                             const isExpanded = expandedTxs[tx.guid];
                             const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
+                            const isUnreviewed = tx.reviewed === false;
                             const amount = parseFloat(tx.account_split_value);
                             const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
                             const isSelected = selectedSplits.has(tx.account_split_guid);
 
+                            if (editingGuid === tx.guid) {
+                                return (
+                                    <InlineEditRow
+                                        key={tx.guid}
+                                        transaction={tx}
+                                        accountGuid={accountGuid}
+                                        accountType={accountType}
+                                        columnCount={isReconciling ? 7 : 6}
+                                        onSave={handleInlineSave}
+                                        onCancel={() => setEditingGuid(null)}
+                                    />
+                                );
+                            }
+
                             return (
                                 <tr
                                     key={tx.guid}
-                                    className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''}`}
+                                    className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-cyan-500/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
                                     onClick={(e) => {
                                         // Don't trigger on checkbox or button clicks
                                         if ((e.target as HTMLElement).closest('input, button')) return;
@@ -327,7 +525,14 @@ export default function AccountLedger({
                                         {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                     </td>
                                     <td className="px-6 py-4 text-sm text-foreground align-top">
-                                        <div className="font-medium">{tx.description}</div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium">{tx.description}</span>
+                                            {tx.source && tx.source !== 'manual' && (
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
+                                                    Imported
+                                                </span>
+                                            )}
+                                        </div>
                                         {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
                                     </td>
                                     <td className="px-6 py-4 text-sm align-top">
