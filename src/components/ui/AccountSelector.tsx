@@ -108,13 +108,6 @@ export function AccountSelector({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [isOpen]);
 
-    // Reset focus index when search changes or dropdown opens
-    useEffect(() => {
-        if (isOpen) {
-            setFocusedIndex(0);
-        }
-    }, [search, isOpen]);
-
     // Scroll focused item into view
     useEffect(() => {
         if (focusedIndex !== null && itemRefs.current[focusedIndex]) {
@@ -153,6 +146,18 @@ export function AccountSelector({
         return result;
     }, [groupedAccounts]);
 
+    // Set focus index to current selection when dropdown opens, or reset on search
+    useEffect(() => {
+        if (isOpen) {
+            if (!search && value) {
+                const idx = flatOptions.findIndex(a => a.guid === value);
+                setFocusedIndex(idx >= 0 ? idx : 0);
+            } else {
+                setFocusedIndex(0);
+            }
+        }
+    }, [search, isOpen, value, flatOptions]);
+
     const handleSelect = (account: Account) => {
         const displayName = formatAccountPath(account.fullname, account.name);
         onChange(account.guid, displayName);
@@ -163,14 +168,8 @@ export function AccountSelector({
     };
 
     const handleInputFocus = () => {
-        if (value) {
-            // Has existing value - don't open dropdown, select text for easy replacement
-            inputRef.current?.select();
-        } else {
-            // No value - open dropdown to browse
-            setIsOpen(true);
-            setSearch('');
-        }
+        setIsOpen(true);
+        setSearch('');
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
