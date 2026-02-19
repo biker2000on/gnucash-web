@@ -176,7 +176,15 @@ const navItems: NavItem[] = [
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
     { name: 'Import/Export', href: '/import-export', icon: 'ArrowUpDown' },
-    { name: 'Settings', href: '/settings', icon: 'Settings' },
+    {
+        name: 'Settings',
+        href: '/settings',
+        icon: 'Settings',
+        children: [
+            { name: 'General', href: '/settings' },
+            { name: 'Users', href: '/settings/users' },
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------------------
