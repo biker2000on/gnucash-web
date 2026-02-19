@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
+import { requireRole } from '@/lib/auth';
 
 /**
  * @openapi
@@ -18,6 +19,9 @@ import { serializeBigInts } from '@/lib/gnucash';
  *         description: A list of commodities.
  */
 export async function GET(request: NextRequest) {
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     try {
         const searchParams = request.nextUrl.searchParams;
         const type = searchParams.get('type');

@@ -9,9 +9,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
   try {
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     const accountGuid = request.nextUrl.searchParams.get('accountGuid');
 
     if (accountGuid) {
@@ -44,6 +48,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     const body = await request.json();
     const {
       accountGuid,
@@ -114,6 +121,9 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     const id = request.nextUrl.searchParams.get('id');
     if (!id) {
       return NextResponse.json({ error: 'Missing id query parameter' }, { status: 400 });

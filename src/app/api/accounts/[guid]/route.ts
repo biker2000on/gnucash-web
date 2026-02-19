@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AccountService, UpdateAccountSchema } from '@/lib/services/account.service';
 import { isAccountInActiveBook } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 /**
  * @openapi
@@ -24,6 +25,9 @@ export async function GET(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify account belongs to active book
@@ -84,6 +88,9 @@ export async function PUT(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify account belongs to active book
@@ -140,6 +147,9 @@ export async function DELETE(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify account belongs to active book

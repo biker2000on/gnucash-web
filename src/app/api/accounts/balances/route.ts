@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { getLatestPrice } from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 interface AccountBalance {
     guid: string;
@@ -63,6 +64,9 @@ interface BalanceQueryResult {
  */
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');

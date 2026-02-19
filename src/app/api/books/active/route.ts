@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { getUserRoleForBook } from '@/lib/services/permission.service';
 
 /**
  * GET /api/books/active
@@ -8,8 +9,10 @@ import prisma from '@/lib/prisma';
  */
 export async function GET() {
     try {
-        const session = await getSession();
+        const authResult = await requireAuth();
+        if (authResult instanceof NextResponse) return authResult;
 
+        const { session } = authResult;
         let activeBookGuid = session.activeBookGuid || null;
 
         // Validate the active book still exists
@@ -48,6 +51,9 @@ export async function GET() {
  */
 export async function PUT(request: NextRequest) {
     try {
+        const authResult = await requireAuth();
+        if (authResult instanceof NextResponse) return authResult;
+
         const body = await request.json();
         const { bookGuid } = body;
 
@@ -71,7 +77,16 @@ export async function PUT(request: NextRequest) {
             );
         }
 
-        const session = await getSession();
+        // Verify user has permission on the target book
+        const role = await getUserRoleForBook(authResult.user.id, bookGuid);
+        if (!role) {
+            return NextResponse.json(
+                { error: 'No access to this book' },
+                { status: 403 }
+            );
+        }
+
+        const { session } = authResult;
         session.activeBookGuid = bookGuid;
         await session.save();
 

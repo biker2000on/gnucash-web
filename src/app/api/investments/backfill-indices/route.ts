@@ -1,13 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { backfillIndexPrices } from '@/lib/market-index-service';
 
 export async function POST() {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+    const roleResult = await requireRole('admin');
+    if (roleResult instanceof NextResponse) return roleResult;
 
     const results = await backfillIndexPrices();
     const totalStored = results.reduce((sum, r) => sum + r.stored, 0);

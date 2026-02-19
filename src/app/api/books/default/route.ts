@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createDefaultBook } from '@/lib/default-book';
+import { requireAuth } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    const authResult = await requireAuth();
+    if (authResult instanceof NextResponse) return authResult;
+
     const body = await request.json().catch(() => ({}));
     const name = body.name || 'My Finances';
     const description = body.description;

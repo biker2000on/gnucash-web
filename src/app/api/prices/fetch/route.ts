@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchAndStorePrices, ensureIndexCommodities, fetchIndexPrices } from '@/lib/price-service';
 import { z } from 'zod';
+import { requireRole } from '@/lib/auth';
 
 /**
  * POST /api/prices/fetch
@@ -32,6 +33,9 @@ const FetchPricesSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     // Parse request body
     let symbols: string[] | undefined;
     let force = false;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma, { toDecimal } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 export interface TransactionSuggestion {
   description: string;
@@ -14,6 +15,9 @@ export interface TransactionSuggestion {
 }
 
 export async function GET(request: NextRequest) {
+  const roleResult = await requireRole('readonly');
+  if (roleResult instanceof NextResponse) return roleResult;
+
   const searchParams = request.nextUrl.searchParams;
   const query = searchParams.get('q') || '';
   const accountGuid = searchParams.get('account_guid');

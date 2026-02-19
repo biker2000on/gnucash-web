@@ -4,9 +4,13 @@ import { toDecimal } from '@/lib/gnucash';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
         const periodParam = searchParams.get('period') || '1Y';
 

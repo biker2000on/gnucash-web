@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal, fromDecimal } from '@/lib/prisma';
 import { z } from 'zod';
+import { requireRole } from '@/lib/auth';
 
 // Schema for updating a price
 const UpdatePriceSchema = z.object({
@@ -16,6 +17,9 @@ export async function GET(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         const price = await prisma.prices.findUnique({
@@ -70,6 +74,9 @@ export async function PUT(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const body = await request.json();
 
@@ -149,6 +156,9 @@ export async function DELETE(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Check if price exists

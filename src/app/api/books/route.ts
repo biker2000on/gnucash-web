@@ -1,14 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
+import { requireAuth } from '@/lib/auth';
+import { getUserBooks } from '@/lib/services/permission.service';
 
 /**
  * GET /api/books
- * List all books with their root account name and account count.
+ * List all books the current user has access to.
  */
 export async function GET() {
     try {
-        const books = await prisma.books.findMany();
+        const authResult = await requireAuth();
+        if (authResult instanceof NextResponse) return authResult;
+
+        // Get only books the user has permissions for
+        const userBooks = await getUserBooks(authResult.user.id);
+        if (userBooks.length === 0) {
+            return NextResponse.json([]);
+        }
+
+        const userBookGuids = userBooks.map(b => b.guid);
+        const roleMap = new Map(userBooks.map(b => [b.guid, b.role]));
+
+        const books = await prisma.books.findMany({
+            where: { guid: { in: userBookGuids } },
+        });
 
         // Enrich each book with name and account count
         const enrichedBooks = await Promise.all(
@@ -36,6 +52,7 @@ export async function GET() {
                     description: book.description,
                     rootAccountGuid: book.root_account_guid,
                     accountCount: Number(accountCount[0]?.count || 0),
+                    role: roleMap.get(book.guid),
                 };
             })
         );
@@ -53,6 +70,9 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
     try {
+        const authResult = await requireAuth();
+        if (authResult instanceof NextResponse) return authResult;
+
         const body = await request.json();
         const { name, description } = body;
 

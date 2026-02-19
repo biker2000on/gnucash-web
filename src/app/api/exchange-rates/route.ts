@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimal } from '@/lib/prisma';
 import { getAllExchangeRates, getBaseCurrency, getCurrencyByMnemonic } from '@/lib/currency';
 import { z } from 'zod';
+import { requireRole } from '@/lib/auth';
 
 // Schema for creating a new exchange rate
 const CreateExchangeRateSchema = z.object({
@@ -15,6 +16,9 @@ const CreateExchangeRateSchema = z.object({
 
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { searchParams } = new URL(request.url);
         const baseCurrency = searchParams.get('base') || 'USD';
 
@@ -54,6 +58,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const body = await request.json();
         const parseResult = CreateExchangeRateSchema.safeParse(body);
 

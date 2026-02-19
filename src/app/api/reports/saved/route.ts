@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { listSavedReports, createSavedReport } from '@/lib/reports/saved-reports';
 import { ReportType } from '@/lib/reports/types';
 
@@ -9,12 +9,10 @@ import { ReportType } from '@/lib/reports/types';
  */
 export async function GET() {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
 
-        const reports = await listSavedReports(user.id);
+        const reports = await listSavedReports(roleResult.user.id);
         return NextResponse.json(reports);
     } catch (error) {
         console.error('Error listing saved reports:', error);
@@ -28,10 +26,8 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
     try {
-        const user = await getCurrentUser();
-        if (!user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
         const { name, baseReportType, description, config, filters, isStarred } = body;
@@ -44,7 +40,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'baseReportType is required' }, { status: 400 });
         }
 
-        const report = await createSavedReport(user.id, {
+        const report = await createSavedReport(roleResult.user.id, {
             name: name.trim(),
             baseReportType: baseReportType as ReportType,
             description,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService, UpdateBudgetSchema } from '@/lib/services/budget.service';
+import { requireRole } from '@/lib/auth';
 
 /**
  * @openapi
@@ -23,6 +24,9 @@ export async function GET(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         const budget = await BudgetService.getById(guid);
@@ -72,6 +76,9 @@ export async function PUT(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const body = await request.json();
 
@@ -119,6 +126,9 @@ export async function DELETE(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         const result = await BudgetService.delete(guid);

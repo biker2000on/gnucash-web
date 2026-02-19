@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService, CreateBudgetSchema } from '@/lib/services/budget.service';
+import { requireRole } from '@/lib/auth';
 
 /**
  * @openapi
@@ -12,6 +13,9 @@ import { BudgetService, CreateBudgetSchema } from '@/lib/services/budget.service
  */
 export async function GET() {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const budgets = await BudgetService.list();
         return NextResponse.json(budgets);
     } catch (error) {
@@ -51,6 +55,9 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const body = await request.json();
 
         const parseResult = CreateBudgetSchema.safeParse(body);

@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ChartReportData, ReportType } from '@/lib/reports/types';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
 
         // Proxy to dashboard income-expense API

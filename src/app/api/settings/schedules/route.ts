@@ -1,17 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { getPreference, setPreference } from '@/lib/user-preferences';
 import { scheduleRefreshPrices } from '@/lib/queue/queues';
 
 export async function GET() {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+    const roleResult = await requireRole('admin');
+    if (roleResult instanceof NextResponse) return roleResult;
 
-    const enabled = await getPreference<boolean | string>(user.id, 'refresh_enabled', false);
-    const intervalHours = await getPreference<number | string>(user.id, 'refresh_interval_hours', 24);
+    const enabled = await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
+    const intervalHours = await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24);
 
     return NextResponse.json({
       enabled: enabled === true || enabled === 'true',
@@ -28,22 +26,20 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-    }
+    const roleResult = await requireRole('admin');
+    if (roleResult instanceof NextResponse) return roleResult;
 
     const body = await request.json();
     const { enabled, intervalHours } = body;
 
     if (enabled !== undefined) {
-      await setPreference(user.id, 'refresh_enabled', enabled);
+      await setPreference(roleResult.user.id, 'refresh_enabled', enabled);
     }
 
     if (intervalHours !== undefined) {
-      await setPreference(user.id, 'refresh_interval_hours', intervalHours);
+      await setPreference(roleResult.user.id, 'refresh_interval_hours', intervalHours);
       // Only reschedule if enabled
-      const isEnabled = enabled !== undefined ? enabled : await getPreference<boolean | string>(user.id, 'refresh_enabled', false);
+      const isEnabled = enabled !== undefined ? enabled : await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
       if (isEnabled === true || isEnabled === 'true') {
         await scheduleRefreshPrices(intervalHours);
       }

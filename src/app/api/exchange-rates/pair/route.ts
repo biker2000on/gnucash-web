@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findExchangeRate } from '@/lib/currency';
+import { requireRole } from '@/lib/auth';
 
 /**
  * GET /api/exchange-rates/pair?from={commodity_guid}&to={commodity_guid}[&date={YYYY-MM-DD}]
@@ -8,6 +9,9 @@ import { findExchangeRate } from '@/lib/currency';
  */
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { searchParams } = new URL(request.url);
         const fromGuid = searchParams.get('from');
         const toGuid = searchParams.get('to');

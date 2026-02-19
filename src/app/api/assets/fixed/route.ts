@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 interface FixedAssetAccount {
   guid: string;
@@ -30,6 +31,9 @@ interface FixedAssetAccount {
 
 export async function GET() {
   try {
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     const bookAccountGuids = await getBookAccountGuids();
 
     // Find all ASSET-type accounts in the current book that are NOT placeholder accounts

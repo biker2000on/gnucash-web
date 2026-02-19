@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { BalanceReversal } from '@/lib/format';
 import { getAllPreferences, setPreferences, getChartDefaults, getPreference, setPreference } from '@/lib/user-preferences';
@@ -15,30 +15,27 @@ const VALID_BALANCE_REVERSALS: BalanceReversal[] = ['none', 'credit', 'income_ex
  */
 export async function GET(request: NextRequest) {
     try {
-        const currentUser = await getCurrentUser();
-
-        if (!currentUser) {
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-        }
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const keyParam = request.nextUrl.searchParams.get('key');
 
         // If key=chart_defaults, return structured chart defaults
         if (keyParam === 'chart_defaults') {
-            const defaults = await getChartDefaults(currentUser.id);
+            const defaults = await getChartDefaults(roleResult.user.id);
             return NextResponse.json(defaults);
         }
 
         // If key param provided with wildcard, return matching key-value preferences
         if (keyParam) {
             const prefix = keyParam.replace(/\.\*$/, '.');
-            const prefs = await getAllPreferences(currentUser.id, prefix);
+            const prefs = await getAllPreferences(roleResult.user.id, prefix);
             return NextResponse.json({ preferences: prefs });
         }
 
         // Default: return legacy balanceReversal and tax rate
         const user = await prisma.gnucash_web_users.findUnique({
-            where: { id: currentUser.id },
+            where: { id: roleResult.user.id },
             select: {
                 balance_reversal: true,
             },
@@ -49,7 +46,7 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch tax rate from key-value preferences
-        const taxRatePref = await getPreference(currentUser.id, 'default_tax_rate', 0);
+        const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
 
         return NextResponse.json({
             balanceReversal: user.balance_reversal || 'none',
@@ -67,11 +64,8 @@ export async function GET(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
     try {
-        const currentUser = await getCurrentUser();
-
-        if (!currentUser) {
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-        }
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
         const { balanceReversal, defaultTaxRate } = body;
@@ -101,7 +95,7 @@ export async function PATCH(request: NextRequest) {
         let updatedBalanceReversal = balanceReversal;
         if (balanceReversal !== undefined) {
             const updatedUser = await prisma.gnucash_web_users.update({
-                where: { id: currentUser.id },
+                where: { id: roleResult.user.id },
                 data: {
                     balance_reversal: balanceReversal,
                 },
@@ -114,15 +108,15 @@ export async function PATCH(request: NextRequest) {
 
         // Update tax rate if provided
         if (defaultTaxRate !== undefined) {
-            await setPreference(currentUser.id, 'default_tax_rate', parseFloat(defaultTaxRate));
+            await setPreference(roleResult.user.id, 'default_tax_rate', parseFloat(defaultTaxRate));
         }
 
         // Fetch current values for response
         const user = await prisma.gnucash_web_users.findUnique({
-            where: { id: currentUser.id },
+            where: { id: roleResult.user.id },
             select: { balance_reversal: true },
         });
-        const taxRatePref = await getPreference(currentUser.id, 'default_tax_rate', 0);
+        const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
 
         return NextResponse.json({
             balanceReversal: updatedBalanceReversal || user?.balance_reversal || 'none',
@@ -141,11 +135,8 @@ export async function PATCH(request: NextRequest) {
  */
 export async function PUT(request: NextRequest) {
     try {
-        const currentUser = await getCurrentUser();
-
-        if (!currentUser) {
-            return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-        }
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
         const { preferences } = body;
@@ -157,7 +148,7 @@ export async function PUT(request: NextRequest) {
             );
         }
 
-        await setPreferences(currentUser.id, preferences);
+        await setPreferences(roleResult.user.id, preferences);
 
         return NextResponse.json({ success: true });
     } catch (error) {

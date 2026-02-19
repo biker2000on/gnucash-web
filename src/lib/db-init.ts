@@ -262,6 +262,20 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_depreciation_schedules_account ON gnucash_web_depreciation_schedules(account_guid);
     `;
 
+    const transactionMetaTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_transaction_meta (
+            id SERIAL PRIMARY KEY,
+            transaction_guid VARCHAR(32) NOT NULL UNIQUE,
+            source VARCHAR(50) NOT NULL DEFAULT 'manual',
+            reviewed BOOLEAN NOT NULL DEFAULT TRUE,
+            imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            simplefin_transaction_id VARCHAR(255),
+            confidence VARCHAR(20)
+        );
+        CREATE INDEX IF NOT EXISTS idx_txn_meta_source ON gnucash_web_transaction_meta(source) WHERE source != 'manual';
+        CREATE INDEX IF NOT EXISTS idx_txn_meta_simplefin_id ON gnucash_web_transaction_meta(simplefin_transaction_id) WHERE simplefin_transaction_id IS NOT NULL;
+    `;
+
     const userPreferencesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_user_preferences (
             id SERIAL PRIMARY KEY,
@@ -274,6 +288,86 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON gnucash_web_user_preferences(user_id);
     `;
 
+    const rolesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_roles (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(50) UNIQUE NOT NULL,
+            description TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Seed default roles
+        INSERT INTO gnucash_web_roles (name, description)
+        VALUES
+            ('readonly', 'View-only access to book data and reports'),
+            ('edit', 'Can create, edit, and delete transactions, budgets, and accounts'),
+            ('admin', 'Full access including user management and book administration')
+        ON CONFLICT (name) DO NOTHING;
+    `;
+
+    const bookPermissionsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_book_permissions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+            book_guid VARCHAR(32) NOT NULL,
+            role_id INTEGER NOT NULL REFERENCES gnucash_web_roles(id),
+            granted_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+            granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, book_guid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bp_user_book ON gnucash_web_book_permissions(user_id, book_guid);
+        CREATE INDEX IF NOT EXISTS idx_bp_book_role ON gnucash_web_book_permissions(book_guid, role_id);
+    `;
+
+    const invitationsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_invitations (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(64) UNIQUE NOT NULL,
+            book_guid VARCHAR(32) NOT NULL,
+            role_id INTEGER NOT NULL REFERENCES gnucash_web_roles(id),
+            created_by INTEGER NOT NULL REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            used_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+            used_at TIMESTAMP,
+            max_uses INTEGER DEFAULT 1,
+            use_count INTEGER DEFAULT 0,
+            is_revoked BOOLEAN DEFAULT FALSE,
+            revoked_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+            revoked_at TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_inv_code ON gnucash_web_invitations(code);
+        CREATE INDEX IF NOT EXISTS idx_inv_book ON gnucash_web_invitations(book_guid, is_revoked);
+    `;
+
+    const simpleFinConnectionsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_simplefin_connections (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+            book_guid VARCHAR(32) NOT NULL,
+            access_url_encrypted TEXT NOT NULL,
+            last_sync_at TIMESTAMP,
+            sync_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, book_guid)
+        );
+    `;
+
+    const simpleFinAccountMapTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_simplefin_account_map (
+            id SERIAL PRIMARY KEY,
+            connection_id INTEGER NOT NULL REFERENCES gnucash_web_simplefin_connections(id) ON DELETE CASCADE,
+            simplefin_account_id VARCHAR(255) NOT NULL,
+            simplefin_account_name VARCHAR(255),
+            simplefin_institution VARCHAR(255),
+            simplefin_last4 VARCHAR(4),
+            gnucash_account_guid VARCHAR(32),
+            last_sync_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(connection_id, simplefin_account_id)
+        );
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -284,6 +378,28 @@ async function createExtensionTables() {
         await query(commodityMetadataTableDDL);
         await query(depreciationSchedulesTableDDL);
         await query(userPreferencesTableDDL);
+        await query(transactionMetaTableDDL);
+        await query(rolesTableDDL);
+        await query(bookPermissionsTableDDL);
+        await query(invitationsTableDDL);
+        await query(simpleFinConnectionsTableDDL);
+        await query(simpleFinAccountMapTableDDL);
+
+        // Backfill: grant admin on all books to existing users with no permissions
+        await query(`
+            INSERT INTO gnucash_web_book_permissions (user_id, book_guid, role_id, granted_by, granted_at)
+            SELECT u.id, b.guid,
+                (SELECT id FROM gnucash_web_roles WHERE name = 'admin'),
+                u.id, NOW()
+            FROM gnucash_web_users u
+            CROSS JOIN books b
+            WHERE NOT EXISTS (
+                SELECT 1 FROM gnucash_web_book_permissions bp
+                WHERE bp.user_id = u.id AND bp.book_guid = b.guid
+            )
+            ON CONFLICT (user_id, book_guid) DO NOTHING;
+        `);
+
         console.log('✓ Extension tables created/verified successfully');
     } catch (error) {
         console.error('Error creating extension tables:', error);

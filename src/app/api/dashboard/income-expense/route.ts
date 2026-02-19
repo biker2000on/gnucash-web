@@ -5,6 +5,7 @@ import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import { cacheGet, cacheSet } from '@/lib/cache';
+import { requireRole } from '@/lib/auth';
 
 /**
  * Build a full path for an account by traversing its parent chain.
@@ -39,6 +40,9 @@ function isTaxAccount(path: string): boolean {
 
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
         const startDateParam = searchParams.get('startDate');
         const endDateParam = searchParams.get('endDate');

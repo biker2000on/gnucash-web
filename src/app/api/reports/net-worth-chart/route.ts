@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ChartReportData, ReportType } from '@/lib/reports/types';
+import { requireRole } from '@/lib/auth';
 
 /**
  * Net Worth Chart Report API
@@ -9,6 +10,9 @@ import { ChartReportData, ReportType } from '@/lib/reports/types';
  */
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
         const startDateParam = searchParams.get('startDate');
         const endDateParam = searchParams.get('endDate');

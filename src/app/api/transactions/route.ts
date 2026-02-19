@@ -8,6 +8,7 @@ import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { requireRole } from '@/lib/auth';
 
 /**
  * @openapi
@@ -76,6 +77,9 @@ import { cacheInvalidateFrom } from '@/lib/cache';
  */
 export async function GET(request: Request) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { searchParams } = new URL(request.url);
         const limit = parseInt(searchParams.get('limit') || '100');
         const offset = parseInt(searchParams.get('offset') || '0');
@@ -258,6 +262,9 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const body: CreateTransactionRequest = await request.json();
 
         // Validate the transaction

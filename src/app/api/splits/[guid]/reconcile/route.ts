@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
+import { requireRole } from '@/lib/auth';
 
 interface ReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
@@ -49,6 +50,9 @@ export async function PATCH(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const body: ReconcileBody = await request.json();
 
@@ -118,6 +122,9 @@ export async function POST(
     request: Request
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const body = await request.json();
         const { splits, reconcile_state, reconcile_date } = body;
 

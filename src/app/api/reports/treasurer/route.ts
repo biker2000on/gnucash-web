@@ -5,6 +5,7 @@ import { getBookAccountGuids } from '@/lib/book-scope';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import { TreasurerReportData } from '@/lib/reports/types';
 import { getEffectiveStartDate } from '@/lib/date-utils';
+import { requireRole } from '@/lib/auth';
 
 function toNumber(num: bigint | null, denom: bigint | null): number {
     if (num === null || denom === null || denom === 0n) return 0;
@@ -233,6 +234,9 @@ async function getTransactionsByType(
 
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { searchParams } = new URL(request.url);
         const bookAccountGuids = await getBookAccountGuids();
         const baseCurrency = await getBaseCurrency();

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma, { toDecimal } from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getIndexHistory, normalizeToPercent, IndexPriceData } from '@/lib/market-index-service';
+import { requireRole } from '@/lib/auth';
 
 interface HistoryPoint {
   date: string;
@@ -27,6 +28,9 @@ interface InvestmentHistoryResponse {
  * - accountGuids: optional comma-separated account GUIDs to filter (default: all investment accounts)
  */
 export async function GET(request: NextRequest) {
+  const roleResult = await requireRole('readonly');
+  if (roleResult instanceof NextResponse) return roleResult;
+
   const searchParams = request.nextUrl.searchParams;
   const days = parseInt(searchParams.get('days') || '365', 10);
   const accountGuidsParam = searchParams.get('accountGuids');

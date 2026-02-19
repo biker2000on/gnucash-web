@@ -6,6 +6,7 @@ import { Account, AccountWithChildren } from '@/lib/types';
 import { Prisma } from '@prisma/client';
 import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
 import { getBookAccountGuids, getActiveBookRootGuid } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 /**
  * @openapi
@@ -42,6 +43,9 @@ import { getBookAccountGuids, getActiveBookRootGuid } from '@/lib/book-scope';
  */
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
@@ -298,6 +302,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const body = await request.json();
 
         // Validate input

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { registerUser, createSession } from '@/lib/auth';
 import { z } from 'zod';
+import prisma from '@/lib/prisma';
+import { grantRole } from '@/lib/services/permission.service';
 
 const RegisterSchema = z.object({
     username: z.string().min(3, 'Username must be at least 3 characters').max(50),
@@ -24,6 +26,19 @@ export async function POST(request: NextRequest) {
         try {
             const user = await registerUser(username, password);
             await createSession(user.id, user.username);
+
+            // Bootstrap RBAC: grant readonly on all existing books
+            try {
+                const books = await prisma.$queryRaw<{ guid: string }[]>`
+                    SELECT guid FROM books
+                `;
+                for (const book of books) {
+                    await grantRole(user.id, book.guid, 'readonly', user.id);
+                }
+            } catch (rbacError) {
+                console.error('Failed to bootstrap RBAC for new user:', rbacError);
+                // Don't fail registration if RBAC bootstrap fails
+            }
 
             return NextResponse.json({
                 success: true,

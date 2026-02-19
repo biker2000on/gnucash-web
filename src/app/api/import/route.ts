@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseGnuCashXml } from '@/lib/gnucash-xml/parser';
 import { importGnuCashData } from '@/lib/gnucash-xml/importer';
+import { requireRole } from '@/lib/auth';
 
 /**
  * POST /api/import
@@ -11,6 +12,9 @@ import { importGnuCashData } from '@/lib/gnucash-xml/importer';
  */
 export async function POST(request: NextRequest) {
   try {
+    const roleResult = await requireRole('admin');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     const formData = await request.formData();
     const file = formData.get('file') as File;
 

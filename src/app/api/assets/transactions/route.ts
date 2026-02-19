@@ -12,9 +12,13 @@ import {
   adjustToTargetValue,
   processDepreciationSchedule,
 } from '@/lib/asset-transaction-service';
+import { requireRole } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     const action = request.nextUrl.searchParams.get('action');
     const body = await request.json();
 

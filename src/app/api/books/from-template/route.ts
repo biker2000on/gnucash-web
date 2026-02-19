@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { getTemplate, flattenTemplate } from '@/lib/account-templates';
+import { requireAuth } from '@/lib/auth';
+import { grantRole } from '@/lib/services/permission.service';
 
 /**
  * POST /api/books/from-template
@@ -11,6 +13,10 @@ import { getTemplate, flattenTemplate } from '@/lib/account-templates';
  */
 export async function POST(request: NextRequest) {
   try {
+    const authResult = await requireAuth();
+    if (authResult instanceof NextResponse) return authResult;
+    const { user } = authResult;
+
     const body = await request.json();
     const { name, description, currency, locale, templateId } = body;
 
@@ -165,6 +171,9 @@ export async function POST(request: NextRequest) {
         }
       }
     });
+
+    // Grant admin role to the creating user
+    await grantRole(user.id, bookGuid, 'admin', user.id);
 
     const accountCount = templateAccounts.length > 0
       ? templateAccounts.length

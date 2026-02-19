@@ -7,12 +7,16 @@ import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { requireRole } from '@/lib/auth';
 
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify transaction belongs to active book
@@ -99,8 +103,13 @@ export async function PUT(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
-        const body: CreateTransactionRequest = await request.json();
+        const rawBody = await request.json();
+        const { original_enter_date, ...bodyData } = rawBody;
+        const body: CreateTransactionRequest = bodyData;
 
         // Validate the transaction
         const validation = validateTransaction(body);
@@ -117,6 +126,17 @@ export async function PUT(
         });
         if (!existingTx) {
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+        }
+
+        // Optimistic locking: check enter_date hasn't changed since the client read it
+        if (original_enter_date && existingTx.enter_date) {
+            const currentEnterDate = existingTx.enter_date.toISOString();
+            if (currentEnterDate !== original_enter_date) {
+                return NextResponse.json(
+                    { error: 'Transaction was modified by another user. Please refresh and try again.' },
+                    { status: 409 }
+                );
+            }
         }
 
         // Verify all account GUIDs exist
@@ -151,13 +171,14 @@ export async function PUT(
             const allSplits = multiCurrencyResult.allSplits;
             totalSplitsCount = allSplits.length;
 
-            // Update transaction
+            // Update transaction (enter_date updated for optimistic locking)
             await tx.transactions.update({
                 where: { guid },
                 data: {
                     currency_guid: body.currency_guid,
                     num: body.num || '',
                     post_date: new Date(body.post_date),
+                    enter_date: new Date(),
                     description: body.description,
                 },
             });
@@ -275,6 +296,9 @@ export async function DELETE(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         // Verify transaction exists and capture values for audit

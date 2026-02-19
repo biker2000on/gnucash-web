@@ -4,6 +4,7 @@ import { getAccountHoldings } from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getCachedMetadata, getPortfolioSectorExposure } from '@/lib/commodity-metadata';
 import type { SectorExposure } from '@/lib/commodity-metadata';
+import { requireRole } from '@/lib/auth';
 
 interface CashByAccount {
   parentGuid: string;
@@ -111,6 +112,9 @@ function buildAccountPathFromMap(
 
 export async function GET() {
   try {
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     // Get book account GUIDs for scoping
     const bookAccountGuids = await getBookAccountGuids();
 

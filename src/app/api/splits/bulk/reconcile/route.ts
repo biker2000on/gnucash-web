@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireRole } from '@/lib/auth';
 
 interface BulkReconcileBody {
     splits: string[];
@@ -45,6 +46,9 @@ interface BulkReconcileBody {
  */
 export async function POST(request: Request) {
     try {
+        const roleResult = await requireRole('edit');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const body: BulkReconcileBody = await request.json();
 
         // Validate input

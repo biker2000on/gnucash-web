@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireAuth, requireRole } from '@/lib/auth';
 
 /**
  * GET /api/books/[guid]
@@ -10,6 +11,9 @@ export async function GET(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const authResult = await requireAuth();
+        if (authResult instanceof NextResponse) return authResult;
+
         const { guid } = await params;
 
         const book = await prisma.books.findUnique({
@@ -59,6 +63,9 @@ export async function PUT(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('admin');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
         const body = await request.json();
         const { name, description } = body;
@@ -120,6 +127,9 @@ export async function DELETE(
     { params }: { params: Promise<{ guid: string }> }
 ) {
     try {
+        const roleResult = await requireRole('admin');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const { guid } = await params;
 
         const book = await prisma.books.findUnique({

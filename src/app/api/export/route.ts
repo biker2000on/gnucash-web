@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { exportBookData } from '@/lib/gnucash-xml/exporter';
 import { buildGnuCashXml, compressGnuCashXml } from '@/lib/gnucash-xml/builder';
 import { getActiveBookRootGuid } from '@/lib/book-scope';
+import { requireRole } from '@/lib/auth';
 
 /**
  * GET /api/export
@@ -11,6 +12,9 @@ import { getActiveBookRootGuid } from '@/lib/book-scope';
  */
 export async function GET() {
   try {
+    const roleResult = await requireRole('admin');
+    if (roleResult instanceof NextResponse) return roleResult;
+
     // Get the active book's root account
     const rootAccountGuid = await getActiveBookRootGuid();
 

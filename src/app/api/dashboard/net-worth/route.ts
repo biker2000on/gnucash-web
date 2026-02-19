@@ -5,6 +5,7 @@ import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency } from '@/lib/currency';
 import { cacheGet, cacheSet } from '@/lib/cache';
+import { requireRole } from '@/lib/auth';
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
@@ -32,6 +33,9 @@ function generateMonthlyDatePoints(start: Date, end: Date): Date[] {
 
 export async function GET(request: NextRequest) {
     try {
+        const roleResult = await requireRole('readonly');
+        if (roleResult instanceof NextResponse) return roleResult;
+
         const searchParams = request.nextUrl.searchParams;
         const startDateParam = searchParams.get('startDate');
         const endDateParam = searchParams.get('endDate');
