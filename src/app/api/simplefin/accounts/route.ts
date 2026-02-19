@@ -35,8 +35,9 @@ export async function GET() {
       simplefin_account_id: string;
       gnucash_account_guid: string | null;
       last_sync_at: Date | null;
+      is_investment: boolean;
     }[]>`
-      SELECT simplefin_account_id, gnucash_account_guid, last_sync_at
+      SELECT simplefin_account_id, gnucash_account_guid, last_sync_at, is_investment
       FROM gnucash_web_simplefin_account_map
       WHERE connection_id = ${connection.id}
     `;
@@ -55,6 +56,8 @@ export async function GET() {
         gnucashAccountGuid: mapping?.gnucash_account_guid || null,
         lastSyncAt: mapping?.last_sync_at || null,
         isMapped: !!mapping?.gnucash_account_guid,
+        hasHoldings: Array.isArray(acc.holdings) && acc.holdings.length > 0,
+        isInvestment: mapping?.is_investment ?? false,
       };
     });
 
