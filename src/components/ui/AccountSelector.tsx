@@ -63,15 +63,28 @@ export function AccountSelector({
         }
     }, [value, accounts]);
 
-    // Calculate dropdown position when opening
+    // Calculate dropdown position when opening — flip upward if near bottom
     useEffect(() => {
         if (isOpen && containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
+            const maxDropdownHeight = 256; // max-h-64 = 16rem = 256px
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            const openUpward = spaceBelow < maxDropdownHeight && spaceAbove > spaceBelow;
+
+            const minWidth = 360;
+            const dropdownWidth = Math.max(rect.width, minWidth);
+            // Clamp left so the dropdown doesn't overflow the right edge of the viewport
+            const maxLeft = window.innerWidth - dropdownWidth - 8;
+            const left = Math.max(8, Math.min(rect.left, maxLeft));
+
             setDropdownStyle({
                 position: 'fixed',
-                top: rect.bottom + 4,
-                left: rect.left,
-                width: rect.width,
+                ...(openUpward
+                    ? { bottom: window.innerHeight - rect.top + 4 }
+                    : { top: rect.bottom + 4 }),
+                left,
+                width: dropdownWidth,
                 zIndex: 99999,
             });
         }
@@ -262,10 +275,12 @@ export function AccountSelector({
                                             <div
                                                 key={account.guid}
                                                 ref={el => { itemRefs.current[currentIndex] = el; }}
-                                                className={`px-3 py-2 cursor-pointer hover:bg-surface-hover/50 ${
-                                                    currentIndex === focusedIndex ? 'bg-blue-100 dark:bg-blue-900' : ''
-                                                } ${
-                                                    account.guid === value ? 'bg-cyan-500/10 text-cyan-400' : 'text-foreground'
+                                                className={`px-3 py-2 cursor-pointer text-foreground hover:bg-surface-hover/50 ${
+                                                    currentIndex === focusedIndex
+                                                        ? 'bg-cyan-500/20'
+                                                        : account.guid === value
+                                                            ? 'bg-cyan-500/10'
+                                                            : ''
                                                 }`}
                                                 onClick={() => handleSelect(account)}
                                             >
