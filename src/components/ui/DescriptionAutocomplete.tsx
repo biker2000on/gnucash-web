@@ -232,7 +232,7 @@ export function DescriptionAutocomplete({
                 key={index}
                 ref={el => { itemRefs.current[index] = el; }}
                 className={`px-3 py-2 cursor-pointer hover:bg-surface-hover/50 ${
-                  index === focusedIndex ? 'bg-blue-100 dark:bg-blue-900' : ''
+                  index === focusedIndex ? 'bg-cyan-500/20' : ''
                 }`}
                 onClick={() => handleSelect(suggestion)}
               >
