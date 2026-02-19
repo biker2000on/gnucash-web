@@ -6,31 +6,17 @@
  */
 
 import bcrypt from 'bcrypt';
-import { getIronSession, IronSession, SessionOptions } from 'iron-session';
+import { getIronSession, IronSession } from 'iron-session';
 import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
 import prisma from './prisma';
+import { SessionData, sessionOptions } from './session-config';
+import { getUserRoleForBook, type Role } from './services/permission.service';
+
+export type { SessionData };
+export type { Role };
 
 const SALT_ROUNDS = 10;
-
-// Session data structure
-export interface SessionData {
-    userId?: number;
-    username?: string;
-    isLoggedIn: boolean;
-    activeBookGuid?: string;
-}
-
-// Session configuration
-const sessionOptions: SessionOptions = {
-    password: process.env.SESSION_SECRET || 'complex_password_at_least_32_characters_long_12345',
-    cookieName: 'gnucash_web_session',
-    cookieOptions: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 60 * 60 * 24, // 24 hours
-    },
-};
 
 /**
  * Get the current session
@@ -151,4 +137,61 @@ export async function authenticateUser(username: string, password: string): Prom
     });
 
     return { id: user.id, username: user.username };
+}
+
+/**
+ * Require authentication. Returns user or 401 response.
+ * Used in API route handlers (middleware already checked auth,
+ * but this provides the user object + active book context).
+ */
+export async function requireAuth(): Promise<
+  { user: { id: number; username: string }; session: IronSession<SessionData> } |
+  NextResponse
+> {
+    const session = await getSession();
+    if (!session.isLoggedIn || !session.userId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const user = await prisma.gnucash_web_users.findUnique({
+        where: { id: session.userId },
+        select: { id: true, username: true },
+    });
+    if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return { user, session };
+}
+
+/**
+ * Require a minimum role for the active book. Returns user + role or error response.
+ * The middleware guarantees authentication; this function adds authorization.
+ */
+export async function requireRole(minimumRole: Role): Promise<
+  { user: { id: number; username: string }; role: Role; bookGuid: string } |
+  NextResponse
+> {
+    const authResult = await requireAuth();
+    if (authResult instanceof NextResponse) return authResult;
+
+    const { user, session } = authResult;
+    const bookGuid = session.activeBookGuid;
+
+    if (!bookGuid) {
+        return NextResponse.json({ error: 'No active book selected' }, { status: 400 });
+    }
+
+    const userRole = await getUserRoleForBook(user.id, bookGuid);
+    if (!userRole) {
+        return NextResponse.json({ error: 'No access to this book' }, { status: 403 });
+    }
+
+    const ROLE_HIERARCHY: Record<string, number> = { readonly: 0, edit: 1, admin: 2 };
+    if (ROLE_HIERARCHY[userRole] < ROLE_HIERARCHY[minimumRole]) {
+        return NextResponse.json(
+            { error: `Requires ${minimumRole} role, you have ${userRole}` },
+            { status: 403 }
+        );
+    }
+
+    return { user, role: userRole, bookGuid };
 }

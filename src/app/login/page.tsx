@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { LoginForm } from '@/components/LoginForm';
 
-export default function LoginPage() {
+function LoginPageContent() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const redirectTo = searchParams.get('redirect') || '/accounts';
     const [mode, setMode] = useState<'login' | 'register'>('login');
     const [checking, setChecking] = useState(true);
 
@@ -15,7 +17,7 @@ export default function LoginPage() {
             try {
                 const res = await fetch('/api/auth/me');
                 if (res.ok) {
-                    router.push('/accounts');
+                    router.push(redirectTo);
                     return;
                 }
             } catch {
@@ -24,7 +26,7 @@ export default function LoginPage() {
             setChecking(false);
         }
         checkAuth();
-    }, [router]);
+    }, [router, redirectTo]);
 
     if (checking) {
         return (
@@ -39,7 +41,20 @@ export default function LoginPage() {
             <LoginForm
                 mode={mode}
                 onToggleMode={() => setMode(mode === 'login' ? 'register' : 'login')}
+                redirectTo={redirectTo}
             />
         </div>
+    );
+}
+
+export default function LoginPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen bg-background flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+            </div>
+        }>
+            <LoginPageContent />
+        </Suspense>
     );
 }

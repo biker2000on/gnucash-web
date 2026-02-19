@@ -6,9 +6,10 @@ import { useRouter } from 'next/navigation';
 interface LoginFormProps {
     mode: 'login' | 'register';
     onToggleMode: () => void;
+    redirectTo?: string;
 }
 
-export function LoginForm({ mode, onToggleMode }: LoginFormProps) {
+export function LoginForm({ mode, onToggleMode, redirectTo = '/accounts' }: LoginFormProps) {
     const router = useRouter();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -41,8 +42,8 @@ export function LoginForm({ mode, onToggleMode }: LoginFormProps) {
                 throw new Error(data.error || 'Authentication failed');
             }
 
-            // Redirect to main page on success
-            router.push('/accounts');
+            // Redirect to original page (or default) on success
+            router.push(redirectTo);
             router.refresh();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
