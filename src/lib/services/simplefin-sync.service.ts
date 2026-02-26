@@ -247,12 +247,22 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
         }
       }
 
-      // Update last_sync_at on the account mapping
-      await prisma.$executeRaw`
-        UPDATE gnucash_web_simplefin_account_map
-        SET last_sync_at = NOW()
-        WHERE id = ${mappedAccount.id}
-      `;
+      // Update last_sync_at and balance on the account mapping
+      if (sfAccount.balance !== undefined) {
+        await prisma.$executeRaw`
+          UPDATE gnucash_web_simplefin_account_map
+          SET last_balance = ${parseFloat(sfAccount.balance)},
+              last_balance_date = NOW(),
+              last_sync_at = NOW()
+          WHERE id = ${mappedAccount.id}
+        `;
+      } else {
+        await prisma.$executeRaw`
+          UPDATE gnucash_web_simplefin_account_map
+          SET last_sync_at = NOW()
+          WHERE id = ${mappedAccount.id}
+        `;
+      }
     } catch (err) {
       result.errors.push({
         account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
