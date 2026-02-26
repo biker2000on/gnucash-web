@@ -312,6 +312,21 @@ export async function DELETE(
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }
 
+        // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
+        await prisma.$executeRaw`
+            UPDATE gnucash_web_transaction_meta
+            SET transaction_guid = NULL, deleted_at = NOW()
+            WHERE transaction_guid = ${guid}
+              AND simplefin_transaction_id IS NOT NULL
+        `;
+
+        // Clean up meta rows for non-SimpleFin transactions
+        await prisma.$executeRaw`
+            DELETE FROM gnucash_web_transaction_meta
+            WHERE transaction_guid = ${guid}
+              AND simplefin_transaction_id IS NULL
+        `;
+
         // Delete transaction (splits will be cascade deleted due to onDelete: Cascade in schema)
         await prisma.$transaction(async (tx) => {
             // Delete splits first (even though cascade should handle it)
