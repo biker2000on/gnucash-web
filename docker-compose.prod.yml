@@ -1,0 +1,66 @@
+# GnuCash Web - Production Docker Compose (TrueNAS)
+#
+# Uses pre-built images from ghcr.io with Watchtower auto-updates.
+#
+# Required: Create a .env file with:
+#   DATABASE_URL=postgresql://user:password@host:port/database
+#   NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
+#   NEXTAUTH_URL=http://<truenas-ip>:3000
+#   WATCHTOWER_REPO_USER=<github-username>
+#   WATCHTOWER_REPO_PASS=<github-pat-with-read:packages>
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml logs -f
+
+services:
+  app:
+    image: ghcr.io/biker2000on/gnucash-web:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  worker:
+    image: ghcr.io/biker2000on/gnucash-web:latest
+    command: ["npx", "tsx", "worker.ts"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_POLL_INTERVAL: 300
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      REPO_USER: ${WATCHTOWER_REPO_USER}
+      REPO_PASS: ${WATCHTOWER_REPO_PASS}
+    restart: unless-stopped
+
+volumes:
+  redis-data:
