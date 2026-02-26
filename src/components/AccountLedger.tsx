@@ -11,6 +11,12 @@ import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { InlineEditRow } from './InlineEditRow';
 import { useToast } from '@/contexts/ToastContext';
 import { toNumDenom } from '@/lib/validation';
+import {
+    useReactTable,
+    getCoreRowModel,
+    flexRender,
+} from '@tanstack/react-table';
+import { getColumns } from './ledger/columns';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -133,11 +139,12 @@ export default function AccountLedger({
         params.set('limit', '100');
         if (startDate) params.set('startDate', startDate);
         if (endDate) params.set('endDate', endDate);
+        if (showUnreviewedOnly) params.set('unreviewedOnly', 'true');
         Object.entries(extraParams).forEach(([key, value]) => {
             params.set(key, String(value));
         });
         return params.toString();
-    }, [startDate, endDate]);
+    }, [startDate, endDate, showUnreviewedOnly]);
 
     // Refresh transactions helper
     const fetchTransactions = useCallback(async () => {
@@ -286,6 +293,19 @@ export default function AccountLedger({
         return transactions.filter(tx => tx.reviewed === false);
     }, [transactions, showUnreviewedOnly]);
 
+    // TanStack Table setup
+    const columns = useMemo(() => getColumns({
+        accountGuid,
+        isReconciling,
+        isReviewMode: false, // will be wired up in review mode task
+    }), [accountGuid, isReconciling]);
+
+    const table = useReactTable({
+        data: displayTransactions,
+        columns,
+        getCoreRowModel: getCoreRowModel(),
+    });
+
     // Keyboard navigation handler
     const handleTableKeyDown = useCallback((e: KeyboardEvent) => {
         if (editingGuid) return; // Let InlineEditRow handle keys during edit
@@ -358,6 +378,15 @@ export default function AccountLedger({
         setOffset(initialTransactions.length);
         setHasMore(initialTransactions.length >= 100);
     }, [initialTransactions]);
+
+    // Reset and re-fetch when unreviewed filter changes
+    useEffect(() => {
+        setOffset(0);
+        setHasMore(true);
+        setFocusedRowIndex(-1);
+        fetchTransactions();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showUnreviewedOnly]);
 
     const toggleExpand = (guid: string) => {
         setExpandedTxs(prev => ({ ...prev, [guid]: !prev[guid] }));
@@ -457,18 +486,26 @@ export default function AccountLedger({
             <div className="overflow-x-auto">
                 <table ref={tableRef} className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="bg-background-secondary/50 text-foreground-secondary text-[10px] uppercase tracking-[0.2em] font-bold">
-                            {isReconciling && <th className="px-4 py-4 w-10"></th>}
-                            <th className="px-4 py-4 w-10">R</th>
-                            <th className="px-6 py-4">Date</th>
-                            <th className="px-6 py-4">Description</th>
-                            <th className="px-6 py-4">Transfer / Splits</th>
-                            <th className="px-6 py-4 text-right">Amount</th>
-                            <th className="px-6 py-4 text-right">Balance</th>
-                        </tr>
+                        {table.getHeaderGroups().map(headerGroup => (
+                            <tr key={headerGroup.id} className="bg-background-secondary/50 text-foreground-secondary text-[10px] uppercase tracking-[0.2em] font-bold">
+                                {headerGroup.headers.map(header => {
+                                    const colId = header.column.id;
+                                    if (colId === 'select') return <th key={header.id} className="px-4 py-4 w-10"></th>;
+                                    if (colId === 'reconcile') return <th key={header.id} className="px-4 py-4 w-10">R</th>;
+                                    if (colId === 'date') return <th key={header.id} className="px-6 py-4">Date</th>;
+                                    if (colId === 'description') return <th key={header.id} className="px-6 py-4">Description</th>;
+                                    if (colId === 'transfer') return <th key={header.id} className="px-6 py-4">Transfer / Splits</th>;
+                                    if (colId === 'amount') return <th key={header.id} className="px-6 py-4 text-right">Amount</th>;
+                                    if (colId === 'balance') return <th key={header.id} className="px-6 py-4 text-right">Balance</th>;
+                                    return <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
+                                })}
+                            </tr>
+                        ))}
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                        {displayTransactions.map((tx, index) => {
+                        {table.getRowModel().rows.map((row) => {
+                            const tx = row.original;
+                            const index = row.index;
                             const isMultiSplit = (tx.splits?.length || 0) > 2;
                             const isExpanded = expandedTxs[tx.guid];
                             const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
@@ -484,7 +521,7 @@ export default function AccountLedger({
                                         transaction={tx}
                                         accountGuid={accountGuid}
                                         accountType={accountType}
-                                        columnCount={isReconciling ? 7 : 6}
+                                        columnCount={row.getVisibleCells().length}
                                         onSave={handleInlineSave}
                                         onCancel={() => setEditingGuid(null)}
                                     />
@@ -493,7 +530,7 @@ export default function AccountLedger({
 
                             return (
                                 <tr
-                                    key={tx.guid}
+                                    key={row.id}
                                     className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-cyan-500/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
                                     onClick={(e) => {
                                         // Don't trigger on checkbox or button clicks
@@ -501,80 +538,118 @@ export default function AccountLedger({
                                         handleRowClick(tx.guid);
                                     }}
                                 >
-                                    {isReconciling && (
-                                        <td className="px-4 py-4 align-top">
-                                            {tx.account_split_reconcile_state !== 'y' && (
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={() => toggleSplitSelection(tx.account_split_guid)}
-                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
-                                                />
-                                            )}
-                                        </td>
-                                    )}
-                                    <td className="px-4 py-4 align-top">
-                                        <span
-                                            className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
-                                            title={reconcileInfo.label}
-                                        >
-                                            {reconcileInfo.icon}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-xs text-foreground-secondary align-top font-mono">
-                                        {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm text-foreground align-top">
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-medium">{tx.description}</span>
-                                            {tx.source && tx.source !== 'manual' && (
-                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
-                                                    Imported
-                                                </span>
-                                            )}
-                                        </div>
-                                        {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm align-top">
-                                        {isMultiSplit && !isExpanded ? (
-                                            <button
-                                                onClick={() => toggleExpand(tx.guid)}
-                                                className="text-foreground-muted hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
-                                            >
-                                                <span>-- Multiple Splits --</span>
-                                                <span className="text-[10px]">▼</span>
-                                            </button>
-                                        ) : (
-                                            <div className="space-y-1">
-                                                {otherSplits.map((split, idx) => (
-                                                    <div key={split.guid} className="flex justify-between items-center text-xs">
-                                                        <span className="text-foreground-secondary truncate max-w-[180px]">
-                                                            {split.account_name}
-                                                        </span>
-                                                        {isExpanded && (
-                                                            <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
-                                                                {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                    {row.getVisibleCells().map(cell => {
+                                        const colId = cell.column.id;
+
+                                        if (colId === 'select') {
+                                            return (
+                                                <td key={cell.id} className="px-4 py-4 align-top">
+                                                    {tx.account_split_reconcile_state !== 'y' && (
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isSelected}
+                                                            onChange={() => toggleSplitSelection(tx.account_split_guid)}
+                                                            className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
+                                                        />
+                                                    )}
+                                                </td>
+                                            );
+                                        }
+
+                                        if (colId === 'reconcile') {
+                                            return (
+                                                <td key={cell.id} className="px-4 py-4 align-top">
+                                                    <span
+                                                        className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
+                                                        title={reconcileInfo.label}
+                                                    >
+                                                        {reconcileInfo.icon}
+                                                    </span>
+                                                </td>
+                                            );
+                                        }
+
+                                        if (colId === 'date') {
+                                            return (
+                                                <td key={cell.id} className="px-6 py-4 whitespace-nowrap text-xs text-foreground-secondary align-top font-mono">
+                                                    {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                                                </td>
+                                            );
+                                        }
+
+                                        if (colId === 'description') {
+                                            return (
+                                                <td key={cell.id} className="px-6 py-4 text-sm text-foreground align-top">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-medium">{tx.description}</span>
+                                                        {tx.source && tx.source !== 'manual' && (
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
+                                                                Imported
                                                             </span>
                                                         )}
                                                     </div>
-                                                ))}
-                                                {isMultiSplit && isExpanded && (
-                                                    <button
-                                                        onClick={() => toggleExpand(tx.guid)}
-                                                        className="text-cyan-500/50 hover:text-cyan-400 transition-colors text-[10px] mt-1"
-                                                    >
-                                                        ▲ Show less
-                                                    </button>
-                                                )}
-                                            </div>
-                                        )}
-                                    </td>
-                                    <td className={`px-6 py-4 text-sm font-mono text-right align-top ${amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                        {formatCurrency(tx.account_split_value, tx.commodity_mnemonic)}
-                                    </td>
-                                    <td className={`px-6 py-4 text-sm font-mono text-right align-top font-bold ${applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                        {formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic)}
-                                    </td>
+                                                    {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
+                                                </td>
+                                            );
+                                        }
+
+                                        if (colId === 'transfer') {
+                                            return (
+                                                <td key={cell.id} className="px-6 py-4 text-sm align-top">
+                                                    {isMultiSplit && !isExpanded ? (
+                                                        <button
+                                                            onClick={() => toggleExpand(tx.guid)}
+                                                            className="text-foreground-muted hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
+                                                        >
+                                                            <span>-- Multiple Splits --</span>
+                                                            <span className="text-[10px]">&#9660;</span>
+                                                        </button>
+                                                    ) : (
+                                                        <div className="space-y-1">
+                                                            {otherSplits.map((split) => (
+                                                                <div key={split.guid} className="flex justify-between items-center text-xs">
+                                                                    <span className="text-foreground-secondary truncate max-w-[180px]">
+                                                                        {split.account_name}
+                                                                    </span>
+                                                                    {isExpanded && (
+                                                                        <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                            {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                            {isMultiSplit && isExpanded && (
+                                                                <button
+                                                                    onClick={() => toggleExpand(tx.guid)}
+                                                                    className="text-cyan-500/50 hover:text-cyan-400 transition-colors text-[10px] mt-1"
+                                                                >
+                                                                    &#9650; Show less
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            );
+                                        }
+
+                                        if (colId === 'amount') {
+                                            return (
+                                                <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top ${amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                    {formatCurrency(tx.account_split_value, tx.commodity_mnemonic)}
+                                                </td>
+                                            );
+                                        }
+
+                                        if (colId === 'balance') {
+                                            return (
+                                                <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400') : 'text-foreground-muted'}`}>
+                                                    {tx.running_balance ? formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic) : '\u2014'}
+                                                </td>
+                                            );
+                                        }
+
+                                        return <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>;
+                                    })}
                                 </tr>
                             );
                         })}
