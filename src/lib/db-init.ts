@@ -373,6 +373,32 @@ async function createExtensionTables() {
         ADD COLUMN IF NOT EXISTS is_investment BOOLEAN NOT NULL DEFAULT FALSE;
     `;
 
+    const transactionMetaAddDeletedAtDDL = `
+        ALTER TABLE gnucash_web_transaction_meta
+        ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+    `;
+
+    const transactionMetaNullableGuidDDL = `
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'gnucash_web_transaction_meta'
+                AND column_name = 'transaction_guid'
+                AND is_nullable = 'NO'
+            ) THEN
+                ALTER TABLE gnucash_web_transaction_meta
+                ALTER COLUMN transaction_guid DROP NOT NULL;
+            END IF;
+        END $$;
+    `;
+
+    const simpleFinAccountMapAddBalanceDDL = `
+        ALTER TABLE gnucash_web_simplefin_account_map
+        ADD COLUMN IF NOT EXISTS last_balance DECIMAL,
+        ADD COLUMN IF NOT EXISTS last_balance_date TIMESTAMP;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -390,6 +416,9 @@ async function createExtensionTables() {
         await query(simpleFinConnectionsTableDDL);
         await query(simpleFinAccountMapTableDDL);
         await query(simpleFinAccountMapAddInvestmentDDL);
+        await query(transactionMetaAddDeletedAtDDL);
+        await query(transactionMetaNullableGuidDDL);
+        await query(simpleFinAccountMapAddBalanceDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`
