@@ -11,7 +11,7 @@ export async function POST() {
 
     const { user, bookGuid } = roleResult;
 
-    const jobId = await enqueueJob('refresh-prices');
+    const jobId = await enqueueJob('refresh-prices', { userId: user.id, bookGuid });
 
     if (!jobId) {
       // No Redis configured, run directly

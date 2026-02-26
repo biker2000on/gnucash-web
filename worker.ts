@@ -1,7 +1,7 @@
 /**
  * GnuCash Web Background Worker
  *
- * Processes BullMQ jobs for price refresh, cache aggregation, and index backfill.
+ * Processes BullMQ jobs for price refresh, SimpleFin sync, cache aggregation, and index backfill.
  * Run as a separate process: npx tsx worker.ts
  */
 
@@ -45,6 +45,13 @@ async function main() {
           const { backfillIndexPrices } = await import('./src/lib/market-index-service');
           const results = await backfillIndexPrices();
           console.log(`Backfill results:`, results);
+          break;
+        }
+        case 'sync-simplefin': {
+          const { connectionId, bookGuid } = job.data as { connectionId: number; bookGuid: string };
+          const { syncSimpleFin } = await import('./src/lib/services/simplefin-sync.service');
+          const syncResult = await syncSimpleFin(connectionId, bookGuid);
+          console.log(`SimpleFin sync: ${syncResult.transactionsImported} imported, ${syncResult.transactionsSkipped} skipped, ${syncResult.investmentTransactionsImported} investment txns`);
           break;
         }
         default:
