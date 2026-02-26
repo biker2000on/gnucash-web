@@ -59,6 +59,7 @@ export default function AccountLedger({
     // Reconciliation state
     const [isReconciling, setIsReconciling] = useState(false);
     const [selectedSplits, setSelectedSplits] = useState<Set<string>>(new Set());
+    const [simpleFinBalance, setSimpleFinBalance] = useState<{ balance: number; balanceDate: string } | null>(null);
 
     // Modal state
     const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
@@ -76,6 +77,18 @@ export default function AccountLedger({
 
     // Reviewed filter state
     const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
+
+    // Fetch SimpleFin balance for this account on mount
+    useEffect(() => {
+        fetch(`/api/simplefin/balance/${accountGuid}`)
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data?.hasBalance) {
+                    setSimpleFinBalance({ balance: data.balance, balanceDate: data.balanceDate });
+                }
+            })
+            .catch(() => {}); // silently ignore - not all accounts have SimpleFin mapping
+    }, [accountGuid]);
 
     // Listen for global 'n' key shortcut to open new transaction
     useEffect(() => {
@@ -480,6 +493,7 @@ export default function AccountLedger({
                         setIsReconciling(false);
                         setSelectedSplits(new Set());
                     }}
+                    simpleFinBalance={simpleFinBalance}
                 />
             </div>
 

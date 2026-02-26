@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { formatCurrency } from '@/lib/format';
 
 interface ReconciliationPanelProps {
@@ -16,6 +16,7 @@ interface ReconciliationPanelProps {
     isReconciling: boolean;
     onStartReconcile: () => void;
     onCancelReconcile: () => void;
+    simpleFinBalance?: { balance: number; balanceDate: string } | null;
 }
 
 export function ReconciliationPanel({
@@ -29,6 +30,7 @@ export function ReconciliationPanel({
     isReconciling,
     onStartReconcile,
     onCancelReconcile,
+    simpleFinBalance,
 }: ReconciliationPanelProps) {
     const [statementBalance, setStatementBalance] = useState('');
     const [statementDate, setStatementDate] = useState(
@@ -36,6 +38,13 @@ export function ReconciliationPanel({
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Auto-fill statement balance from SimpleFin when reconciliation starts
+    useEffect(() => {
+        if (isReconciling && simpleFinBalance && !statementBalance) {
+            setStatementBalance(simpleFinBalance.balance.toFixed(2));
+        }
+    }, [isReconciling, simpleFinBalance]);
 
     const handleFinish = useCallback(async () => {
         if (selectedSplits.size === 0) {
@@ -136,6 +145,11 @@ export function ReconciliationPanel({
                         placeholder="0.00"
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />
+                    {simpleFinBalance && (
+                        <p className="text-[10px] text-foreground-muted mt-1">
+                            from SimpleFin, synced {new Date(simpleFinBalance.balanceDate).toLocaleDateString()}
+                        </p>
+                    )}
                 </div>
             </div>
 
