@@ -25,6 +25,10 @@ RUN npm run build
 FROM node:24-alpine AS runner
 WORKDIR /app
 
+LABEL org.opencontainers.image.source="https://github.com/biker2000on/gnucash-web"
+LABEL org.opencontainers.image.description="GnuCash Web - Progressive Web App for viewing GnuCash financial data"
+LABEL org.opencontainers.image.licenses="MIT"
+
 ENV NODE_ENV production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 # ENV NEXT_TELEMETRY_DISABLED 1
