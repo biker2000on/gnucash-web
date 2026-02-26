@@ -9,6 +9,7 @@ import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { InlineEditRow } from './InlineEditRow';
+import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
 import { useToast } from '@/contexts/ToastContext';
 import { toNumDenom } from '@/lib/validation';
 import {
@@ -77,6 +78,13 @@ export default function AccountLedger({
 
     // Reviewed filter state
     const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
+
+    // Review mode state
+    const [isReviewMode, setIsReviewMode] = useState(false);
+    const [reviewedCount, setReviewedCount] = useState(0);
+    const [reviewSelectedGuids, setReviewSelectedGuids] = useState<Set<string>>(new Set());
+    const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
+    const editableRowRefs = useRef<Map<string, EditableRowHandle>>(new Map());
 
     // Fetch SimpleFin balance for this account on mount
     useEffect(() => {
@@ -306,12 +314,77 @@ export default function AccountLedger({
         return transactions.filter(tx => tx.reviewed === false);
     }, [transactions, showUnreviewedOnly]);
 
+    // Review mode toggle with mutual exclusivity
+    const handleToggleReviewMode = useCallback(() => {
+        setIsReviewMode(prev => {
+            const next = !prev;
+            if (next) {
+                // Entering review mode: exit reconciliation, enable unreviewed filter
+                setIsReconciling(false);
+                setSelectedSplits(new Set());
+                setShowUnreviewedOnly(true);
+                setReviewedCount(0);
+            } else {
+                // Exiting review mode: clear review state
+                setReviewSelectedGuids(new Set());
+                setFocusedRowIndex(-1);
+            }
+            return next;
+        });
+    }, []);
+
+    // Review mode checkbox handling with shift+click range selection
+    const handleReviewCheckToggle = useCallback((index: number, guid: string, shiftKey: boolean) => {
+        setReviewSelectedGuids(prev => {
+            const next = new Set(prev);
+            if (shiftKey && lastCheckedIndex !== null) {
+                const start = Math.min(lastCheckedIndex, index);
+                const end = Math.max(lastCheckedIndex, index);
+                for (let i = start; i <= end; i++) {
+                    next.add(displayTransactions[i].guid);
+                }
+            } else {
+                if (next.has(guid)) {
+                    next.delete(guid);
+                } else {
+                    next.add(guid);
+                }
+            }
+            return next;
+        });
+        setLastCheckedIndex(index);
+    }, [lastCheckedIndex, displayTransactions]);
+
+    // Select all review checkboxes
+    const handleSelectAllReview = useCallback(() => {
+        const allGuids = new Set(displayTransactions.map(tx => tx.guid));
+        setReviewSelectedGuids(allGuids);
+    }, [displayTransactions]);
+
+    // Bulk review handler
+    const handleBulkReview = useCallback(async () => {
+        const guids = Array.from(reviewSelectedGuids);
+        for (const guid of guids) {
+            await fetch(`/api/transactions/${guid}/review`, { method: 'PATCH' });
+        }
+        setReviewedCount(prev => prev + guids.length);
+        setReviewSelectedGuids(new Set());
+        await fetchTransactions();
+    }, [reviewSelectedGuids, fetchTransactions]);
+
+    // Open TransactionFormModal directly for review mode edit button
+    const handleEditDirect = useCallback((guid: string) => {
+        const tx = transactions.find(t => t.guid === guid);
+        setEditingTransaction(tx || null);
+        setIsEditModalOpen(true);
+    }, [transactions]);
+
     // TanStack Table setup
     const columns = useMemo(() => getColumns({
         accountGuid,
         isReconciling,
-        isReviewMode: false, // will be wired up in review mode task
-    }), [accountGuid, isReconciling]);
+        isReviewMode,
+    }), [accountGuid, isReconciling, isReviewMode]);
 
     const table = useReactTable({
         data: displayTransactions,
@@ -320,13 +393,102 @@ export default function AccountLedger({
     });
 
     // Keyboard navigation handler
-    const handleTableKeyDown = useCallback((e: KeyboardEvent) => {
+    const handleTableKeyDown = useCallback(async (e: KeyboardEvent) => {
         if (editingGuid) return; // Let InlineEditRow handle keys during edit
         if (isEditModalOpen || isViewModalOpen || deleteConfirmOpen) return; // Don't navigate when modals are open
 
         const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
+        const isInInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
 
+        if (isInInput) {
+            // In review mode, still handle Ctrl+R and Escape even in input fields
+            if (isReviewMode) {
+                if (e.key === 'r' && e.ctrlKey) {
+                    e.preventDefault();
+                    if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                        const tx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(tx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                        await toggleReviewed(tx.guid);
+                        setReviewedCount(prev => prev + 1);
+                        if (focusedRowIndex < displayTransactions.length - 1) {
+                            setFocusedRowIndex(prev => prev + 1);
+                        }
+                    }
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    (e.target as HTMLElement).blur();
+                    return;
+                }
+            }
+            return; // Let input fields handle other keys normally
+        }
+
+        if (isReviewMode) {
+            switch (e.key) {
+                case 'ArrowDown':
+                case 'j': {
+                    e.preventDefault();
+                    if (focusedRowIndex >= 0) {
+                        const currentTx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(currentTx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                    }
+                    setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                    break;
+                }
+                case 'ArrowUp':
+                case 'k': {
+                    e.preventDefault();
+                    if (focusedRowIndex >= 0) {
+                        const currentTx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(currentTx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                    }
+                    setFocusedRowIndex(i => Math.max(i - 1, 0));
+                    break;
+                }
+                case 'Enter': {
+                    e.preventDefault();
+                    if (focusedRowIndex >= 0) {
+                        const currentTx = displayTransactions[focusedRowIndex];
+                        const isMultiSplit = (currentTx.splits?.length || 0) > 2;
+                        if (isMultiSplit) {
+                            handleEditDirect(currentTx.guid);
+                        } else {
+                            const handle = editableRowRefs.current.get(currentTx.guid);
+                            const saved = await handle?.save();
+                            if (saved !== false) {
+                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                            }
+                        }
+                    }
+                    break;
+                }
+                case 'r': {
+                    if (e.ctrlKey && focusedRowIndex >= 0) {
+                        e.preventDefault();
+                        const tx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(tx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                        await toggleReviewed(tx.guid);
+                        setReviewedCount(prev => prev + 1);
+                        if (focusedRowIndex < displayTransactions.length - 1) {
+                            setFocusedRowIndex(prev => prev + 1);
+                        }
+                    }
+                    break;
+                }
+                case 'Escape':
+                    setFocusedRowIndex(-1);
+                    break;
+            }
+            return;
+        }
+
+        // Normal mode keyboard handling
         switch (e.key) {
             case 'ArrowDown':
             case 'j':
@@ -369,7 +531,7 @@ export default function AccountLedger({
                 setFocusedRowIndex(-1);
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, transactions, displayTransactions, handleRowClick, toggleReviewed]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isReviewMode, handleRowClick, handleEditDirect, toggleReviewed]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -384,6 +546,13 @@ export default function AccountLedger({
             rows[focusedRowIndex]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         }
     }, [focusedRowIndex]);
+
+    // Auto-focus first row when entering review mode
+    useEffect(() => {
+        if (isReviewMode && displayTransactions.length > 0 && focusedRowIndex < 0) {
+            setFocusedRowIndex(0);
+        }
+    }, [isReviewMode, displayTransactions.length, focusedRowIndex]);
 
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
@@ -476,6 +645,40 @@ export default function AccountLedger({
                     >
                         {showUnreviewedOnly ? 'Showing Unreviewed' : 'Show Unreviewed Only'}
                     </button>
+                    <button
+                        onClick={handleToggleReviewMode}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                            isReviewMode
+                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                                : 'border-border text-foreground-muted hover:text-foreground'
+                        }`}
+                    >
+                        {isReviewMode ? 'Exit Review Mode' : 'Review Mode'}
+                    </button>
+                    {isReviewMode && (
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleSelectAllReview}
+                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                            >
+                                Select All
+                            </button>
+                            <span className="text-foreground-muted">|</span>
+                            <button
+                                onClick={() => setReviewSelectedGuids(new Set())}
+                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                            >
+                                Clear
+                            </button>
+                            <button
+                                onClick={handleBulkReview}
+                                disabled={reviewSelectedGuids.size === 0}
+                                className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                            >
+                                Mark Reviewed ({reviewSelectedGuids.size})
+                            </button>
+                        </div>
+                    )}
                 </div>
                 <ReconciliationPanel
                     accountGuid={accountGuid}
@@ -488,7 +691,7 @@ export default function AccountLedger({
                     onSelectAll={selectAllUnreconciled}
                     onClearSelection={clearSelection}
                     isReconciling={isReconciling}
-                    onStartReconcile={() => setIsReconciling(true)}
+                    onStartReconcile={() => { setIsReviewMode(false); setIsReconciling(true); }}
                     onCancelReconcile={() => {
                         setIsReconciling(false);
                         setSelectedSplits(new Set());
@@ -504,171 +707,227 @@ export default function AccountLedger({
                             <tr key={headerGroup.id} className="bg-background-secondary/50 text-foreground-secondary text-[10px] uppercase tracking-[0.2em] font-bold">
                                 {headerGroup.headers.map(header => {
                                     const colId = header.column.id;
-                                    if (colId === 'select') return <th key={header.id} className="px-4 py-4 w-10"></th>;
+                                    if (colId === 'select') return (
+                                        <th key={header.id} className="px-4 py-4 w-10">
+                                            {isReviewMode && (
+                                                <input
+                                                    type="checkbox"
+                                                    checked={reviewSelectedGuids.size === displayTransactions.length && displayTransactions.length > 0}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) handleSelectAllReview();
+                                                        else setReviewSelectedGuids(new Set());
+                                                    }}
+                                                    tabIndex={-1}
+                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-cyan-500 cursor-pointer"
+                                                />
+                                            )}
+                                        </th>
+                                    );
                                     if (colId === 'reconcile') return <th key={header.id} className="px-4 py-4 w-10">R</th>;
                                     if (colId === 'date') return <th key={header.id} className="px-6 py-4">Date</th>;
                                     if (colId === 'description') return <th key={header.id} className="px-6 py-4">Description</th>;
                                     if (colId === 'transfer') return <th key={header.id} className="px-6 py-4">Transfer / Splits</th>;
                                     if (colId === 'amount') return <th key={header.id} className="px-6 py-4 text-right">Amount</th>;
                                     if (colId === 'balance') return <th key={header.id} className="px-6 py-4 text-right">Balance</th>;
+                                    if (colId === 'actions') return <th key={header.id} className="px-2 py-4 w-10"></th>;
                                     return <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
                                 })}
                             </tr>
                         ))}
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                        {table.getRowModel().rows.map((row) => {
-                            const tx = row.original;
-                            const index = row.index;
-                            const isMultiSplit = (tx.splits?.length || 0) > 2;
-                            const isExpanded = expandedTxs[tx.guid];
-                            const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
-                            const isUnreviewed = tx.reviewed === false;
-                            const amount = parseFloat(tx.account_split_value);
-                            const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
-                            const isSelected = selectedSplits.has(tx.account_split_guid);
-
-                            if (editingGuid === tx.guid) {
-                                return (
-                                    <InlineEditRow
-                                        key={tx.guid}
-                                        transaction={tx}
-                                        accountGuid={accountGuid}
-                                        accountType={accountType}
-                                        columnCount={row.getVisibleCells().length}
-                                        onSave={handleInlineSave}
-                                        onCancel={() => setEditingGuid(null)}
-                                    />
-                                );
-                            }
-
-                            return (
-                                <tr
-                                    key={row.id}
-                                    className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-cyan-500/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
-                                    onClick={(e) => {
-                                        // Don't trigger on checkbox or button clicks
-                                        if ((e.target as HTMLElement).closest('input, button')) return;
-                                        handleRowClick(tx.guid);
+                        {isReviewMode ? (
+                            displayTransactions.map((tx, index) => (
+                                <EditableRow
+                                    key={tx.guid}
+                                    ref={(handle) => {
+                                        if (handle) editableRowRefs.current.set(tx.guid, handle);
+                                        else editableRowRefs.current.delete(tx.guid);
                                     }}
-                                >
-                                    {row.getVisibleCells().map(cell => {
-                                        const colId = cell.column.id;
+                                    transaction={tx}
+                                    accountGuid={accountGuid}
+                                    accountType={accountType}
+                                    isActive={index === focusedRowIndex}
+                                    showCheckbox={true}
+                                    isChecked={reviewSelectedGuids.has(tx.guid)}
+                                    onToggleCheck={(e) => handleReviewCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
+                                    onSave={handleInlineSave}
+                                    onEditModal={handleEditDirect}
+                                    columnCount={table.getVisibleFlatColumns().length}
+                                />
+                            ))
+                        ) : (
+                            table.getRowModel().rows.map((row) => {
+                                const tx = row.original;
+                                const index = row.index;
+                                const isMultiSplit = (tx.splits?.length || 0) > 2;
+                                const isExpanded = expandedTxs[tx.guid];
+                                const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
+                                const isUnreviewed = tx.reviewed === false;
+                                const amount = parseFloat(tx.account_split_value);
+                                const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
+                                const isSelected = selectedSplits.has(tx.account_split_guid);
 
-                                        if (colId === 'select') {
-                                            return (
-                                                <td key={cell.id} className="px-4 py-4 align-top">
-                                                    {tx.account_split_reconcile_state !== 'y' && (
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isSelected}
-                                                            onChange={() => toggleSplitSelection(tx.account_split_guid)}
-                                                            className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
-                                                        />
-                                                    )}
-                                                </td>
-                                            );
-                                        }
+                                if (editingGuid === tx.guid) {
+                                    return (
+                                        <InlineEditRow
+                                            key={tx.guid}
+                                            transaction={tx}
+                                            accountGuid={accountGuid}
+                                            accountType={accountType}
+                                            columnCount={row.getVisibleCells().length}
+                                            onSave={handleInlineSave}
+                                            onCancel={() => setEditingGuid(null)}
+                                        />
+                                    );
+                                }
 
-                                        if (colId === 'reconcile') {
-                                            return (
-                                                <td key={cell.id} className="px-4 py-4 align-top">
-                                                    <span
-                                                        className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
-                                                        title={reconcileInfo.label}
-                                                    >
-                                                        {reconcileInfo.icon}
-                                                    </span>
-                                                </td>
-                                            );
-                                        }
+                                return (
+                                    <tr
+                                        key={row.id}
+                                        className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-cyan-500/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
+                                        onClick={(e) => {
+                                            // Don't trigger on checkbox or button clicks
+                                            if ((e.target as HTMLElement).closest('input, button')) return;
+                                            handleRowClick(tx.guid);
+                                        }}
+                                    >
+                                        {row.getVisibleCells().map(cell => {
+                                            const colId = cell.column.id;
 
-                                        if (colId === 'date') {
-                                            return (
-                                                <td key={cell.id} className="px-6 py-4 whitespace-nowrap text-xs text-foreground-secondary align-top font-mono">
-                                                    {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                                                </td>
-                                            );
-                                        }
-
-                                        if (colId === 'description') {
-                                            return (
-                                                <td key={cell.id} className="px-6 py-4 text-sm text-foreground align-top">
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="font-medium">{tx.description}</span>
-                                                        {tx.source && tx.source !== 'manual' && (
-                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
-                                                                Imported
-                                                            </span>
+                                            if (colId === 'select') {
+                                                return (
+                                                    <td key={cell.id} className="px-4 py-4 align-top">
+                                                        {tx.account_split_reconcile_state !== 'y' && (
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isSelected}
+                                                                onChange={() => toggleSplitSelection(tx.account_split_guid)}
+                                                                className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
+                                                            />
                                                         )}
-                                                    </div>
-                                                    {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
-                                                </td>
-                                            );
-                                        }
+                                                    </td>
+                                                );
+                                            }
 
-                                        if (colId === 'transfer') {
-                                            return (
-                                                <td key={cell.id} className="px-6 py-4 text-sm align-top">
-                                                    {isMultiSplit && !isExpanded ? (
-                                                        <button
-                                                            onClick={() => toggleExpand(tx.guid)}
-                                                            className="text-foreground-muted hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
+                                            if (colId === 'reconcile') {
+                                                return (
+                                                    <td key={cell.id} className="px-4 py-4 align-top">
+                                                        <span
+                                                            className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
+                                                            title={reconcileInfo.label}
                                                         >
-                                                            <span>-- Multiple Splits --</span>
-                                                            <span className="text-[10px]">&#9660;</span>
-                                                        </button>
-                                                    ) : (
-                                                        <div className="space-y-1">
-                                                            {otherSplits.map((split) => (
-                                                                <div key={split.guid} className="flex justify-between items-center text-xs">
-                                                                    <span className="text-foreground-secondary truncate max-w-[180px]">
-                                                                        {split.account_name}
-                                                                    </span>
-                                                                    {isExpanded && (
-                                                                        <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
-                                                                            {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            ))}
-                                                            {isMultiSplit && isExpanded && (
-                                                                <button
-                                                                    onClick={() => toggleExpand(tx.guid)}
-                                                                    className="text-cyan-500/50 hover:text-cyan-400 transition-colors text-[10px] mt-1"
-                                                                >
-                                                                    &#9650; Show less
-                                                                </button>
+                                                            {reconcileInfo.icon}
+                                                        </span>
+                                                    </td>
+                                                );
+                                            }
+
+                                            if (colId === 'date') {
+                                                return (
+                                                    <td key={cell.id} className="px-6 py-4 whitespace-nowrap text-xs text-foreground-secondary align-top font-mono">
+                                                        {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                                                    </td>
+                                                );
+                                            }
+
+                                            if (colId === 'description') {
+                                                return (
+                                                    <td key={cell.id} className="px-6 py-4 text-sm text-foreground align-top">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-medium">{tx.description}</span>
+                                                            {tx.source && tx.source !== 'manual' && (
+                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
+                                                                    Imported
+                                                                </span>
                                                             )}
                                                         </div>
-                                                    )}
-                                                </td>
-                                            );
-                                        }
+                                                        {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
+                                                    </td>
+                                                );
+                                            }
 
-                                        if (colId === 'amount') {
-                                            return (
-                                                <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top ${amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                                    {formatCurrency(tx.account_split_value, tx.commodity_mnemonic)}
-                                                </td>
-                                            );
-                                        }
+                                            if (colId === 'transfer') {
+                                                return (
+                                                    <td key={cell.id} className="px-6 py-4 text-sm align-top">
+                                                        {isMultiSplit && !isExpanded ? (
+                                                            <button
+                                                                onClick={() => toggleExpand(tx.guid)}
+                                                                className="text-foreground-muted hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
+                                                            >
+                                                                <span>-- Multiple Splits --</span>
+                                                                <span className="text-[10px]">&#9660;</span>
+                                                            </button>
+                                                        ) : (
+                                                            <div className="space-y-1">
+                                                                {otherSplits.map((split) => (
+                                                                    <div key={split.guid} className="flex justify-between items-center text-xs">
+                                                                        <span className="text-foreground-secondary truncate max-w-[180px]">
+                                                                            {split.account_name}
+                                                                        </span>
+                                                                        {isExpanded && (
+                                                                            <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                                {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                                {isMultiSplit && isExpanded && (
+                                                                    <button
+                                                                        onClick={() => toggleExpand(tx.guid)}
+                                                                        className="text-cyan-500/50 hover:text-cyan-400 transition-colors text-[10px] mt-1"
+                                                                    >
+                                                                        &#9650; Show less
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                );
+                                            }
 
-                                        if (colId === 'balance') {
-                                            return (
-                                                <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400') : 'text-foreground-muted'}`}>
-                                                    {tx.running_balance ? formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic) : '\u2014'}
-                                                </td>
-                                            );
-                                        }
+                                            if (colId === 'amount') {
+                                                return (
+                                                    <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top ${amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                        {formatCurrency(tx.account_split_value, tx.commodity_mnemonic)}
+                                                    </td>
+                                                );
+                                            }
 
-                                        return <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>;
-                                    })}
-                                </tr>
-                            );
-                        })}
+                                            if (colId === 'balance') {
+                                                return (
+                                                    <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400') : 'text-foreground-muted'}`}>
+                                                        {tx.running_balance ? formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic) : '\u2014'}
+                                                    </td>
+                                                );
+                                            }
+
+                                            return <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>;
+                                        })}
+                                    </tr>
+                                );
+                            })
+                        )}
                     </tbody>
                 </table>
+
+                {isReviewMode && displayTransactions.length === 0 && (
+                    <div className="p-12 text-center">
+                        <div className="text-4xl mb-4">&#10003;</div>
+                        <h3 className="text-lg font-semibold text-emerald-400 mb-2">All caught up!</h3>
+                        <p className="text-sm text-foreground-muted">
+                            {reviewedCount > 0
+                                ? `You reviewed ${reviewedCount} transaction${reviewedCount !== 1 ? 's' : ''} this session.`
+                                : 'No unreviewed transactions.'}
+                        </p>
+                        <button
+                            onClick={handleToggleReviewMode}
+                            className="mt-4 px-4 py-2 text-sm border border-border text-foreground-secondary hover:text-foreground rounded-lg transition-colors"
+                        >
+                            Exit Review Mode
+                        </button>
+                    </div>
+                )}
 
                 <div ref={loader} className="p-8 flex justify-center border-t border-border/50">
                     {loading ? (
