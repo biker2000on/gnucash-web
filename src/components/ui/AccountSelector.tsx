@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Account } from '@/lib/types';
 import { useAccounts } from '@/lib/hooks/useAccounts';
+import { useBooks } from '@/contexts/BookContext';
+import { formatAccountPath } from '@/lib/account-utils';
 
 interface AccountSelectorProps {
     value: string;
@@ -12,16 +14,10 @@ interface AccountSelectorProps {
     disabled?: boolean;
     className?: string;
     hasError?: boolean;
-}
-
-// Strip "Root Account:" prefix from account paths
-function formatAccountPath(fullname: string | undefined, name: string): string {
-    const path = fullname || name;
-    // Remove "Root Account:" prefix if present
-    if (path.startsWith('Root Account:')) {
-        return path.substring('Root Account:'.length);
-    }
-    return path;
+    onEnter?: () => void;
+    onArrowUp?: () => void;
+    onArrowDown?: () => void;
+    autoFocus?: boolean;
 }
 
 export function AccountSelector({
@@ -31,6 +27,10 @@ export function AccountSelector({
     disabled = false,
     className = '',
     hasError = false,
+    onEnter,
+    onArrowUp,
+    onArrowDown,
+    autoFocus,
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -44,6 +44,13 @@ export function AccountSelector({
     // Use React Query hook for accounts
     const { data: accounts = [], isLoading: loading, error } = useAccounts({ flat: true });
 
+    // Get active book name for stripping from account paths
+    const { activeBookGuid, books } = useBooks();
+    const bookName = useMemo(() => {
+        if (!activeBookGuid) return undefined;
+        return books.find(b => b.guid === activeBookGuid)?.name;
+    }, [activeBookGuid, books]);
+
     // Log errors
     useEffect(() => {
         if (error) {
@@ -51,17 +58,24 @@ export function AccountSelector({
         }
     }, [error]);
 
+    // Auto-focus when requested
+    useEffect(() => {
+        if (autoFocus) {
+            inputRef.current?.focus();
+        }
+    }, [autoFocus]);
+
     // Update selected name when value changes
     useEffect(() => {
         if (value && accounts.length > 0) {
             const selected = accounts.find(a => a.guid === value);
             if (selected) {
-                setSelectedName(formatAccountPath(selected.fullname, selected.name));
+                setSelectedName(formatAccountPath(selected.fullname, selected.name, bookName));
             }
         } else if (!value) {
             setSelectedName('');
         }
-    }, [value, accounts]);
+    }, [value, accounts, bookName]);
 
     // Calculate dropdown position when opening — flip upward if near bottom
     useEffect(() => {
@@ -118,35 +132,40 @@ export function AccountSelector({
         }
     }, [focusedIndex]);
 
-    // Filter accounts by search
-    const filteredAccounts = accounts.filter(account => {
-        // Exclude ROOT account type
-        if (account.account_type === 'ROOT') return false;
+    // Filter accounts by search (memoized)
+    const filteredAccounts = useMemo(() =>
+        accounts.filter(account => {
+            if (account.account_type === 'ROOT') return false;
+            const searchLower = search.toLowerCase();
+            const displayName = formatAccountPath(account.fullname, account.name, bookName);
+            return displayName.toLowerCase().includes(searchLower) ||
+                account.account_type.toLowerCase().includes(searchLower);
+        }),
+        [accounts, search, bookName]
+    );
 
-        const searchLower = search.toLowerCase();
-        const displayName = formatAccountPath(account.fullname, account.name);
-        return displayName.toLowerCase().includes(searchLower) ||
-            account.account_type.toLowerCase().includes(searchLower);
-    });
-
-    // Group accounts by type
-    const groupedAccounts = filteredAccounts.reduce((acc, account) => {
-        const type = account.account_type;
-        if (!acc[type]) acc[type] = [];
-        acc[type].push(account);
-        return acc;
-    }, {} as Record<string, Account[]>);
+    // Group accounts by type (memoized)
+    const groupedAccounts = useMemo(() =>
+        filteredAccounts.reduce((acc, account) => {
+            const type = account.account_type;
+            if (!acc[type]) acc[type] = [];
+            acc[type].push(account);
+            return acc;
+        }, {} as Record<string, Account[]>),
+        [filteredAccounts]
+    );
 
     // Create flattened list of all visible accounts for keyboard navigation
     const flatOptions = useMemo(() => {
         const result: Account[] = [];
-        Object.entries(groupedAccounts).forEach(([, accounts]) => {
-            result.push(...accounts);
+        Object.entries(groupedAccounts).forEach(([, accs]) => {
+            result.push(...accs);
         });
         return result;
     }, [groupedAccounts]);
 
     // Set focus index to current selection when dropdown opens, or reset on search
+    // Deps intentionally limited to [search, isOpen] to avoid resetting on flatOptions reference changes
     useEffect(() => {
         if (isOpen) {
             if (!search && value) {
@@ -156,10 +175,11 @@ export function AccountSelector({
                 setFocusedIndex(0);
             }
         }
-    }, [search, isOpen, value, flatOptions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [search, isOpen]);
 
     const handleSelect = (account: Account) => {
-        const displayName = formatAccountPath(account.fullname, account.name);
+        const displayName = formatAccountPath(account.fullname, account.name, bookName);
         onChange(account.guid, displayName);
         setSelectedName(displayName);
         setSearch('');
@@ -167,9 +187,10 @@ export function AccountSelector({
         setFocusedIndex(null);
     };
 
+    // Task 2.2: Don't open dropdown on focus — only clear search and select text
     const handleInputFocus = () => {
-        setIsOpen(true);
         setSearch('');
+        inputRef.current?.select();
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -177,6 +198,12 @@ export function AccountSelector({
             if (e.key === 'ArrowDown') {
                 setIsOpen(true);
                 setFocusedIndex(0);
+                e.preventDefault();
+            } else if (e.key === 'Enter') {
+                onEnter?.();
+                e.preventDefault();
+            } else if (e.key === 'ArrowUp') {
+                onArrowUp?.();
                 e.preventDefault();
             }
             return;
@@ -283,7 +310,7 @@ export function AccountSelector({
                                                 }`}
                                                 onClick={() => handleSelect(account)}
                                             >
-                                                <div className="text-sm">{formatAccountPath(account.fullname, account.name)}</div>
+                                                <div className="text-sm">{formatAccountPath(account.fullname, account.name, bookName)}</div>
                                             </div>
                                         );
                                     })}
