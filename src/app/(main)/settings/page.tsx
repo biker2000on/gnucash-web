@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import type { DateFormat } from '@/lib/date-format';
 
 interface ScheduleSettings {
   enabled: boolean;
@@ -23,7 +24,7 @@ const INTERVAL_OPTIONS = [
 
 export default function SettingsPage() {
   const { success, error: showError } = useToast();
-  const { defaultTaxRate, setDefaultTaxRate } = useUserPreferences();
+  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode } = useUserPreferences();
 
   const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24 });
   const [loading, setLoading] = useState(true);
@@ -391,6 +392,46 @@ export default function SettingsPage() {
                 T
               </kbd>{' '}
               in amount fields to apply this tax rate to the current value.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Display Preferences */}
+      <div className="bg-surface rounded-xl border border-border p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">Display Preferences</h2>
+
+        <div className="space-y-4">
+          {/* Date Format */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Date Format</label>
+            <select
+              value={dateFormat}
+              onChange={(e) => setDateFormat(e.target.value as DateFormat)}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+            >
+              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+              <option value="MM-DD-YYYY">MM-DD-YYYY</option>
+            </select>
+            <p className="text-xs text-foreground-muted">
+              Format used for all date fields in the application.
+            </p>
+          </div>
+
+          {/* Default Ledger Mode */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Default Ledger Mode</label>
+            <select
+              value={defaultLedgerMode}
+              onChange={(e) => setDefaultLedgerMode(e.target.value as 'readonly' | 'edit')}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+            >
+              <option value="readonly">Read-only</option>
+              <option value="edit">Edit Mode</option>
+            </select>
+            <p className="text-xs text-foreground-muted">
+              Whether account ledgers open in read-only or edit mode by default.
             </p>
           </div>
         </div>

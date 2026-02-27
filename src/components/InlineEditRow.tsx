@@ -35,14 +35,12 @@ export function InlineEditRow({
     onSave,
     onCancel,
 }: InlineEditRowProps) {
-    const { defaultTaxRate, balanceReversal } = useUserPreferences();
+    const { defaultTaxRate, balanceReversal, dateFormat } = useUserPreferences();
     const { success } = useToast();
 
     // Find the account split and the "other" split for a 2-split transaction
     const accountSplit = transaction.splits?.find(s => s.account_guid === accountGuid);
     const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
-
-    const dateFormat = 'MM/DD/YYYY';
     const [postDate, setPostDate] = useState(
         transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
     );

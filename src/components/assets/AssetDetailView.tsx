@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid,
@@ -55,6 +56,7 @@ interface AccountOption {
 
 export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
   const { success, error: showError } = useToast();
+  const { dateFormat } = useUserPreferences();
 
   const [asset, setAsset] = useState<AssetInfo | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -66,7 +68,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
   // Manual adjustment form state
   const [adjustTarget, setAdjustTarget] = useState('');
   const [adjustDate, setAdjustDate] = useState(new Date().toISOString().split('T')[0]);
-  const [adjustDateDisplay, setAdjustDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], 'MM/DD/YYYY'));
+  const [adjustDateDisplay, setAdjustDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
   const [adjustContraGuid, setAdjustContraGuid] = useState('');
   const [adjustNotes, setAdjustNotes] = useState('');
   const [adjusting, setAdjusting] = useState(false);
@@ -278,9 +280,9 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                   const parsed = parseDateInput(adjustDateDisplay);
                   if (parsed) {
                     setAdjustDate(parsed);
-                    setAdjustDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                    setAdjustDateDisplay(formatDateForDisplay(parsed, dateFormat));
                   } else {
-                    setAdjustDateDisplay(formatDateForDisplay(adjustDate, 'MM/DD/YYYY'));
+                    setAdjustDateDisplay(formatDateForDisplay(adjustDate, dateFormat));
                   }
                 }}
                 placeholder="MM/DD/YYYY"

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { DATE_PRESETS, DateRange, formatDateForDisplay } from '@/lib/datePresets';
 import { formatDateForDisplay as formatIsoToDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface DateRangePickerProps {
     startDate: string | null;
@@ -12,20 +13,21 @@ interface DateRangePickerProps {
 }
 
 export function DateRangePicker({ startDate, endDate, onChange, className = '' }: DateRangePickerProps) {
+    const { dateFormat } = useUserPreferences();
     const [isOpen, setIsOpen] = useState(false);
     const [customStart, setCustomStart] = useState(startDate || '');
     const [customEnd, setCustomEnd] = useState(endDate || '');
-    const [customStartDisplay, setCustomStartDisplay] = useState(() => startDate ? formatIsoToDisplay(startDate, 'MM/DD/YYYY') : '');
-    const [customEndDisplay, setCustomEndDisplay] = useState(() => endDate ? formatIsoToDisplay(endDate, 'MM/DD/YYYY') : '');
+    const [customStartDisplay, setCustomStartDisplay] = useState(() => startDate ? formatIsoToDisplay(startDate, dateFormat) : '');
+    const [customEndDisplay, setCustomEndDisplay] = useState(() => endDate ? formatIsoToDisplay(endDate, dateFormat) : '');
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     // Update custom inputs when props change
     useEffect(() => {
         setCustomStart(startDate || '');
         setCustomEnd(endDate || '');
-        setCustomStartDisplay(startDate ? formatIsoToDisplay(startDate, 'MM/DD/YYYY') : '');
-        setCustomEndDisplay(endDate ? formatIsoToDisplay(endDate, 'MM/DD/YYYY') : '');
-    }, [startDate, endDate]);
+        setCustomStartDisplay(startDate ? formatIsoToDisplay(startDate, dateFormat) : '');
+        setCustomEndDisplay(endDate ? formatIsoToDisplay(endDate, dateFormat) : '');
+    }, [startDate, endDate, dateFormat]);
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -129,11 +131,11 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
                                     const parsed = parseDateInput(customStartDisplay);
                                     if (parsed) {
                                         setCustomStart(parsed);
-                                        setCustomStartDisplay(formatIsoToDisplay(parsed, 'MM/DD/YYYY'));
+                                        setCustomStartDisplay(formatIsoToDisplay(parsed, dateFormat));
                                     } else if (!customStartDisplay.trim()) {
                                         setCustomStart('');
                                     } else {
-                                        setCustomStartDisplay(customStart ? formatIsoToDisplay(customStart, 'MM/DD/YYYY') : '');
+                                        setCustomStartDisplay(customStart ? formatIsoToDisplay(customStart, dateFormat) : '');
                                     }
                                 }}
                                 placeholder="MM/DD/YYYY"
@@ -149,11 +151,11 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
                                     const parsed = parseDateInput(customEndDisplay);
                                     if (parsed) {
                                         setCustomEnd(parsed);
-                                        setCustomEndDisplay(formatIsoToDisplay(parsed, 'MM/DD/YYYY'));
+                                        setCustomEndDisplay(formatIsoToDisplay(parsed, dateFormat));
                                     } else if (!customEndDisplay.trim()) {
                                         setCustomEnd('');
                                     } else {
-                                        setCustomEndDisplay(customEnd ? formatIsoToDisplay(customEnd, 'MM/DD/YYYY') : '');
+                                        setCustomEndDisplay(customEnd ? formatIsoToDisplay(customEnd, dateFormat) : '');
                                     }
                                 }}
                                 placeholder="MM/DD/YYYY"

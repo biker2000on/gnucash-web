@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { ReportFilters as ReportFiltersType } from '@/lib/reports/types';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface ReportFiltersProps {
     filters: ReportFiltersType;
@@ -68,22 +69,23 @@ function getLastYear() {
 }
 
 export function ReportFilters({ filters, onChange, showCompare = true, showAccountTypes = false }: ReportFiltersProps) {
+    const { dateFormat } = useUserPreferences();
     const [localFilters, setLocalFilters] = useState(filters);
-    const [startDateDisplay, setStartDateDisplay] = useState(() => filters.startDate ? formatDateForDisplay(filters.startDate, 'MM/DD/YYYY') : '');
-    const [endDateDisplay, setEndDateDisplay] = useState(() => filters.endDate ? formatDateForDisplay(filters.endDate, 'MM/DD/YYYY') : '');
+    const [startDateDisplay, setStartDateDisplay] = useState(() => filters.startDate ? formatDateForDisplay(filters.startDate, dateFormat) : '');
+    const [endDateDisplay, setEndDateDisplay] = useState(() => filters.endDate ? formatDateForDisplay(filters.endDate, dateFormat) : '');
 
     useEffect(() => {
         setLocalFilters(filters);
-        setStartDateDisplay(filters.startDate ? formatDateForDisplay(filters.startDate, 'MM/DD/YYYY') : '');
-        setEndDateDisplay(filters.endDate ? formatDateForDisplay(filters.endDate, 'MM/DD/YYYY') : '');
+        setStartDateDisplay(filters.startDate ? formatDateForDisplay(filters.startDate, dateFormat) : '');
+        setEndDateDisplay(filters.endDate ? formatDateForDisplay(filters.endDate, dateFormat) : '');
     }, [filters]);
 
     const handlePreset = (preset: typeof PRESETS[number]) => {
         const { startDate, endDate } = preset.getValue();
         const newFilters = { ...localFilters, startDate, endDate };
         setLocalFilters(newFilters);
-        setStartDateDisplay(startDate ? formatDateForDisplay(startDate, 'MM/DD/YYYY') : '');
-        setEndDateDisplay(endDate ? formatDateForDisplay(endDate, 'MM/DD/YYYY') : '');
+        setStartDateDisplay(startDate ? formatDateForDisplay(startDate, dateFormat) : '');
+        setEndDateDisplay(endDate ? formatDateForDisplay(endDate, dateFormat) : '');
         onChange(newFilters);
     };
 
@@ -125,11 +127,11 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                                 const parsed = parseDateInput(startDateDisplay);
                                 if (parsed) {
                                     setLocalFilters(prev => ({ ...prev, startDate: parsed }));
-                                    setStartDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                                    setStartDateDisplay(formatDateForDisplay(parsed, dateFormat));
                                 } else if (!startDateDisplay.trim()) {
                                     setLocalFilters(prev => ({ ...prev, startDate: null }));
                                 } else {
-                                    setStartDateDisplay(localFilters.startDate ? formatDateForDisplay(localFilters.startDate, 'MM/DD/YYYY') : '');
+                                    setStartDateDisplay(localFilters.startDate ? formatDateForDisplay(localFilters.startDate, dateFormat) : '');
                                 }
                             }}
                             placeholder="MM/DD/YYYY"
@@ -149,11 +151,11 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                                 const parsed = parseDateInput(endDateDisplay);
                                 if (parsed) {
                                     setLocalFilters(prev => ({ ...prev, endDate: parsed }));
-                                    setEndDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                                    setEndDateDisplay(formatDateForDisplay(parsed, dateFormat));
                                 } else if (!endDateDisplay.trim()) {
                                     setLocalFilters(prev => ({ ...prev, endDate: null }));
                                 } else {
-                                    setEndDateDisplay(localFilters.endDate ? formatDateForDisplay(localFilters.endDate, 'MM/DD/YYYY') : '');
+                                    setEndDateDisplay(localFilters.endDate ? formatDateForDisplay(localFilters.endDate, dateFormat) : '');
                                 }
                             }}
                             placeholder="MM/DD/YYYY"

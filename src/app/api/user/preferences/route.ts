@@ -7,6 +7,8 @@ import { getAllPreferences, setPreferences, getChartDefaults, getPreference, set
 const VALID_BALANCE_REVERSALS: BalanceReversal[] = ['none', 'credit', 'income_expense'];
 const VALID_LEDGER_MODES = ['readonly', 'edit'] as const;
 type DefaultLedgerMode = typeof VALID_LEDGER_MODES[number];
+const VALID_DATE_FORMATS = ['MM/DD/YYYY', 'YYYY-MM-DD', 'MM-DD-YYYY'] as const;
+type DateFormat = typeof VALID_DATE_FORMATS[number];
 
 /**
  * GET /api/user/preferences
@@ -47,14 +49,16 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        // Fetch tax rate and ledger mode from key-value preferences
+        // Fetch tax rate, ledger mode, and date format from key-value preferences
         const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
         const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
+        const dateFormatPref = await getPreference(roleResult.user.id, 'date_format', 'MM/DD/YYYY');
 
         return NextResponse.json({
             balanceReversal: user.balance_reversal || 'none',
             defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
             defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
+            dateFormat: (VALID_DATE_FORMATS.includes(dateFormatPref as DateFormat) ? dateFormatPref : 'MM/DD/YYYY') as DateFormat,
         });
     } catch (error) {
         console.error('Error fetching user preferences:', error);
@@ -72,7 +76,7 @@ export async function PATCH(request: NextRequest) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
-        const { balanceReversal, defaultTaxRate, defaultLedgerMode } = body;
+        const { balanceReversal, defaultTaxRate, defaultLedgerMode, dateFormat } = body;
 
         // Validate balance reversal value
         if (balanceReversal !== undefined) {
@@ -105,6 +109,16 @@ export async function PATCH(request: NextRequest) {
             }
         }
 
+        // Validate date format
+        if (dateFormat !== undefined) {
+            if (!VALID_DATE_FORMATS.includes(dateFormat)) {
+                return NextResponse.json(
+                    { error: `Invalid dateFormat value. Must be one of: ${VALID_DATE_FORMATS.join(', ')}` },
+                    { status: 400 }
+                );
+            }
+        }
+
         // Update balance reversal if provided
         let updatedBalanceReversal = balanceReversal;
         if (balanceReversal !== undefined) {
@@ -130,6 +144,11 @@ export async function PATCH(request: NextRequest) {
             await setPreference(roleResult.user.id, 'default_ledger_mode', defaultLedgerMode);
         }
 
+        // Update date format if provided
+        if (dateFormat !== undefined) {
+            await setPreference(roleResult.user.id, 'date_format', dateFormat);
+        }
+
         // Fetch current values for response
         const user = await prisma.gnucash_web_users.findUnique({
             where: { id: roleResult.user.id },
@@ -137,11 +156,13 @@ export async function PATCH(request: NextRequest) {
         });
         const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
         const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
+        const dateFormatPref = await getPreference(roleResult.user.id, 'date_format', 'MM/DD/YYYY');
 
         return NextResponse.json({
             balanceReversal: updatedBalanceReversal || user?.balance_reversal || 'none',
             defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
             defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
+            dateFormat: (VALID_DATE_FORMATS.includes(dateFormatPref as DateFormat) ? dateFormatPref : 'MM/DD/YYYY') as DateFormat,
         });
     } catch (error) {
         console.error('Error updating user preferences:', error);

@@ -5,6 +5,7 @@ import { Account, CreateTransactionRequest } from '@/lib/types';
 import { toNumDenom } from '@/lib/validation';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -78,7 +79,7 @@ export function InvestmentTransactionForm({
     onSave,
     onCancel,
 }: InvestmentTransactionFormProps) {
-    const dateFormat = 'MM/DD/YYYY';
+    const { dateFormat } = useUserPreferences();
     const [form, setForm] = useState<FormState>(INITIAL_FORM_STATE);
     const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(INITIAL_FORM_STATE.date, dateFormat));
     const [errors, setErrors] = useState<string[]>([]);

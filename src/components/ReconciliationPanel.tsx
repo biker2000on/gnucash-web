@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface ReconciliationPanelProps {
     accountGuid: string;
@@ -33,12 +34,13 @@ export function ReconciliationPanel({
     onCancelReconcile,
     simpleFinBalance,
 }: ReconciliationPanelProps) {
+    const { dateFormat } = useUserPreferences();
     const [statementBalance, setStatementBalance] = useState('');
     const [statementDate, setStatementDate] = useState(
         new Date().toISOString().split('T')[0]
     );
-    const [statementDateDisplay, setStatementDateDisplay] = useState(
-        formatDateForDisplay(new Date().toISOString().split('T')[0], 'MM/DD/YYYY')
+    const [statementDateDisplay, setStatementDateDisplay] = useState(() =>
+        formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat)
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -139,9 +141,9 @@ export function ReconciliationPanel({
                             const parsed = parseDateInput(statementDateDisplay);
                             if (parsed) {
                                 setStatementDate(parsed);
-                                setStatementDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                                setStatementDateDisplay(formatDateForDisplay(parsed, dateFormat));
                             } else {
-                                setStatementDateDisplay(formatDateForDisplay(statementDate, 'MM/DD/YYYY'));
+                                setStatementDateDisplay(formatDateForDisplay(statementDate, dateFormat));
                             }
                         }}
                         placeholder="MM/DD/YYYY"

@@ -62,12 +62,11 @@ export function TransactionForm({
         fromAccountGuid: defaultFromAccount,
         toAccountGuid: defaultToAccount,
     });
-    const dateFormat = 'MM/DD/YYYY';
-    const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
     const formRef = useRef<HTMLDivElement>(null);
     const dateInputRef = useRef<HTMLInputElement>(null);
     const { success } = useToast();
-    const { defaultTaxRate } = useUserPreferences();
+    const { defaultTaxRate, dateFormat } = useUserPreferences();
+    const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
 
     // Fetch accounts for commodity info (used for multi-currency detection)
     const { data: accounts = [] } = useAccounts({ flat: true });

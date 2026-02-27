@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode, useMemo } from 'react';
 import { BalanceReversal } from '@/lib/format';
+import { DateFormat } from '@/lib/date-format';
 
 export type DefaultLedgerMode = 'readonly' | 'edit';
 
@@ -12,6 +13,8 @@ interface UserPreferencesContextType {
     setDefaultTaxRate: (rate: number) => Promise<void>;
     defaultLedgerMode: DefaultLedgerMode;
     setDefaultLedgerMode: (mode: DefaultLedgerMode) => Promise<void>;
+    dateFormat: DateFormat;
+    setDateFormat: (format: DateFormat) => Promise<void>;
     loading: boolean;
 }
 
@@ -27,6 +30,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
     const [balanceReversal, setBalanceReversalState] = useState<BalanceReversal>('none');
     const [defaultTaxRate, setDefaultTaxRateState] = useState<number>(0);
     const [defaultLedgerMode, setDefaultLedgerModeState] = useState<DefaultLedgerMode>('readonly');
+    const [dateFormat, setDateFormatState] = useState<DateFormat>('MM/DD/YYYY');
     const [loading, setLoading] = useState(true);
 
     // Load preferences from API on mount
@@ -47,6 +51,9 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         if (parsed.defaultLedgerMode) {
                             setDefaultLedgerModeState(parsed.defaultLedgerMode);
                         }
+                        if (parsed.dateFormat) {
+                            setDateFormatState(parsed.dateFormat);
+                        }
                     } catch {
                         // Invalid cache, ignore
                     }
@@ -59,6 +66,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                     setBalanceReversalState(data.balanceReversal || 'none');
                     setDefaultTaxRateState(data.defaultTaxRate || 0);
                     setDefaultLedgerModeState(data.defaultLedgerMode || 'readonly');
+                    setDateFormatState(data.dateFormat || 'MM/DD/YYYY');
                     // Update cache
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 }
@@ -146,6 +154,26 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         }
     }, []);
 
+    const setDateFormat = useCallback(async (value: DateFormat) => {
+        setDateFormatState(value);
+
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, dateFormat: value }));
+
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dateFormat: value }),
+            });
+            if (!res.ok) throw new Error('Failed to save preference');
+        } catch (error) {
+            console.error('Failed to save dateFormat preference:', error);
+            throw error;
+        }
+    }, []);
+
     const value = useMemo<UserPreferencesContextType>(() => ({
         balanceReversal,
         setBalanceReversal,
@@ -153,8 +181,10 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         setDefaultTaxRate,
         defaultLedgerMode,
         setDefaultLedgerMode,
+        dateFormat,
+        setDateFormat,
         loading,
-    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, loading]);
+    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, loading]);
 
     return (
         <UserPreferencesContext.Provider value={value}>

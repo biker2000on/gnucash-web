@@ -9,6 +9,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceA
 import type { CategoricalChartFunc } from 'recharts/types/chart/types';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface PriceData {
     guid: string;
@@ -58,6 +59,7 @@ interface InvestmentAccountProps {
 export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     const router = useRouter();
     const { success, error: showError } = useToast();
+    const { dateFormat } = useUserPreferences();
     const [data, setData] = useState<ValuationData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -728,9 +730,9 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         const parsed = parseDateInput(priceDisplayDate);
                                         if (parsed) {
                                             setNewPrice(prev => ({ ...prev, date: parsed }));
-                                            setPriceDisplayDate(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                                            setPriceDisplayDate(formatDateForDisplay(parsed, dateFormat));
                                         } else if (newPrice.date) {
-                                            setPriceDisplayDate(formatDateForDisplay(newPrice.date, 'MM/DD/YYYY'));
+                                            setPriceDisplayDate(formatDateForDisplay(newPrice.date, dateFormat));
                                         }
                                     }}
                                     placeholder="MM/DD/YYYY"

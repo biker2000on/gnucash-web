@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface AccountOption {
   guid: string;
@@ -40,12 +41,13 @@ export function DepreciationScheduleForm({
   onProcessed,
 }: DepreciationScheduleFormProps) {
   const { success, error: showError } = useToast();
+  const { dateFormat } = useUserPreferences();
 
   const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [contraAccounts, setContraAccounts] = useState<AccountOption[]>([]);
   const initialDate = existingSchedule?.purchaseDate ?? new Date().toISOString().split('T')[0];
-  const [purchaseDateDisplay, setPurchaseDateDisplay] = useState(() => formatDateForDisplay(initialDate, 'MM/DD/YYYY'));
+  const [purchaseDateDisplay, setPurchaseDateDisplay] = useState(() => formatDateForDisplay(initialDate, dateFormat));
 
   const [form, setForm] = useState<ScheduleData>({
     accountGuid: assetAccountGuid,
@@ -200,9 +202,9 @@ export function DepreciationScheduleForm({
               const parsed = parseDateInput(purchaseDateDisplay);
               if (parsed) {
                 handleChange('purchaseDate', parsed);
-                setPurchaseDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                setPurchaseDateDisplay(formatDateForDisplay(parsed, dateFormat));
               } else {
-                setPurchaseDateDisplay(formatDateForDisplay(form.purchaseDate, 'MM/DD/YYYY'));
+                setPurchaseDateDisplay(formatDateForDisplay(form.purchaseDate, dateFormat));
               }
             }}
             placeholder="MM/DD/YYYY"
