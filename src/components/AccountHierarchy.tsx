@@ -6,15 +6,31 @@ import Link from 'next/link';
 import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useInvalidateAccounts } from '@/lib/hooks/useAccounts';
+import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
+import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
 import { AccountForm } from './AccountForm';
 
 type SortKey = 'name' | 'total_balance' | 'period_balance';
 
+function aggregateUnreviewed(account: AccountWithChildren, statusMap: ReviewStatusMap): number {
+    let count = statusMap[account.guid]?.unreviewedCount || 0;
+    for (const child of account.children || []) {
+        count += aggregateUnreviewed(child, statusMap);
+    }
+    return count;
+}
+
+function hasAnyUnreviewed(account: AccountWithChildren, statusMap: ReviewStatusMap): boolean {
+    return aggregateUnreviewed(account, statusMap) > 0;
+}
+
 interface AccountNodeProps {
     account: AccountWithChildren;
     showHidden: boolean;
     filterText: string;
+    showToReview: boolean;
+    statusMap: ReviewStatusMap;
     depth?: number;
     expandToDepth?: number;
     expandedNodes: Set<string>;
@@ -29,6 +45,8 @@ function AccountNode({
     account,
     showHidden,
     filterText,
+    showToReview,
+    statusMap,
     depth = 0,
     expandToDepth = Infinity,
     expandedNodes,
@@ -51,14 +69,16 @@ function AccountNode({
         return acc.children.some(child => (showHidden || !child.hidden) && hasMatch(child));
     };
 
-    const matches = filterText ? hasMatch(account) : true;
+    const textMatches = filterText ? hasMatch(account) : true;
+    const reviewMatches = showToReview ? hasAnyUnreviewed(account, statusMap) : true;
+    const matches = textMatches && reviewMatches;
 
     // Auto-expand if there's a match inside and search is active
     useEffect(() => {
-        if (filterText && matches) {
+        if ((filterText || showToReview) && matches) {
             setIsExpanded(true);
         }
-    }, [filterText, matches]);
+    }, [filterText, showToReview, matches]);
 
     // Update expansion state when global expandToDepth changes
     // But only if the user hasn't manually toggled this node
@@ -110,6 +130,8 @@ function AccountNode({
     const { total: aggTotal, period: aggPeriod, totalUsd: aggTotalUsd, periodUsd: aggPeriodUsd } = getAggregatedBalances(account);
 
     const isInvestment = account.account_type === 'STOCK' || account.account_type === 'MUTUAL';
+    const hasSimpleFin = statusMap[account.guid]?.hasSimpleFin ?? false;
+    const aggregatedUnreviewed = aggregateUnreviewed(account, statusMap);
 
     const handleToggle = () => {
         const newExpanded = !isExpanded;
@@ -145,6 +167,17 @@ function AccountNode({
                 >
                     {account.name}
                 </Link>
+                {hasSimpleFin && (
+                    <svg className="w-3 h-3 text-foreground-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Linked to SimpleFin">
+                        <title>Linked to SimpleFin</title>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                )}
+                {aggregatedUnreviewed > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex-shrink-0">
+                        {aggregatedUnreviewed}
+                    </span>
+                )}
                 <Link
                     href={`/accounts/${account.guid}`}
                     className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-border-hover rounded text-foreground-muted hover:text-emerald-400 ml-1"
@@ -226,6 +259,8 @@ function AccountNode({
                         account={child}
                         showHidden={showHidden}
                         filterText={filterText}
+                        showToReview={showToReview}
+                        statusMap={statusMap}
                         depth={depth + 1}
                         expandToDepth={expandToDepth}
                         expandedNodes={expandedNodes}
@@ -249,11 +284,21 @@ interface AccountHierarchyProps {
 export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarchyProps) {
     const { balanceReversal } = useUserPreferences();
     const invalidateAccounts = useInvalidateAccounts();
+    const { data: reviewStatusData } = useReviewStatus();
+    const statusMap: ReviewStatusMap = reviewStatusData ?? {};
 
     // Initialize state from localStorage with fallback defaults
     const [showHidden, setShowHidden] = useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('accountHierarchy.showHidden');
+            return saved ? JSON.parse(saved) : false;
+        }
+        return false;
+    });
+
+    const [showToReview, setShowToReview] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('accountHierarchy.showToReview');
             return saved ? JSON.parse(saved) : false;
         }
         return false;
@@ -298,6 +343,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     useEffect(() => {
         localStorage.setItem('accountHierarchy.showHidden', JSON.stringify(showHidden));
     }, [showHidden]);
+
+    useEffect(() => {
+        localStorage.setItem('accountHierarchy.showToReview', JSON.stringify(showToReview));
+    }, [showToReview]);
 
     useEffect(() => {
         localStorage.setItem('accountHierarchy.sortKey', sortKey);
@@ -428,6 +477,15 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             New Account
                         </button>
                         <div className="flex items-center gap-3">
+                            <span className="text-sm text-foreground-secondary">To Review</span>
+                            <button
+                                onClick={() => setShowToReview(!showToReview)}
+                                className={`w-12 h-6 rounded-full p-1 transition-colors duration-200 ease-in-out ${showToReview ? 'bg-amber-500' : 'bg-border-hover'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-in-out ${showToReview ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-3">
                             <span className="text-sm text-foreground-secondary">Show Hidden</span>
                             <button
                                 onClick={() => setShowHidden(!showHidden)}
@@ -526,6 +584,8 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         account={acc}
                         showHidden={showHidden}
                         filterText={filterText}
+                        showToReview={showToReview}
+                        statusMap={statusMap}
                         depth={0}
                         expandToDepth={expandToDepth}
                         expandedNodes={expandedNodes}
