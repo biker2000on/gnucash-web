@@ -50,7 +50,7 @@ const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; descri
 ];
 
 export default function ProfilePage() {
-    const { balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, loading: prefsLoading } = useUserPreferences();
+    const { balanceReversal, setBalanceReversal, loading: prefsLoading } = useUserPreferences();
     const { theme, setTheme } = useTheme();
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
@@ -230,41 +230,6 @@ export default function ProfilePage() {
                             </div>
                         </label>
                     ))}
-                </div>
-            </div>
-
-            {/* Tax Settings */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
-                <h3 className="text-lg font-semibold text-foreground mb-2">Tax Settings</h3>
-                <p className="text-sm text-foreground-muted mb-6">
-                    Set a default tax rate to quickly apply to transaction amounts using the Ctrl+T keyboard shortcut.
-                </p>
-
-                <div className="space-y-3">
-                    <label className="block text-sm text-foreground-secondary">Default Tax Rate</label>
-                    <div className="flex items-center gap-2">
-                        <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max="100"
-                            value={defaultTaxRate > 0 ? (defaultTaxRate * 100).toFixed(2) : ''}
-                            onChange={(e) => {
-                                const pct = parseFloat(e.target.value);
-                                if (!isNaN(pct) && pct >= 0 && pct <= 100) {
-                                    setDefaultTaxRate(pct / 100);
-                                } else if (e.target.value === '') {
-                                    setDefaultTaxRate(0);
-                                }
-                            }}
-                            placeholder="0.00"
-                            className="w-32 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
-                        />
-                        <span className="text-sm text-foreground-muted">%</span>
-                    </div>
-                    <p className="text-xs text-foreground-muted">
-                        Press <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover text-xs">Ctrl</kbd>+<kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover text-xs">T</kbd> in amount fields to apply this tax rate to the current value.
-                    </p>
                 </div>
             </div>
 

@@ -235,7 +235,7 @@ export default function ConnectionsPage() {
       <div className="bg-surface rounded-xl border border-border p-6">
         <h2 className="text-lg font-semibold text-foreground mb-2">Bank Connections</h2>
         <p className="text-sm text-foreground-muted mb-4">
-          Connect your bank accounts via SimpleFin Bridge to automatically import transactions.
+          Connect your bank accounts via <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">SimpleFin Bridge</a> to automatically import transactions.
         </p>
 
         {!simplefinConnected ? (

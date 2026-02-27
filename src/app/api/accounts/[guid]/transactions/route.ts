@@ -18,6 +18,7 @@ export async function GET(
         const offset = parseInt(searchParams.get('offset') || '0');
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
+        const unreviewedOnly = searchParams.get('unreviewedOnly') === 'true';
         const { guid: accountGuid } = await params;
 
         // Verify account belongs to active book
@@ -40,67 +41,86 @@ export async function GET(
             };
         }
 
+        // Pre-fetch unreviewed GUIDs if filter is active
+        let unreviewedGuids: string[] | undefined;
+        if (unreviewedOnly) {
+            const unreviewedMeta = await prisma.$queryRaw<{ transaction_guid: string }[]>`
+                SELECT m.transaction_guid
+                FROM gnucash_web_transaction_meta m
+                JOIN splits s ON s.tx_guid = m.transaction_guid
+                WHERE s.account_guid = ${accountGuid} AND m.reviewed = false
+            `;
+            unreviewedGuids = unreviewedMeta.map(m => m.transaction_guid);
+            if (unreviewedGuids.length === 0) {
+                return NextResponse.json([]);
+            }
+        }
+
         // 1. Get the total balance of the account (considering date filter for filtered balance)
         // For running balance, we need balance as of the end of the date range (or total if no filter)
-        const balanceWhere: Prisma.splitsWhereInput = {
-            account_guid: accountGuid,
-            ...(endDate ? {
-                transaction: {
-                    post_date: {
-                        lte: new Date(endDate),
-                    },
-                },
-            } : {}),
-        };
+        let startingBalance = 0;
 
-        const balanceSplits = await prisma.splits.findMany({
-            where: balanceWhere,
-        });
-
-        const totalBalance = balanceSplits.reduce((sum, split) => {
-            return sum + Number(split.quantity_num) / Number(split.quantity_denom);
-        }, 0);
-
-        // 2. Get the sum of splits for transactions that are NEWER than the current batch (to calculate starting balance for the page)
-        let startingBalance = totalBalance;
-        if (offset > 0) {
-            // Get transaction GUIDs that are newer (before this page)
-            const newerTransactions = await prisma.transactions.findMany({
-                where: {
-                    ...dateFilter,
-                    splits: {
-                        some: {
-                            account_guid: accountGuid,
+        if (!unreviewedOnly) {
+            const balanceWhere: Prisma.splitsWhereInput = {
+                account_guid: accountGuid,
+                ...(endDate ? {
+                    transaction: {
+                        post_date: {
+                            lte: new Date(endDate),
                         },
                     },
-                },
-                orderBy: [
-                    { post_date: 'desc' },
-                    { enter_date: 'desc' },
-                ],
-                take: offset,
-                select: {
-                    guid: true,
-                },
+                } : {}),
+            };
+
+            const balanceSplits = await prisma.splits.findMany({
+                where: balanceWhere,
             });
 
-            const newerTxGuids = newerTransactions.map(tx => tx.guid);
+            const totalBalance = balanceSplits.reduce((sum, split) => {
+                return sum + Number(split.quantity_num) / Number(split.quantity_denom);
+            }, 0);
 
-            if (newerTxGuids.length > 0) {
-                const newerSplits = await prisma.splits.findMany({
+            // 2. Get the sum of splits for transactions that are NEWER than the current batch (to calculate starting balance for the page)
+            startingBalance = totalBalance;
+            if (offset > 0) {
+                // Get transaction GUIDs that are newer (before this page)
+                const newerTransactions = await prisma.transactions.findMany({
                     where: {
-                        account_guid: accountGuid,
-                        tx_guid: {
-                            in: newerTxGuids,
+                        ...dateFilter,
+                        splits: {
+                            some: {
+                                account_guid: accountGuid,
+                            },
                         },
+                    },
+                    orderBy: [
+                        { post_date: 'desc' },
+                        { enter_date: 'desc' },
+                    ],
+                    take: offset,
+                    select: {
+                        guid: true,
                     },
                 });
 
-                const newerSum = newerSplits.reduce((sum, split) => {
-                    return sum + Number(split.quantity_num) / Number(split.quantity_denom);
-                }, 0);
+                const newerTxGuids = newerTransactions.map(tx => tx.guid);
 
-                startingBalance = totalBalance - newerSum;
+                if (newerTxGuids.length > 0) {
+                    const newerSplits = await prisma.splits.findMany({
+                        where: {
+                            account_guid: accountGuid,
+                            tx_guid: {
+                                in: newerTxGuids,
+                            },
+                        },
+                    });
+
+                    const newerSum = newerSplits.reduce((sum, split) => {
+                        return sum + Number(split.quantity_num) / Number(split.quantity_denom);
+                    }, 0);
+
+                    startingBalance = totalBalance - newerSum;
+                }
             }
         }
 
@@ -108,6 +128,7 @@ export async function GET(
         const transactions = await prisma.transactions.findMany({
             where: {
                 ...dateFilter,
+                ...(unreviewedGuids ? { guid: { in: unreviewedGuids } } : {}),
                 splits: {
                     some: {
                         account_guid: accountGuid,
@@ -195,7 +216,7 @@ export async function GET(
                 enter_date: tx.enter_date,
                 description: tx.description,
                 splits: enrichedSplits,
-                running_balance: currentRunningBalance.toFixed(2),
+                running_balance: unreviewedOnly ? '' : currentRunningBalance.toFixed(2),
                 account_split_value: splitValue.toFixed(2),
                 commodity_mnemonic: accountMnemonic,
                 account_split_guid: accountSplit?.guid || '',
@@ -205,7 +226,7 @@ export async function GET(
                 source: meta?.source ?? 'manual',
             };
 
-            currentRunningBalance -= splitValue;
+            if (!unreviewedOnly) currentRunningBalance -= splitValue;
             return row;
         });
 
