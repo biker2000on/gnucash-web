@@ -18,6 +18,7 @@ interface AccountSelectorProps {
     onArrowUp?: () => void;
     onArrowDown?: () => void;
     autoFocus?: boolean;
+    onFocus?: () => void;
 }
 
 export function AccountSelector({
@@ -31,6 +32,7 @@ export function AccountSelector({
     onArrowUp,
     onArrowDown,
     autoFocus,
+    onFocus,
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -191,6 +193,7 @@ export function AccountSelector({
     const handleInputFocus = () => {
         setSearch('');
         inputRef.current?.select();
+        onFocus?.();
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {

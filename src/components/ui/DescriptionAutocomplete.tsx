@@ -12,6 +12,11 @@ interface DescriptionAutocompleteProps {
   className?: string;
   hasError?: boolean;
   accountGuid?: string;
+  onEnter?: () => void;
+  onArrowUp?: () => void;
+  onArrowDown?: () => void;
+  autoFocus?: boolean;
+  onFocus?: () => void;
 }
 
 export function DescriptionAutocomplete({
@@ -22,6 +27,11 @@ export function DescriptionAutocomplete({
   className = '',
   hasError = false,
   accountGuid,
+  onEnter,
+  onArrowUp,
+  onArrowDown,
+  autoFocus,
+  onFocus,
 }: DescriptionAutocompleteProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<TransactionSuggestion[]>([]);
@@ -133,11 +143,28 @@ export function DescriptionAutocomplete({
     }
   };
 
+  // Auto-focus when requested
+  useEffect(() => {
+    if (autoFocus) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [autoFocus]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (!isOpen) {
       if (e.key === 'ArrowDown' && suggestions.length > 0) {
         setIsOpen(true);
         setFocusedIndex(0);
+        e.preventDefault();
+      } else if (e.key === 'Enter') {
+        onEnter?.();
+        e.preventDefault();
+      } else if (e.key === 'ArrowUp') {
+        onArrowUp?.();
+        e.preventDefault();
+      } else if (e.key === 'ArrowDown') {
+        onArrowDown?.();
         e.preventDefault();
       }
       return;
@@ -194,6 +221,7 @@ export function DescriptionAutocomplete({
         onFocus={() => {
           isFocusedRef.current = true;
           if (suggestions.length > 0) setIsOpen(true);
+          onFocus?.();
         }}
         onBlur={() => {
           isFocusedRef.current = false;

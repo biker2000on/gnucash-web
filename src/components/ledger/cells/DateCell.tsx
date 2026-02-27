@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 interface DateCellProps {
     value: string;
@@ -10,10 +11,11 @@ interface DateCellProps {
     onEnter?: () => void;
     onArrowUp?: () => void;
     onArrowDown?: () => void;
+    onFocus?: () => void;
 }
 
-export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown }: DateCellProps) {
-    const format = 'MM/DD/YYYY';
+export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus }: DateCellProps) {
+    const { dateFormat: format } = useUserPreferences();
     const [displayValue, setDisplayValue] = useState(() => formatDateForDisplay(value, format));
     const ref = useRef<HTMLInputElement>(null);
     const { handleDateKeyDown } = useDateShortcuts(value, (newIso) => {
@@ -63,7 +65,7 @@ export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArr
             type="text"
             value={displayValue}
             onChange={(e) => setDisplayValue(e.target.value)}
-            onFocus={() => ref.current?.select()}
+            onFocus={() => { ref.current?.select(); onFocus?.(); }}
             onBlur={handleBlur}
             onKeyDown={handleKeyDown}
             placeholder="MM/DD/YYYY"

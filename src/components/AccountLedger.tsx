@@ -74,6 +74,7 @@ export default function AccountLedger({
 
     // Keyboard navigation state
     const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
+    const [focusedColumnIndex, setFocusedColumnIndex] = useState<number>(0);
     const [editingGuid, setEditingGuid] = useState<string | null>(null);
     const tableRef = useRef<HTMLTableElement>(null);
 
@@ -784,6 +785,23 @@ export default function AccountLedger({
                                     onEditModal={handleEditDirect}
                                     columnCount={table.getVisibleFlatColumns().length}
                                     onClick={() => setFocusedRowIndex(index)}
+                                    focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
+                                    onEnter={async () => {
+                                        const handle = editableRowRefs.current.get(tx.guid);
+                                        if (handle?.isDirty()) await handle.save();
+                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                    }}
+                                    onArrowUp={async () => {
+                                        const handle = editableRowRefs.current.get(tx.guid);
+                                        if (handle?.isDirty()) await handle.save();
+                                        setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                    }}
+                                    onArrowDown={async () => {
+                                        const handle = editableRowRefs.current.get(tx.guid);
+                                        if (handle?.isDirty()) await handle.save();
+                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                    }}
+                                    onColumnFocus={(col) => setFocusedColumnIndex(col)}
                                 />
                             ))
                         ) : (

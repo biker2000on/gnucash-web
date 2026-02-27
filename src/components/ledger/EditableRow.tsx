@@ -31,6 +31,11 @@ interface EditableRowProps {
     onEditModal: (guid: string) => void;
     columnCount: number;
     onClick?: () => void;
+    focusedColumn?: number;
+    onEnter?: () => void;
+    onArrowUp?: () => void;
+    onArrowDown?: () => void;
+    onColumnFocus?: (columnIndex: number) => void;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -45,6 +50,11 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onSave,
         onEditModal,
         onClick,
+        focusedColumn,
+        onEnter,
+        onArrowUp,
+        onArrowDown,
+        onColumnFocus,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -196,16 +206,48 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     </span>
                 </td>
                 <td className="px-2 py-2 align-middle">
-                    <DateCell value={postDate} onChange={setPostDate} autoFocus />
+                    <DateCell
+                        value={postDate}
+                        onChange={setPostDate}
+                        autoFocus={focusedColumn === 0}
+                        onEnter={onEnter}
+                        onArrowUp={onArrowUp}
+                        onArrowDown={onArrowDown}
+                        onFocus={() => onColumnFocus?.(0)}
+                    />
                 </td>
                 <td className="px-2 py-2 align-middle">
-                    <DescriptionCell value={description} onChange={setDescription} />
+                    <DescriptionCell
+                        value={description}
+                        onChange={setDescription}
+                        autoFocus={focusedColumn === 1}
+                        onEnter={onEnter}
+                        onArrowUp={onArrowUp}
+                        onArrowDown={onArrowDown}
+                        onFocus={() => onColumnFocus?.(1)}
+                    />
                 </td>
                 <td className="px-2 py-2 align-middle">
-                    <AccountCell value={otherAccountGuid} onChange={setOtherAccountGuid} />
+                    <AccountCell
+                        value={otherAccountGuid}
+                        onChange={setOtherAccountGuid}
+                        autoFocus={focusedColumn === 2}
+                        onEnter={onEnter}
+                        onArrowUp={onArrowUp}
+                        onArrowDown={onArrowDown}
+                        onFocus={() => onColumnFocus?.(2)}
+                    />
                 </td>
                 <td className="px-2 py-2 align-middle">
-                    <AmountCell value={amount} onChange={setAmount} />
+                    <AmountCell
+                        value={amount}
+                        onChange={setAmount}
+                        autoFocus={focusedColumn === 3}
+                        onEnter={onEnter}
+                        onArrowUp={onArrowUp}
+                        onArrowDown={onArrowDown}
+                        onFocus={() => onColumnFocus?.(3)}
+                    />
                 </td>
                 <td className="px-6 py-2 text-sm font-mono text-right align-middle opacity-40">
                     {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}

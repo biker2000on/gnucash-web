@@ -9,9 +9,13 @@ interface AmountCellProps {
     value: string;
     onChange: (value: string) => void;
     autoFocus?: boolean;
+    onEnter?: () => void;
+    onArrowUp?: () => void;
+    onArrowDown?: () => void;
+    onFocus?: () => void;
 }
 
-export function AmountCell({ value, onChange, autoFocus }: AmountCellProps) {
+export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus }: AmountCellProps) {
     const ref = useRef<HTMLInputElement>(null);
     const { defaultTaxRate } = useUserPreferences();
     const { success } = useToast();
@@ -25,6 +29,17 @@ export function AmountCell({ value, onChange, autoFocus }: AmountCellProps) {
         if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && !e.altKey) {
             e.preventDefault();
             applyTax();
+        } else if (e.key === 'Enter') {
+            const result = evaluateMathExpression(value);
+            if (result !== null) onChange(result.toFixed(2));
+            e.preventDefault();
+            onEnter?.();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            onArrowUp?.();
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            onArrowDown?.();
         }
     };
 
@@ -43,6 +58,7 @@ export function AmountCell({ value, onChange, autoFocus }: AmountCellProps) {
                 inputMode="decimal"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
+                onFocus={onFocus}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
                 placeholder="0.00"
