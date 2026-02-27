@@ -13,6 +13,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -61,6 +62,8 @@ export function TransactionForm({
         fromAccountGuid: defaultFromAccount,
         toAccountGuid: defaultToAccount,
     });
+    const dateFormat = 'MM/DD/YYYY';
+    const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
     const formRef = useRef<HTMLDivElement>(null);
     const dateInputRef = useRef<HTMLInputElement>(null);
     const { success } = useToast();
@@ -152,13 +155,15 @@ export function TransactionForm({
                 };
             }) || [createEmptySplit(), createEmptySplit()];
 
+            const postDate = transaction.post_date.toString().split('T')[0];
             setFormData({
-                post_date: transaction.post_date.toString().split('T')[0],
+                post_date: postDate,
                 description: transaction.description,
                 num: transaction.num || '',
                 currency_guid: transaction.currency_guid,
                 splits,
             });
+            setDateDisplay(formatDateForDisplay(postDate, dateFormat));
 
             // If editing a transaction with more than 2 splits, use advanced mode
             if (splits.length > 2) {
@@ -514,15 +519,21 @@ export function TransactionForm({
             e.preventDefault();
             const current = new Date(formData.post_date + 'T12:00:00');
             current.setDate(current.getDate() + 1);
-            setFormData(f => ({ ...f, post_date: current.toISOString().split('T')[0] }));
+            const newDate = current.toISOString().split('T')[0];
+            setFormData(f => ({ ...f, post_date: newDate }));
+            setDateDisplay(formatDateForDisplay(newDate, dateFormat));
         } else if (e.key === '-') {
             e.preventDefault();
             const current = new Date(formData.post_date + 'T12:00:00');
             current.setDate(current.getDate() - 1);
-            setFormData(f => ({ ...f, post_date: current.toISOString().split('T')[0] }));
+            const newDate = current.toISOString().split('T')[0];
+            setFormData(f => ({ ...f, post_date: newDate }));
+            setDateDisplay(formatDateForDisplay(newDate, dateFormat));
         } else if (e.key === 't' || e.key === 'T') {
             e.preventDefault();
-            setFormData(f => ({ ...f, post_date: new Date().toISOString().split('T')[0] }));
+            const newDate = new Date().toISOString().split('T')[0];
+            setFormData(f => ({ ...f, post_date: newDate }));
+            setDateDisplay(formatDateForDisplay(newDate, dateFormat));
         }
     };
 
@@ -666,11 +677,22 @@ export function TransactionForm({
                     </label>
                     <input
                         ref={dateInputRef}
-                        type="date"
-                        value={formData.post_date}
-                        onChange={(e) => setFormData(f => ({ ...f, post_date: e.target.value }))}
+                        type="text"
+                        value={dateDisplay}
+                        onChange={(e) => setDateDisplay(e.target.value)}
+                        onFocus={() => dateInputRef.current?.select()}
+                        onBlur={() => {
+                            const parsed = parseDateInput(dateDisplay);
+                            if (parsed) {
+                                setFormData(f => ({ ...f, post_date: parsed }));
+                                setDateDisplay(formatDateForDisplay(parsed, dateFormat));
+                            } else {
+                                setDateDisplay(formatDateForDisplay(formData.post_date, dateFormat));
+                            }
+                        }}
                         onKeyDown={handleDateKeyDown}
                         data-field="post_date"
+                        placeholder="MM/DD/YYYY"
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>

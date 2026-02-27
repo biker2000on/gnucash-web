@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Account, CreateTransactionRequest } from '@/lib/types';
 import { toNumDenom } from '@/lib/validation';
 import { useAccounts } from '@/lib/hooks/useAccounts';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 
 type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -77,7 +78,9 @@ export function InvestmentTransactionForm({
     onSave,
     onCancel,
 }: InvestmentTransactionFormProps) {
+    const dateFormat = 'MM/DD/YYYY';
     const [form, setForm] = useState<FormState>(INITIAL_FORM_STATE);
+    const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(INITIAL_FORM_STATE.date, dateFormat));
     const [errors, setErrors] = useState<string[]>([]);
     const [saving, setSaving] = useState(false);
     const [currencyGuid, setCurrencyGuid] = useState<string>('');
@@ -645,9 +648,20 @@ export function InvestmentTransactionForm({
                     Date
                 </label>
                 <input
-                    type="date"
-                    value={form.date}
-                    onChange={(e) => handleChange('date', e.target.value)}
+                    type="text"
+                    value={dateDisplay}
+                    onChange={(e) => setDateDisplay(e.target.value)}
+                    onFocus={(e) => e.target.select()}
+                    onBlur={() => {
+                        const parsed = parseDateInput(dateDisplay);
+                        if (parsed) {
+                            handleChange('date', parsed);
+                            setDateDisplay(formatDateForDisplay(parsed, dateFormat));
+                        } else {
+                            setDateDisplay(formatDateForDisplay(form.date, dateFormat));
+                        }
+                    }}
+                    placeholder="MM/DD/YYYY"
                     className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                 />
             </div>

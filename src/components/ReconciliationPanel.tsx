@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 
 interface ReconciliationPanelProps {
     accountGuid: string;
@@ -35,6 +36,9 @@ export function ReconciliationPanel({
     const [statementBalance, setStatementBalance] = useState('');
     const [statementDate, setStatementDate] = useState(
         new Date().toISOString().split('T')[0]
+    );
+    const [statementDateDisplay, setStatementDateDisplay] = useState(
+        formatDateForDisplay(new Date().toISOString().split('T')[0], 'MM/DD/YYYY')
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -127,9 +131,20 @@ export function ReconciliationPanel({
                         Statement Date
                     </label>
                     <input
-                        type="date"
-                        value={statementDate}
-                        onChange={(e) => setStatementDate(e.target.value)}
+                        type="text"
+                        value={statementDateDisplay}
+                        onChange={(e) => setStatementDateDisplay(e.target.value)}
+                        onFocus={(e) => e.target.select()}
+                        onBlur={() => {
+                            const parsed = parseDateInput(statementDateDisplay);
+                            if (parsed) {
+                                setStatementDate(parsed);
+                                setStatementDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                            } else {
+                                setStatementDateDisplay(formatDateForDisplay(statementDate, 'MM/DD/YYYY'));
+                            }
+                        }}
+                        placeholder="MM/DD/YYYY"
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-amber-500/50"
                     />
                 </div>

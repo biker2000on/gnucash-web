@@ -6,6 +6,7 @@ import { AccountSelector } from './ui/AccountSelector';
 import { DescriptionAutocomplete } from './ui/DescriptionAutocomplete';
 import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
 import { useTaxShortcut } from '@/lib/hooks/useTaxShortcut';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
@@ -41,8 +42,12 @@ export function InlineEditRow({
     const accountSplit = transaction.splits?.find(s => s.account_guid === accountGuid);
     const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
 
+    const dateFormat = 'MM/DD/YYYY';
     const [postDate, setPostDate] = useState(
         transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+    );
+    const [dateDisplay, setDateDisplay] = useState(() =>
+        formatDateForDisplay(transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0], dateFormat)
     );
     const [description, setDescription] = useState(transaction.description || '');
     const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');
@@ -65,7 +70,10 @@ export function InlineEditRow({
     }, []);
 
     // Hook up date shortcuts (+/- to increment/decrement, t for today)
-    const { handleDateKeyDown } = useDateShortcuts(postDate, setPostDate);
+    const { handleDateKeyDown } = useDateShortcuts(postDate, (newIso) => {
+        setPostDate(newIso);
+        setDateDisplay(formatDateForDisplay(newIso, dateFormat));
+    });
 
     // Hook up tax shortcut
     const { applyTax } = useTaxShortcut(amount, defaultTaxRate, setAmount, (msg) => success(msg));
@@ -143,10 +151,21 @@ export function InlineEditRow({
             <td className="px-2 py-2 align-middle">
                 <input
                     ref={dateRef}
-                    type="date"
-                    value={postDate}
-                    onChange={(e) => setPostDate(e.target.value)}
+                    type="text"
+                    value={dateDisplay}
+                    onChange={(e) => setDateDisplay(e.target.value)}
+                    onFocus={() => dateRef.current?.select()}
+                    onBlur={() => {
+                        const parsed = parseDateInput(dateDisplay);
+                        if (parsed) {
+                            setPostDate(parsed);
+                            setDateDisplay(formatDateForDisplay(parsed, dateFormat));
+                        } else {
+                            setDateDisplay(formatDateForDisplay(postDate, dateFormat));
+                        }
+                    }}
                     onKeyDown={handleDateKeyDown}
+                    placeholder="MM/DD/YYYY"
                     className="w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-cyan-500/50 font-mono"
                 />
             </td>

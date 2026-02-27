@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 
 interface AccountOption {
   guid: string;
@@ -43,6 +44,8 @@ export function DepreciationScheduleForm({
   const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [contraAccounts, setContraAccounts] = useState<AccountOption[]>([]);
+  const initialDate = existingSchedule?.purchaseDate ?? new Date().toISOString().split('T')[0];
+  const [purchaseDateDisplay, setPurchaseDateDisplay] = useState(() => formatDateForDisplay(initialDate, 'MM/DD/YYYY'));
 
   const [form, setForm] = useState<ScheduleData>({
     accountGuid: assetAccountGuid,
@@ -189,9 +192,20 @@ export function DepreciationScheduleForm({
             Purchase Date
           </label>
           <input
-            type="date"
-            value={form.purchaseDate}
-            onChange={(e) => handleChange('purchaseDate', e.target.value)}
+            type="text"
+            value={purchaseDateDisplay}
+            onChange={(e) => setPurchaseDateDisplay(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onBlur={() => {
+              const parsed = parseDateInput(purchaseDateDisplay);
+              if (parsed) {
+                handleChange('purchaseDate', parsed);
+                setPurchaseDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+              } else {
+                setPurchaseDateDisplay(formatDateForDisplay(form.purchaseDate, 'MM/DD/YYYY'));
+              }
+            }}
+            placeholder="MM/DD/YYYY"
             className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
           />
         </div>

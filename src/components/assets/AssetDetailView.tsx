@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid,
@@ -65,6 +66,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
   // Manual adjustment form state
   const [adjustTarget, setAdjustTarget] = useState('');
   const [adjustDate, setAdjustDate] = useState(new Date().toISOString().split('T')[0]);
+  const [adjustDateDisplay, setAdjustDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], 'MM/DD/YYYY'));
   const [adjustContraGuid, setAdjustContraGuid] = useState('');
   const [adjustNotes, setAdjustNotes] = useState('');
   const [adjusting, setAdjusting] = useState(false);
@@ -268,9 +270,20 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                 Date
               </label>
               <input
-                type="date"
-                value={adjustDate}
-                onChange={(e) => setAdjustDate(e.target.value)}
+                type="text"
+                value={adjustDateDisplay}
+                onChange={(e) => setAdjustDateDisplay(e.target.value)}
+                onFocus={(e) => e.target.select()}
+                onBlur={() => {
+                  const parsed = parseDateInput(adjustDateDisplay);
+                  if (parsed) {
+                    setAdjustDate(parsed);
+                    setAdjustDateDisplay(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                  } else {
+                    setAdjustDateDisplay(formatDateForDisplay(adjustDate, 'MM/DD/YYYY'));
+                  }
+                }}
+                placeholder="MM/DD/YYYY"
                 className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
               />
             </div>

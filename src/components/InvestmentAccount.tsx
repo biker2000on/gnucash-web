@@ -8,6 +8,7 @@ import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceArea, AreaChart, Area, ReferenceLine } from 'recharts';
 import type { CategoricalChartFunc } from 'recharts/types/chart/types';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
+import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 
 interface PriceData {
     guid: string;
@@ -62,6 +63,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
     const [error, setError] = useState<string | null>(null);
     const [showPriceModal, setShowPriceModal] = useState(false);
     const [newPrice, setNewPrice] = useState({ date: '', value: '' });
+    const [priceDisplayDate, setPriceDisplayDate] = useState('');
     const [savingPrice, setSavingPrice] = useState(false);
     const [fetchingPrice, setFetchingPrice] = useState(false);
     const [showTransactionModal, setShowTransactionModal] = useState(false);
@@ -718,9 +720,20 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     Date
                                 </label>
                                 <input
-                                    type="date"
-                                    value={newPrice.date}
-                                    onChange={e => setNewPrice(prev => ({ ...prev, date: e.target.value }))}
+                                    type="text"
+                                    value={priceDisplayDate}
+                                    onChange={e => setPriceDisplayDate(e.target.value)}
+                                    onFocus={(e) => e.target.select()}
+                                    onBlur={() => {
+                                        const parsed = parseDateInput(priceDisplayDate);
+                                        if (parsed) {
+                                            setNewPrice(prev => ({ ...prev, date: parsed }));
+                                            setPriceDisplayDate(formatDateForDisplay(parsed, 'MM/DD/YYYY'));
+                                        } else if (newPrice.date) {
+                                            setPriceDisplayDate(formatDateForDisplay(newPrice.date, 'MM/DD/YYYY'));
+                                        }
+                                    }}
+                                    placeholder="MM/DD/YYYY"
                                     className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
                                 />
                             </div>

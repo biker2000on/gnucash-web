@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { DATE_PRESETS, DateRange, formatDateForDisplay } from '@/lib/datePresets';
+import { formatDateForDisplay as formatIsoToDisplay, parseDateInput } from '@/lib/date-format';
 
 interface DateRangePickerProps {
     startDate: string | null;
@@ -14,12 +15,16 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
     const [isOpen, setIsOpen] = useState(false);
     const [customStart, setCustomStart] = useState(startDate || '');
     const [customEnd, setCustomEnd] = useState(endDate || '');
+    const [customStartDisplay, setCustomStartDisplay] = useState(() => startDate ? formatIsoToDisplay(startDate, 'MM/DD/YYYY') : '');
+    const [customEndDisplay, setCustomEndDisplay] = useState(() => endDate ? formatIsoToDisplay(endDate, 'MM/DD/YYYY') : '');
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     // Update custom inputs when props change
     useEffect(() => {
         setCustomStart(startDate || '');
         setCustomEnd(endDate || '');
+        setCustomStartDisplay(startDate ? formatIsoToDisplay(startDate, 'MM/DD/YYYY') : '');
+        setCustomEndDisplay(endDate ? formatIsoToDisplay(endDate, 'MM/DD/YYYY') : '');
     }, [startDate, endDate]);
 
     // Close dropdown when clicking outside
@@ -116,16 +121,42 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
                         <div className="text-xs text-foreground-muted uppercase tracking-wider mb-2">Custom Range</div>
                         <div className="flex gap-2 items-center mb-3">
                             <input
-                                type="date"
-                                value={customStart}
-                                onChange={(e) => setCustomStart(e.target.value)}
+                                type="text"
+                                value={customStartDisplay}
+                                onChange={(e) => setCustomStartDisplay(e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={() => {
+                                    const parsed = parseDateInput(customStartDisplay);
+                                    if (parsed) {
+                                        setCustomStart(parsed);
+                                        setCustomStartDisplay(formatIsoToDisplay(parsed, 'MM/DD/YYYY'));
+                                    } else if (!customStartDisplay.trim()) {
+                                        setCustomStart('');
+                                    } else {
+                                        setCustomStartDisplay(customStart ? formatIsoToDisplay(customStart, 'MM/DD/YYYY') : '');
+                                    }
+                                }}
+                                placeholder="MM/DD/YYYY"
                                 className="flex-1 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
                             />
                             <span className="text-foreground-muted">to</span>
                             <input
-                                type="date"
-                                value={customEnd}
-                                onChange={(e) => setCustomEnd(e.target.value)}
+                                type="text"
+                                value={customEndDisplay}
+                                onChange={(e) => setCustomEndDisplay(e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={() => {
+                                    const parsed = parseDateInput(customEndDisplay);
+                                    if (parsed) {
+                                        setCustomEnd(parsed);
+                                        setCustomEndDisplay(formatIsoToDisplay(parsed, 'MM/DD/YYYY'));
+                                    } else if (!customEndDisplay.trim()) {
+                                        setCustomEnd('');
+                                    } else {
+                                        setCustomEndDisplay(customEnd ? formatIsoToDisplay(customEnd, 'MM/DD/YYYY') : '');
+                                    }
+                                }}
+                                placeholder="MM/DD/YYYY"
                                 className="flex-1 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
                             />
                         </div>
