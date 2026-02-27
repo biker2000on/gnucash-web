@@ -48,7 +48,7 @@ export default function AccountLedger({
     currentBalance = 0,
     accountType = 'ASSET',
 }: AccountLedgerProps) {
-    const { balanceReversal } = useUserPreferences();
+    const { balanceReversal, defaultLedgerMode } = useUserPreferences();
     const { success, error } = useToast();
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
@@ -70,6 +70,7 @@ export default function AccountLedger({
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [deletingGuid, setDeletingGuid] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
 
     // Keyboard navigation state
     const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
@@ -79,12 +80,21 @@ export default function AccountLedger({
     // Reviewed filter state
     const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
 
-    // Review mode state
-    const [isReviewMode, setIsReviewMode] = useState(false);
-    const [reviewedCount, setReviewedCount] = useState(0);
-    const [reviewSelectedGuids, setReviewSelectedGuids] = useState<Set<string>>(new Set());
+    // Edit mode state (initialized from defaultLedgerMode preference)
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [editModeInitialized, setEditModeInitialized] = useState(false);
+    const [editReviewedCount, setEditReviewedCount] = useState(0);
+    const [editSelectedGuids, setEditSelectedGuids] = useState<Set<string>>(new Set());
     const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
     const editableRowRefs = useRef<Map<string, EditableRowHandle>>(new Map());
+
+    // Initialize edit mode from preference on mount (once preferences are loaded)
+    useEffect(() => {
+        if (!editModeInitialized && defaultLedgerMode) {
+            setIsEditMode(defaultLedgerMode === 'edit');
+            setEditModeInitialized(true);
+        }
+    }, [defaultLedgerMode, editModeInitialized]);
 
     // Fetch SimpleFin balance for this account on mount
     useEffect(() => {
@@ -314,28 +324,27 @@ export default function AccountLedger({
         return transactions.filter(tx => tx.reviewed === false);
     }, [transactions, showUnreviewedOnly]);
 
-    // Review mode toggle with mutual exclusivity
-    const handleToggleReviewMode = useCallback(() => {
-        setIsReviewMode(prev => {
+    // Edit mode toggle with mutual exclusivity
+    const handleToggleEditMode = useCallback(() => {
+        setIsEditMode(prev => {
             const next = !prev;
             if (next) {
-                // Entering review mode: exit reconciliation, enable unreviewed filter
+                // Entering edit mode: exit reconciliation
                 setIsReconciling(false);
                 setSelectedSplits(new Set());
-                setShowUnreviewedOnly(true);
-                setReviewedCount(0);
+                setEditReviewedCount(0);
             } else {
-                // Exiting review mode: clear review state
-                setReviewSelectedGuids(new Set());
+                // Exiting edit mode: clear edit state
+                setEditSelectedGuids(new Set());
                 setFocusedRowIndex(-1);
             }
             return next;
         });
     }, []);
 
-    // Review mode checkbox handling with shift+click range selection
-    const handleReviewCheckToggle = useCallback((index: number, guid: string, shiftKey: boolean) => {
-        setReviewSelectedGuids(prev => {
+    // Edit mode checkbox handling with shift+click range selection
+    const handleEditCheckToggle = useCallback((index: number, guid: string, shiftKey: boolean) => {
+        setEditSelectedGuids(prev => {
             const next = new Set(prev);
             if (shiftKey && lastCheckedIndex !== null) {
                 const start = Math.min(lastCheckedIndex, index);
@@ -355,24 +364,36 @@ export default function AccountLedger({
         setLastCheckedIndex(index);
     }, [lastCheckedIndex, displayTransactions]);
 
-    // Select all review checkboxes
-    const handleSelectAllReview = useCallback(() => {
+    // Select all edit mode checkboxes
+    const handleSelectAllEdit = useCallback(() => {
         const allGuids = new Set(displayTransactions.map(tx => tx.guid));
-        setReviewSelectedGuids(allGuids);
+        setEditSelectedGuids(allGuids);
     }, [displayTransactions]);
 
     // Bulk review handler
     const handleBulkReview = useCallback(async () => {
-        const guids = Array.from(reviewSelectedGuids);
+        const guids = Array.from(editSelectedGuids);
         for (const guid of guids) {
             await fetch(`/api/transactions/${guid}/review`, { method: 'PATCH' });
         }
-        setReviewedCount(prev => prev + guids.length);
-        setReviewSelectedGuids(new Set());
+        setEditReviewedCount(prev => prev + guids.length);
+        setEditSelectedGuids(new Set());
         await fetchTransactions();
-    }, [reviewSelectedGuids, fetchTransactions]);
+    }, [editSelectedGuids, fetchTransactions]);
 
-    // Open TransactionFormModal directly for review mode edit button
+    // Bulk delete handler
+    const handleBulkDelete = useCallback(async () => {
+        const guids = Array.from(editSelectedGuids);
+        for (const guid of guids) {
+            await fetch(`/api/transactions/${guid}`, { method: 'DELETE' });
+        }
+        setEditSelectedGuids(new Set());
+        setBulkDeleteConfirmOpen(false);
+        await fetchTransactions();
+        success(`Deleted ${guids.length} transaction${guids.length !== 1 ? 's' : ''}`);
+    }, [editSelectedGuids, fetchTransactions, success]);
+
+    // Open TransactionFormModal directly for edit mode edit button
     const handleEditDirect = useCallback((guid: string) => {
         const tx = transactions.find(t => t.guid === guid);
         setEditingTransaction(tx || null);
@@ -383,8 +404,8 @@ export default function AccountLedger({
     const columns = useMemo(() => getColumns({
         accountGuid,
         isReconciling,
-        isReviewMode,
-    }), [accountGuid, isReconciling, isReviewMode]);
+        isEditMode,
+    }), [accountGuid, isReconciling, isEditMode]);
 
     const table = useReactTable({
         data: displayTransactions,
@@ -401,8 +422,8 @@ export default function AccountLedger({
         const isInInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
 
         if (isInInput) {
-            // In review mode, still handle Ctrl+R and Escape even in input fields
-            if (isReviewMode) {
+            // In edit mode, still handle Ctrl+R and Escape even in input fields
+            if (isEditMode) {
                 if (e.key === 'r' && e.ctrlKey) {
                     e.preventDefault();
                     if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
@@ -410,7 +431,7 @@ export default function AccountLedger({
                         const handle = editableRowRefs.current.get(tx.guid);
                         if (handle?.isDirty()) await handle.save();
                         await toggleReviewed(tx.guid);
-                        setReviewedCount(prev => prev + 1);
+                        setEditReviewedCount(prev => prev + 1);
                         if (focusedRowIndex < displayTransactions.length - 1) {
                             setFocusedRowIndex(prev => prev + 1);
                         }
@@ -426,7 +447,7 @@ export default function AccountLedger({
             return; // Let input fields handle other keys normally
         }
 
-        if (isReviewMode) {
+        if (isEditMode) {
             switch (e.key) {
                 case 'ArrowDown':
                 case 'j': {
@@ -474,7 +495,7 @@ export default function AccountLedger({
                         const handle = editableRowRefs.current.get(tx.guid);
                         if (handle?.isDirty()) await handle.save();
                         await toggleReviewed(tx.guid);
-                        setReviewedCount(prev => prev + 1);
+                        setEditReviewedCount(prev => prev + 1);
                         if (focusedRowIndex < displayTransactions.length - 1) {
                             setFocusedRowIndex(prev => prev + 1);
                         }
@@ -531,7 +552,7 @@ export default function AccountLedger({
                 setFocusedRowIndex(-1);
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isReviewMode, handleRowClick, handleEditDirect, toggleReviewed]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -547,12 +568,12 @@ export default function AccountLedger({
         }
     }, [focusedRowIndex]);
 
-    // Auto-focus first row when entering review mode
+    // Auto-focus first row when entering edit mode
     useEffect(() => {
-        if (isReviewMode && displayTransactions.length > 0 && focusedRowIndex < 0) {
+        if (isEditMode && displayTransactions.length > 0 && focusedRowIndex < 0) {
             setFocusedRowIndex(0);
         }
-    }, [isReviewMode, displayTransactions.length, focusedRowIndex]);
+    }, [isEditMode, displayTransactions.length, focusedRowIndex]);
 
     // Reset when initialTransactions change (e.g., date filter changed)
     useEffect(() => {
@@ -646,37 +667,45 @@ export default function AccountLedger({
                         {showUnreviewedOnly ? 'Showing Unreviewed' : 'Show Unreviewed Only'}
                     </button>
                     <button
-                        onClick={handleToggleReviewMode}
+                        onClick={handleToggleEditMode}
                         className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
-                            isReviewMode
+                            isEditMode
                                 ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
                                 : 'border-border text-foreground-muted hover:text-foreground'
                         }`}
                     >
-                        {isReviewMode ? 'Exit Review Mode' : 'Review Mode'}
+                        {isEditMode ? 'Exit Edit Mode' : 'Edit Mode'}
                     </button>
-                    {isReviewMode && (
+                    {isEditMode && (
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={handleSelectAllReview}
+                                onClick={handleSelectAllEdit}
                                 className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
                             >
                                 Select All
                             </button>
                             <span className="text-foreground-muted">|</span>
                             <button
-                                onClick={() => setReviewSelectedGuids(new Set())}
+                                onClick={() => setEditSelectedGuids(new Set())}
                                 className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
                             >
                                 Clear
                             </button>
                             <button
                                 onClick={handleBulkReview}
-                                disabled={reviewSelectedGuids.size === 0}
+                                disabled={editSelectedGuids.size === 0}
                                 className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                             >
-                                Mark Reviewed ({reviewSelectedGuids.size})
+                                Mark Reviewed ({editSelectedGuids.size})
                             </button>
+                            {editSelectedGuids.size > 0 && (
+                                <button
+                                    onClick={() => setBulkDeleteConfirmOpen(true)}
+                                    className="px-3 py-1.5 text-xs bg-rose-700 hover:bg-rose-600 text-white rounded-lg transition-colors"
+                                >
+                                    Delete Selected ({editSelectedGuids.size})
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -691,7 +720,7 @@ export default function AccountLedger({
                     onSelectAll={selectAllUnreconciled}
                     onClearSelection={clearSelection}
                     isReconciling={isReconciling}
-                    onStartReconcile={() => { setIsReviewMode(false); setIsReconciling(true); }}
+                    onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
                     onCancelReconcile={() => {
                         setIsReconciling(false);
                         setSelectedSplits(new Set());
@@ -709,13 +738,13 @@ export default function AccountLedger({
                                     const colId = header.column.id;
                                     if (colId === 'select') return (
                                         <th key={header.id} className="px-4 py-4 w-10">
-                                            {isReviewMode && (
+                                            {isEditMode && (
                                                 <input
                                                     type="checkbox"
-                                                    checked={reviewSelectedGuids.size === displayTransactions.length && displayTransactions.length > 0}
+                                                    checked={editSelectedGuids.size === displayTransactions.length && displayTransactions.length > 0}
                                                     onChange={(e) => {
-                                                        if (e.target.checked) handleSelectAllReview();
-                                                        else setReviewSelectedGuids(new Set());
+                                                        if (e.target.checked) handleSelectAllEdit();
+                                                        else setEditSelectedGuids(new Set());
                                                     }}
                                                     tabIndex={-1}
                                                     className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-cyan-500 cursor-pointer"
@@ -736,7 +765,7 @@ export default function AccountLedger({
                         ))}
                     </thead>
                     <tbody className="divide-y divide-border/50">
-                        {isReviewMode ? (
+                        {isEditMode ? (
                             displayTransactions.map((tx, index) => (
                                 <EditableRow
                                     key={tx.guid}
@@ -749,11 +778,12 @@ export default function AccountLedger({
                                     accountType={accountType}
                                     isActive={index === focusedRowIndex}
                                     showCheckbox={true}
-                                    isChecked={reviewSelectedGuids.has(tx.guid)}
-                                    onToggleCheck={(e) => handleReviewCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
+                                    isChecked={editSelectedGuids.has(tx.guid)}
+                                    onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
                                     onSave={handleInlineSave}
                                     onEditModal={handleEditDirect}
                                     columnCount={table.getVisibleFlatColumns().length}
+                                    onClick={() => setFocusedRowIndex(index)}
                                 />
                             ))
                         ) : (
@@ -911,20 +941,20 @@ export default function AccountLedger({
                     </tbody>
                 </table>
 
-                {isReviewMode && displayTransactions.length === 0 && (
+                {isEditMode && displayTransactions.length === 0 && (
                     <div className="p-12 text-center">
                         <div className="text-4xl mb-4">&#10003;</div>
                         <h3 className="text-lg font-semibold text-emerald-400 mb-2">All caught up!</h3>
                         <p className="text-sm text-foreground-muted">
-                            {reviewedCount > 0
-                                ? `You reviewed ${reviewedCount} transaction${reviewedCount !== 1 ? 's' : ''} this session.`
+                            {editReviewedCount > 0
+                                ? `You reviewed ${editReviewedCount} transaction${editReviewedCount !== 1 ? 's' : ''} this session.`
                                 : 'No unreviewed transactions.'}
                         </p>
                         <button
-                            onClick={handleToggleReviewMode}
+                            onClick={handleToggleEditMode}
                             className="mt-4 px-4 py-2 text-sm border border-border text-foreground-secondary hover:text-foreground rounded-lg transition-colors"
                         >
-                            Exit Review Mode
+                            Exit Edit Mode
                         </button>
                     </div>
                 )}
@@ -980,6 +1010,16 @@ export default function AccountLedger({
                 confirmLabel="Delete"
                 confirmVariant="danger"
                 isLoading={isDeleting}
+            />
+
+            <ConfirmationDialog
+                isOpen={bulkDeleteConfirmOpen}
+                onConfirm={handleBulkDelete}
+                onCancel={() => setBulkDeleteConfirmOpen(false)}
+                title="Delete Selected Transactions"
+                message={`Delete ${editSelectedGuids.size} selected transaction${editSelectedGuids.size !== 1 ? 's' : ''}? This cannot be undone.`}
+                confirmLabel="Delete"
+                confirmVariant="danger"
             />
         </div>
     );

@@ -5,6 +5,8 @@ import { BalanceReversal } from '@/lib/format';
 import { getAllPreferences, setPreferences, getChartDefaults, getPreference, setPreference } from '@/lib/user-preferences';
 
 const VALID_BALANCE_REVERSALS: BalanceReversal[] = ['none', 'credit', 'income_expense'];
+const VALID_LEDGER_MODES = ['readonly', 'edit'] as const;
+type DefaultLedgerMode = typeof VALID_LEDGER_MODES[number];
 
 /**
  * GET /api/user/preferences
@@ -45,12 +47,14 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        // Fetch tax rate from key-value preferences
+        // Fetch tax rate and ledger mode from key-value preferences
         const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
+        const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
 
         return NextResponse.json({
             balanceReversal: user.balance_reversal || 'none',
             defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
+            defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
         });
     } catch (error) {
         console.error('Error fetching user preferences:', error);
@@ -68,7 +72,7 @@ export async function PATCH(request: NextRequest) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
-        const { balanceReversal, defaultTaxRate } = body;
+        const { balanceReversal, defaultTaxRate, defaultLedgerMode } = body;
 
         // Validate balance reversal value
         if (balanceReversal !== undefined) {
@@ -86,6 +90,16 @@ export async function PATCH(request: NextRequest) {
             if (isNaN(rate) || rate < 0 || rate > 1) {
                 return NextResponse.json(
                     { error: 'Invalid defaultTaxRate value. Must be a number between 0 and 1' },
+                    { status: 400 }
+                );
+            }
+        }
+
+        // Validate ledger mode
+        if (defaultLedgerMode !== undefined) {
+            if (!VALID_LEDGER_MODES.includes(defaultLedgerMode)) {
+                return NextResponse.json(
+                    { error: `Invalid defaultLedgerMode value. Must be one of: ${VALID_LEDGER_MODES.join(', ')}` },
                     { status: 400 }
                 );
             }
@@ -111,16 +125,23 @@ export async function PATCH(request: NextRequest) {
             await setPreference(roleResult.user.id, 'default_tax_rate', parseFloat(defaultTaxRate));
         }
 
+        // Update ledger mode if provided
+        if (defaultLedgerMode !== undefined) {
+            await setPreference(roleResult.user.id, 'default_ledger_mode', defaultLedgerMode);
+        }
+
         // Fetch current values for response
         const user = await prisma.gnucash_web_users.findUnique({
             where: { id: roleResult.user.id },
             select: { balance_reversal: true },
         });
         const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
+        const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
 
         return NextResponse.json({
             balanceReversal: updatedBalanceReversal || user?.balance_reversal || 'none',
             defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
+            defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
         });
     } catch (error) {
         console.error('Error updating user preferences:', error);

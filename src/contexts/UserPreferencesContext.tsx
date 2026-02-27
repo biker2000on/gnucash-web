@@ -3,11 +3,15 @@
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode, useMemo } from 'react';
 import { BalanceReversal } from '@/lib/format';
 
+export type DefaultLedgerMode = 'readonly' | 'edit';
+
 interface UserPreferencesContextType {
     balanceReversal: BalanceReversal;
     setBalanceReversal: (value: BalanceReversal) => Promise<void>;
     defaultTaxRate: number;
     setDefaultTaxRate: (rate: number) => Promise<void>;
+    defaultLedgerMode: DefaultLedgerMode;
+    setDefaultLedgerMode: (mode: DefaultLedgerMode) => Promise<void>;
     loading: boolean;
 }
 
@@ -22,6 +26,7 @@ interface UserPreferencesProviderProps {
 export function UserPreferencesProvider({ children }: UserPreferencesProviderProps) {
     const [balanceReversal, setBalanceReversalState] = useState<BalanceReversal>('none');
     const [defaultTaxRate, setDefaultTaxRateState] = useState<number>(0);
+    const [defaultLedgerMode, setDefaultLedgerModeState] = useState<DefaultLedgerMode>('readonly');
     const [loading, setLoading] = useState(true);
 
     // Load preferences from API on mount
@@ -39,6 +44,9 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         if (parsed.defaultTaxRate !== undefined) {
                             setDefaultTaxRateState(parsed.defaultTaxRate);
                         }
+                        if (parsed.defaultLedgerMode) {
+                            setDefaultLedgerModeState(parsed.defaultLedgerMode);
+                        }
                     } catch {
                         // Invalid cache, ignore
                     }
@@ -50,6 +58,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                     const data = await res.json();
                     setBalanceReversalState(data.balanceReversal || 'none');
                     setDefaultTaxRateState(data.defaultTaxRate || 0);
+                    setDefaultLedgerModeState(data.defaultLedgerMode || 'readonly');
                     // Update cache
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 }
@@ -117,13 +126,35 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         }
     }, []);
 
+    const setDefaultLedgerMode = useCallback(async (value: DefaultLedgerMode) => {
+        setDefaultLedgerModeState(value);
+
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, defaultLedgerMode: value }));
+
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ defaultLedgerMode: value }),
+            });
+            if (!res.ok) throw new Error('Failed to save preference');
+        } catch (error) {
+            console.error('Failed to save defaultLedgerMode preference:', error);
+            throw error;
+        }
+    }, []);
+
     const value = useMemo<UserPreferencesContextType>(() => ({
         balanceReversal,
         setBalanceReversal,
         defaultTaxRate,
         setDefaultTaxRate,
+        defaultLedgerMode,
+        setDefaultLedgerMode,
         loading,
-    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, loading]);
+    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, loading]);
 
     return (
         <UserPreferencesContext.Provider value={value}>

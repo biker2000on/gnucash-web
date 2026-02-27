@@ -30,6 +30,7 @@ interface EditableRowProps {
     }) => Promise<void>;
     onEditModal: (guid: string) => void;
     columnCount: number;
+    onClick?: () => void;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -43,7 +44,13 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onToggleCheck,
         onSave,
         onEditModal,
+        onClick,
     }, ref) {
+        const handleRowClick = (e: React.MouseEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.closest('input[type="checkbox"], button, a')) return;
+            onClick?.();
+        };
         const { balanceReversal } = useUserPreferences();
         const isMultiSplit = (transaction.splits?.length || 0) > 2;
         const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
@@ -133,7 +140,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         if (isMultiSplit) {
             const otherSplits = transaction.splits?.filter(s => s.account_guid !== accountGuid) || [];
             return (
-                <tr className={rowClass}>
+                <tr className={rowClass} onClick={handleRowClick}>
                     {checkboxCell}
                     {reconcileCell}
                     <td className="px-6 py-4 text-xs text-foreground-secondary font-mono">
@@ -160,7 +167,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         // 2-split: read-only when not active
         if (!isActive) {
             return (
-                <tr className={rowClass}>
+                <tr className={rowClass} onClick={handleRowClick}>
                     {checkboxCell}
                     {reconcileCell}
                     <td className="px-6 py-4 text-xs text-foreground-secondary font-mono">

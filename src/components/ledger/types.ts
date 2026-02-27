@@ -4,7 +4,7 @@ export interface LedgerMeta {
     accountGuid: string;
     accountType: string;
     isReconciling: boolean;
-    isReviewMode: boolean;
+    isEditMode: boolean;
     focusedRowIndex: number;
     editingGuid: string | null;
     balanceReversal: string;

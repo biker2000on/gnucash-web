@@ -6,12 +6,12 @@ const columnHelper = createColumnHelper<AccountTransaction>();
 export function getColumns(meta: {
     accountGuid: string;
     isReconciling: boolean;
-    isReviewMode: boolean;
+    isEditMode: boolean;
 }): ColumnDef<AccountTransaction, any>[] {
     const columns: ColumnDef<AccountTransaction, any>[] = [];
 
-    // Checkbox column (reconciliation or review mode)
-    if (meta.isReconciling || meta.isReviewMode) {
+    // Checkbox column (reconciliation or edit mode)
+    if (meta.isReconciling || meta.isEditMode) {
         columns.push(
             columnHelper.display({
                 id: 'select',
@@ -70,8 +70,8 @@ export function getColumns(meta: {
         })
     );
 
-    // Edit button (review mode)
-    if (meta.isReviewMode) {
+    // Edit button (edit mode)
+    if (meta.isEditMode) {
         columns.push(
             columnHelper.display({
                 id: 'actions',
