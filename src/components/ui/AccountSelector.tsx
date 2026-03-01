@@ -19,6 +19,7 @@ interface AccountSelectorProps {
     onArrowDown?: () => void;
     autoFocus?: boolean;
     onFocus?: () => void;
+    accountTypes?: string[];
 }
 
 export function AccountSelector({
@@ -33,6 +34,7 @@ export function AccountSelector({
     onArrowDown,
     autoFocus,
     onFocus,
+    accountTypes,
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -138,12 +140,13 @@ export function AccountSelector({
     const filteredAccounts = useMemo(() =>
         accounts.filter(account => {
             if (account.account_type === 'ROOT') return false;
+            if (accountTypes && !accountTypes.includes(account.account_type)) return false;
             const searchLower = search.toLowerCase();
             const displayName = formatAccountPath(account.fullname, account.name, bookName);
             return displayName.toLowerCase().includes(searchLower) ||
                 account.account_type.toLowerCase().includes(searchLower);
         }),
-        [accounts, search, bookName]
+        [accounts, search, bookName, accountTypes]
     );
 
     // Group accounts by type (memoized)
