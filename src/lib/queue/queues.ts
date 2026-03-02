@@ -52,6 +52,34 @@ export async function scheduleRefreshPrices(intervalHours: number = 24): Promise
 }
 
 /**
+ * Remove any recurring price refresh jobs from the queue.
+ */
+export async function unscheduleRefreshPrices(): Promise<void> {
+  const queue = getJobQueue();
+  if (!queue) return;
+
+  try {
+    const withTimeout = <T>(promise: Promise<T>) =>
+      Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Redis timeout')), 5000)
+        ),
+      ]);
+
+    const existing = await withTimeout(queue.getRepeatableJobs());
+    for (const job of existing) {
+      if (job.name === 'refresh-prices') {
+        await withTimeout(queue.removeRepeatableByKey(job.key));
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to unschedule refresh prices:', err);
+    jobQueue = null;
+  }
+}
+
+/**
  * Enqueue an immediate one-off job.
  * Returns undefined (triggering direct fallback) if Redis is unavailable.
  */

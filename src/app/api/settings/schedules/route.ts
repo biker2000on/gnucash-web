@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getPreference, setPreference } from '@/lib/user-preferences';
-import { scheduleRefreshPrices } from '@/lib/queue/queues';
+import { scheduleRefreshPrices, unscheduleRefreshPrices } from '@/lib/queue/queues';
 
 export async function GET() {
   try {
@@ -38,11 +38,24 @@ export async function PATCH(request: NextRequest) {
 
     if (intervalHours !== undefined) {
       await setPreference(roleResult.user.id, 'refresh_interval_hours', intervalHours);
-      // Only reschedule if enabled
-      const isEnabled = enabled !== undefined ? enabled : await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
-      if (isEnabled === true || isEnabled === 'true') {
-        await scheduleRefreshPrices(intervalHours);
-      }
+    }
+
+    // Determine effective state after updates
+    let isEnabled: boolean;
+    if (enabled !== undefined) {
+      isEnabled = enabled === true || enabled === 'true';
+    } else {
+      const stored = await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
+      isEnabled = stored === true || stored === 'true';
+    }
+
+    if (isEnabled) {
+      const hours = intervalHours !== undefined
+        ? intervalHours
+        : await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24);
+      await scheduleRefreshPrices(typeof hours === 'number' ? hours : parseInt(String(hours)));
+    } else if (enabled === false) {
+      await unscheduleRefreshPrices();
     }
 
     return NextResponse.json({ success: true });
