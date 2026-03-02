@@ -186,7 +186,7 @@ function DashboardContent() {
                 const cashFlowArray = months.map((month: string, index: number) => ({
                     month,
                     income: income[index] || 0,
-                    expenses: expenses[index] || 0,
+                    expenses: -(expenses[index] || 0),
                     netCashFlow: netCashFlow[index] || 0,
                 }));
                 setCashFlowData(cashFlowArray);
