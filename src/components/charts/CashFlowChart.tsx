@@ -2,7 +2,7 @@
 
 import { useContext } from 'react';
 import {
-    AreaChart,
+    ComposedChart,
     Area,
     Line,
     XAxis,
@@ -139,7 +139,7 @@ export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
     return (
         <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
             <ResponsiveContainer width="100%" height={height}>
-                <AreaChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <ComposedChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                     <XAxis
                         dataKey="month"
@@ -171,6 +171,7 @@ export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
                         stroke="#10b981"
                         fill="#10b981"
                         fillOpacity={0.3}
+                        baseValue={0}
                         name="Income"
                     />
                     <Area
@@ -179,6 +180,7 @@ export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
                         stroke="#ef4444"
                         fill="#ef4444"
                         fillOpacity={0.3}
+                        baseValue={0}
                         name="Expenses"
                     />
                     <Line
@@ -190,7 +192,7 @@ export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
                         dot={{ fill: '#3b82f6', r: 3 }}
                         name="Net Cash Flow"
                     />
-                </AreaChart>
+                </ComposedChart>
             </ResponsiveContainer>
         </div>
     );
