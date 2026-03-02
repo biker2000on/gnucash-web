@@ -2,18 +2,16 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { DateRangePicker } from '@/components/ui/DateRangePicker';
-import { DateRange } from '@/lib/datePresets';
 import KPIGrid from '@/components/dashboard/KPIGrid';
 import NetWorthChart from '@/components/dashboard/NetWorthChart';
 import SankeyDiagram, { SankeyHierarchyNode, SankeyResponseData } from '@/components/dashboard/SankeyDiagram';
 import ExpensePieChart from '@/components/dashboard/ExpensePieChart';
 import IncomePieChart from '@/components/dashboard/IncomePieChart';
 import TaxPieChart from '@/components/dashboard/TaxPieChart';
-import IncomeExpenseBarChart from '@/components/dashboard/IncomeExpenseBarChart';
-import NetProfitChart from '@/components/dashboard/NetProfitChart';
 import CashFlowChart from '@/components/charts/CashFlowChart';
 import ExpandableChart from '@/components/charts/ExpandableChart';
+import { DashboardPeriodProvider, useDashboardPeriod, PERIOD_OPTIONS } from '@/contexts/DashboardPeriodContext';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 // ------------------------------------------------------------------
 // Types matching API responses
@@ -38,38 +36,16 @@ interface NetWorthDataPoint {
     liabilities: number;
 }
 
-interface MonthlyData {
-    month: string;
-    income: number;
-    expenses: number;
-    taxes: number;
-    netProfit: number;
-}
-
 interface CategoryData {
     name: string;
     value: number;
 }
 
-// ------------------------------------------------------------------
-// Helper: year-to-date default range
-// ------------------------------------------------------------------
-
-function getYearToDateRange(): DateRange {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    return {
-        startDate: startOfYear.toISOString().split('T')[0],
-        endDate: now.toISOString().split('T')[0],
-    };
-}
-
-function buildQueryString(startDate: string | null, endDate: string | null): string {
-    const params = new URLSearchParams();
-    if (startDate) params.set('startDate', startDate);
-    if (endDate) params.set('endDate', endDate);
-    const qs = params.toString();
-    return qs ? `?${qs}` : '';
+interface CashFlowData {
+    month: string;
+    income: number;
+    expenses: number;
+    netCashFlow: number;
 }
 
 // ------------------------------------------------------------------
@@ -129,33 +105,24 @@ function deriveTaxCategoriesFromTree(expense: SankeyHierarchyNode[]): CategoryDa
 }
 
 // ------------------------------------------------------------------
-// Dashboard page
+// Dashboard content (uses period context)
 // ------------------------------------------------------------------
 
-export default function DashboardPage() {
-    const [dateRange, setDateRange] = useState<DateRange>(getYearToDateRange);
-
-    // Book states
-    const [hasBooks, setHasBooks] = useState(true);
-    const [creatingBook, setCreatingBook] = useState(false);
-    const [checkingBooks, setCheckingBooks] = useState(true);
+function DashboardContent() {
+    const { period, setPeriod, queryString } = useDashboardPeriod();
+    const { dashboardDefaultPeriod, setDashboardDefaultPeriod } = useUserPreferences();
 
     // Data states
     const [kpiData, setKpiData] = useState<KPIData | null>(null);
     const [netWorthData, setNetWorthData] = useState<NetWorthDataPoint[]>([]);
-    const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
     const [sankeyData, setSankeyData] = useState<SankeyResponseData | null>(null);
+    const [cashFlowData, setCashFlowData] = useState<CashFlowData[]>([]);
 
     // Loading states
     const [kpiLoading, setKpiLoading] = useState(true);
     const [netWorthLoading, setNetWorthLoading] = useState(true);
-    const [monthlyLoading, setMonthlyLoading] = useState(true);
     const [sankeyLoading, setSankeyLoading] = useState(true);
-
-    const queryString = useMemo(
-        () => buildQueryString(dateRange.startDate, dateRange.endDate),
-        [dateRange.startDate, dateRange.endDate]
-    );
+    const [cashFlowLoading, setCashFlowLoading] = useState(true);
 
     // Fetch KPIs
     const fetchKpis = useCallback(async (qs: string) => {
@@ -189,22 +156,6 @@ export default function DashboardPage() {
         }
     }, []);
 
-    // Fetch income/expense monthly
-    const fetchIncomeExpense = useCallback(async (qs: string) => {
-        setMonthlyLoading(true);
-        try {
-            const res = await fetch(`/api/dashboard/income-expense${qs}`);
-            if (res.ok) {
-                const data = await res.json();
-                setMonthlyData(data.monthly || []);
-            }
-        } catch {
-            // silently fail
-        } finally {
-            setMonthlyLoading(false);
-        }
-    }, []);
-
     // Fetch sankey
     const fetchSankey = useCallback(async (qs: string) => {
         setSankeyLoading(true);
@@ -220,6 +171,138 @@ export default function DashboardPage() {
             setSankeyLoading(false);
         }
     }, []);
+
+    // Fetch cash flow
+    const fetchCashFlow = useCallback(async (qs: string) => {
+        setCashFlowLoading(true);
+        try {
+            const res = await fetch(`/api/dashboard/cash-flow-chart${qs}`);
+            if (res.ok) {
+                const data = await res.json();
+                const months = data.months || [];
+                const income = data.income || [];
+                const expenses = data.expenses || [];
+                const netCashFlow = data.netCashFlow || [];
+                const cashFlowArray = months.map((month: string, index: number) => ({
+                    month,
+                    income: income[index] || 0,
+                    expenses: expenses[index] || 0,
+                    netCashFlow: netCashFlow[index] || 0,
+                }));
+                setCashFlowData(cashFlowArray);
+            }
+        } catch {
+            // silently fail
+        } finally {
+            setCashFlowLoading(false);
+        }
+    }, []);
+
+    // Fetch all data when query string changes
+    useEffect(() => {
+        fetchKpis(queryString);
+        fetchNetWorth(queryString);
+        fetchSankey(queryString);
+        fetchCashFlow(queryString);
+    }, [queryString, fetchKpis, fetchNetWorth, fetchSankey, fetchCashFlow]);
+
+    // Derive pie chart data from sankey hierarchy
+    const incomeCategories = useMemo(
+        () => sankeyData ? deriveIncomeCategoriesFromTree(sankeyData.income) : [],
+        [sankeyData]
+    );
+    const expenseCategories = useMemo(
+        () => sankeyData ? deriveExpenseCategoriesFromTree(sankeyData.expense) : [],
+        [sankeyData]
+    );
+    const taxCategories = useMemo(
+        () => sankeyData ? deriveTaxCategoriesFromTree(sankeyData.expense) : [],
+        [sankeyData]
+    );
+
+    return (
+        <div className="space-y-6">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+                    <p className="text-sm text-foreground-secondary mt-1">
+                        Your financial overview at a glance
+                    </p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                        {PERIOD_OPTIONS.map((opt) => (
+                            <button
+                                key={opt.key}
+                                onClick={() => setPeriod(opt.key)}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                    period === opt.key
+                                        ? 'bg-primary text-white'
+                                        : 'bg-surface-hover text-foreground-secondary hover:bg-background-secondary'
+                                }`}
+                            >
+                                {opt.label}
+                            </button>
+                        ))}
+                    </div>
+                    {period !== dashboardDefaultPeriod && (
+                        <button
+                            onClick={() => setDashboardDefaultPeriod(period)}
+                            title="Save as default period"
+                            className="p-1.5 rounded-md text-foreground-secondary hover:text-amber-500 hover:bg-surface-hover transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* KPI Cards */}
+            <KPIGrid data={kpiData} loading={kpiLoading} />
+
+            {/* Net Worth Chart - full width */}
+            <ExpandableChart title="Net Worth Over Time">
+                <NetWorthChart data={netWorthData} loading={netWorthLoading} />
+            </ExpandableChart>
+
+            {/* Sankey - full width */}
+            <ExpandableChart title="Income Flow">
+                <SankeyDiagram data={sankeyData} loading={sankeyLoading} />
+            </ExpandableChart>
+
+            {/* 3 Pie Charts - same row */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <ExpandableChart title="Income by Category">
+                    <IncomePieChart data={incomeCategories} loading={sankeyLoading} />
+                </ExpandableChart>
+                <ExpandableChart title="Expenses by Category">
+                    <ExpensePieChart data={expenseCategories} loading={sankeyLoading} />
+                </ExpandableChart>
+                <ExpandableChart title="Taxes by Category">
+                    <TaxPieChart data={taxCategories} loading={sankeyLoading} />
+                </ExpandableChart>
+            </div>
+
+            {/* Cash Flow - full width */}
+            <ExpandableChart title="Cash Flow">
+                <CashFlowChart data={cashFlowData} loading={cashFlowLoading} />
+            </ExpandableChart>
+        </div>
+    );
+}
+
+// ------------------------------------------------------------------
+// Dashboard page (book check + provider wrapper)
+// ------------------------------------------------------------------
+
+export default function DashboardPage() {
+    // Book states
+    const [hasBooks, setHasBooks] = useState(true);
+    const [creatingBook, setCreatingBook] = useState(false);
+    const [checkingBooks, setCheckingBooks] = useState(true);
 
     // Check if books exist
     useEffect(() => {
@@ -239,33 +322,6 @@ export default function DashboardPage() {
             }
         }
         checkBooks();
-    }, []);
-
-    // Fetch all data when query string changes
-    useEffect(() => {
-        if (!hasBooks || checkingBooks) return;
-        fetchKpis(queryString);
-        fetchNetWorth(queryString);
-        fetchIncomeExpense(queryString);
-        fetchSankey(queryString);
-    }, [queryString, hasBooks, checkingBooks, fetchKpis, fetchNetWorth, fetchIncomeExpense, fetchSankey]);
-
-    // Derive pie chart data from sankey hierarchy
-    const incomeCategories = useMemo(
-        () => sankeyData ? deriveIncomeCategoriesFromTree(sankeyData.income) : [],
-        [sankeyData]
-    );
-    const expenseCategories = useMemo(
-        () => sankeyData ? deriveExpenseCategoriesFromTree(sankeyData.expense) : [],
-        [sankeyData]
-    );
-    const taxCategories = useMemo(
-        () => sankeyData ? deriveTaxCategoriesFromTree(sankeyData.expense) : [],
-        [sankeyData]
-    );
-
-    const handleDateChange = useCallback((range: DateRange) => {
-        setDateRange(range);
     }, []);
 
     const handleCreateDefault = async () => {
@@ -349,67 +405,8 @@ export default function DashboardPage() {
     }
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-                    <p className="text-sm text-foreground-secondary mt-1">
-                        Your financial overview at a glance
-                    </p>
-                </div>
-                <DateRangePicker
-                    startDate={dateRange.startDate}
-                    endDate={dateRange.endDate}
-                    onChange={handleDateChange}
-                />
-            </div>
-
-            {/* KPI Cards */}
-            <KPIGrid data={kpiData} loading={kpiLoading} />
-
-            {/* Net Worth Chart - full width */}
-            <ExpandableChart title="Net Worth Over Time">
-                <NetWorthChart data={netWorthData} loading={netWorthLoading} />
-            </ExpandableChart>
-
-            {/* Sankey + Expense Pie + Income Pie - 3 columns */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <ExpandableChart title="Income Flow">
-                    <SankeyDiagram
-                        data={sankeyData}
-                        loading={sankeyLoading}
-                    />
-                </ExpandableChart>
-                <ExpandableChart title="Expenses by Category">
-                    <ExpensePieChart data={expenseCategories} loading={sankeyLoading} />
-                </ExpandableChart>
-                <ExpandableChart title="Income by Category">
-                    <IncomePieChart data={incomeCategories} loading={sankeyLoading} />
-                </ExpandableChart>
-            </div>
-
-            {/* Income vs Expense Bar Chart - full width */}
-            <ExpandableChart title="Income vs Expenses">
-                <IncomeExpenseBarChart data={monthlyData} loading={monthlyLoading} />
-            </ExpandableChart>
-
-            {/* Net Profit by Month - full width */}
-            <ExpandableChart title="Net Profit by Month">
-                <NetProfitChart data={monthlyData} loading={monthlyLoading} />
-            </ExpandableChart>
-
-            {/* Cash Flow Chart - full width */}
-            <ExpandableChart title="Cash Flow">
-                <CashFlowChart />
-            </ExpandableChart>
-
-            {/* Tax Pie - half width */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <ExpandableChart title="Taxes by Category">
-                    <TaxPieChart data={taxCategories} loading={sankeyLoading} />
-                </ExpandableChart>
-            </div>
-        </div>
+        <DashboardPeriodProvider>
+            <DashboardContent />
+        </DashboardPeriodProvider>
     );
 }

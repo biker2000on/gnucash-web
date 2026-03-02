@@ -5,6 +5,7 @@ import { BalanceReversal } from '@/lib/format';
 import { DateFormat } from '@/lib/date-format';
 
 export type DefaultLedgerMode = 'readonly' | 'edit';
+export type DashboardPeriod = 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'thisYear' | 'lastYear' | 'allTime';
 
 interface UserPreferencesContextType {
     balanceReversal: BalanceReversal;
@@ -15,6 +16,8 @@ interface UserPreferencesContextType {
     setDefaultLedgerMode: (mode: DefaultLedgerMode) => Promise<void>;
     dateFormat: DateFormat;
     setDateFormat: (format: DateFormat) => Promise<void>;
+    dashboardDefaultPeriod: DashboardPeriod;
+    setDashboardDefaultPeriod: (period: DashboardPeriod) => Promise<void>;
     loading: boolean;
 }
 
@@ -31,6 +34,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
     const [defaultTaxRate, setDefaultTaxRateState] = useState<number>(0);
     const [defaultLedgerMode, setDefaultLedgerModeState] = useState<DefaultLedgerMode>('readonly');
     const [dateFormat, setDateFormatState] = useState<DateFormat>('MM/DD/YYYY');
+    const [dashboardDefaultPeriod, setDashboardDefaultPeriodState] = useState<DashboardPeriod>('thisYear');
     const [loading, setLoading] = useState(true);
 
     // Load preferences from API on mount
@@ -54,6 +58,9 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         if (parsed.dateFormat) {
                             setDateFormatState(parsed.dateFormat);
                         }
+                        if (parsed.dashboardDefaultPeriod) {
+                            setDashboardDefaultPeriodState(parsed.dashboardDefaultPeriod);
+                        }
                     } catch {
                         // Invalid cache, ignore
                     }
@@ -67,6 +74,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                     setDefaultTaxRateState(data.defaultTaxRate || 0);
                     setDefaultLedgerModeState(data.defaultLedgerMode || 'readonly');
                     setDateFormatState(data.dateFormat || 'MM/DD/YYYY');
+                    setDashboardDefaultPeriodState(data.dashboardDefaultPeriod || 'thisYear');
                     // Update cache
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 }
@@ -174,6 +182,24 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         }
     }, []);
 
+    const setDashboardDefaultPeriod = useCallback(async (value: DashboardPeriod) => {
+        setDashboardDefaultPeriodState(value);
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, dashboardDefaultPeriod: value }));
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dashboardDefaultPeriod: value }),
+            });
+            if (!res.ok) throw new Error('Failed to save preference');
+        } catch (error) {
+            console.error('Failed to save dashboardDefaultPeriod preference:', error);
+            throw error;
+        }
+    }, []);
+
     const value = useMemo<UserPreferencesContextType>(() => ({
         balanceReversal,
         setBalanceReversal,
@@ -183,8 +209,10 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         setDefaultLedgerMode,
         dateFormat,
         setDateFormat,
+        dashboardDefaultPeriod,
+        setDashboardDefaultPeriod,
         loading,
-    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, loading]);
+    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, dashboardDefaultPeriod, setDashboardDefaultPeriod, loading]);
 
     return (
         <UserPreferencesContext.Provider value={value}>

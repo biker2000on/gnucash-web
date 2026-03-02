@@ -9,6 +9,8 @@ const VALID_LEDGER_MODES = ['readonly', 'edit'] as const;
 type DefaultLedgerMode = typeof VALID_LEDGER_MODES[number];
 const VALID_DATE_FORMATS = ['MM/DD/YYYY', 'YYYY-MM-DD', 'MM-DD-YYYY'] as const;
 type DateFormat = typeof VALID_DATE_FORMATS[number];
+const VALID_DASHBOARD_PERIODS = ['thisMonth', 'lastMonth', 'thisQuarter', 'thisYear', 'lastYear', 'allTime'] as const;
+type DashboardPeriod = typeof VALID_DASHBOARD_PERIODS[number];
 
 /**
  * GET /api/user/preferences
@@ -53,12 +55,14 @@ export async function GET(request: NextRequest) {
         const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
         const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
         const dateFormatPref = await getPreference(roleResult.user.id, 'date_format', 'MM/DD/YYYY');
+        const dashboardPeriodPref = await getPreference(roleResult.user.id, 'dashboard.default_period', 'thisYear');
 
         return NextResponse.json({
             balanceReversal: user.balance_reversal || 'none',
             defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
             defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
             dateFormat: (VALID_DATE_FORMATS.includes(dateFormatPref as DateFormat) ? dateFormatPref : 'MM/DD/YYYY') as DateFormat,
+            dashboardDefaultPeriod: (VALID_DASHBOARD_PERIODS.includes(dashboardPeriodPref as DashboardPeriod) ? dashboardPeriodPref : 'thisYear') as DashboardPeriod,
         });
     } catch (error) {
         console.error('Error fetching user preferences:', error);
@@ -76,7 +80,7 @@ export async function PATCH(request: NextRequest) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
-        const { balanceReversal, defaultTaxRate, defaultLedgerMode, dateFormat } = body;
+        const { balanceReversal, defaultTaxRate, defaultLedgerMode, dateFormat, dashboardDefaultPeriod } = body;
 
         // Validate balance reversal value
         if (balanceReversal !== undefined) {
@@ -119,6 +123,16 @@ export async function PATCH(request: NextRequest) {
             }
         }
 
+        // Validate dashboard default period
+        if (dashboardDefaultPeriod !== undefined) {
+            if (!VALID_DASHBOARD_PERIODS.includes(dashboardDefaultPeriod)) {
+                return NextResponse.json(
+                    { error: `Invalid dashboardDefaultPeriod value. Must be one of: ${VALID_DASHBOARD_PERIODS.join(', ')}` },
+                    { status: 400 }
+                );
+            }
+        }
+
         // Update balance reversal if provided
         let updatedBalanceReversal = balanceReversal;
         if (balanceReversal !== undefined) {
@@ -149,6 +163,11 @@ export async function PATCH(request: NextRequest) {
             await setPreference(roleResult.user.id, 'date_format', dateFormat);
         }
 
+        // Update dashboard default period if provided
+        if (dashboardDefaultPeriod !== undefined) {
+            await setPreference(roleResult.user.id, 'dashboard.default_period', dashboardDefaultPeriod);
+        }
+
         // Fetch current values for response
         const user = await prisma.gnucash_web_users.findUnique({
             where: { id: roleResult.user.id },
@@ -157,12 +176,14 @@ export async function PATCH(request: NextRequest) {
         const taxRatePref = await getPreference(roleResult.user.id, 'default_tax_rate', 0);
         const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
         const dateFormatPref = await getPreference(roleResult.user.id, 'date_format', 'MM/DD/YYYY');
+        const dashboardPeriodPref = await getPreference(roleResult.user.id, 'dashboard.default_period', 'thisYear');
 
         return NextResponse.json({
             balanceReversal: updatedBalanceReversal || user?.balance_reversal || 'none',
             defaultTaxRate: typeof taxRatePref === 'number' ? taxRatePref : parseFloat(taxRatePref as string) || 0,
             defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
             dateFormat: (VALID_DATE_FORMATS.includes(dateFormatPref as DateFormat) ? dateFormatPref : 'MM/DD/YYYY') as DateFormat,
+            dashboardDefaultPeriod: (VALID_DASHBOARD_PERIODS.includes(dashboardPeriodPref as DashboardPeriod) ? dashboardPeriodPref : 'thisYear') as DashboardPeriod,
         });
     } catch (error) {
         console.error('Error updating user preferences:', error);

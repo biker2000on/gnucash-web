@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useContext } from 'react';
+import { useContext } from 'react';
 import {
     AreaChart,
     Area,
@@ -14,14 +14,12 @@ import {
 } from 'recharts';
 import { ExpandedContext } from './ExpandableChart';
 
-interface CashFlowData {
+export interface CashFlowData {
     month: string;
     income: number;
     expenses: number;
     netCashFlow: number;
 }
-
-type Period = '6M' | '1Y' | '2Y' | 'ALL';
 
 function formatCurrency(value: number): string {
     if (Math.abs(value) >= 1_000_000) {
@@ -116,63 +114,19 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
     );
 }
 
-export default function CashFlowChart() {
+interface CashFlowChartProps {
+    data: CashFlowData[];
+    loading: boolean;
+}
+
+export default function CashFlowChart({ data, loading }: CashFlowChartProps) {
     const expanded = useContext(ExpandedContext);
-    const [data, setData] = useState<CashFlowData[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [period, setPeriod] = useState<Period>('1Y');
-
-    useEffect(() => {
-        async function fetchData() {
-            setLoading(true);
-            try {
-                const res = await fetch(`/api/dashboard/cash-flow-chart?period=${period}`);
-                if (res.ok) {
-                    const result = await res.json();
-
-                    // Transform API response to chart data format
-                    const chartData: CashFlowData[] = result.months.map((month: string, index: number) => ({
-                        month,
-                        income: result.income[index],
-                        expenses: result.expenses[index],
-                        netCashFlow: result.netCashFlow[index],
-                    }));
-
-                    setData(chartData);
-                }
-            } catch (err) {
-                console.error('Error fetching cash flow data:', err);
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        fetchData();
-    }, [period]);
 
     if (loading) return <ChartSkeleton />;
 
     if (!data || data.length === 0) {
         return (
             <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-foreground">Cash Flow</h3>
-                    <div className="flex gap-2">
-                        {(['6M', '1Y', '2Y', 'ALL'] as Period[]).map((p) => (
-                            <button
-                                key={p}
-                                onClick={() => setPeriod(p)}
-                                className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                                    period === p
-                                        ? 'bg-primary text-white'
-                                        : 'bg-surface-hover text-foreground-secondary hover:bg-background-secondary'
-                                }`}
-                            >
-                                {p}
-                            </button>
-                        ))}
-                    </div>
-                </div>
                 <div className="h-[350px] flex items-center justify-center">
                     <p className="text-foreground-muted text-sm">No cash flow data available for this period.</p>
                 </div>
@@ -184,24 +138,6 @@ export default function CashFlowChart() {
 
     return (
         <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-foreground">Cash Flow</h3>
-                <div className="flex gap-2">
-                    {(['6M', '1Y', '2Y', 'ALL'] as Period[]).map((p) => (
-                        <button
-                            key={p}
-                            onClick={() => setPeriod(p)}
-                            className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                                period === p
-                                    ? 'bg-primary text-white'
-                                    : 'bg-surface-hover text-foreground-secondary hover:bg-background-secondary'
-                            }`}
-                        >
-                            {p}
-                        </button>
-                    ))}
-                </div>
-            </div>
             <ResponsiveContainer width="100%" height={height}>
                 <AreaChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
