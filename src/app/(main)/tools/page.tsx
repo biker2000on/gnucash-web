@@ -24,6 +24,12 @@ function ToolIcon({ icon }: { icon: string }) {
                     <circle cx="12" cy="14" r="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} />
                 </svg>
             );
+        case 'building':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
+                </svg>
+            );
         default:
             return null;
     }
@@ -83,6 +89,12 @@ export default function ToolsPage() {
             description: 'Estimate payoff timeline with extra payments or calculate the payment needed for a target date.',
             icon: 'calendar',
             href: '/tools/mortgage#payoff',
+        },
+        {
+            title: 'Asset Analysis',
+            description: 'View fixed assets with depreciation schedules, appreciation tracking, and valuation history.',
+            icon: 'building',
+            href: '/assets',
         },
     ];
 

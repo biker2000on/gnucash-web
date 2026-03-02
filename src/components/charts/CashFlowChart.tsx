@@ -232,7 +232,6 @@ export default function CashFlowChart() {
                     <Area
                         type="monotone"
                         dataKey="income"
-                        stackId="1"
                         stroke="#10b981"
                         fill="#10b981"
                         fillOpacity={0.3}
@@ -241,7 +240,6 @@ export default function CashFlowChart() {
                     <Area
                         type="monotone"
                         dataKey="expenses"
-                        stackId="1"
                         stroke="#ef4444"
                         fill="#ef4444"
                         fillOpacity={0.3}

@@ -161,8 +161,8 @@ export async function GET(request: NextRequest) {
             const data = monthlyData.get(monthKey) || { income: 0, expenses: 0 };
 
             const incomeValue = Math.round(data.income * 100) / 100;
-            const expensesValue = Math.round(data.expenses * 100) / 100;
-            const netValue = Math.round((incomeValue - expensesValue) * 100) / 100;
+            const expensesValue = -Math.round(data.expenses * 100) / 100;
+            const netValue = Math.round((incomeValue + expensesValue) * 100) / 100;
 
             months.push(monthKey);
             income.push(incomeValue);
