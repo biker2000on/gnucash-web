@@ -5,7 +5,7 @@
  * and storing them in the GnuCash prices table.
  *
  * DESIGN RULE: Only historical closing prices are stored.
- * The most recent price is always yesterday's close. No real-time quotes.
+ * The most recent price is the latest available close. No real-time quotes.
  *
  * Uses the yahoo-finance2 package which requires no API key.
  */
@@ -61,15 +61,6 @@ function formatDateYMD(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Get yesterday's date at midnight UTC
- */
-function getYesterday(): Date {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d;
-}
 
 /**
  * Get the date of the most recent stored price for a commodity
@@ -153,7 +144,7 @@ export async function fetchHistoricalPrices(
 /**
  * Detect and fill gaps in stored price history for a commodity.
  * Fetches existing dates, gets historical prices from Yahoo, and stores only missing dates.
- * Uses yesterday as the upper bound -- never today.
+ * Uses now as the upper bound to capture the most recent market close.
  *
  * @param commodityGuid GUID of the commodity
  * @param symbol Stock ticker symbol
@@ -165,12 +156,12 @@ export async function detectAndFillGaps(
   symbol: string,
   lookbackMonths: number = 3
 ): Promise<number> {
-  const yesterday = getYesterday();
-  const startDate = new Date(yesterday);
+  const endDate = new Date();
+  const startDate = new Date(endDate);
   startDate.setUTCMonth(startDate.getUTCMonth() - lookbackMonths);
 
   // Get all existing dates in the range
-  const existingDates = await getExistingPriceDates(commodityGuid, startDate, yesterday);
+  const existingDates = await getExistingPriceDates(commodityGuid, startDate, endDate);
 
   // If no existing prices at all, skip gap detection (backfill should handle it)
   if (existingDates.size === 0) {
@@ -180,7 +171,7 @@ export async function detectAndFillGaps(
   // Fetch historical prices for the full range
   let historicalPrices: HistoricalPriceRow[];
   try {
-    historicalPrices = await fetchHistoricalPrices(symbol, startDate, yesterday);
+    historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
   } catch (err) {
     console.warn(`Gap detection: failed to fetch historical prices for ${symbol}:`, err);
     return 0;
@@ -374,13 +365,13 @@ export async function storeFetchedPrice(
 /**
  * Fetch and store historical closing prices for all quotable commodities (or specific symbols).
  *
- * DESIGN: Only historical closing prices are stored. The most recent price is
- * always yesterday's close. No real-time quotes are fetched or stored.
+ * DESIGN: Only historical closing prices are stored. The ceiling is now (new Date())
+ * so the most recent available market close is always captured. No real-time quotes.
  *
  * Three MUTUALLY EXCLUSIVE paths:
  * 1. force=true: Fetch full 3-month range, insert only missing dates
- * 2. !lastDate: First-time backfill, fetch 3 months up to yesterday
- * 3. Normal: Backfill from lastDate+1 to yesterday, then gap detection
+ * 2. !lastDate: First-time backfill, fetch 3 months up to now
+ * 3. Normal: Backfill from lastDate+1 to now, then gap detection
  *
  * @param symbols Optional array of specific symbols to fetch. If not provided, fetches all quotable commodities.
  * @param force If true, fetch full 3-month historical range regardless of existing data
@@ -391,7 +382,7 @@ export async function fetchAndStorePrices(
   force: boolean = false
 ): Promise<FetchAndStoreResult> {
   const LOOKBACK_MONTHS = 3;
-  const yesterday = getYesterday();
+  const endDate = new Date();
 
   // Get quotable commodities
   const commodities = await getQuotableCommodities();
@@ -422,11 +413,11 @@ export async function fetchAndStorePrices(
       if (force) {
         // PATH 1: Force -- fetch full 3-month range, insert only missing
         // Mutually exclusive: skip normal backfill and gap detection
-        const startDate = new Date(yesterday);
+        const startDate = new Date(endDate);
         startDate.setUTCMonth(startDate.getUTCMonth() - LOOKBACK_MONTHS);
 
-        const existingDates = await getExistingPriceDates(commodity.guid, startDate, yesterday);
-        const historicalPrices = await fetchHistoricalPrices(symbol, startDate, yesterday);
+        const existingDates = await getExistingPriceDates(commodity.guid, startDate, endDate);
+        const historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
 
         for (const row of historicalPrices) {
           const dateStr = formatDateYMD(row.date);
@@ -447,12 +438,12 @@ export async function fetchAndStorePrices(
         const lastDate = await getLastPriceDate(commodity.guid);
 
         if (!lastDate) {
-          // PATH 2: First-time backfill -- fetch 3 months up to yesterday
-          const startDate = new Date(yesterday);
+          // PATH 2: First-time backfill -- fetch 3 months up to now
+          const startDate = new Date(endDate);
           startDate.setUTCMonth(startDate.getUTCMonth() - LOOKBACK_MONTHS);
 
-          const existingDates = await getExistingPriceDates(commodity.guid, startDate, yesterday);
-          const historicalPrices = await fetchHistoricalPrices(symbol, startDate, yesterday);
+          const existingDates = await getExistingPriceDates(commodity.guid, startDate, endDate);
+          const historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
 
           for (const row of historicalPrices) {
             const dateStr = formatDateYMD(row.date);
@@ -469,7 +460,7 @@ export async function fetchAndStorePrices(
 
           totalBackfilled += pricesStored;
         } else {
-          // PATH 3: Normal -- backfill from lastDate+1 to yesterday, then gap detection
+          // PATH 3: Normal -- backfill from lastDate+1 to now, then gap detection
           const backfillStart = new Date(lastDate);
           backfillStart.setUTCDate(backfillStart.getUTCDate() + 1);
           backfillStart.setUTCHours(0, 0, 0, 0);
@@ -477,9 +468,9 @@ export async function fetchAndStorePrices(
           let backfillCount = 0;
 
           // Only backfill if there are days to fill
-          if (backfillStart <= yesterday) {
-            const existingDates = await getExistingPriceDates(commodity.guid, backfillStart, yesterday);
-            const historicalPrices = await fetchHistoricalPrices(symbol, backfillStart, yesterday);
+          if (backfillStart <= endDate) {
+            const existingDates = await getExistingPriceDates(commodity.guid, backfillStart, endDate);
+            const historicalPrices = await fetchHistoricalPrices(symbol, backfillStart, endDate);
 
             for (const row of historicalPrices) {
               const dateStr = formatDateYMD(row.date);

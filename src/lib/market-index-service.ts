@@ -99,8 +99,6 @@ export async function fetchIndexPrices(
   const results: { symbol: string; stored: number }[] = [];
 
   const endDate = new Date();
-  endDate.setUTCHours(0, 0, 0, 0);
-  endDate.setUTCDate(endDate.getUTCDate() - 1); // yesterday
 
   const startDate = new Date(endDate);
   startDate.setUTCDate(startDate.getUTCDate() - days);
