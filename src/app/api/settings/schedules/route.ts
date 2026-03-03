@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getPreference, setPreference } from '@/lib/user-preferences';
-import { scheduleRefreshPrices, unscheduleRefreshPrices } from '@/lib/queue/queues';
+import { signalScheduleChanged } from '@/lib/queue/queues';
 
 export async function GET() {
   try {
@@ -49,14 +49,12 @@ export async function PATCH(request: NextRequest) {
       isEnabled = stored === true || stored === 'true';
     }
 
-    if (isEnabled) {
-      const hours = intervalHours !== undefined
-        ? intervalHours
-        : await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24);
-      await scheduleRefreshPrices(typeof hours === 'number' ? hours : parseInt(String(hours)));
-    } else if (enabled === false) {
-      await unscheduleRefreshPrices();
-    }
+    const effectiveHours = intervalHours !== undefined
+      ? (typeof intervalHours === 'number' ? intervalHours : parseInt(String(intervalHours)))
+      : await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24).then(
+          h => typeof h === 'number' ? h : parseInt(String(h))
+        );
+    await signalScheduleChanged(roleResult.user.id, isEnabled, effectiveHours);
 
     return NextResponse.json({ success: true });
   } catch (error) {

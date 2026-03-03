@@ -18,65 +18,11 @@ export function getJobQueue(): Queue | null {
 }
 
 /**
- * Schedule recurring price refresh job.
+ * Signal the worker to update its internal refresh schedule.
+ * The worker reads the preference from DB and reconfigures its timer.
  */
-export async function scheduleRefreshPrices(intervalHours: number = 24): Promise<void> {
-  const queue = getJobQueue();
-  if (!queue) return;
-
-  try {
-    const withTimeout = <T>(promise: Promise<T>) =>
-      Promise.race([
-        promise,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Redis timeout')), 5000)
-        ),
-      ]);
-
-    const existing = await withTimeout(queue.getRepeatableJobs());
-    for (const job of existing) {
-      if (job.name === 'refresh-prices') {
-        await withTimeout(queue.removeRepeatableByKey(job.key));
-      }
-    }
-
-    await withTimeout(queue.add('refresh-prices', {}, {
-      repeat: { every: intervalHours * 60 * 60 * 1000 },
-      removeOnComplete: 100,
-      removeOnFail: 50,
-    }));
-  } catch (err) {
-    console.warn('Failed to schedule refresh prices:', err);
-    jobQueue = null;
-  }
-}
-
-/**
- * Remove any recurring price refresh jobs from the queue.
- */
-export async function unscheduleRefreshPrices(): Promise<void> {
-  const queue = getJobQueue();
-  if (!queue) return;
-
-  try {
-    const withTimeout = <T>(promise: Promise<T>) =>
-      Promise.race([
-        promise,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Redis timeout')), 5000)
-        ),
-      ]);
-
-    const existing = await withTimeout(queue.getRepeatableJobs());
-    for (const job of existing) {
-      if (job.name === 'refresh-prices') {
-        await withTimeout(queue.removeRepeatableByKey(job.key));
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to unschedule refresh prices:', err);
-    jobQueue = null;
-  }
+export async function signalScheduleChanged(userId: number, enabled: boolean, intervalHours: number): Promise<void> {
+  await enqueueJob('schedule-changed', { userId, enabled, intervalHours });
 }
 
 /**
