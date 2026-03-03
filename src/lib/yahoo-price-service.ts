@@ -134,13 +134,18 @@ export async function fetchHistoricalPrices(
   });
 
   // chart() returns { quotes: Array<{ date, open, high, low, close, volume }> }
-  // Filter out today's date — the market may still be open, so today's close isn't final.
-  // We use new Date() as period2 to ensure Yahoo returns the latest *completed* close,
-  // but the API may also return a partial intraday bar for today.
-  const todayStr = formatDateYMD(new Date());
+  // Filter out today's date only if the US market is still open (before 9 PM UTC,
+  // which covers 4 PM EST / 5 PM EDT close). After market close, today's bar is final.
+  const now = new Date();
+  const todayStr = formatDateYMD(now);
+  const marketClosed = now.getUTCHours() >= 21; // 9 PM UTC = after US market close
   const quotes = result.quotes ?? [];
   return quotes
-    .filter((q) => typeof q.close === 'number' && q.close > 0 && formatDateYMD(q.date) !== todayStr)
+    .filter((q) => {
+      if (typeof q.close !== 'number' || q.close <= 0) return false;
+      if (!marketClosed && formatDateYMD(q.date) === todayStr) return false;
+      return true;
+    })
     .map((q) => ({ date: q.date, close: q.close as number }));
 }
 
