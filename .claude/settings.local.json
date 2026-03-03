@@ -4,5 +4,9 @@
       "WebFetch(domain:github.com)",
       "Bash(PGPASSWORD=gnucash psql:*)"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "context7"
+  ]
 }
