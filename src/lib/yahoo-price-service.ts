@@ -134,10 +134,13 @@ export async function fetchHistoricalPrices(
   });
 
   // chart() returns { quotes: Array<{ date, open, high, low, close, volume }> }
-  // Map to the same HistoricalPriceRow interface used by all callers
+  // Filter out today's date — the market may still be open, so today's close isn't final.
+  // We use new Date() as period2 to ensure Yahoo returns the latest *completed* close,
+  // but the API may also return a partial intraday bar for today.
+  const todayStr = formatDateYMD(new Date());
   const quotes = result.quotes ?? [];
   return quotes
-    .filter((q) => typeof q.close === 'number' && q.close > 0)
+    .filter((q) => typeof q.close === 'number' && q.close > 0 && formatDateYMD(q.date) !== todayStr)
     .map((q) => ({ date: q.date, close: q.close as number }));
 }
 
