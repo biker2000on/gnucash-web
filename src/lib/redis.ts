@@ -2,6 +2,7 @@ import Redis from 'ioredis';
 
 let redis: Redis | null = null;
 let connectionFailed = false;
+let initializing: Promise<Redis | null> | null = null;
 
 /**
  * Get Redis connection singleton.
@@ -12,21 +13,26 @@ export function getRedis(): Redis | null {
   if (!process.env.REDIS_URL) return null;
   if (connectionFailed) return null;
 
-  if (!redis) {
-    redis = new Redis(process.env.REDIS_URL, {
-      maxRetriesPerRequest: 1,
-      connectTimeout: 5000,
-      lazyConnect: true,
-      retryStrategy(times) {
-        if (times > 3) {
-          console.warn('Redis: max connection retries reached, disabling Redis for this process');
-          connectionFailed = true;
-          return null; // Stop retrying
-        }
-        return Math.min(times * 500, 2000);
-      },
+  if (!redis && !initializing) {
+    initializing = new Promise<Redis | null>((resolve) => {
+      const instance = new Redis(process.env.REDIS_URL!, {
+        maxRetriesPerRequest: 1,
+        connectTimeout: 5000,
+        lazyConnect: true,
+        retryStrategy(times) {
+          if (times > 3) {
+            console.warn('Redis: max connection retries reached, disabling Redis for this process');
+            connectionFailed = true;
+            return null;
+          }
+          return Math.min(times * 500, 2000);
+        },
+      });
+      instance.on('error', (err) => console.warn('Redis connection error:', err.message));
+      redis = instance;
+      initializing = null;
+      resolve(instance);
     });
-    redis.on('error', (err) => console.warn('Redis connection error:', err.message));
   }
   return redis;
 }
