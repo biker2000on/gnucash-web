@@ -51,9 +51,9 @@ export function InlineEditRow({
     const [description, setDescription] = useState(transaction.description || '');
     const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');
     const [otherAccountName, setOtherAccountName] = useState(otherSplit?.account_name || '');
-    const [amount, setAmount] = useState(
-        Math.abs(parseFloat(transaction.account_split_value)).toFixed(2)
-    );
+    const splitValue = parseFloat(transaction.account_split_value);
+    const [debit, setDebit] = useState(splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '');
+    const [credit, setCredit] = useState(splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '');
     const [saving, setSaving] = useState(false);
 
     const dateRef = useRef<HTMLInputElement>(null);
@@ -75,10 +75,10 @@ export function InlineEditRow({
         setDateDisplay(formatDateForDisplay(newIso, dateFormat));
     });
 
-    // Hook up tax shortcut
-    const { applyTax } = useTaxShortcut(amount, defaultTaxRate, setAmount, (msg) => success(msg));
+    // Hook up tax shortcut (applies to debit field)
+    const { applyTax } = useTaxShortcut(debit, defaultTaxRate, (v) => { setDebit(v); if (v) setCredit(''); }, (msg) => success(msg));
 
-    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const handleDebitKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 't' || e.key === 'T') {
             if (e.ctrlKey || e.metaKey || e.altKey) return;
             e.preventDefault();
@@ -86,31 +86,42 @@ export function InlineEditRow({
         }
     };
 
-    const handleAmountBlur = () => {
-        const result = evaluateMathExpression(amount);
+    const handleDebitBlur = () => {
+        const result = evaluateMathExpression(debit);
         if (result !== null) {
-            setAmount(result.toFixed(2));
+            setDebit(result.toFixed(2));
+        }
+    };
+
+    const handleCreditBlur = () => {
+        const result = evaluateMathExpression(credit);
+        if (result !== null) {
+            setCredit(result.toFixed(2));
         }
     };
 
     const handleSave = useCallback(async () => {
         if (saving) return;
-        if (!description.trim() || !otherAccountGuid || !amount || parseFloat(amount) <= 0) return;
+        const hasAmount = (debit && parseFloat(debit) > 0) || (credit && parseFloat(credit) > 0);
+        if (!description.trim() || !otherAccountGuid || !hasAmount) return;
 
         setSaving(true);
         try {
+            const signedAmount = debit && parseFloat(debit) > 0
+                ? parseFloat(debit).toFixed(2)
+                : (-parseFloat(credit)).toFixed(2);
             await onSave(transaction.guid, {
                 post_date: postDate,
                 description: description.trim(),
                 accountGuid: otherAccountGuid,
                 accountName: otherAccountName,
-                amount,
+                amount: signedAmount,
                 original_enter_date: originalEnterDate,
             });
         } finally {
             setSaving(false);
         }
-    }, [saving, description, otherAccountGuid, amount, postDate, transaction.guid, originalEnterDate, onSave]);
+    }, [saving, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
 
     // Global key handler for Enter (save) and Escape (cancel)
     useEffect(() => {
@@ -190,20 +201,38 @@ export function InlineEditRow({
                 />
             </td>
 
-            {/* Amount */}
+            {/* Debit */}
             <td className="px-2 py-2 align-middle">
                 <div className="relative">
                     <input
                         type="text"
                         inputMode="decimal"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        onBlur={handleAmountBlur}
-                        onKeyDown={handleAmountKeyDown}
+                        value={debit}
+                        onChange={(e) => { setDebit(e.target.value); if (e.target.value) setCredit(''); }}
+                        onBlur={handleDebitBlur}
+                        onKeyDown={handleDebitKeyDown}
                         placeholder="0.00"
                         className="w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-foreground text-right focus:outline-none focus:border-cyan-500/50 font-mono"
                     />
-                    {containsMathExpression(amount) && (
+                    {containsMathExpression(debit) && (
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                    )}
+                </div>
+            </td>
+
+            {/* Credit */}
+            <td className="px-2 py-2 align-middle">
+                <div className="relative">
+                    <input
+                        type="text"
+                        inputMode="decimal"
+                        value={credit}
+                        onChange={(e) => { setCredit(e.target.value); if (e.target.value) setDebit(''); }}
+                        onBlur={handleCreditBlur}
+                        placeholder="0.00"
+                        className="w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-foreground text-right focus:outline-none focus:border-cyan-500/50 font-mono"
+                    />
+                    {containsMathExpression(credit) && (
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
                     )}
                 </div>

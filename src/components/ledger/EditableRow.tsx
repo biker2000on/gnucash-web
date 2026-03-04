@@ -72,9 +72,9 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         const [description, setDescription] = useState(transaction.description || '');
         const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');
         const [otherAccountName, setOtherAccountName] = useState(otherSplit?.account_name || '');
-        const [amount, setAmount] = useState(
-            Math.abs(parseFloat(transaction.account_split_value)).toFixed(2)
-        );
+        const splitValue = parseFloat(transaction.account_split_value);
+        const [debit, setDebit] = useState(splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '');
+        const [credit, setCredit] = useState(splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '');
         const [saveError, setSaveError] = useState(false);
 
         const originalEnterDate = transaction.enter_date
@@ -83,23 +83,31 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
 
         const isDirty = useCallback(() => {
             const origDate = transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : '';
+            const origDebit = splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '';
+            const origCredit = splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '';
             return postDate !== origDate
                 || description !== (transaction.description || '')
                 || otherAccountGuid !== (otherSplit?.account_guid || '')
-                || amount !== Math.abs(parseFloat(transaction.account_split_value)).toFixed(2);
-        }, [postDate, description, otherAccountGuid, amount, transaction, otherSplit]);
+                || debit !== origDebit
+                || credit !== origCredit;
+        }, [postDate, description, otherAccountGuid, debit, credit, splitValue, transaction, otherSplit]);
 
         const save = useCallback(async (): Promise<boolean> => {
             if (!isDirty()) return true;
-            if (!description.trim() || !otherAccountGuid || !amount || parseFloat(amount) <= 0) return false;
+            const hasAmount = (debit && parseFloat(debit) > 0) || (credit && parseFloat(credit) > 0);
+            if (!description.trim() || !otherAccountGuid || !hasAmount) return false;
             try {
                 setSaveError(false);
+                // Pass signed amount: positive for debit, negative for credit
+                const signedAmount = debit && parseFloat(debit) > 0
+                    ? parseFloat(debit).toFixed(2)
+                    : (-parseFloat(credit)).toFixed(2);
                 await onSave(transaction.guid, {
                     post_date: postDate,
                     description: description.trim(),
                     accountGuid: otherAccountGuid,
                     accountName: otherAccountName,
-                    amount,
+                    amount: signedAmount,
                     original_enter_date: originalEnterDate,
                 });
                 return true;
@@ -107,7 +115,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 setSaveError(true);
                 return false;
             }
-        }, [isDirty, description, otherAccountGuid, amount, postDate, transaction.guid, originalEnterDate, onSave]);
+        }, [isDirty, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
 
         useImperativeHandle(ref, () => ({ save, isDirty }), [save, isDirty]);
 
@@ -166,8 +174,11 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         )}
                     </td>
                     <td className="px-6 py-4 text-sm text-foreground-muted italic text-xs">-- {otherSplits.length + 1} splits --</td>
-                    <td className={`px-6 py-4 text-sm font-mono text-right ${parseFloat(transaction.account_split_value) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {formatCurrency(transaction.account_split_value, transaction.commodity_mnemonic)}
+                    <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
+                        {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
+                    </td>
+                    <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
+                        {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                     </td>
                     <td className={`px-6 py-4 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
@@ -188,8 +199,11 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     </td>
                     <td className="px-6 py-4 text-sm text-foreground font-medium">{transaction.description}</td>
                     <td className="px-6 py-4 text-sm text-foreground-secondary">{otherSplit?.account_name || ''}</td>
-                    <td className={`px-6 py-4 text-sm font-mono text-right ${parseFloat(transaction.account_split_value) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {formatCurrency(transaction.account_split_value, transaction.commodity_mnemonic)}
+                    <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
+                        {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
+                    </td>
+                    <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
+                        {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                     </td>
                     <td className={`px-6 py-4 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
@@ -243,13 +257,24 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 </td>
                 <td className="px-2 py-2 align-middle">
                     <AmountCell
-                        value={amount}
-                        onChange={setAmount}
+                        value={debit}
+                        onChange={(v) => { setDebit(v); if (v) setCredit(''); }}
                         autoFocus={focusedColumn === 3}
                         onEnter={onEnter}
                         onArrowUp={onArrowUp}
                         onArrowDown={onArrowDown}
                         onFocus={() => onColumnFocus?.(3)}
+                    />
+                </td>
+                <td className="px-2 py-2 align-middle">
+                    <AmountCell
+                        value={credit}
+                        onChange={(v) => { setCredit(v); if (v) setDebit(''); }}
+                        autoFocus={focusedColumn === 4}
+                        onEnter={onEnter}
+                        onArrowUp={onArrowUp}
+                        onArrowDown={onArrowDown}
+                        onFocus={() => onColumnFocus?.(4)}
                     />
                 </td>
                 <td className="px-6 py-2 text-sm font-mono text-right align-middle opacity-40">

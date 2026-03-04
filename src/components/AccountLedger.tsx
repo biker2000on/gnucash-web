@@ -247,9 +247,11 @@ export default function AccountLedger({
             const tx = transactions.find(t => t.guid === guid);
             if (!tx) return;
 
-            const amountValue = parseFloat(data.amount);
-            const { num: valueNum, denom: valueDenom } = toNumDenom(amountValue);
-            const { num: negValueNum, denom: negValueDenom } = toNumDenom(-amountValue);
+            const signedAmount = parseFloat(data.amount);
+            const absAmount = Math.abs(signedAmount);
+            const isDebit = signedAmount >= 0;
+            const { num: valueNum, denom: valueDenom } = toNumDenom(absAmount);
+            const { num: negValueNum, denom: negValueDenom } = toNumDenom(-absAmount);
 
             const body: Record<string, unknown> = {
                 currency_guid: tx.currency_guid,
@@ -258,17 +260,17 @@ export default function AccountLedger({
                 splits: [
                     {
                         account_guid: accountGuid,
-                        value_num: parseFloat(tx.account_split_value) >= 0 ? valueNum : negValueNum,
+                        value_num: isDebit ? valueNum : negValueNum,
                         value_denom: valueDenom,
-                        quantity_num: parseFloat(tx.account_split_value) >= 0 ? valueNum : negValueNum,
+                        quantity_num: isDebit ? valueNum : negValueNum,
                         quantity_denom: valueDenom,
                         reconcile_state: tx.account_split_reconcile_state || 'n',
                     },
                     {
                         account_guid: data.accountGuid,
-                        value_num: parseFloat(tx.account_split_value) >= 0 ? negValueNum : valueNum,
+                        value_num: isDebit ? negValueNum : valueNum,
                         value_denom: negValueDenom,
-                        quantity_num: parseFloat(tx.account_split_value) >= 0 ? negValueNum : valueNum,
+                        quantity_num: isDebit ? negValueNum : valueNum,
                         quantity_denom: negValueDenom,
                         reconcile_state: 'n',
                     },
@@ -307,7 +309,7 @@ export default function AccountLedger({
                         ...t,
                         post_date: new Date(data.post_date + 'T12:00:00Z') as unknown as Date,
                         description: data.description,
-                        account_split_value: (parseFloat(t.account_split_value) >= 0 ? '' : '-') + data.amount,
+                        account_split_value: data.amount,
                         splits: updatedSplits,
                     };
                 }));
@@ -775,7 +777,8 @@ export default function AccountLedger({
                                     if (colId === 'date') return <th key={header.id} className="px-6 py-4">Date</th>;
                                     if (colId === 'description') return <th key={header.id} className="px-6 py-4">Description</th>;
                                     if (colId === 'transfer') return <th key={header.id} className="px-6 py-4">Transfer / Splits</th>;
-                                    if (colId === 'amount') return <th key={header.id} className="px-6 py-4 text-right">Amount</th>;
+                                    if (colId === 'debit') return <th key={header.id} className="px-6 py-4 text-right">Debit</th>;
+                                    if (colId === 'credit') return <th key={header.id} className="px-6 py-4 text-right">Credit</th>;
                                     if (colId === 'balance') return <th key={header.id} className="px-6 py-4 text-right">Balance</th>;
                                     if (colId === 'actions') return <th key={header.id} className="px-2 py-4 w-10"></th>;
                                     return <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
@@ -952,10 +955,18 @@ export default function AccountLedger({
                                                 );
                                             }
 
-                                            if (colId === 'amount') {
+                                            if (colId === 'debit') {
                                                 return (
-                                                    <td key={cell.id} className={`px-6 py-4 text-sm font-mono text-right align-top ${amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                                        {formatCurrency(tx.account_split_value, tx.commodity_mnemonic)}
+                                                    <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top text-emerald-400">
+                                                        {amount >= 0 ? formatCurrency(amount, tx.commodity_mnemonic) : ''}
+                                                    </td>
+                                                );
+                                            }
+
+                                            if (colId === 'credit') {
+                                                return (
+                                                    <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top text-rose-400">
+                                                        {amount < 0 ? formatCurrency(Math.abs(amount), tx.commodity_mnemonic) : ''}
                                                     </td>
                                                 );
                                             }

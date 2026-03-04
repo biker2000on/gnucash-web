@@ -54,11 +54,19 @@ export function getColumns(meta: {
         })
     );
 
-    // Amount
+    // Debit
     columns.push(
         columnHelper.accessor('account_split_value', {
-            id: 'amount',
-            header: 'Amount',
+            id: 'debit',
+            header: 'Debit',
+        })
+    );
+
+    // Credit
+    columns.push(
+        columnHelper.display({
+            id: 'credit',
+            header: 'Credit',
         })
     );
 
