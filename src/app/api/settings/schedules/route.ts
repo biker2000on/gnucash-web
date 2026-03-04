@@ -10,10 +10,12 @@ export async function GET() {
 
     const enabled = await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
     const intervalHours = await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24);
+    const refreshTime = await getPreference<string>(roleResult.user.id, 'refresh_time', '21:00');
 
     return NextResponse.json({
       enabled: enabled === true || enabled === 'true',
       intervalHours: typeof intervalHours === 'number' ? intervalHours : parseInt(String(intervalHours)),
+      refreshTime,
     });
   } catch (error) {
     console.error('Failed to get refresh schedule:', error);
@@ -30,7 +32,7 @@ export async function PATCH(request: NextRequest) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const body = await request.json();
-    const { enabled, intervalHours } = body;
+    const { enabled, intervalHours, refreshTime } = body;
 
     if (enabled !== undefined) {
       await setPreference(roleResult.user.id, 'refresh_enabled', enabled);
@@ -38,6 +40,10 @@ export async function PATCH(request: NextRequest) {
 
     if (intervalHours !== undefined) {
       await setPreference(roleResult.user.id, 'refresh_interval_hours', intervalHours);
+    }
+
+    if (refreshTime !== undefined) {
+      await setPreference(roleResult.user.id, 'refresh_time', refreshTime);
     }
 
     // Determine effective state after updates
@@ -54,7 +60,10 @@ export async function PATCH(request: NextRequest) {
       : await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24).then(
           h => typeof h === 'number' ? h : parseInt(String(h))
         );
-    await signalScheduleChanged(roleResult.user.id, isEnabled, effectiveHours);
+    const effectiveTime = refreshTime !== undefined
+      ? refreshTime
+      : await getPreference<string>(roleResult.user.id, 'refresh_time', '21:00');
+    await signalScheduleChanged(roleResult.user.id, isEnabled, effectiveHours, effectiveTime);
 
     return NextResponse.json({ success: true });
   } catch (error) {

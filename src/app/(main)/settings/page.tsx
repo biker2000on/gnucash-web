@@ -8,6 +8,7 @@ import type { DateFormat } from '@/lib/date-format';
 interface ScheduleSettings {
   enabled: boolean;
   intervalHours: number;
+  refreshTime: string; // HH:MM in UTC
 }
 
 interface IndexCoverage {
@@ -26,7 +27,7 @@ export default function SettingsPage() {
   const { success, error: showError } = useToast();
   const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode } = useUserPreferences();
 
-  const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24 });
+  const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24, refreshTime: '21:00' });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
@@ -144,6 +145,29 @@ export default function SettingsPage() {
     }
   };
 
+  const handleTimeChange = async (refreshTime: string) => {
+    try {
+      const res = await fetch('/api/settings/schedules', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshTime }),
+      });
+
+      if (!res.ok) throw new Error('Failed to update refresh time');
+
+      setSchedule((prev) => ({ ...prev, refreshTime }));
+
+      // Format for display: convert UTC HH:MM to local time description
+      const [h, m] = refreshTime.split(':').map(Number);
+      const utcDate = new Date();
+      utcDate.setUTCHours(h, m, 0, 0);
+      const localTime = utcDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      success(`Refresh time set to ${refreshTime} UTC (${localTime} local)`);
+    } catch (err) {
+      showError('Failed to update refresh time');
+    }
+  };
+
   const handleRefreshNow = async () => {
     setRefreshing(true);
     try {
@@ -255,7 +279,7 @@ export default function SettingsPage() {
             </label>
           )}
 
-          {/* Frequency Dropdown */}
+          {/* Refresh Frequency */}
           <div className="space-y-2">
             <label className="block text-sm text-foreground-secondary">Refresh Frequency</label>
             <select
@@ -270,6 +294,23 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Refresh Time */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">
+              Refresh Time (UTC)
+            </label>
+            <input
+              type="time"
+              value={schedule.refreshTime}
+              onChange={(e) => handleTimeChange(e.target.value)}
+              disabled={!schedule.enabled}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            <p className="text-xs text-foreground-muted">
+              US markets close at 21:00 UTC (4 PM ET). Schedule after market close for complete daily prices.
+            </p>
           </div>
 
           {/* Refresh Now Button */}

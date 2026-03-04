@@ -13,8 +13,8 @@ import http from 'http';
 interface ScheduleEntry {
   userId: number;
   bookGuid: string;
-  intervalMs: number;
-  timer: ReturnType<typeof setInterval> | null;
+  refreshTime: string; // HH:MM in UTC
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 const schedules = new Map<number, ScheduleEntry>(); // keyed by userId
@@ -50,24 +50,49 @@ async function runRefreshForUser(userId: number, bookGuid: string) {
   }
 }
 
-function setSchedule(userId: number, bookGuid: string, intervalHours: number) {
+/**
+ * Calculate milliseconds until the next occurrence of a given HH:MM (UTC).
+ * If the time has already passed today, schedules for tomorrow.
+ */
+function msUntilNext(timeStr: string): number {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  const now = new Date();
+  const target = new Date(now);
+  target.setUTCHours(hours, minutes, 0, 0);
+
+  // If the target time has already passed today, schedule for tomorrow
+  if (target.getTime() <= now.getTime()) {
+    target.setUTCDate(target.getUTCDate() + 1);
+  }
+
+  return target.getTime() - now.getTime();
+}
+
+function setSchedule(userId: number, bookGuid: string, refreshTime: string) {
   clearSchedule(userId);
 
-  const intervalMs = intervalHours * 60 * 60 * 1000;
-  const entry: ScheduleEntry = {
-    userId,
-    bookGuid,
-    intervalMs,
-    timer: setInterval(() => runRefreshForUser(userId, bookGuid), intervalMs),
-  };
-  schedules.set(userId, entry);
-  console.log(`Schedule set: user ${userId}, every ${intervalHours}h`);
+  function scheduleNext() {
+    const ms = msUntilNext(refreshTime);
+    const nextRun = new Date(Date.now() + ms);
+    console.log(`Next refresh for user ${userId} at ${nextRun.toISOString()} (${refreshTime} UTC)`);
+
+    const timer = setTimeout(async () => {
+      await runRefreshForUser(userId, bookGuid);
+      // Reschedule for the next day
+      scheduleNext();
+    }, ms);
+
+    schedules.set(userId, { userId, bookGuid, refreshTime, timer });
+  }
+
+  scheduleNext();
+  console.log(`Schedule set: user ${userId}, daily at ${refreshTime} UTC`);
 }
 
 function clearSchedule(userId: number) {
   const existing = schedules.get(userId);
   if (existing?.timer) {
-    clearInterval(existing.timer);
+    clearTimeout(existing.timer);
     schedules.delete(userId);
     console.log(`Schedule cleared: user ${userId}`);
   }
@@ -90,26 +115,26 @@ async function recoverSchedules() {
       });
 
       for (const pref of enabledPrefs) {
-        const intervalPref = await prisma.gnucash_web_user_preferences.findUnique({
+        const timePref = await prisma.gnucash_web_user_preferences.findUnique({
           where: {
             user_id_preference_key: {
               user_id: pref.user_id,
-              preference_key: 'refresh_interval_hours',
+              preference_key: 'refresh_time',
             },
           },
           select: { preference_value: true },
         });
 
-        const intervalHours = intervalPref
-          ? parseInt(JSON.parse(intervalPref.preference_value), 10) || 24
-          : 24;
+        const refreshTime = timePref
+          ? JSON.parse(timePref.preference_value) || '21:00'
+          : '21:00';
 
         const firstBook = await prisma.books.findFirst({
           select: { guid: true },
         });
 
         if (firstBook) {
-          setSchedule(pref.user_id, firstBook.guid, intervalHours);
+          setSchedule(pref.user_id, firstBook.guid, refreshTime);
         }
       }
 
@@ -170,10 +195,10 @@ async function main() {
           break;
         }
         case 'schedule-changed': {
-          const { userId, enabled, intervalHours } = job.data as {
+          const { userId, enabled, refreshTime } = job.data as {
             userId: number;
             enabled: boolean;
-            intervalHours: number;
+            refreshTime: string;
           };
 
           if (enabled) {
@@ -182,7 +207,7 @@ async function main() {
             try {
               const firstBook = await prisma.books.findFirst({ select: { guid: true } });
               if (firstBook) {
-                setSchedule(userId, firstBook.guid, intervalHours);
+                setSchedule(userId, firstBook.guid, refreshTime || '21:00');
               }
             } finally {
               await prisma.$disconnect();
