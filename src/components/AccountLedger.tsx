@@ -237,6 +237,7 @@ export default function AccountLedger({
         post_date: string;
         description: string;
         accountGuid: string;
+        accountName: string;
         amount: string;
         original_enter_date?: string;
     }) => {
@@ -294,7 +295,23 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to update');
 
             success('Transaction updated');
-            if (!isEditMode) {
+            if (isEditMode) {
+                // Update local state without refetching to preserve row order
+                setTransactions(prev => prev.map(t => {
+                    if (t.guid !== guid) return t;
+                    const updatedSplits = t.splits?.map(s => {
+                        if (s.account_guid === accountGuid) return s;
+                        return { ...s, account_guid: data.accountGuid, account_name: data.accountName };
+                    });
+                    return {
+                        ...t,
+                        post_date: new Date(data.post_date + 'T12:00:00Z') as unknown as Date,
+                        description: data.description,
+                        account_split_value: (parseFloat(t.account_split_value) >= 0 ? '' : '-') + data.amount,
+                        splits: updatedSplits,
+                    };
+                }));
+            } else {
                 setEditingGuid(null);
                 await fetchTransactions();
             }

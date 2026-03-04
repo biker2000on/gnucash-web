@@ -21,6 +21,7 @@ interface InlineEditRowProps {
         post_date: string;
         description: string;
         accountGuid: string;
+        accountName: string;
         amount: string;
         original_enter_date?: string;
     }) => Promise<void>;
@@ -49,6 +50,7 @@ export function InlineEditRow({
     );
     const [description, setDescription] = useState(transaction.description || '');
     const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');
+    const [otherAccountName, setOtherAccountName] = useState(otherSplit?.account_name || '');
     const [amount, setAmount] = useState(
         Math.abs(parseFloat(transaction.account_split_value)).toFixed(2)
     );
@@ -101,6 +103,7 @@ export function InlineEditRow({
                 post_date: postDate,
                 description: description.trim(),
                 accountGuid: otherAccountGuid,
+                accountName: otherAccountName,
                 amount,
                 original_enter_date: originalEnterDate,
             });
@@ -182,7 +185,7 @@ export function InlineEditRow({
             <td className="px-2 py-2 align-middle">
                 <AccountSelector
                     value={otherAccountGuid}
-                    onChange={(guid) => setOtherAccountGuid(guid)}
+                    onChange={(guid, name) => { setOtherAccountGuid(guid); setOtherAccountName(name); }}
                     placeholder="Account..."
                 />
             </td>

@@ -3,7 +3,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 
 interface AccountCellProps {
     value: string;
-    onChange: (guid: string) => void;
+    onChange: (guid: string, name: string) => void;
     onEnter?: () => void;
     onArrowUp?: () => void;
     onArrowDown?: () => void;
@@ -15,7 +15,7 @@ export function AccountCell({ value, onChange, onEnter, onArrowUp, onArrowDown, 
     return (
         <AccountSelector
             value={value}
-            onChange={(guid) => onChange(guid)}
+            onChange={(guid, name) => onChange(guid, name)}
             placeholder="Account..."
             onEnter={onEnter}
             onArrowUp={onArrowUp}
