@@ -145,24 +145,35 @@ export default function SettingsPage() {
     }
   };
 
-  const handleTimeChange = async (refreshTime: string) => {
+  // Convert UTC HH:MM to local HH:MM for the time input
+  const utcToLocal = (utcTime: string): string => {
+    const [h, m] = utcTime.split(':').map(Number);
+    const d = new Date();
+    d.setUTCHours(h, m, 0, 0);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  // Convert local HH:MM to UTC HH:MM for storage
+  const localToUtc = (localTime: string): string => {
+    const [h, m] = localTime.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  };
+
+  const handleTimeChange = async (localTime: string) => {
+    const utcTime = localToUtc(localTime);
     try {
       const res = await fetch('/api/settings/schedules', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshTime }),
+        body: JSON.stringify({ refreshTime: utcTime }),
       });
 
       if (!res.ok) throw new Error('Failed to update refresh time');
 
-      setSchedule((prev) => ({ ...prev, refreshTime }));
-
-      // Format for display: convert UTC HH:MM to local time description
-      const [h, m] = refreshTime.split(':').map(Number);
-      const utcDate = new Date();
-      utcDate.setUTCHours(h, m, 0, 0);
-      const localTime = utcDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      success(`Refresh time set to ${refreshTime} UTC (${localTime} local)`);
+      setSchedule((prev) => ({ ...prev, refreshTime: utcTime }));
+      success(`Refresh time set to ${localTime} (${utcTime} UTC)`);
     } catch (err) {
       showError('Failed to update refresh time');
     }
@@ -299,17 +310,17 @@ export default function SettingsPage() {
           {/* Refresh Time */}
           <div className="space-y-2">
             <label className="block text-sm text-foreground-secondary">
-              Refresh Time (UTC)
+              Refresh Time
             </label>
             <input
               type="time"
-              value={schedule.refreshTime}
+              value={utcToLocal(schedule.refreshTime)}
               onChange={(e) => handleTimeChange(e.target.value)}
               disabled={!schedule.enabled}
               className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <p className="text-xs text-foreground-muted">
-              US markets close at 21:00 UTC (4 PM ET). Schedule after market close for complete daily prices.
+              Schedule after US market close (4 PM ET) for complete daily prices.
             </p>
           </div>
 
