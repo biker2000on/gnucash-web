@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
+import { BalanceReversal } from '@/lib/format';
 
 interface ScheduleSettings {
   enabled: boolean;
@@ -23,9 +24,27 @@ const INTERVAL_OPTIONS = [
   { value: 6, label: 'Every 6 Hours' },
 ];
 
+const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; description: string }[] = [
+  {
+    value: 'none',
+    label: 'None (Raw Values)',
+    description: 'Show raw GnuCash accounting values. Income and liabilities appear negative.',
+  },
+  {
+    value: 'credit',
+    label: 'Credit Accounts',
+    description: 'Reverse credit-balance accounts (Income, Liability, Equity). Income and liabilities appear positive.',
+  },
+  {
+    value: 'income_expense',
+    label: 'Income & Expense',
+    description: 'Reverse both Income and Expense accounts. Both appear as positive values.',
+  },
+];
+
 export default function SettingsPage() {
   const { success, error: showError } = useToast();
-  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode } = useUserPreferences();
+  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode, balanceReversal, setBalanceReversal } = useUserPreferences();
 
   const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24, refreshTime: '21:00' });
   const [loading, setLoading] = useState(true);
@@ -36,6 +55,7 @@ export default function SettingsPage() {
   const [taxRateInput, setTaxRateInput] = useState('');
   const [simplefinSyncEnabled, setSimplefinSyncEnabled] = useState(false);
   const [simplefinConnected, setSimplefinConnected] = useState(false);
+  const [savingBalance, setSavingBalance] = useState(false);
 
   // Sync tax rate input from context (mount only)
   useEffect(() => {
@@ -96,6 +116,18 @@ export default function SettingsPage() {
     }
     loadCoverage();
   }, []);
+
+  const handleBalanceReversalChange = async (value: BalanceReversal) => {
+    setSavingBalance(true);
+    try {
+      await setBalanceReversal(value);
+      success('Balance display preference saved');
+    } catch {
+      showError('Failed to save balance display preference');
+    } finally {
+      setSavingBalance(false);
+    }
+  };
 
   const handleScheduleToggle = async (enabled: boolean) => {
     try {
@@ -447,6 +479,68 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Balance Display */}
+      <div className="bg-surface rounded-xl border border-border p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-2">Balance Display</h2>
+        <p className="text-sm text-foreground-muted mb-4">
+          Choose how account balances are displayed throughout the app.
+        </p>
+
+        <div className="space-y-3">
+          {BALANCE_REVERSAL_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className={`block p-4 rounded-xl border cursor-pointer transition-all ${
+                balanceReversal === option.value
+                  ? 'bg-emerald-500/10 border-emerald-500/50'
+                  : 'bg-surface border-border hover:border-border-hover'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="balanceReversal"
+                  value={option.value}
+                  checked={balanceReversal === option.value}
+                  onChange={() => handleBalanceReversalChange(option.value)}
+                  disabled={savingBalance}
+                  className="mt-1 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground">{option.label}</span>
+                    {savingBalance && balanceReversal === option.value && (
+                      <div className="w-3 h-3 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                    )}
+                  </div>
+                  <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <details className="mt-4">
+          <summary className="text-sm text-foreground-secondary cursor-pointer hover:text-foreground">
+            Understanding Balance Reversal
+          </summary>
+          <div className="mt-2 text-sm text-foreground-muted space-y-2">
+            <p>
+              In double-entry accounting, some accounts naturally have credit balances (shown as negative in GnuCash):
+            </p>
+            <ul className="list-disc list-inside space-y-1">
+              <li><strong className="text-foreground-secondary">Income</strong> - Money you earn appears negative</li>
+              <li><strong className="text-foreground-secondary">Liabilities</strong> - Debts you owe appear negative</li>
+              <li><strong className="text-foreground-secondary">Equity</strong> - Net worth appears negative</li>
+            </ul>
+            <p>
+              The balance reversal setting displays these with positive values for easier reading,
+              while maintaining proper accounting relationships.
+            </p>
+          </div>
+        </details>
       </div>
 
       {/* Display Preferences */}

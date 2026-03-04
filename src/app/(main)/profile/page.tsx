@@ -1,32 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { BalanceReversal } from '@/lib/format';
 
 interface User {
     id: number;
     username: string;
 }
-
-const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; description: string }[] = [
-    {
-        value: 'none',
-        label: 'None (Raw Values)',
-        description: 'Show raw GnuCash accounting values. Income and liabilities appear negative.',
-    },
-    {
-        value: 'credit',
-        label: 'Credit Accounts',
-        description: 'Reverse credit-balance accounts (Income, Liability, Equity). Income and liabilities appear positive.',
-    },
-    {
-        value: 'income_expense',
-        label: 'Income & Expense',
-        description: 'Reverse both Income and Expense accounts. Both appear as positive values.',
-    },
-];
 
 const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; description: string; icon: string }[] = [
     {
@@ -50,12 +30,14 @@ const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; descri
 ];
 
 export default function ProfilePage() {
-    const { balanceReversal, setBalanceReversal, loading: prefsLoading } = useUserPreferences();
     const { theme, setTheme } = useTheme();
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [changingPassword, setChangingPassword] = useState(false);
+    const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     useEffect(() => {
         async function fetchUser() {
@@ -74,23 +56,48 @@ export default function ProfilePage() {
         fetchUser();
     }, []);
 
-    const handleBalanceReversalChange = async (value: BalanceReversal) => {
-        setSaving(true);
-        setSaveMessage(null);
+    const handlePasswordChange = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setPasswordMessage(null);
 
+        if (newPassword !== confirmPassword) {
+            setPasswordMessage({ type: 'error', text: 'New passwords do not match' });
+            return;
+        }
+
+        if (newPassword.length < 8) {
+            setPasswordMessage({ type: 'error', text: 'New password must be at least 8 characters' });
+            return;
+        }
+
+        setChangingPassword(true);
         try {
-            await setBalanceReversal(value);
-            setSaveMessage({ type: 'success', text: 'Preference saved successfully' });
-            // Clear success message after 3 seconds
-            setTimeout(() => setSaveMessage(null), 3000);
-        } catch (error) {
-            setSaveMessage({ type: 'error', text: 'Failed to save preference' });
+            const res = await fetch('/api/auth/change-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentPassword, newPassword }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                setPasswordMessage({ type: 'error', text: data.error || 'Failed to change password' });
+                return;
+            }
+
+            setPasswordMessage({ type: 'success', text: 'Password changed successfully' });
+            setCurrentPassword('');
+            setNewPassword('');
+            setConfirmPassword('');
+            setTimeout(() => setPasswordMessage(null), 5000);
+        } catch {
+            setPasswordMessage({ type: 'error', text: 'Failed to change password' });
         } finally {
-            setSaving(false);
+            setChangingPassword(false);
         }
     };
 
-    if (loading || prefsLoading) {
+    if (loading) {
         return (
             <div className="max-w-2xl mx-auto">
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 shadow-2xl">
@@ -123,7 +130,7 @@ export default function ProfilePage() {
                     </span>
                 </h1>
                 <p className="mt-2 text-foreground-muted">
-                    Customize how GnuCash Web displays your financial data.
+                    Manage your account and appearance settings.
                 </p>
             </header>
 
@@ -137,60 +144,6 @@ export default function ProfilePage() {
                         <h2 className="text-xl font-semibold text-foreground">{user.username}</h2>
                         <p className="text-sm text-foreground-muted">User ID: {user.id}</p>
                     </div>
-                </div>
-            </div>
-
-            {/* Balance Display Settings */}
-            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
-                <h3 className="text-lg font-semibold text-foreground mb-2">Balance Display</h3>
-                <p className="text-sm text-foreground-muted mb-6">
-                    Choose how account balances are displayed throughout the app. This affects the Accounts page, ledgers, and reports.
-                </p>
-
-                {saveMessage && (
-                    <div
-                        className={`mb-4 px-4 py-2 rounded-lg text-sm ${
-                            saveMessage.type === 'success'
-                                ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
-                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
-                        }`}
-                    >
-                        {saveMessage.text}
-                    </div>
-                )}
-
-                <div className="space-y-3">
-                    {BALANCE_REVERSAL_OPTIONS.map((option) => (
-                        <label
-                            key={option.value}
-                            className={`block p-4 rounded-xl border cursor-pointer transition-all ${
-                                balanceReversal === option.value
-                                    ? 'bg-emerald-500/10 border-emerald-500/50'
-                                    : 'bg-surface/50 border-border hover:border-border-hover'
-                            }`}
-                        >
-                            <div className="flex items-start gap-3">
-                                <input
-                                    type="radio"
-                                    name="balanceReversal"
-                                    value={option.value}
-                                    checked={balanceReversal === option.value}
-                                    onChange={() => handleBalanceReversalChange(option.value)}
-                                    disabled={saving}
-                                    className="mt-1 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
-                                />
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-medium text-foreground">{option.label}</span>
-                                        {saving && balanceReversal === option.value && (
-                                            <div className="w-3 h-3 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
-                                        )}
-                                    </div>
-                                    <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
-                                </div>
-                            </div>
-                        </label>
-                    ))}
                 </div>
             </div>
 
@@ -233,24 +186,69 @@ export default function ProfilePage() {
                 </div>
             </div>
 
-            {/* Help Section */}
+            {/* Change Password */}
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
-                <h3 className="text-lg font-semibold text-foreground mb-2">Understanding Balance Reversal</h3>
-                <div className="prose prose-sm prose-invert text-foreground-secondary">
-                    <p>
-                        In double-entry accounting, some accounts naturally have credit balances (shown as negative in GnuCash).
-                        These include:
-                    </p>
-                    <ul className="list-disc list-inside space-y-1 mt-2">
-                        <li><strong className="text-foreground-secondary">Income</strong> - Money you earn appears negative</li>
-                        <li><strong className="text-foreground-secondary">Liabilities</strong> - Debts you owe appear negative</li>
-                        <li><strong className="text-foreground-secondary">Equity</strong> - Net worth appears negative</li>
-                    </ul>
-                    <p className="mt-4">
-                        The balance reversal setting lets you display these accounts with positive values for easier reading,
-                        while still maintaining proper accounting relationships.
-                    </p>
-                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">Change Password</h3>
+                <p className="text-sm text-foreground-muted mb-6">
+                    Update your account password. You will need to enter your current password to confirm the change.
+                </p>
+
+                {passwordMessage && (
+                    <div
+                        className={`mb-4 px-4 py-2 rounded-lg text-sm ${
+                            passwordMessage.type === 'success'
+                                ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                        }`}
+                    >
+                        {passwordMessage.text}
+                    </div>
+                )}
+
+                <form onSubmit={handlePasswordChange} className="space-y-4">
+                    <div>
+                        <label className="block text-sm text-foreground-secondary mb-1">Current Password</label>
+                        <input
+                            type="password"
+                            value={currentPassword}
+                            onChange={(e) => setCurrentPassword(e.target.value)}
+                            required
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm text-foreground-secondary mb-1">New Password</label>
+                        <input
+                            type="password"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            required
+                            minLength={8}
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm text-foreground-secondary mb-1">Confirm New Password</label>
+                        <input
+                            type="password"
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            required
+                            minLength={8}
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                        />
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                        {changingPassword && (
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        )}
+                        <span>{changingPassword ? 'Changing Password...' : 'Change Password'}</span>
+                    </button>
+                </form>
             </div>
         </div>
     );
