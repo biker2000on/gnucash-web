@@ -9,7 +9,7 @@ import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 
 export interface EditableRowHandle {
-    save: () => Promise<{ saved: boolean; dateChanged: boolean }>;
+    save: () => Promise<boolean>;
     isDirty: () => boolean;
 }
 
@@ -87,11 +87,9 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 || amount !== Math.abs(parseFloat(transaction.account_split_value)).toFixed(2);
         }, [postDate, description, otherAccountGuid, amount, transaction, otherSplit]);
 
-        const save = useCallback(async (): Promise<{ saved: boolean; dateChanged: boolean }> => {
-            const origDate = transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : '';
-            const dateChanged = postDate !== origDate;
-            if (!isDirty()) return { saved: true, dateChanged: false };
-            if (!description.trim() || !otherAccountGuid || !amount || parseFloat(amount) <= 0) return { saved: false, dateChanged: false };
+        const save = useCallback(async (): Promise<boolean> => {
+            if (!isDirty()) return true;
+            if (!description.trim() || !otherAccountGuid || !amount || parseFloat(amount) <= 0) return false;
             try {
                 setSaveError(false);
                 await onSave(transaction.guid, {
@@ -101,12 +99,12 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     amount,
                     original_enter_date: originalEnterDate,
                 });
-                return { saved: true, dateChanged };
+                return true;
             } catch {
                 setSaveError(true);
-                return { saved: false, dateChanged: false };
+                return false;
             }
-        }, [isDirty, description, otherAccountGuid, amount, postDate, transaction.post_date, transaction.guid, originalEnterDate, onSave]);
+        }, [isDirty, description, otherAccountGuid, amount, postDate, transaction.guid, originalEnterDate, onSave]);
 
         useImperativeHandle(ref, () => ({ save, isDirty }), [save, isDirty]);
 

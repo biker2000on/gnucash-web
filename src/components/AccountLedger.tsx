@@ -294,13 +294,15 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to update');
 
             success('Transaction updated');
-            setEditingGuid(null);
-            await fetchTransactions();
+            if (!isEditMode) {
+                setEditingGuid(null);
+                await fetchTransactions();
+            }
         } catch (err) {
             console.error('Inline save failed:', err);
             error('Failed to update transaction');
         }
-    }, [transactions, accountGuid, fetchTransactions, success, error]);
+    }, [transactions, accountGuid, fetchTransactions, success, error, isEditMode]);
 
     // Toggle reviewed status
     const toggleReviewed = useCallback(async (transactionGuid: string) => {
@@ -335,13 +337,14 @@ export default function AccountLedger({
                 setSelectedSplits(new Set());
                 setEditReviewedCount(0);
             } else {
-                // Exiting edit mode: clear edit state
+                // Exiting edit mode: clear edit state and refresh data
                 setEditSelectedGuids(new Set());
                 setFocusedRowIndex(-1);
+                fetchTransactions();
             }
             return next;
         });
-    }, []);
+    }, [fetchTransactions]);
 
     // Edit mode checkbox handling with shift+click range selection
     const handleEditCheckToggle = useCallback((index: number, guid: string, shiftKey: boolean) => {
@@ -481,14 +484,8 @@ export default function AccountLedger({
                             handleEditDirect(currentTx.guid);
                         } else {
                             const handle = editableRowRefs.current.get(currentTx.guid);
-                            if (handle?.isDirty()) {
-                                const result = await handle.save();
-                                if (result?.dateChanged) {
-                                    setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                }
-                            } else {
-                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                            }
+                            if (handle?.isDirty()) await handle.save();
+                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                         }
                     }
                     break;
@@ -792,14 +789,8 @@ export default function AccountLedger({
                                     focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
                                     onEnter={async () => {
                                         const handle = editableRowRefs.current.get(tx.guid);
-                                        if (handle?.isDirty()) {
-                                            const result = await handle.save();
-                                            if (result?.dateChanged) {
-                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                            }
-                                        } else {
-                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                        }
+                                        if (handle?.isDirty()) await handle.save();
+                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                                     }}
                                     onArrowUp={async () => {
                                         const handle = editableRowRefs.current.get(tx.guid);
