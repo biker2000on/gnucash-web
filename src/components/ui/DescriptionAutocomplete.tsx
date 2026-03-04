@@ -43,6 +43,7 @@ export function DescriptionAutocomplete({
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isFocusedRef = useRef(false);
+  const hasUserTypedRef = useRef(false);
 
   // Debounced API call
   useEffect(() => {
@@ -51,6 +52,8 @@ export function DescriptionAutocomplete({
       setIsOpen(false);
       return;
     }
+
+    if (!hasUserTypedRef.current) return;
 
     // Clear existing timer
     if (debounceTimerRef.current) {
@@ -217,10 +220,10 @@ export function DescriptionAutocomplete({
         ref={inputRef}
         type="text"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => { hasUserTypedRef.current = true; onChange(e.target.value); }}
         onFocus={() => {
           isFocusedRef.current = true;
-          if (suggestions.length > 0) setIsOpen(true);
+          hasUserTypedRef.current = false;
           onFocus?.();
         }}
         onBlur={() => {

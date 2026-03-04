@@ -202,8 +202,7 @@ export function AccountSelector({
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (!isOpen) {
             if (e.key === 'ArrowDown') {
-                setIsOpen(true);
-                setFocusedIndex(0);
+                onArrowDown?.();
                 e.preventDefault();
             } else if (e.key === 'Enter') {
                 onEnter?.();

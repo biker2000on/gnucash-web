@@ -481,8 +481,12 @@ export default function AccountLedger({
                             handleEditDirect(currentTx.guid);
                         } else {
                             const handle = editableRowRefs.current.get(currentTx.guid);
-                            const saved = await handle?.save();
-                            if (saved !== false) {
+                            if (handle?.isDirty()) {
+                                const result = await handle.save();
+                                if (result?.dateChanged) {
+                                    setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                }
+                            } else {
                                 setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                             }
                         }
@@ -788,8 +792,14 @@ export default function AccountLedger({
                                     focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
                                     onEnter={async () => {
                                         const handle = editableRowRefs.current.get(tx.guid);
-                                        if (handle?.isDirty()) await handle.save();
-                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                        if (handle?.isDirty()) {
+                                            const result = await handle.save();
+                                            if (result?.dateChanged) {
+                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                            }
+                                        } else {
+                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                        }
                                     }}
                                     onArrowUp={async () => {
                                         const handle = editableRowRefs.current.get(tx.guid);
