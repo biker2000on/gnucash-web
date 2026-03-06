@@ -421,13 +421,15 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         <tr className="bg-background-secondary/50 text-foreground-secondary text-xs uppercase tracking-widest">
                             <th className="px-6 py-4 font-semibold">Date</th>
                             <th className="px-6 py-4 font-semibold">Description</th>
-                            <th className="px-6 py-4 font-semibold text-right">Accounts & Amounts</th>
+                            <th className="px-6 py-4 font-semibold">Account</th>
+                            <th className="px-6 py-4 font-semibold text-right">Debit</th>
+                            <th className="px-6 py-4 font-semibold text-right">Credit</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                         {transactions.length === 0 ? (
                             <tr>
-                                <td colSpan={3} className="px-6 py-12 text-center text-foreground-muted">
+                                <td colSpan={5} className="px-6 py-12 text-center text-foreground-muted">
                                     {loading ? 'Loading...' : 'No transactions found matching your filters.'}
                                 </td>
                             </tr>
@@ -442,18 +444,34 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
                                     </td>
                                     <td className="px-6 py-4 text-sm align-top">
-                                        <div className="space-y-2">
+                                        <div className="space-y-1">
                                             {tx.splits?.map(split => (
-                                                <div key={split.guid} className="flex justify-between gap-4">
-                                                    <span className="text-foreground-secondary truncate max-w-[200px]">{split.account_name}</span>
-                                                    <span className={`font-mono ${parseFloat(split.quantity_decimal || '0') < 0
-                                                        ? 'text-rose-400'
-                                                        : 'text-emerald-400'
-                                                        }`}>
-                                                        {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
-                                                    </span>
-                                                </div>
+                                                <div key={split.guid} className="text-foreground-secondary truncate max-w-[200px]">{split.account_name}</div>
                                             ))}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-sm font-mono text-right align-top">
+                                        <div className="space-y-1">
+                                            {tx.splits?.map(split => {
+                                                const val = parseFloat(split.quantity_decimal || '0');
+                                                return (
+                                                    <div key={split.guid} className="text-emerald-400">
+                                                        {val >= 0 ? formatCurrency(val, split.commodity_mnemonic) : '\u00A0'}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-sm font-mono text-right align-top">
+                                        <div className="space-y-1">
+                                            {tx.splits?.map(split => {
+                                                const val = parseFloat(split.quantity_decimal || '0');
+                                                return (
+                                                    <div key={split.guid} className="text-rose-400">
+                                                        {val < 0 ? formatCurrency(Math.abs(val), split.commodity_mnemonic) : '\u00A0'}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     </td>
                                 </tr>
