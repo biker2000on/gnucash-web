@@ -15,13 +15,17 @@ export function GlobalShortcuts() {
 
   // New transaction shortcut
   useKeyboardShortcut('new-transaction', 'n', 'New Transaction', () => {
-    // Dispatch custom event that transaction form can listen to
     window.dispatchEvent(new CustomEvent('open-new-transaction'))
   })
 
-  // Escape to close modal (just register for help display - Modal component handles it)
-  useKeyboardShortcut('close-modal', 'Escape', 'Close modal', () => {
-    // This is actually handled by Modal component, but we register it for help display
+  // Edit mode shortcuts
+  useKeyboardShortcut('enter-edit-mode', 'e', 'Enter edit mode', () => {
+    window.dispatchEvent(new CustomEvent('enter-edit-mode'))
+  })
+
+  // Escape to close modal / exit edit mode
+  useKeyboardShortcut('close-modal', 'Escape', 'Close modal / Exit edit mode', () => {
+    window.dispatchEvent(new CustomEvent('exit-edit-mode'))
   })
 
   return null

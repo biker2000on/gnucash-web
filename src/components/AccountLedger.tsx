@@ -119,6 +119,7 @@ export default function AccountLedger({
         return () => window.removeEventListener('open-new-transaction', handler);
     }, []);
 
+
     const toggleSplitSelection = useCallback((splitGuid: string) => {
         setSelectedSplits(prev => {
             const newSet = new Set(prev);
@@ -364,6 +365,26 @@ export default function AccountLedger({
             return next;
         });
     }, [fetchTransactions]);
+
+    // Listen for global edit mode shortcuts
+    useEffect(() => {
+        const enterHandler = () => {
+            if (!isEditMode) {
+                handleToggleEditMode();
+            }
+        };
+        const exitHandler = () => {
+            if (isEditMode) {
+                handleToggleEditMode();
+            }
+        };
+        window.addEventListener('enter-edit-mode', enterHandler);
+        window.addEventListener('exit-edit-mode', exitHandler);
+        return () => {
+            window.removeEventListener('enter-edit-mode', enterHandler);
+            window.removeEventListener('exit-edit-mode', exitHandler);
+        };
+    }, [isEditMode, handleToggleEditMode]);
 
     // Edit mode checkbox handling with shift+click range selection
     const handleEditCheckToggle = useCallback((index: number, guid: string, shiftKey: boolean) => {
