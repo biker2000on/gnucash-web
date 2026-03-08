@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { isAuthenticated } from '@/lib/auth';
 
 const features = [
   {
@@ -39,7 +41,11 @@ const features = [
   },
 ];
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  if (await isAuthenticated()) {
+    redirect('/dashboard');
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}

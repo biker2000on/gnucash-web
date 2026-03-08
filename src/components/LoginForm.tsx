@@ -9,7 +9,7 @@ interface LoginFormProps {
     redirectTo?: string;
 }
 
-export function LoginForm({ mode, onToggleMode, redirectTo = '/accounts' }: LoginFormProps) {
+export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormProps) {
     const router = useRouter();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
