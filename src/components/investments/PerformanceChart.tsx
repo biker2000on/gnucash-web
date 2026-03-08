@@ -9,24 +9,10 @@ import { formatCurrency } from '@/lib/format';
 import { ExpandedContext } from '@/components/charts/ExpandableChart';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
 import { ChartSettingsPanel } from './ChartSettingsPanel';
+import type { ChartDefaults } from '@/lib/user-preferences';
+import type { IndexDataPoint, IndicesData } from '@/types/investments';
 
-interface IndexDataPoint {
-  date: string;
-  value: number;
-  percentChange: number;
-}
-
-interface IndicesData {
-  sp500: IndexDataPoint[];
-  djia: IndexDataPoint[];
-}
-
-export interface ChartDefaults {
-  sp500Enabled: boolean;
-  djiaEnabled: boolean;
-  defaultPeriod: string;
-  defaultMode: 'dollar' | 'percent';
-}
+export type { ChartDefaults };
 
 interface PerformanceChartProps {
   data: Array<{
@@ -40,8 +26,10 @@ interface PerformanceChartProps {
 type Period = '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'ALL';
 
 const INDEX_COLORS = {
-  sp500: '#f97316', // orange
-  djia: '#a855f7',  // purple
+  sp500: '#f97316',    // orange
+  djia: '#a855f7',     // purple
+  nasdaq: '#22c55e',   // green
+  russell2000: '#ec4899', // pink
   portfolio: '#06b6d4', // cyan
 };
 
@@ -55,6 +43,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
   const [chartMode, setChartMode] = useState<'value' | 'percentChange'>(initialMode);
   const [showSP500, setShowSP500] = useState(chartDefaults?.sp500Enabled ?? false);
   const [showDJIA, setShowDJIA] = useState(chartDefaults?.djiaEnabled ?? false);
+  const [showNasdaq, setShowNasdaq] = useState(chartDefaults?.nasdaqEnabled ?? false);
+  const [showRussell2000, setShowRussell2000] = useState(chartDefaults?.russell2000Enabled ?? false);
   const [currentDefaults, setCurrentDefaults] = useState<ChartDefaults | undefined>(chartDefaults);
   const [defaultsLoaded, setDefaultsLoaded] = useState(!!chartDefaults);
 
@@ -73,6 +63,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
         setChartMode(data.defaultMode === 'percent' ? 'percentChange' : 'value');
         setShowSP500(data.sp500Enabled);
         setShowDJIA(data.djiaEnabled);
+        setShowNasdaq(data.nasdaqEnabled);
+        setShowRussell2000(data.russell2000Enabled);
       } catch {
         // Ignore - use defaults
       } finally {
@@ -94,6 +86,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     setCurrentDefaults(newDefaults);
     setShowSP500(newDefaults.sp500Enabled);
     setShowDJIA(newDefaults.djiaEnabled);
+    setShowNasdaq(newDefaults.nasdaqEnabled);
+    setShowRussell2000(newDefaults.russell2000Enabled);
     setPeriod((newDefaults.defaultPeriod as Period) || '1Y');
     setChartMode(newDefaults.defaultMode === 'percent' ? 'percentChange' : 'value');
   }, []);
@@ -132,6 +126,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     // Build a map of index data by date for fast lookup
     const sp500Map = new Map<string, number>();
     const djiaMap = new Map<string, number>();
+    const nasdaqMap = new Map<string, number>();
+    const russell2000Map = new Map<string, number>();
 
     if (indices?.sp500) {
       for (const pt of indices.sp500) {
@@ -143,6 +139,16 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
         djiaMap.set(pt.date, pt.percentChange);
       }
     }
+    if (indices?.nasdaq) {
+      for (const pt of indices.nasdaq) {
+        nasdaqMap.set(pt.date, pt.percentChange);
+      }
+    }
+    if (indices?.russell2000) {
+      for (const pt of indices.russell2000) {
+        russell2000Map.set(pt.date, pt.percentChange);
+      }
+    }
 
     // Filter index data to the same period cutoff
     const cutoffDateStr = filteredData[0]?.date;
@@ -150,27 +156,35 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     // Find base values for indices at the start of filtered period
     let sp500Base: number | null = null;
     let djiaBase: number | null = null;
+    let nasdaqBase: number | null = null;
+    let russell2000Base: number | null = null;
 
     if (indices?.sp500) {
       for (const pt of indices.sp500) {
-        if (pt.date >= cutoffDateStr) {
-          sp500Base = pt.value;
-          break;
-        }
+        if (pt.date >= cutoffDateStr) { sp500Base = pt.value; break; }
       }
     }
     if (indices?.djia) {
       for (const pt of indices.djia) {
-        if (pt.date >= cutoffDateStr) {
-          djiaBase = pt.value;
-          break;
-        }
+        if (pt.date >= cutoffDateStr) { djiaBase = pt.value; break; }
+      }
+    }
+    if (indices?.nasdaq) {
+      for (const pt of indices.nasdaq) {
+        if (pt.date >= cutoffDateStr) { nasdaqBase = pt.value; break; }
+      }
+    }
+    if (indices?.russell2000) {
+      for (const pt of indices.russell2000) {
+        if (pt.date >= cutoffDateStr) { russell2000Base = pt.value; break; }
       }
     }
 
     // Recalculate percent change from the filtered period start
     const sp500PctMap = new Map<string, number>();
     const djiaPctMap = new Map<string, number>();
+    const nasdaqPctMap = new Map<string, number>();
+    const russell2000PctMap = new Map<string, number>();
 
     if (sp500Base && indices?.sp500) {
       for (const pt of indices.sp500) {
@@ -186,12 +200,28 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
         }
       }
     }
+    if (nasdaqBase && indices?.nasdaq) {
+      for (const pt of indices.nasdaq) {
+        if (pt.date >= cutoffDateStr) {
+          nasdaqPctMap.set(pt.date, Math.round(((pt.value - nasdaqBase) / nasdaqBase) * 10000) / 100);
+        }
+      }
+    }
+    if (russell2000Base && indices?.russell2000) {
+      for (const pt of indices.russell2000) {
+        if (pt.date >= cutoffDateStr) {
+          russell2000PctMap.set(pt.date, Math.round(((pt.value - russell2000Base) / russell2000Base) * 10000) / 100);
+        }
+      }
+    }
 
     return filteredData.map(point => ({
       ...point,
       value: ((point.value - firstValue) / firstValue) * 100,
       sp500: sp500PctMap.get(point.date) ?? null,
       djia: djiaPctMap.get(point.date) ?? null,
+      nasdaq: nasdaqPctMap.get(point.date) ?? null,
+      russell2000: russell2000PctMap.get(point.date) ?? null,
     }));
   }, [filteredData, chartMode, indices]);
 
@@ -201,7 +231,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
   const periods = expanded ? allPeriods : (['1M', '6M', '1Y', 'ALL'] as Period[]);
 
   const isPercentMode = chartMode === 'percentChange';
-  const hasIndices = indices && (indices.sp500.length > 0 || indices.djia.length > 0);
+  const hasIndices = indices && (indices.sp500.length > 0 || indices.djia.length > 0 || indices.nasdaq.length > 0 || indices.russell2000.length > 0);
 
   if (!data || data.length === 0) {
     return (
@@ -219,6 +249,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
         value: 'Portfolio',
         sp500: 'S&P 500',
         djia: 'DJIA',
+        nasdaq: 'NASDAQ',
+        russell2000: 'Russell 2000',
       };
       return [`${Number(value).toFixed(2)}%`, labels[name || ''] || name || ''];
     }
@@ -310,6 +342,36 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
               >
                 DJIA
               </button>
+              <button
+                onClick={() => isPercentMode && setShowNasdaq(!showNasdaq)}
+                disabled={!isPercentMode}
+                title={!isPercentMode ? 'Switch to % mode for index comparison' : (showNasdaq ? 'Hide NASDAQ' : 'Show NASDAQ')}
+                className={`px-2 py-1 text-xs rounded transition-colors ${
+                  !isPercentMode
+                    ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
+                    : showNasdaq
+                      ? 'text-white'
+                      : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+                }`}
+                style={isPercentMode && showNasdaq ? { backgroundColor: INDEX_COLORS.nasdaq } : undefined}
+              >
+                NDQ
+              </button>
+              <button
+                onClick={() => isPercentMode && setShowRussell2000(!showRussell2000)}
+                disabled={!isPercentMode}
+                title={!isPercentMode ? 'Switch to % mode for index comparison' : (showRussell2000 ? 'Hide Russell 2000' : 'Show Russell 2000')}
+                className={`px-2 py-1 text-xs rounded transition-colors ${
+                  !isPercentMode
+                    ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
+                    : showRussell2000
+                      ? 'text-white'
+                      : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+                }`}
+                style={isPercentMode && showRussell2000 ? { backgroundColor: INDEX_COLORS.russell2000 } : undefined}
+              >
+                R2K
+              </button>
             </div>
           )}
         </div>
@@ -387,7 +449,31 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                 connectNulls
               />
             )}
-            {(showSP500 || showDJIA) && (
+            {showNasdaq && (
+              <Line
+                type="monotone"
+                dataKey="nasdaq"
+                name="nasdaq"
+                stroke={INDEX_COLORS.nasdaq}
+                strokeWidth={1.5}
+                dot={false}
+                animationDuration={300}
+                connectNulls
+              />
+            )}
+            {showRussell2000 && (
+              <Line
+                type="monotone"
+                dataKey="russell2000"
+                name="russell2000"
+                stroke={INDEX_COLORS.russell2000}
+                strokeWidth={1.5}
+                dot={false}
+                animationDuration={300}
+                connectNulls
+              />
+            )}
+            {(showSP500 || showDJIA || showNasdaq || showRussell2000) && (
               <Legend
                 verticalAlign="bottom"
                 height={24}
@@ -396,6 +482,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                     value: 'Portfolio',
                     sp500: 'S&P 500',
                     djia: 'DJIA',
+                    nasdaq: 'NASDAQ',
+                    russell2000: 'Russell 2000',
                   };
                   return <span style={{ color: '#d4d4d4', fontSize: 11 }}>{labels[val] || val}</span>;
                 }}

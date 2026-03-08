@@ -52,6 +52,8 @@ export interface IndexDataPoint {
 export interface IndicesData {
   sp500: IndexDataPoint[];
   djia: IndexDataPoint[];
+  nasdaq: IndexDataPoint[];
+  russell2000: IndexDataPoint[];
 }
 
 export interface PortfolioData {

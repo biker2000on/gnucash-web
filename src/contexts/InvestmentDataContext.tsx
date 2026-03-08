@@ -25,7 +25,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
 
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [history, setHistory] = useState<HistoryData['history']>([]);
-  const [indices, setIndices] = useState<IndicesData>({ sp500: [], djia: [] });
+  const [indices, setIndices] = useState<IndicesData>({ sp500: [], djia: [], nasdaq: [], russell2000: [] });
   const [loading, setLoading] = useState(true);
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [apiConfigured, setApiConfigured] = useState(true);

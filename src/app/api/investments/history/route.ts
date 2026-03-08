@@ -14,6 +14,8 @@ interface InvestmentHistoryResponse {
   indices: {
     sp500: IndexPriceData[];
     djia: IndexPriceData[];
+    nasdaq: IndexPriceData[];
+    russell2000: IndexPriceData[];
   };
 }
 
@@ -208,17 +210,21 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // Fetch market index data for the same date range (only for portfolio-wide requests)
-    let indices: InvestmentHistoryResponse['indices'] = { sp500: [], djia: [] };
+    let indices: InvestmentHistoryResponse['indices'] = { sp500: [], djia: [], nasdaq: [], russell2000: [] };
     if (!filterAccountGuids) {
       try {
-        const [sp500Raw, djiaRaw] = await Promise.all([
+        const [sp500Raw, djiaRaw, nasdaqRaw, russell2000Raw] = await Promise.all([
           getIndexHistory('^GSPC', startDate),
           getIndexHistory('^DJI', startDate),
+          getIndexHistory('^IXIC', startDate),
+          getIndexHistory('^RUT', startDate),
         ]);
 
         indices = {
           sp500: normalizeToPercent(sp500Raw, startDate),
           djia: normalizeToPercent(djiaRaw, startDate),
+          nasdaq: normalizeToPercent(nasdaqRaw, startDate),
+          russell2000: normalizeToPercent(russell2000Raw, startDate),
         };
       } catch (err) {
         console.warn('Failed to fetch market index data for history:', err);

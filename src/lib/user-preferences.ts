@@ -10,6 +10,8 @@ import prisma from '@/lib/prisma';
 export interface ChartDefaults {
   sp500Enabled: boolean;
   djiaEnabled: boolean;
+  nasdaqEnabled: boolean;
+  russell2000Enabled: boolean;
   defaultPeriod: string;
   defaultMode: 'dollar' | 'percent';
 }
@@ -17,6 +19,8 @@ export interface ChartDefaults {
 const CHART_DEFAULT_VALUES: ChartDefaults = {
   sp500Enabled: false,
   djiaEnabled: false,
+  nasdaqEnabled: false,
+  russell2000Enabled: false,
   defaultPeriod: '1Y',
   defaultMode: 'dollar',
 };
@@ -24,6 +28,8 @@ const CHART_DEFAULT_VALUES: ChartDefaults = {
 const CHART_PREF_KEYS: Record<keyof ChartDefaults, string> = {
   sp500Enabled: 'performance_chart.sp500_default',
   djiaEnabled: 'performance_chart.djia_default',
+  nasdaqEnabled: 'performance_chart.nasdaq_default',
+  russell2000Enabled: 'performance_chart.russell2000_default',
   defaultPeriod: 'performance_chart.default_period',
   defaultMode: 'performance_chart.default_mode',
 };
@@ -148,6 +154,14 @@ export async function getChartDefaults(userId: number): Promise<ChartDefaults> {
       typeof prefs[CHART_PREF_KEYS.djiaEnabled] === 'boolean'
         ? (prefs[CHART_PREF_KEYS.djiaEnabled] as boolean)
         : CHART_DEFAULT_VALUES.djiaEnabled,
+    nasdaqEnabled:
+      typeof prefs[CHART_PREF_KEYS.nasdaqEnabled] === 'boolean'
+        ? (prefs[CHART_PREF_KEYS.nasdaqEnabled] as boolean)
+        : CHART_DEFAULT_VALUES.nasdaqEnabled,
+    russell2000Enabled:
+      typeof prefs[CHART_PREF_KEYS.russell2000Enabled] === 'boolean'
+        ? (prefs[CHART_PREF_KEYS.russell2000Enabled] as boolean)
+        : CHART_DEFAULT_VALUES.russell2000Enabled,
     defaultPeriod:
       typeof prefs[CHART_PREF_KEYS.defaultPeriod] === 'string'
         ? (prefs[CHART_PREF_KEYS.defaultPeriod] as string)

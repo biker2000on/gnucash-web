@@ -19,6 +19,8 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
 
   const [sp500Enabled, setSp500Enabled] = useState(currentDefaults?.sp500Enabled ?? false);
   const [djiaEnabled, setDjiaEnabled] = useState(currentDefaults?.djiaEnabled ?? false);
+  const [nasdaqEnabled, setNasdaqEnabled] = useState(currentDefaults?.nasdaqEnabled ?? false);
+  const [russell2000Enabled, setRussell2000Enabled] = useState(currentDefaults?.russell2000Enabled ?? false);
   const [defaultPeriod, setDefaultPeriod] = useState(currentDefaults?.defaultPeriod ?? '1Y');
   const [defaultMode, setDefaultMode] = useState<'dollar' | 'percent'>(currentDefaults?.defaultMode ?? 'dollar');
 
@@ -27,6 +29,8 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
     if (currentDefaults) {
       setSp500Enabled(currentDefaults.sp500Enabled);
       setDjiaEnabled(currentDefaults.djiaEnabled);
+      setNasdaqEnabled(currentDefaults.nasdaqEnabled);
+      setRussell2000Enabled(currentDefaults.russell2000Enabled);
       setDefaultPeriod(currentDefaults.defaultPeriod);
       setDefaultMode(currentDefaults.defaultMode);
     }
@@ -55,6 +59,8 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
           preferences: {
             'performance_chart.sp500_default': sp500Enabled,
             'performance_chart.djia_default': djiaEnabled,
+            'performance_chart.nasdaq_default': nasdaqEnabled,
+            'performance_chart.russell2000_default': russell2000Enabled,
             'performance_chart.default_period': defaultPeriod,
             'performance_chart.default_mode': defaultMode,
           },
@@ -65,6 +71,8 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
         onSettingsChange({
           sp500Enabled,
           djiaEnabled,
+          nasdaqEnabled,
+          russell2000Enabled,
           defaultPeriod,
           defaultMode,
         });
@@ -84,7 +92,7 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
     } finally {
       setSaving(false);
     }
-  }, [sp500Enabled, djiaEnabled, defaultPeriod, defaultMode, onSettingsChange]);
+  }, [sp500Enabled, djiaEnabled, nasdaqEnabled, russell2000Enabled, defaultPeriod, defaultMode, onSettingsChange]);
 
   return (
     <div className="relative" ref={panelRef}>
@@ -126,6 +134,24 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
                   className="rounded border-border bg-background-tertiary"
                 />
                 DJIA on by default
+              </label>
+              <label className="flex items-center gap-2 text-sm text-foreground-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={nasdaqEnabled}
+                  onChange={(e) => setNasdaqEnabled(e.target.checked)}
+                  className="rounded border-border bg-background-tertiary"
+                />
+                NASDAQ on by default
+              </label>
+              <label className="flex items-center gap-2 text-sm text-foreground-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={russell2000Enabled}
+                  onChange={(e) => setRussell2000Enabled(e.target.checked)}
+                  className="rounded border-border bg-background-tertiary"
+                />
+                Russell 2000 on by default
               </label>
             </div>
           </div>

@@ -36,6 +36,8 @@ interface IndexDefinition {
 const INDEX_DEFINITIONS: IndexDefinition[] = [
   { mnemonic: '^GSPC', fullname: 'S&P 500 Index' },
   { mnemonic: '^DJI', fullname: 'Dow Jones Industrial Average' },
+  { mnemonic: '^IXIC', fullname: 'NASDAQ Composite' },
+  { mnemonic: '^RUT', fullname: 'Russell 2000' },
 ];
 
 /**
@@ -319,6 +321,8 @@ export async function getIndexCoverage(): Promise<{
   const nameMap: Record<string, string> = {
     '^GSPC': 'S&P 500',
     '^DJI': 'Dow Jones',
+    '^IXIC': 'NASDAQ',
+    '^RUT': 'Russell 2000',
   };
 
   for (const [symbol, commodityGuid] of indexGuids) {
