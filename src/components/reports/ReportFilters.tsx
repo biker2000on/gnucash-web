@@ -111,9 +111,9 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
 
     return (
         <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4">
-            <div className="flex flex-wrap gap-4 items-end">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-4 items-stretch sm:items-end">
                 {/* Date Range */}
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                     <div>
                         <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                             Start Date
@@ -165,7 +165,7 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                 </div>
 
                 {/* Quick Presets */}
-                <div className="flex gap-1">
+                <div className="flex flex-wrap gap-1">
                     {PRESETS.map(preset => (
                         <button
                             key={preset.label}
@@ -195,7 +195,7 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
                 )}
 
                 {/* Apply/Reset */}
-                <div className="flex gap-2 ml-auto">
+                <div className="flex gap-2 w-full sm:w-auto sm:ml-auto">
                     <button
                         onClick={handleReset}
                         className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"

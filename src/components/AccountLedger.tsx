@@ -18,6 +18,8 @@ import {
     flexRender,
 } from '@tanstack/react-table';
 import { getColumns } from './ledger/columns';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from './ui/MobileCard';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -50,6 +52,7 @@ export default function AccountLedger({
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode } = useUserPreferences();
     const { success, error } = useToast();
+    const isMobile = useIsMobile();
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -687,20 +690,20 @@ export default function AccountLedger({
     return (
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
             {/* Top Bar: New Transaction + Reconciliation Panel */}
-            <div className="p-4 border-b border-border flex justify-between items-center">
-                <div className="flex items-center gap-3">
+            <div className="p-4 border-b border-border flex flex-col md:flex-row md:justify-between md:items-center gap-3">
+                <div className="flex flex-wrap gap-2">
                     <button
                         onClick={() => {
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
+                        className="w-full md:w-auto px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
                     >
                         New Transaction
                     </button>
                     <button
                         onClick={() => setShowUnreviewedOnly(prev => !prev)}
-                        className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                        className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-colors flex items-center ${
                             showUnreviewedOnly
                                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
                                 : 'border-border text-foreground-muted hover:text-foreground'
@@ -710,7 +713,7 @@ export default function AccountLedger({
                     </button>
                     <button
                         onClick={handleToggleEditMode}
-                        className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                        className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors ${
                             isEditMode
                                 ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
                                 : 'border-border text-foreground-muted hover:text-foreground'
@@ -722,28 +725,28 @@ export default function AccountLedger({
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={handleSelectAllEdit}
-                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                             >
                                 Select All
                             </button>
                             <span className="text-foreground-muted">|</span>
                             <button
                                 onClick={() => setEditSelectedGuids(new Set())}
-                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                                className="text-xs text-foreground-secondary hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                             >
                                 Clear
                             </button>
                             <button
                                 onClick={handleBulkReview}
                                 disabled={editSelectedGuids.size === 0}
-                                className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                                className="px-3 py-2 min-h-[44px] text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center"
                             >
                                 Mark Reviewed ({editSelectedGuids.size})
                             </button>
                             {editSelectedGuids.size > 0 && (
                                 <button
                                     onClick={() => setBulkDeleteConfirmOpen(true)}
-                                    className="px-3 py-1.5 text-xs bg-rose-700 hover:bg-rose-600 text-white rounded-lg transition-colors"
+                                    className="px-3 py-2 min-h-[44px] text-xs bg-rose-700 hover:bg-rose-600 text-white rounded-lg transition-colors flex items-center"
                                 >
                                     Delete Selected ({editSelectedGuids.size})
                                 </button>
@@ -771,6 +774,63 @@ export default function AccountLedger({
                 />
             </div>
 
+            {isMobile && isEditMode ? (
+                <div className="p-8 text-center">
+                    <p className="text-foreground-muted mb-4">Edit mode is not available on mobile. Use the + button to add transactions.</p>
+                    <button onClick={handleToggleEditMode} className="px-4 py-2 text-sm border border-border text-foreground-secondary hover:text-foreground rounded-lg transition-colors">
+                        Exit Edit Mode
+                    </button>
+                </div>
+            ) : isMobile && !isEditMode ? (
+                <div>
+                    {displayTransactions.map((tx) => {
+                        const amount = parseFloat(tx.account_split_value);
+                        const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
+                        const transferName = otherSplits.length === 1
+                            ? otherSplits[0].account_name
+                            : otherSplits.length > 1
+                                ? `-- ${otherSplits.length} Splits --`
+                                : '';
+                        const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
+                        const balanceValue = tx.running_balance
+                            ? applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal)
+                            : null;
+
+                        return (
+                            <MobileCard
+                                key={tx.guid}
+                                onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}
+                                fields={[
+                                    { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
+                                    { label: 'Description', value: <span className="font-medium">{tx.description}</span> },
+                                    { label: 'Transfer', value: transferName },
+                                    ...(amount >= 0
+                                        ? [{ label: 'Debit', value: <span className="text-emerald-400 font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
+                                        : [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
+                                    ),
+                                    { label: 'Balance', value: balanceValue !== null
+                                        ? <span className={`font-mono font-bold ${balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{formatCurrency(balanceValue, tx.commodity_mnemonic)}</span>
+                                        : <span className="text-foreground-muted">{'\u2014'}</span>
+                                    },
+                                    { label: 'Reconcile', value: <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}>{reconcileInfo.icon}</span> },
+                                ]}
+                            />
+                        );
+                    })}
+                    <div ref={loader} className="p-8 flex justify-center border-t border-border/50">
+                        {loading ? (
+                            <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                                <span className="text-xs text-foreground-muted uppercase tracking-widest">Updating Ledger...</span>
+                            </div>
+                        ) : hasMore ? (
+                            <span className="text-xs text-foreground-muted uppercase tracking-widest animate-pulse">Scroll for history</span>
+                        ) : (
+                            <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">End of Records</span>
+                        )}
+                    </div>
+                </div>
+            ) : (
             <div className="overflow-x-auto">
                 <table ref={tableRef} className="w-full text-left border-collapse">
                     <thead>
@@ -1040,6 +1100,7 @@ export default function AccountLedger({
                     )}
                 </div>
             </div>
+            )}
 
             {/* Modals */}
             <TransactionModal

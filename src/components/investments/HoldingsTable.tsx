@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 interface Holding {
   accountGuid: string;
@@ -66,6 +68,7 @@ function SortHeader({ label, sortKeyName, sortKey, sortDir, onSort }: {
 
 export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableProps) {
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [sortKey, setSortKey] = useState<SortKey>('marketValue');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [showZeroShares, setShowZeroShares] = useState(false);
@@ -144,38 +147,99 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
             {showZeroShares ? 'Hide' : 'Show'} Closed Positions
           </button>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-background-tertiary/50">
-              <tr>
-                <th className="w-8 px-2 py-3"></th>
-                <SortHeader label="Symbol" sortKeyName="symbol" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Shares" sortKeyName="shares" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Cost Basis" sortKeyName="costBasis" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Market Value" sortKeyName="marketValue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Gain/Loss" sortKeyName="gainLoss" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortHeader label="Gain %" sortKeyName="gainLossPercent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {sorted.map((holding) => {
-                const isMultiAccount = holding.accounts.length > 1;
-                const isExpanded = expandedCommodities.has(holding.commodityGuid);
+        {isMobile ? (
+          <div>
+            {sorted.map((holding) => {
+              const isMultiAccount = holding.accounts.length > 1;
+              const isExpanded = expandedCommodities.has(holding.commodityGuid);
 
-                return (
-                  <ConsolidatedRow
-                    key={holding.commodityGuid}
-                    holding={holding}
-                    isMultiAccount={isMultiAccount}
-                    isExpanded={isExpanded}
-                    onToggle={() => toggleExpanded(holding.commodityGuid)}
-                    onNavigate={(guid) => router.push(`/accounts/${guid}`)}
+              return (
+                <div key={holding.commodityGuid}>
+                  {/* Section header for expandable commodities */}
+                  {isMultiAccount && (
+                    <div
+                      onClick={() => toggleExpanded(holding.commodityGuid)}
+                      className="flex items-center gap-2 px-4 py-2 bg-background-tertiary/30 cursor-pointer"
+                    >
+                      <svg
+                        className={`w-4 h-4 text-foreground-secondary transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="font-medium text-foreground">{holding.symbol}</span>
+                      <span className="text-sm text-foreground-muted">{holding.fullname}</span>
+                    </div>
+                  )}
+                  <MobileCard
+                    onClick={isMultiAccount ? undefined : () => router.push(`/accounts/${holding.accounts[0].accountGuid}`)}
+                    fields={[
+                      { label: 'Symbol', value: holding.symbol },
+                      { label: 'Full Name', value: holding.fullname },
+                      { label: 'Shares', value: holding.totalShares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+                      { label: 'Price', value: formatCurrency(holding.latestPrice) },
+                      { label: 'Market Value', value: formatCurrency(holding.totalMarketValue) },
+                      { label: 'Cost Basis', value: formatCurrency(holding.totalCostBasis) },
+                      { label: 'Gain/Loss', value: <span className={holding.totalGainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(holding.totalGainLoss)}</span> },
+                      { label: 'Gain %', value: <span className={holding.totalGainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}>{holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%</span> },
+                    ]}
                   />
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                  {/* Expanded sub-accounts */}
+                  {isMultiAccount && isExpanded && holding.accounts.map((account) => (
+                    <MobileCard
+                      key={account.accountGuid}
+                      onClick={() => router.push(`/accounts/${account.accountGuid}`)}
+                      className="pl-8 bg-background-tertiary/20"
+                      fields={[
+                        { label: 'Account', value: account.accountPath },
+                        { label: 'Shares', value: account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+                        { label: 'Market Value', value: formatCurrency(account.marketValue) },
+                        { label: 'Cost Basis', value: formatCurrency(account.costBasis) },
+                        { label: 'Gain/Loss', value: <span className={account.gainLoss >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>{formatCurrency(account.gainLoss)}</span> },
+                        { label: 'Gain %', value: <span className={account.gainLossPercent >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>{account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%</span> },
+                      ]}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-background-tertiary/50">
+                <tr>
+                  <th className="w-8 px-2 py-3"></th>
+                  <SortHeader label="Symbol" sortKeyName="symbol" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Shares" sortKeyName="shares" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Cost Basis" sortKeyName="costBasis" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Market Value" sortKeyName="marketValue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Gain/Loss" sortKeyName="gainLoss" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Gain %" sortKeyName="gainLossPercent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {sorted.map((holding) => {
+                  const isMultiAccount = holding.accounts.length > 1;
+                  const isExpanded = expandedCommodities.has(holding.commodityGuid);
+
+                  return (
+                    <ConsolidatedRow
+                      key={holding.commodityGuid}
+                      holding={holding}
+                      isMultiAccount={isMultiAccount}
+                      isExpanded={isExpanded}
+                      onToggle={() => toggleExpanded(holding.commodityGuid)}
+                      onNavigate={(guid) => router.push(`/accounts/${guid}`)}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }
@@ -208,43 +272,63 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
           {showZeroShares ? 'Hide' : 'Show'} Closed Positions
         </button>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-background-tertiary/50">
-            <tr>
-              <SortHeader label="Symbol" sortKeyName="symbol" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Shares" sortKeyName="shares" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Cost Basis" sortKeyName="costBasis" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Market Value" sortKeyName="marketValue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Gain/Loss" sortKeyName="gainLoss" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Gain %" sortKeyName="gainLossPercent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {sortedHoldings.map((holding) => (
-              <tr
-                key={holding.accountGuid}
-                onClick={() => router.push(`/accounts/${holding.accountGuid}`)}
-                className="hover:bg-surface-hover/50 cursor-pointer transition-colors"
-              >
-                <td className="px-4 py-3">
-                  <div className="font-medium text-foreground" title={holding.accountPath}>{holding.symbol}</div>
-                  <div className="text-sm text-foreground-muted">{holding.accountName}</div>
-                </td>
-                <td className="px-4 py-3 text-foreground-secondary">{holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-                <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.costBasis)}</td>
-                <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
-                <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {formatCurrency(holding.gainLoss)}
-                </td>
-                <td className={`px-4 py-3 ${holding.gainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
-                </td>
+      {isMobile ? (
+        <div>
+          {sortedHoldings.map((holding) => (
+            <MobileCard
+              key={holding.accountGuid}
+              onClick={() => router.push(`/accounts/${holding.accountGuid}`)}
+              fields={[
+                { label: 'Symbol', value: <><span className="font-medium">{holding.symbol}</span> <span className="text-foreground-muted">{holding.accountName}</span></> },
+                { label: 'Full Name', value: holding.accountName },
+                { label: 'Shares', value: holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+                { label: 'Market Value', value: formatCurrency(holding.marketValue) },
+                { label: 'Cost Basis', value: formatCurrency(holding.costBasis) },
+                { label: 'Gain/Loss', value: <span className={holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(holding.gainLoss)}</span> },
+                { label: 'Gain %', value: <span className={holding.gainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}>{holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%</span> },
+              ]}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-background-tertiary/50">
+              <tr>
+                <SortHeader label="Symbol" sortKeyName="symbol" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Shares" sortKeyName="shares" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Cost Basis" sortKeyName="costBasis" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Market Value" sortKeyName="marketValue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Gain/Loss" sortKeyName="gainLoss" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Gain %" sortKeyName="gainLossPercent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {sortedHoldings.map((holding) => (
+                <tr
+                  key={holding.accountGuid}
+                  onClick={() => router.push(`/accounts/${holding.accountGuid}`)}
+                  className="hover:bg-surface-hover/50 cursor-pointer transition-colors"
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-foreground" title={holding.accountPath}>{holding.symbol}</div>
+                    <div className="text-sm text-foreground-muted">{holding.accountName}</div>
+                  </td>
+                  <td className="px-4 py-3 text-foreground-secondary">{holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                  <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.costBasis)}</td>
+                  <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
+                  <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatCurrency(holding.gainLoss)}
+                  </td>
+                  <td className={`px-4 py-3 ${holding.gainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

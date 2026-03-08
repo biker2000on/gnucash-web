@@ -249,7 +249,7 @@ export default function ConnectionsPage() {
               </ol>
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
               <input
                 type="text"
                 value={sfSetupToken}
@@ -276,7 +276,7 @@ export default function ConnectionsPage() {
         ) : (
           <div className="space-y-4">
             {/* Status */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
@@ -290,7 +290,7 @@ export default function ConnectionsPage() {
                   {sfAccountsMapped}/{sfAccountsTotal} accounts mapped
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <a
                   href="https://beta-bridge.simplefin.org"
                   target="_blank"

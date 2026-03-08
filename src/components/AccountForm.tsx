@@ -356,11 +356,11 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
             </p>
 
             {/* Actions */}
-            <div className="flex justify-between items-center pt-4 border-t border-border">
-                <span className="text-xs text-foreground-muted">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-between sm:items-center gap-3 pt-4 border-t border-border">
+                <span className="hidden sm:inline text-xs text-foreground-muted">
                     Press <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> to save
                 </span>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3 justify-end">
                     <button
                         type="button"
                         onClick={onCancel}

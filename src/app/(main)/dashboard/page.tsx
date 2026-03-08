@@ -230,8 +230,8 @@ function DashboardContent() {
                         Your financial overview at a glance
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex flex-wrap gap-1">
                         {PERIOD_OPTIONS.map((opt) => (
                             <button
                                 key={opt.key}

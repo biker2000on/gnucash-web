@@ -15,7 +15,7 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
         <div className="relative">
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className={`flex items-center gap-2 px-4 py-2 text-sm rounded-xl border transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 min-h-[44px] text-sm rounded-xl border transition-all ${
                     activeFilterCount > 0
                         ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-400'
                         : 'bg-surface/50 border-border text-foreground-secondary hover:border-cyan-500/50'
@@ -36,8 +36,8 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
             </button>
 
             {isOpen && (
-                <div className="absolute top-full left-0 mt-2 w-80 bg-background-secondary border border-border rounded-xl shadow-xl z-50 overflow-hidden">
-                    <div className="p-4 space-y-4">
+                <div className="absolute top-full left-0 mt-2 w-[calc(100vw-2rem)] md:w-80 bg-background-secondary border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                    <div className="p-4 flex flex-col gap-2">
                         {children}
                     </div>
                     {activeFilterCount > 0 && (
@@ -47,7 +47,7 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
                                     onClearAll();
                                     setIsOpen(false);
                                 }}
-                                className="w-full text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
+                                className="w-full min-h-[44px] text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
                             >
                                 Clear all filters
                             </button>

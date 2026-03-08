@@ -122,9 +122,9 @@ export function SplitRow({
 
     return (
         <div className="py-2 border-b border-border last:border-0">
-            <div className="grid grid-cols-12 gap-2 items-center">
+            <div className="flex flex-col md:grid md:grid-cols-12 gap-2 md:items-center">
                 {/* Account Selector */}
-                <div className="col-span-5">
+                <div className="w-full md:col-span-5">
                     <AccountSelector
                         value={split.account_guid}
                         onChange={handleAccountChange}
@@ -132,65 +132,71 @@ export function SplitRow({
                     />
                 </div>
 
-                {/* Debit */}
-                <div className="col-span-2 relative">
-                    <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="Debit"
-                        value={split.debit}
-                        onChange={(e) => handleDebitChange(e.target.value)}
-                        onBlur={handleDebitBlur}
-                        onKeyDown={(e) => handleAmountKeyDown(e, 'debit')}
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
-                    />
-                    {containsMathExpression(split.debit) && (
-                        <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
-                    )}
+                {/* Debit & Credit */}
+                <div className="grid grid-cols-2 gap-2 md:contents">
+                    {/* Debit */}
+                    <div className="relative md:col-span-2">
+                        <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Debit"
+                            value={split.debit}
+                            onChange={(e) => handleDebitChange(e.target.value)}
+                            onBlur={handleDebitBlur}
+                            onKeyDown={(e) => handleAmountKeyDown(e, 'debit')}
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
+                        />
+                        {containsMathExpression(split.debit) && (
+                            <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                        )}
+                    </div>
+
+                    {/* Credit */}
+                    <div className="relative md:col-span-2">
+                        <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Credit"
+                            value={split.credit}
+                            onChange={(e) => handleCreditChange(e.target.value)}
+                            onBlur={handleCreditBlur}
+                            onKeyDown={(e) => handleAmountKeyDown(e, 'credit')}
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
+                        />
+                        {containsMathExpression(split.credit) && (
+                            <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                        )}
+                    </div>
                 </div>
 
-                {/* Credit */}
-                <div className="col-span-2 relative">
-                    <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="Credit"
-                        value={split.credit}
-                        onChange={(e) => handleCreditChange(e.target.value)}
-                        onBlur={handleCreditBlur}
-                        onKeyDown={(e) => handleAmountKeyDown(e, 'credit')}
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
-                    />
-                    {containsMathExpression(split.credit) && (
-                        <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
-                    )}
-                </div>
+                {/* Memo & Remove */}
+                <div className="flex gap-2 items-center md:contents">
+                    {/* Memo */}
+                    <div className="flex-1 md:col-span-2">
+                        <input
+                            type="text"
+                            placeholder="Memo"
+                            value={split.memo}
+                            onChange={(e) => onChange(index, 'memo', e.target.value)}
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                        />
+                    </div>
 
-                {/* Memo */}
-                <div className="col-span-2">
-                    <input
-                        type="text"
-                        placeholder="Memo"
-                        value={split.memo}
-                        onChange={(e) => onChange(index, 'memo', e.target.value)}
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
-                    />
-                </div>
-
-                {/* Remove Button */}
-                <div className="col-span-1 flex justify-center">
-                    {canRemove && (
-                        <button
-                            type="button"
-                            onClick={() => onRemove(index)}
-                            className="p-2 text-foreground-muted hover:text-rose-400 transition-colors"
-                            title="Remove split"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
-                    )}
+                    {/* Remove Button */}
+                    <div className="md:col-span-1 flex justify-center">
+                        {canRemove && (
+                            <button
+                                type="button"
+                                onClick={() => onRemove(index)}
+                                className="p-2 text-foreground-muted hover:text-rose-400 transition-colors"
+                                title="Remove split"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 

@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { GeneralLedgerData, LedgerAccount } from '@/lib/reports/types';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -12,7 +14,7 @@ function fmtCurrency(n: number): string {
     }).format(n);
 }
 
-function AccountSection({ account }: { account: LedgerAccount }) {
+function AccountSection({ account, isMobile }: { account: LedgerAccount; isMobile: boolean }) {
     const [expanded, setExpanded] = useState(true);
 
     const sectionDebits = account.entries.reduce((sum, e) => sum + e.debit, 0);
@@ -53,74 +55,116 @@ function AccountSection({ account }: { account: LedgerAccount }) {
                         </span>
                     </div>
 
-                    {/* Transaction Table */}
-                    <table className="w-full border-collapse">
-                        <thead>
-                            <tr className="border-b border-border bg-background-tertiary/30">
-                                <th className="text-left py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-28">
-                                    Date
-                                </th>
-                                <th className="text-left py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider">
-                                    Description
-                                </th>
-                                <th className="text-right py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-28">
-                                    Debit
-                                </th>
-                                <th className="text-right py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-28">
-                                    Credit
-                                </th>
-                                <th className="text-right py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-32">
-                                    Balance
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
+                    {isMobile ? (
+                        /* Mobile: Card view for transactions */
+                        <div className="border-x border-border">
                             {account.entries.length === 0 ? (
-                                <tr>
-                                    <td colSpan={5} className="py-4 px-3 text-sm text-foreground-secondary text-center">
-                                        No transactions in this period
-                                    </td>
-                                </tr>
+                                <div className="py-4 px-3 text-sm text-foreground-secondary text-center">
+                                    No transactions in this period
+                                </div>
                             ) : (
-                                account.entries.map((entry, i) => (
-                                    <tr key={i} className="border-b border-border/30 hover:bg-surface-hover/20 transition-colors">
-                                        <td className="py-1.5 px-3 text-sm text-foreground">{entry.date}</td>
-                                        <td className="py-1.5 px-3 text-sm text-foreground">
-                                            {entry.description}
-                                            {entry.memo && (
-                                                <span className="ml-2 text-xs text-foreground-muted">({entry.memo})</span>
-                                            )}
-                                        </td>
-                                        <td className="py-1.5 px-3 text-sm text-right font-mono text-foreground">
-                                            {entry.debit > 0 ? fmtCurrency(entry.debit) : ''}
-                                        </td>
-                                        <td className="py-1.5 px-3 text-sm text-right font-mono text-foreground">
-                                            {entry.credit > 0 ? fmtCurrency(entry.credit) : ''}
-                                        </td>
-                                        <td className="py-1.5 px-3 text-sm text-right font-mono font-medium text-foreground">
-                                            {fmtCurrency(entry.runningBalance)}
+                                <>
+                                    {account.entries.map((entry, i) => (
+                                        <MobileCard
+                                            key={i}
+                                            fields={[
+                                                { label: 'Date', value: entry.date },
+                                                { label: 'Description', value: (
+                                                    <span>
+                                                        {entry.description}
+                                                        {entry.memo && (
+                                                            <span className="ml-1 text-xs text-foreground-muted">({entry.memo})</span>
+                                                        )}
+                                                    </span>
+                                                )},
+                                                ...(entry.debit > 0 ? [{ label: 'Debit', value: <span className="font-mono">{fmtCurrency(entry.debit)}</span> }] : []),
+                                                ...(entry.credit > 0 ? [{ label: 'Credit', value: <span className="font-mono">{fmtCurrency(entry.credit)}</span> }] : []),
+                                                { label: 'Balance', value: <span className="font-mono font-medium">{fmtCurrency(entry.runningBalance)}</span> },
+                                            ]}
+                                        />
+                                    ))}
+                                    {/* Section summary */}
+                                    <div className="px-3 py-2 border-t border-border text-xs text-foreground-muted flex justify-between">
+                                        <span>{account.entries.length} transaction{account.entries.length !== 1 ? 's' : ''}</span>
+                                        <span className="font-mono text-foreground-secondary">
+                                            {sectionDebits > 0 && `Dr ${fmtCurrency(sectionDebits)}`}
+                                            {sectionDebits > 0 && sectionCredits > 0 && ' / '}
+                                            {sectionCredits > 0 && `Cr ${fmtCurrency(sectionCredits)}`}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    ) : (
+                        /* Desktop: Table view for transactions */
+                        <table className="w-full border-collapse">
+                            <thead>
+                                <tr className="border-b border-border bg-background-tertiary/30">
+                                    <th className="text-left py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-28">
+                                        Date
+                                    </th>
+                                    <th className="text-left py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider">
+                                        Description
+                                    </th>
+                                    <th className="text-right py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-28">
+                                        Debit
+                                    </th>
+                                    <th className="text-right py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-28">
+                                        Credit
+                                    </th>
+                                    <th className="text-right py-2 px-3 text-xs font-semibold text-foreground-secondary uppercase tracking-wider w-32">
+                                        Balance
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {account.entries.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={5} className="py-4 px-3 text-sm text-foreground-secondary text-center">
+                                            No transactions in this period
                                         </td>
                                     </tr>
-                                ))
+                                ) : (
+                                    account.entries.map((entry, i) => (
+                                        <tr key={i} className="border-b border-border/30 hover:bg-surface-hover/20 transition-colors">
+                                            <td className="py-1.5 px-3 text-sm text-foreground">{entry.date}</td>
+                                            <td className="py-1.5 px-3 text-sm text-foreground">
+                                                {entry.description}
+                                                {entry.memo && (
+                                                    <span className="ml-2 text-xs text-foreground-muted">({entry.memo})</span>
+                                                )}
+                                            </td>
+                                            <td className="py-1.5 px-3 text-sm text-right font-mono text-foreground">
+                                                {entry.debit > 0 ? fmtCurrency(entry.debit) : ''}
+                                            </td>
+                                            <td className="py-1.5 px-3 text-sm text-right font-mono text-foreground">
+                                                {entry.credit > 0 ? fmtCurrency(entry.credit) : ''}
+                                            </td>
+                                            <td className="py-1.5 px-3 text-sm text-right font-mono font-medium text-foreground">
+                                                {fmtCurrency(entry.runningBalance)}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                            {account.entries.length > 0 && (
+                                <tfoot>
+                                    <tr className="border-t border-border">
+                                        <td className="py-1.5 px-3 text-xs text-foreground-muted" colSpan={2}>
+                                            {account.entries.length} transaction{account.entries.length !== 1 ? 's' : ''}
+                                        </td>
+                                        <td className="py-1.5 px-3 text-xs text-right font-mono text-foreground-secondary">
+                                            {sectionDebits > 0 ? fmtCurrency(sectionDebits) : ''}
+                                        </td>
+                                        <td className="py-1.5 px-3 text-xs text-right font-mono text-foreground-secondary">
+                                            {sectionCredits > 0 ? fmtCurrency(sectionCredits) : ''}
+                                        </td>
+                                        <td className="py-1.5 px-3"></td>
+                                    </tr>
+                                </tfoot>
                             )}
-                        </tbody>
-                        {account.entries.length > 0 && (
-                            <tfoot>
-                                <tr className="border-t border-border">
-                                    <td className="py-1.5 px-3 text-xs text-foreground-muted" colSpan={2}>
-                                        {account.entries.length} transaction{account.entries.length !== 1 ? 's' : ''}
-                                    </td>
-                                    <td className="py-1.5 px-3 text-xs text-right font-mono text-foreground-secondary">
-                                        {sectionDebits > 0 ? fmtCurrency(sectionDebits) : ''}
-                                    </td>
-                                    <td className="py-1.5 px-3 text-xs text-right font-mono text-foreground-secondary">
-                                        {sectionCredits > 0 ? fmtCurrency(sectionCredits) : ''}
-                                    </td>
-                                    <td className="py-1.5 px-3"></td>
-                                </tr>
-                            </tfoot>
-                        )}
-                    </table>
+                        </table>
+                    )}
 
                     {/* Closing Balance */}
                     <div className="flex justify-between px-3 py-2 bg-background-tertiary/50 rounded-b-lg border border-border border-t-0">
@@ -140,6 +184,8 @@ interface LedgerTableProps {
 }
 
 export function LedgerTable({ data }: LedgerTableProps) {
+    const isMobile = useIsMobile();
+
     return (
         <div>
             {/* Account Sections */}
@@ -151,7 +197,7 @@ export function LedgerTable({ data }: LedgerTableProps) {
                 <>
                     <div className="divide-y divide-border">
                         {data.accounts.map((account) => (
-                            <AccountSection key={account.guid} account={account} />
+                            <AccountSection key={account.guid} account={account} isMobile={isMobile} />
                         ))}
                     </div>
 

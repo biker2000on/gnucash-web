@@ -274,7 +274,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
+                className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   period === p
                     ? 'bg-cyan-600 text-white'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
@@ -289,7 +289,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
           <div className="flex gap-1 border-l border-border pl-1">
             <button
               onClick={() => setChartMode('value')}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
+              className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'value'
                   ? 'bg-cyan-600 text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
@@ -299,7 +299,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
             </button>
             <button
               onClick={() => setChartMode('percentChange')}
-              className={`px-3 py-1 text-xs rounded transition-colors ${
+              className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'percentChange'
                   ? 'bg-cyan-600 text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
@@ -316,7 +316,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                 onClick={() => isPercentMode && setShowSP500(!showSP500)}
                 disabled={!isPercentMode}
                 title={!isPercentMode ? 'Switch to % mode for index comparison' : (showSP500 ? 'Hide S&P 500' : 'Show S&P 500')}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
+                className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isPercentMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showSP500
@@ -331,7 +331,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                 onClick={() => isPercentMode && setShowDJIA(!showDJIA)}
                 disabled={!isPercentMode}
                 title={!isPercentMode ? 'Switch to % mode for index comparison' : (showDJIA ? 'Hide DJIA' : 'Show DJIA')}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
+                className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isPercentMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showDJIA
@@ -346,7 +346,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                 onClick={() => isPercentMode && setShowNasdaq(!showNasdaq)}
                 disabled={!isPercentMode}
                 title={!isPercentMode ? 'Switch to % mode for index comparison' : (showNasdaq ? 'Hide NASDAQ' : 'Show NASDAQ')}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
+                className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isPercentMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showNasdaq
@@ -361,7 +361,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                 onClick={() => isPercentMode && setShowRussell2000(!showRussell2000)}
                 disabled={!isPercentMode}
                 title={!isPercentMode ? 'Switch to % mode for index comparison' : (showRussell2000 ? 'Hide Russell 2000' : 'Show Russell 2000')}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
+                className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   !isPercentMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showRussell2000

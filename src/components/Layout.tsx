@@ -420,7 +420,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                     key={child.href}
                                     href={child.href}
                                     onClick={() => setMobileOpen(false)}
-                                    className={`block px-3 py-1.5 text-sm rounded-lg transition-colors
+                                    className={`block px-3 py-2.5 min-h-[44px] flex items-center text-sm rounded-lg transition-colors
                                         ${isChildActive
                                             ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
                                             : 'text-foreground-muted hover:text-foreground-secondary hover:bg-sidebar-hover/50'
@@ -459,7 +459,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     )}
                     <button
                         onClick={toggleCollapsed}
-                        className="p-1.5 rounded-lg text-sidebar-text hover:bg-sidebar-hover hover:text-foreground transition-colors"
+                        className="p-2.5 rounded-lg text-sidebar-text hover:bg-sidebar-hover hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                     >
                         <IconChevronLeft
@@ -514,7 +514,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     </h1>
                     <button
                         onClick={() => setMobileOpen(false)}
-                        className="p-1.5 rounded-lg text-sidebar-text hover:bg-sidebar-hover hover:text-foreground transition-colors"
+                        className="p-2.5 rounded-lg text-sidebar-text hover:bg-sidebar-hover hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         aria-label="Close sidebar"
                     >
                         <IconX className="w-5 h-5" />
@@ -581,7 +581,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                                     key={child.href}
                                                     href={child.href}
                                                     onClick={() => setMobileOpen(false)}
-                                                    className={`block px-3 py-1.5 text-sm rounded-lg transition-colors
+                                                    className={`block px-3 py-2.5 min-h-[44px] flex items-center text-sm rounded-lg transition-colors
                                                         ${isChildActive
                                                             ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
                                                             : 'text-foreground-muted hover:text-foreground-secondary hover:bg-sidebar-hover/50'

@@ -48,7 +48,7 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
                         <button
                             key={state.value}
                             onClick={() => toggleState(state.value)}
-                            className={`flex-1 px-3 py-2 text-sm rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                            className={`flex-1 px-3 py-2 min-h-[44px] text-sm rounded-lg border transition-all flex items-center justify-center gap-2 ${
                                 isSelected ? colors.selected : colors.unselected
                             }`}
                             title={state.label}

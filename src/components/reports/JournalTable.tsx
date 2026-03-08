@@ -2,12 +2,70 @@
 
 import { GeneralJournalData } from '@/lib/reports/types';
 import { formatCurrency } from '@/lib/format';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 interface JournalTableProps {
     data: GeneralJournalData;
 }
 
 export function JournalTable({ data }: JournalTableProps) {
+    const isMobile = useIsMobile();
+
+    if (isMobile) {
+        return (
+            <div>
+                {data.entries.length === 0 ? (
+                    <div className="py-8 text-center text-foreground-secondary">
+                        No transactions found for this period.
+                    </div>
+                ) : (
+                    data.entries.map((entry, entryIdx) => (
+                        <div key={entry.transactionGuid}>
+                            <MobileCard
+                                className={entryIdx % 2 === 0 ? 'bg-background-secondary/20' : ''}
+                                fields={[
+                                    { label: 'Date', value: entry.date },
+                                    { label: 'Description', value: <span className="font-semibold">{entry.description}</span> },
+                                    ...(entry.num ? [{ label: 'Num', value: <span className="font-mono">{entry.num}</span> }] : []),
+                                ]}
+                            >
+                                <div className="mt-2 space-y-1 pl-2 border-l-2 border-border">
+                                    {entry.splits.map((split, splitIdx) => (
+                                        <div key={splitIdx} className="py-1">
+                                            <div className="text-sm text-foreground-secondary">{split.accountPath}</div>
+                                            <div className="flex gap-4 text-sm font-mono">
+                                                {split.debit > 0 && (
+                                                    <span className="text-emerald-400">Dr {formatCurrency(split.debit, 'USD')}</span>
+                                                )}
+                                                {split.credit > 0 && (
+                                                    <span className="text-rose-400">Cr {formatCurrency(split.credit, 'USD')}</span>
+                                                )}
+                                            </div>
+                                            {split.memo && (
+                                                <div className="text-xs text-foreground-muted">{split.memo}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </MobileCard>
+                        </div>
+                    ))
+                )}
+                {/* Totals */}
+                <div className="border-t-2 border-border-hover p-4">
+                    <div className="text-sm font-semibold text-foreground mb-1">
+                        Totals ({data.entryCount} {data.entryCount === 1 ? 'entry' : 'entries'})
+                    </div>
+                    <div className="flex justify-between text-sm font-mono font-semibold">
+                        <span className="text-emerald-400">Debits: {formatCurrency(data.totalDebits, 'USD')}</span>
+                        <span className="text-rose-400">Credits: {formatCurrency(data.totalCredits, 'USD')}</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="overflow-x-auto">
             <table className="w-full">

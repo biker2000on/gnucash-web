@@ -8,6 +8,8 @@ import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { useToast } from '@/contexts/ToastContext';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from './ui/MobileCard';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -35,6 +37,7 @@ interface TransactionJournalProps {
 
 export default function TransactionJournal({ initialTransactions, startDate, endDate }: TransactionJournalProps) {
     const { success, error } = useToast();
+    const isMobile = useIsMobile();
     const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -361,13 +364,13 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     </span>
                 </div>
 
-                <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="flex flex-wrap gap-2 w-full md:w-auto">
                     <button
                         onClick={() => {
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
+                        className="w-full md:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
                     >
                         <span>+</span>
                         New Transaction
@@ -393,7 +396,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         />
                     </FilterPanel>
 
-                    <div className="relative flex-1 md:w-64">
+                    <div className="relative w-full md:w-64 md:flex-1">
                         <input
                             type="text"
                             placeholder="Search description, # or account..."
@@ -407,7 +410,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         {filterText && (
                             <button
                                 onClick={() => setFilterText('')}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary"
+                                className="absolute right-1 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary min-h-[44px] min-w-[44px] flex items-center justify-center"
                             >
                                 ✕
                             </button>
@@ -415,85 +418,127 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     </div>
                 </div>
             </div>
-            <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                    <thead>
-                        <tr className="bg-background-secondary/50 text-foreground-secondary text-xs uppercase tracking-widest">
-                            <th className="px-6 py-4 font-semibold">Date</th>
-                            <th className="px-6 py-4 font-semibold">Description</th>
-                            <th className="px-6 py-4 font-semibold">Account</th>
-                            <th className="px-6 py-4 font-semibold text-right">Debit</th>
-                            <th className="px-6 py-4 font-semibold text-right">Credit</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                        {transactions.length === 0 ? (
-                            <tr>
-                                <td colSpan={5} className="px-6 py-12 text-center text-foreground-muted">
-                                    {loading ? 'Loading...' : 'No transactions found matching your filters.'}
-                                </td>
-                            </tr>
+            {isMobile ? (
+                <div>
+                    {transactions.length === 0 ? (
+                        <div className="px-4 py-12 text-center text-foreground-muted">
+                            {loading ? 'Loading...' : 'No transactions found matching your filters.'}
+                        </div>
+                    ) : (
+                        transactions.map(tx => {
+                            const debits = tx.splits?.filter(s => parseFloat(s.quantity_decimal || '0') >= 0) || [];
+                            const credits = tx.splits?.filter(s => parseFloat(s.quantity_decimal || '0') < 0) || [];
+                            const debitTotal = debits.reduce((sum, s) => sum + parseFloat(s.quantity_decimal || '0'), 0);
+                            const creditTotal = credits.reduce((sum, s) => sum + Math.abs(parseFloat(s.quantity_decimal || '0')), 0);
+                            return (
+                                <MobileCard
+                                    key={tx.guid}
+                                    onClick={() => handleRowClick(tx.guid)}
+                                    fields={[
+                                        { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
+                                        { label: 'Description', value: <><span className="font-medium">{tx.description}</span>{tx.num && <span className="text-xs text-foreground-muted ml-1">#{tx.num}</span>}</> },
+                                        { label: 'Accounts', value: <div className="text-right">{tx.splits?.map(s => <div key={s.guid} className="text-foreground-secondary text-xs">{s.account_name}</div>)}</div> },
+                                        ...(debitTotal > 0 ? [{ label: 'Debit', value: <span className="text-emerald-400 font-mono">{formatCurrency(debitTotal)}</span> }] : []),
+                                        ...(creditTotal > 0 ? [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(creditTotal)}</span> }] : []),
+                                    ]}
+                                />
+                            );
+                        })
+                    )}
+                    <div ref={loader} className="p-6 flex justify-center border-t border-border">
+                        {loading ? (
+                            <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                                <span className="text-sm text-foreground-secondary">Loading more...</span>
+                            </div>
+                        ) : hasMore ? (
+                            <span className="text-sm text-foreground-muted italic">Scroll for more</span>
                         ) : (
-                            transactions.map(tx => (
-                                <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground-secondary align-top">
-                                        {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm text-foreground align-top max-w-xs">
-                                        <div className="font-medium">{tx.description}</div>
-                                        {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm align-top">
-                                        <div className="space-y-1">
-                                            {tx.splits?.map(split => (
-                                                <div key={split.guid} className="text-foreground-secondary truncate max-w-[200px]">{split.account_name}</div>
-                                            ))}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-sm font-mono text-right align-top">
-                                        <div className="space-y-1">
-                                            {tx.splits?.map(split => {
-                                                const val = parseFloat(split.quantity_decimal || '0');
-                                                return (
-                                                    <div key={split.guid} className="text-emerald-400">
-                                                        {val >= 0 ? formatCurrency(val, split.commodity_mnemonic) : '\u00A0'}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-sm font-mono text-right align-top">
-                                        <div className="space-y-1">
-                                            {tx.splits?.map(split => {
-                                                const val = parseFloat(split.quantity_decimal || '0');
-                                                return (
-                                                    <div key={split.guid} className="text-rose-400">
-                                                        {val < 0 ? formatCurrency(Math.abs(val), split.commodity_mnemonic) : '\u00A0'}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                            <span className="text-sm text-foreground-muted italic font-medium">All transactions loaded</span>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                        <thead>
+                            <tr className="bg-background-secondary/50 text-foreground-secondary text-xs uppercase tracking-widest">
+                                <th className="px-6 py-4 font-semibold">Date</th>
+                                <th className="px-6 py-4 font-semibold">Description</th>
+                                <th className="px-6 py-4 font-semibold">Account</th>
+                                <th className="px-6 py-4 font-semibold text-right">Debit</th>
+                                <th className="px-6 py-4 font-semibold text-right">Credit</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                            {transactions.length === 0 ? (
+                                <tr>
+                                    <td colSpan={5} className="px-6 py-12 text-center text-foreground-muted">
+                                        {loading ? 'Loading...' : 'No transactions found matching your filters.'}
                                     </td>
                                 </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
+                            ) : (
+                                transactions.map(tx => (
+                                    <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground-secondary align-top">
+                                            {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-foreground align-top max-w-xs">
+                                            <div className="font-medium">{tx.description}</div>
+                                            {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
+                                        </td>
+                                        <td className="px-6 py-4 text-sm align-top">
+                                            <div className="space-y-1">
+                                                {tx.splits?.map(split => (
+                                                    <div key={split.guid} className="text-foreground-secondary truncate max-w-[200px]">{split.account_name}</div>
+                                                ))}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm font-mono text-right align-top">
+                                            <div className="space-y-1">
+                                                {tx.splits?.map(split => {
+                                                    const val = parseFloat(split.quantity_decimal || '0');
+                                                    return (
+                                                        <div key={split.guid} className="text-emerald-400">
+                                                            {val >= 0 ? formatCurrency(val, split.commodity_mnemonic) : '\u00A0'}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm font-mono text-right align-top">
+                                            <div className="space-y-1">
+                                                {tx.splits?.map(split => {
+                                                    const val = parseFloat(split.quantity_decimal || '0');
+                                                    return (
+                                                        <div key={split.guid} className="text-rose-400">
+                                                            {val < 0 ? formatCurrency(Math.abs(val), split.commodity_mnemonic) : '\u00A0'}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
 
-                {/* Loader trigger */}
-                <div ref={loader} className="p-8 flex justify-center border-t border-border">
-                    {loading ? (
-                        <div className="flex items-center gap-3">
-                            <div className="w-4 h-4 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
-                            <span className="text-sm text-foreground-secondary">Loading more transactions...</span>
-                        </div>
-                    ) : hasMore ? (
-                        <span className="text-sm text-foreground-muted italic">Scroll for more</span>
-                    ) : (
-                        <span className="text-sm text-foreground-muted italic font-medium">All transactions loaded</span>
-                    )}
+                    {/* Loader trigger */}
+                    <div ref={loader} className="p-8 flex justify-center border-t border-border">
+                        {loading ? (
+                            <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                                <span className="text-sm text-foreground-secondary">Loading more transactions...</span>
+                            </div>
+                        ) : hasMore ? (
+                            <span className="text-sm text-foreground-muted italic">Scroll for more</span>
+                        ) : (
+                            <span className="text-sm text-foreground-muted italic font-medium">All transactions loaded</span>
+                        )}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Transaction Details Modal */}
             <TransactionModal

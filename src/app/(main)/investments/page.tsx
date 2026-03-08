@@ -90,7 +90,7 @@ export default function HoldingsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <header className="flex items-center justify-between">
+      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Investments</h1>
           <p className="text-foreground-muted mt-1">Portfolio overview and performance</p>
@@ -132,7 +132,7 @@ export default function HoldingsPage() {
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
         <div className="flex flex-col gap-0">
           {/* Allocation tab selector */}
-          <div className="flex gap-1 mb-2">
+          <div className="flex flex-wrap gap-1 mb-2">
             {allocationTabs.map(tab => (
               <button
                 key={tab.key}

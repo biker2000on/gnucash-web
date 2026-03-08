@@ -51,7 +51,7 @@ export function AccountTypeFilter({ selectedTypes, onChange }: AccountTypeFilter
                         <button
                             key={type.value}
                             onClick={() => toggleType(type.value)}
-                            className={`px-2 py-1 text-xs rounded-lg border transition-all ${
+                            className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-all flex items-center ${
                                 isSelected
                                     ? colorClasses[type.color]
                                     : 'bg-background-tertiary/50 border-border-hover text-foreground-secondary hover:border-border-hover'

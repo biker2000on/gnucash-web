@@ -2,6 +2,7 @@
 
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
 interface ModalProps {
     isOpen: boolean;
@@ -34,6 +35,9 @@ export function Modal({
     const modalRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const [mounted, setMounted] = useState(false);
+    const isMobile = useIsMobile();
+    const mobileFullscreen = isMobile;
+    const effectiveSize = isMobile ? 'fullscreen' : size;
 
     // Wait for client-side mount before rendering portal
     useEffect(() => {
@@ -106,7 +110,7 @@ export function Modal({
     if (!mounted || !isOpen) return null;
 
     const modalContent = (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+        <div className={`fixed inset-0 z-[9999] flex items-center justify-center ${mobileFullscreen ? '' : 'p-4'}`}>
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -116,7 +120,11 @@ export function Modal({
             {/* Modal */}
             <div
                 ref={modalRef}
-                className={`relative bg-background-secondary border border-border rounded-2xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200`}
+                className={`relative bg-background-secondary border border-border shadow-2xl w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200 ${
+                    mobileFullscreen
+                        ? 'w-full h-full max-w-none max-h-none rounded-none'
+                        : `rounded-2xl ${sizeClasses[effectiveSize]} max-h-[90vh]`
+                }`}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={title ? 'modal-title' : undefined}

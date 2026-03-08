@@ -1,6 +1,8 @@
 'use client';
 
 import { InvestmentPortfolioData } from '@/lib/reports/types';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 function fmtCurrency(n: number): string {
     return new Intl.NumberFormat('en-US', {
@@ -35,6 +37,58 @@ interface PortfolioTableProps {
 
 export function PortfolioTable({ data }: PortfolioTableProps) {
     const { holdings, totals } = data;
+    const isMobile = useIsMobile();
+
+    if (isMobile) {
+        return (
+            <div className="p-4">
+                {holdings.length === 0 ? (
+                    <div className="py-8 text-sm text-foreground-secondary text-center">
+                        No investment holdings found
+                    </div>
+                ) : (
+                    <>
+                        {holdings.map((h) => (
+                            <MobileCard
+                                key={h.guid}
+                                fields={[
+                                    { label: 'Account', value: h.accountName },
+                                    { label: 'Symbol', value: <span className="font-mono">{h.symbol}</span> },
+                                    { label: 'Shares', value: <span className="font-mono">{fmtShares(h.shares)}</span> },
+                                    { label: 'Price', value: <span className="font-mono">{fmtCurrency(h.latestPrice)}</span> },
+                                    { label: 'Price Date', value: h.priceDate || '-' },
+                                    { label: 'Market Value', value: <span className="font-mono">{fmtCurrency(h.marketValue)}</span> },
+                                    { label: 'Cost Basis', value: <span className="font-mono">{fmtCurrency(h.costBasis)}</span> },
+                                    { label: 'Gain/Loss', value: <span className={`font-mono ${gainColor(h.gain)}`}>{fmtCurrency(h.gain)}</span> },
+                                    { label: 'Gain %', value: <span className={`font-mono ${gainColor(h.gainPercent)}`}>{fmtPercent(h.gainPercent)}</span> },
+                                ]}
+                            />
+                        ))}
+                        {/* Totals */}
+                        <div className="border-t-2 border-border p-4 space-y-1">
+                            <div className="text-sm font-bold text-foreground">Totals</div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-foreground-muted uppercase text-xs">Market Value</span>
+                                <span className="font-mono font-bold">{fmtCurrency(totals.marketValue)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-foreground-muted uppercase text-xs">Cost Basis</span>
+                                <span className="font-mono font-bold">{fmtCurrency(totals.costBasis)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-foreground-muted uppercase text-xs">Gain/Loss</span>
+                                <span className={`font-mono font-bold ${gainColor(totals.gain)}`}>{fmtCurrency(totals.gain)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-foreground-muted uppercase text-xs">Gain %</span>
+                                <span className={`font-mono font-bold ${gainColor(totals.gainPercent)}`}>{fmtPercent(totals.gainPercent)}</span>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="p-6">

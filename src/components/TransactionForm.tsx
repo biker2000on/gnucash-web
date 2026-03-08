@@ -669,8 +669,8 @@ export function TransactionForm({
             )}
 
             {/* Header Fields */}
-            <div className="grid grid-cols-3 gap-4">
-                <div>
+            <div className="flex flex-col md:flex-row gap-3">
+                <div className="md:w-1/3">
                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Date
                     </label>
@@ -695,7 +695,7 @@ export function TransactionForm({
                         className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
                     />
                 </div>
-                <div className="col-span-2">
+                <div className="md:flex-1">
                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Description
                     </label>
@@ -776,8 +776,8 @@ export function TransactionForm({
                     </div>
 
                     {/* From/To accounts */}
-                    <div className="flex items-center gap-4">
-                        <div className="flex-1">
+                    <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+                        <div className="w-full md:flex-1">
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 From Account
                             </label>
@@ -787,12 +787,12 @@ export function TransactionForm({
                                 placeholder="Select source account..."
                             />
                         </div>
-                        <div className="flex items-center justify-center pt-5">
+                        <div className="hidden md:flex items-center justify-center pt-5">
                             <svg className="w-6 h-6 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                             </svg>
                         </div>
-                        <div className="flex-1">
+                        <div className="w-full md:flex-1">
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 To Account
                             </label>
@@ -836,7 +836,7 @@ export function TransactionForm({
                     </div>
 
                     {/* Column Headers */}
-                    <div className="grid grid-cols-12 gap-2 text-xs text-foreground-muted uppercase tracking-wider py-2 border-b border-border-hover">
+                    <div className="hidden md:grid grid-cols-12 gap-2 text-xs text-foreground-muted uppercase tracking-wider py-2 border-b border-border-hover">
                         <div className="col-span-5">Account</div>
                         <div className="col-span-2 text-right">Debit</div>
                         <div className="col-span-2 text-right">Credit</div>
@@ -859,8 +859,8 @@ export function TransactionForm({
                         ))}
                     </div>
 
-                    {/* Totals */}
-                    <div className="grid grid-cols-12 gap-2 text-sm font-mono py-3 border-t border-border-hover mt-2">
+                    {/* Totals - Desktop */}
+                    <div className="hidden md:grid grid-cols-12 gap-2 text-sm font-mono py-3 border-t border-border-hover mt-2">
                         <div className="col-span-5 text-foreground-secondary text-right pr-2">Totals:</div>
                         <div className="col-span-2 text-right text-emerald-400">
                             {totalDebit.toFixed(2)}
@@ -878,18 +878,34 @@ export function TransactionForm({
                             )}
                         </div>
                     </div>
+                    {/* Totals - Mobile */}
+                    <div className="md:hidden flex justify-between text-sm font-mono py-3 border-t border-border-hover mt-2">
+                        <div className="flex gap-3">
+                            <span className="text-emerald-400">Dr: {totalDebit.toFixed(2)}</span>
+                            <span className="text-rose-400">Cr: {totalCredit.toFixed(2)}</span>
+                        </div>
+                        <div>
+                            {Math.abs(difference) > 0.01 ? (
+                                <span className="text-amber-400">
+                                    Diff: {difference.toFixed(2)}
+                                </span>
+                            ) : (
+                                <span className="text-emerald-400">Balanced</span>
+                            )}
+                        </div>
+                    </div>
                 </div>
             )}
 
             {/* Actions */}
-            <div className="flex justify-between items-center pt-4 border-t border-border">
-                <span className="text-xs text-foreground-muted">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-between sm:items-center gap-3 pt-4 border-t border-border">
+                <span className="hidden sm:inline text-xs text-foreground-muted">
                     <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> save
                     {onSaveAndAnother && (
                         <> | <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Ctrl+Shift</kbd> + <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover">Enter</kbd> save & new</>
                     )}
                 </span>
-                <div className="flex gap-3">
+                <div className="flex flex-wrap gap-3 justify-end">
                     <button
                         type="button"
                         onClick={onCancel}
