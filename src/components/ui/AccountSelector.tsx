@@ -62,10 +62,13 @@ export function AccountSelector({
         }
     }, [error]);
 
-    // Auto-focus when requested
+    // Auto-focus when requested — select text after frame so DOM has settled
     useEffect(() => {
-        if (autoFocus) {
-            inputRef.current?.focus();
+        if (autoFocus && inputRef.current) {
+            inputRef.current.focus();
+            requestAnimationFrame(() => {
+                inputRef.current?.select();
+            });
         }
     }, [autoFocus]);
 
@@ -195,7 +198,9 @@ export function AccountSelector({
     // Task 2.2: Don't open dropdown on focus — only clear search and select text
     const handleInputFocus = () => {
         setSearch('');
-        inputRef.current?.select();
+        requestAnimationFrame(() => {
+            inputRef.current?.select();
+        });
         onFocus?.();
     };
 
