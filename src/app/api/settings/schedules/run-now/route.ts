@@ -25,13 +25,13 @@ export async function POST() {
         const syncEnabled = syncPref === 'true';
 
         if (syncEnabled) {
-          const connections = await prisma.$queryRaw<{ id: number }[]>`
-            SELECT id FROM gnucash_web_simplefin_connections
-            WHERE user_id = ${user.id} AND book_guid = ${bookGuid}
+          const connections = await prisma.$queryRaw<{ id: number; book_guid: string }[]>`
+            SELECT id, book_guid FROM gnucash_web_simplefin_connections
+            WHERE user_id = ${user.id} AND sync_enabled = TRUE
           `;
           if (connections.length > 0) {
             const { syncSimpleFin } = await import('@/lib/services/simplefin-sync.service');
-            simplefinResult = await syncSimpleFin(connections[0].id, bookGuid);
+            simplefinResult = await syncSimpleFin(connections[0].id, connections[0].book_guid);
           }
         }
       } catch (err) {
