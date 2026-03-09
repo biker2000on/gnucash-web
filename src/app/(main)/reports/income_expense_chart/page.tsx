@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { ReportViewer } from '@/components/reports/ReportViewer';
-import { ReportFilters, ChartReportData, ChartDataPoint } from '@/lib/reports/types';
+import { ReportFilters, ChartReportData } from '@/lib/reports/types';
 import {
     BarChart,
     Bar,

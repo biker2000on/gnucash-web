@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
-import { Transaction, Split, CreateTransactionRequest } from '@/lib/types';
+import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { Prisma } from '@prisma/client';
 import { logAudit } from '@/lib/services/audit.service';
@@ -9,6 +9,7 @@ import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { requireRole } from '@/lib/auth';
+import { buildAccountPathMap } from '@/lib/reports/utils';
 
 /**
  * @openapi
@@ -146,9 +147,6 @@ export async function GET(request: Request) {
 
         // Amount range filters (need raw SQL for these due to computed values)
         // For minAmount and maxAmount, we'll use Prisma's raw filter
-        let minAmountFilter: Prisma.transactionsWhereInput | undefined;
-        let maxAmountFilter: Prisma.transactionsWhereInput | undefined;
-
         if (minAmount || maxAmount || reconcileStates) {
             // These require post-filtering or raw SQL
             // For now, we'll fetch and filter in JS for complex cases
@@ -175,6 +173,8 @@ export async function GET(request: Request) {
                 },
             },
         });
+
+        const accountPathMap = await buildAccountPathMap(bookAccountGuids);
 
         // Post-filter for amount range and reconcile states if needed
         let filteredTransactions = transactions;
@@ -228,6 +228,7 @@ export async function GET(request: Request) {
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
+                account_fullname: accountPathMap.get(split.account_guid) || split.account.name,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
@@ -310,7 +311,7 @@ export async function POST(request: Request) {
             totalSplitsCount = allSplits.length;
 
             // Insert transaction
-            const newTx = await tx.transactions.create({
+            await tx.transactions.create({
                 data: {
                     guid: txGuid,
                     currency_guid: body.currency_guid,
@@ -363,6 +364,8 @@ export async function POST(request: Request) {
             throw new Error('Failed to create transaction');
         }
 
+        const accountPathMap = await buildAccountPathMap(await getBookAccountGuids());
+
         // Log audit event
         await logAudit('CREATE', 'TRANSACTION', txGuid, null, {
             description: body.description,
@@ -404,6 +407,7 @@ export async function POST(request: Request) {
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
+                account_fullname: accountPathMap.get(split.account_guid) || split.account.name,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),

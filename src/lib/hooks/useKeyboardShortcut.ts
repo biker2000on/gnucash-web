@@ -11,7 +11,10 @@ export function useKeyboardShortcut(
 ) {
   const { register } = useKeyboardShortcuts()
   const handlerRef = useRef(handler)
-  handlerRef.current = handler
+
+  useEffect(() => {
+    handlerRef.current = handler
+  }, [handler])
 
   useEffect(() => {
     if (!enabled) return

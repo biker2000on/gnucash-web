@@ -74,7 +74,7 @@ export type ExtendedPrismaClient = ReturnType<typeof createPrismaClient>;
 
 // Global variable declaration for HMR
 declare global {
-  // eslint-disable-next-line no-var
+   
   var prisma: ExtendedPrismaClient | undefined;
 }
 

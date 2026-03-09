@@ -3,6 +3,7 @@
 import { Transaction, Split } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { formatDisplayAccountPath } from '@/lib/account-path';
 import { FilterPanel, AccountTypeFilter, AmountFilter, ReconcileFilter } from './filters';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
@@ -271,7 +272,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
 
     // Get reconcile status for warning dialog
     const pendingTx = pendingGuid ? transactions.find(t => t.guid === pendingGuid) : null;
-    const { hasReconciled, hasCleared } = getReconcileStatus(pendingTx?.splits);
+    const { hasReconciled } = getReconcileStatus(pendingTx?.splits);
 
     // Reset and fetch when filter changes
     useEffect(() => {
@@ -490,7 +491,9 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-6 py-4 text-sm align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => (
-                                                    <div key={split.guid} className="text-foreground-secondary truncate max-w-[200px]">{split.account_name}</div>
+                                                    <div key={split.guid} className="text-foreground-secondary whitespace-normal break-words">
+                                                        {formatDisplayAccountPath(split.account_fullname, split.account_name)}
+                                                    </div>
                                                 ))}
                                             </div>
                                         </td>

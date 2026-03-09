@@ -98,6 +98,7 @@ export interface Split {
     quantity_denom: number | string | bigint;
     lot_guid: string | null;
     account_name?: string;
+    account_fullname?: string;
     value_decimal?: string;
     quantity_decimal?: string;
     commodity_mnemonic?: string;

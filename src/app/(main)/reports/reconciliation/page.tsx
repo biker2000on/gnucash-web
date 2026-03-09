@@ -28,7 +28,7 @@ function ReconciliationReportContent() {
 
     // Account selection state
     const [selectedAccountGuids, setSelectedAccountGuids] = useState<string[]>([]);
-    const [savedReportId, setSavedReportId] = useState<number | null>(savedIdParam ? parseInt(savedIdParam, 10) : null);
+    const [, setSavedReportId] = useState<number | null>(savedIdParam ? parseInt(savedIdParam, 10) : null);
     const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
     const [currentSavedReport, setCurrentSavedReport] = useState<SavedReport | null>(null);
 

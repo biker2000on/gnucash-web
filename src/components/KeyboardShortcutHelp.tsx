@@ -3,7 +3,6 @@
 import { useKeyboardShortcuts } from '@/contexts/KeyboardShortcutContext'
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut'
 import { Modal } from '@/components/ui/Modal'
-import { useEffect } from 'react'
 
 const scopeLabels: Record<string, string> = {
   global: 'Global',

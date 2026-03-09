@@ -51,8 +51,6 @@ export async function generateGeneralLedger(filters: ReportFilters): Promise<Gen
     }
 
     const accountGuids = accounts.map(a => a.guid);
-    const accountMap = new Map(accounts.map(a => [a.guid, a]));
-
     // Build full account path map for display
     const accountPaths = await buildAccountPathMap(filters.bookAccountGuids);
 

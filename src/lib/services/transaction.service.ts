@@ -75,7 +75,7 @@ export class TransactionService {
     // Create transaction and splits atomically
     const transaction = await prisma.$transaction(async (tx) => {
       // Create transaction
-      const newTransaction = await tx.transactions.create({
+      await tx.transactions.create({
         data: {
           guid: transactionGuid,
           currency_guid: data.currency_guid,

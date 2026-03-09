@@ -13,7 +13,7 @@ export interface ChartDefaults {
   nasdaqEnabled: boolean;
   russell2000Enabled: boolean;
   defaultPeriod: string;
-  defaultMode: 'dollar' | 'percent';
+  defaultMode: 'dollar' | 'twr' | 'mwr';
 }
 
 const CHART_DEFAULT_VALUES: ChartDefaults = {
@@ -144,6 +144,14 @@ export async function setPreferences(
  */
 export async function getChartDefaults(userId: number): Promise<ChartDefaults> {
   const prefs = await getAllPreferences(userId, 'performance_chart.');
+  const rawDefaultMode = prefs[CHART_PREF_KEYS.defaultMode];
+
+  const defaultMode =
+    rawDefaultMode === 'dollar' || rawDefaultMode === 'twr' || rawDefaultMode === 'mwr'
+      ? rawDefaultMode
+      : rawDefaultMode === 'percent'
+        ? 'twr'
+        : CHART_DEFAULT_VALUES.defaultMode;
 
   return {
     sp500Enabled:
@@ -166,9 +174,6 @@ export async function getChartDefaults(userId: number): Promise<ChartDefaults> {
       typeof prefs[CHART_PREF_KEYS.defaultPeriod] === 'string'
         ? (prefs[CHART_PREF_KEYS.defaultPeriod] as string)
         : CHART_DEFAULT_VALUES.defaultPeriod,
-    defaultMode:
-      prefs[CHART_PREF_KEYS.defaultMode] === 'dollar' || prefs[CHART_PREF_KEYS.defaultMode] === 'percent'
-        ? (prefs[CHART_PREF_KEYS.defaultMode] as 'dollar' | 'percent')
-        : CHART_DEFAULT_VALUES.defaultMode,
+    defaultMode,
   };
 }

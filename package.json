@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "worker": "tsx worker.ts"
+    "worker": "tsx worker.ts",
+    "prices:audit": "tsx utilities/run-price-audit.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.3.0",
@@ -57,6 +58,7 @@
     "jsdom": "^27.4.0",
     "playwright": "^1.58.2",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5",
     "vite-tsconfig-paths": "^6.0.5",
     "vitest": "^4.0.18"

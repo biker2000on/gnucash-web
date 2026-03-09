@@ -10,7 +10,7 @@ export function formatCurrency(amount: number | string, currencyMnemonic: string
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         }).format(val);
-    } catch (e) {
+    } catch {
         // Fallback for non-standard mnemonics
         const formattedNumber = new Intl.NumberFormat('en-US', {
             minimumFractionDigits: 2,

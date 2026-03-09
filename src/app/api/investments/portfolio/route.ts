@@ -13,6 +13,10 @@ interface CashByAccount {
   cashBalance: number;
   investmentValue: number;
   cashPercent: number;
+  cashAccountGuid?: string;
+  cashAccountName?: string;
+  cashAccountPath?: string;
+  cashSource?: 'sibling' | 'parent' | 'none';
 }
 
 interface OverallCash {
@@ -77,6 +81,7 @@ interface PortfolioResponse {
   cashByAccount: CashByAccount[];
   overallCash: OverallCash;
   sectorExposure: SectorExposure[];
+  sectorByAccount: Record<string, SectorExposure[]>;
   consolidatedHoldings: ConsolidatedHolding[];
 }
 
@@ -108,6 +113,19 @@ function buildAccountPathFromMap(
     currentGuid = account.parent_guid;
   }
   return segments.join(':');
+}
+
+async function getAccountBalance(accountGuid: string): Promise<number> {
+  const splits = await prisma.splits.findMany({
+    where: { account_guid: accountGuid },
+    select: { value_num: true, value_denom: true },
+  });
+
+  return splits.reduce((sum, split) => {
+    const num = Number(split.value_num);
+    const denom = Number(split.value_denom);
+    return denom !== 0 ? sum + num / denom : sum;
+  }, 0);
 }
 
 export async function GET() {
@@ -234,17 +252,34 @@ export async function GET() {
         a => a.parent_guid === parentGuid && cashAccountTypes.includes(a.account_type)
       );
 
-      // Sum cash balances from splits
       let cashBalance = 0;
+      let cashAccountGuid: string | undefined;
+      let cashAccountName: string | undefined;
+      let cashAccountPath: string | undefined;
+      let cashSource: 'sibling' | 'parent' | 'none' = 'none';
+
       for (const cashAccount of cashSiblings) {
-        const splits = await prisma.splits.findMany({
-          where: { account_guid: cashAccount.guid },
-          select: { value_num: true, value_denom: true },
-        });
-        for (const split of splits) {
-          const num = Number(split.value_num);
-          const denom = Number(split.value_denom);
-          if (denom !== 0) cashBalance += num / denom;
+        cashBalance += await getAccountBalance(cashAccount.guid);
+      }
+
+      if (cashSiblings.length === 1) {
+        cashAccountGuid = cashSiblings[0].guid;
+        cashAccountName = cashSiblings[0].name;
+        cashAccountPath = buildAccountPathFromMap(cashSiblings[0].guid, accountLookup);
+        cashSource = 'sibling';
+      } else if (cashSiblings.length > 1) {
+        cashAccountGuid = parentGuid;
+        cashAccountName = 'Cash';
+        cashAccountPath = `${buildAccountPathFromMap(parentGuid, accountLookup)}:Cash`;
+        cashSource = 'sibling';
+      } else {
+        const parentBalance = await getAccountBalance(parentGuid);
+        if (Math.abs(parentBalance) >= 0.01) {
+          cashBalance = parentBalance;
+          cashAccountGuid = parentGuid;
+          cashAccountName = accountLookup.get(parentGuid)?.name || 'Cash';
+          cashAccountPath = buildAccountPathFromMap(parentGuid, accountLookup);
+          cashSource = 'parent';
         }
       }
 
@@ -266,6 +301,10 @@ export async function GET() {
         cashPercent: totalAccountValue > 0
           ? Math.round((cashBalance / totalAccountValue) * 10000) / 100
           : 0,
+        cashAccountGuid,
+        cashAccountName,
+        cashAccountPath,
+        cashSource,
       });
     }
 
@@ -295,6 +334,28 @@ export async function GET() {
       sectorExposure = await getPortfolioSectorExposure(holdingsForSector);
     } catch (err) {
       console.warn('Failed to compute sector exposure:', err);
+    }
+
+    const sectorByAccount: Record<string, SectorExposure[]> = {};
+    for (const parentGuid of parentGuids) {
+      const accountHoldings = holdings
+        .filter((holding) => holding.parentGuid === parentGuid)
+        .map((holding) => ({
+          commodityGuid: holding.commodityGuid,
+          marketValue: holding.marketValue,
+        }));
+
+      if (accountHoldings.length === 0) {
+        sectorByAccount[parentGuid] = [];
+        continue;
+      }
+
+      try {
+        sectorByAccount[parentGuid] = await getPortfolioSectorExposure(accountHoldings);
+      } catch (err) {
+        console.warn(`Failed to compute sector exposure for account ${parentGuid}:`, err);
+        sectorByAccount[parentGuid] = [];
+      }
     }
 
     // Trigger background refresh for commodities without metadata
@@ -360,6 +421,7 @@ export async function GET() {
       cashByAccount,
       overallCash,
       sectorExposure,
+      sectorByAccount,
       consolidatedHoldings,
     };
 

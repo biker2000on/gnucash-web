@@ -14,11 +14,17 @@ class MockIntersectionObserver implements IntersectionObserver {
 
   constructor(
     private callback: IntersectionObserverCallback,
-    _options?: IntersectionObserverInit
-  ) {}
+    options?: IntersectionObserverInit
+  ) {
+    void options;
+  }
 
-  observe(_target: Element): void {}
-  unobserve(_target: Element): void {}
+  observe(target: Element): void {
+    void target;
+  }
+  unobserve(target: Element): void {
+    void target;
+  }
   disconnect(): void {}
   takeRecords(): IntersectionObserverEntry[] {
     return [];

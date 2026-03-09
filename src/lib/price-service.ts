@@ -11,6 +11,7 @@ export {
   fetchHistoricalPrices,
   getLastPriceDate,
   detectAndFillGaps,
+  auditAndBackfillPrices,
   getQuotableCommodities,
   storeFetchedPrice,
   getExistingPriceDates,
@@ -20,6 +21,7 @@ export type {
   PriceFetchResult,
   QuotableCommodity,
   FetchAndStoreResult,
+  AuditPricesResult,
 } from './yahoo-price-service';
 
 export {

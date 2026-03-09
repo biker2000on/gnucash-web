@@ -26,7 +26,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved }: Book
         setName(book.name);
         setDescription(book.description || '');
         setError('');
-    }, [book.guid]);
+    }, [book.description, book.guid, book.name]);
 
     const handleSave = async () => {
         if (!name.trim()) {

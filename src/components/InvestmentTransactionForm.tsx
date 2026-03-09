@@ -74,7 +74,6 @@ const ACTION_OPTIONS: { value: InvestmentAction; label: string; description: str
 export function InvestmentTransactionForm({
     accountGuid,
     accountName,
-    accountCommodityGuid,
     commoditySymbol,
     onSave,
     onCancel,

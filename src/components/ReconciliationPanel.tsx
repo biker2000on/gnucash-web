@@ -50,7 +50,7 @@ export function ReconciliationPanel({
         if (isReconciling && simpleFinBalance && !statementBalance) {
             setStatementBalance(simpleFinBalance.balance.toFixed(2));
         }
-    }, [isReconciling, simpleFinBalance]);
+    }, [isReconciling, simpleFinBalance, statementBalance]);
 
     const handleFinish = useCallback(async () => {
         if (selectedSplits.size === 0) {

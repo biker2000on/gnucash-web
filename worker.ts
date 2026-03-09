@@ -187,6 +187,11 @@ async function main() {
           console.log(`Backfill results:`, results);
           break;
         }
+        case 'audit-price-history': {
+          const { handleAuditPriceHistory } = await import('./src/lib/queue/jobs/audit-price-history');
+          await handleAuditPriceHistory(job);
+          break;
+        }
         case 'sync-simplefin': {
           const { connectionId, bookGuid } = job.data as { connectionId: number; bookGuid: string };
           const { syncSimpleFin } = await import('./src/lib/services/simplefin-sync.service');
@@ -233,7 +238,7 @@ async function main() {
     lockDuration: 300000, // 5 minute lock (acts as job timeout)
   });
 
-  worker.on('completed', (_job) => {
+  worker.on('completed', () => {
     // Already logged above
   });
 

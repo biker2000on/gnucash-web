@@ -215,10 +215,6 @@ export async function GET(request: NextRequest) {
         const incomeTree = buildHierarchy(incomeParent.guid, 0, true);
         const expenseTree = buildHierarchy(expenseParent.guid, 0, false);
 
-        // Calculate totals from top-level tree nodes
-        const totalIncome = incomeTree.reduce((sum, n) => sum + n.value, 0);
-        const totalExpenses = expenseTree.reduce((sum, n) => sum + n.value, 0);
-
         // Add uncategorized income (splits directly on the parent Income account)
         const uncategorizedIncome = -(splitTotalsByAccount.get(incomeParent.guid) || 0);
         if (uncategorizedIncome > 0) {

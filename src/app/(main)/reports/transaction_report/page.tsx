@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters } from '@/lib/reports/types';
-import { TransactionReportData, TransactionReportItem } from '@/lib/reports/transaction-report';
+import { TransactionReportData } from '@/lib/reports/transaction-report';
 import { formatCurrency } from '@/lib/format';
 
 function getDefaultFilters(): ReportFilters {

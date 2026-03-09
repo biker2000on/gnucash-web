@@ -2,7 +2,7 @@
 
 import { SplitFormData } from '@/lib/types';
 import { AccountSelector } from './ui/AccountSelector';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -24,36 +24,17 @@ export function SplitRow({
     canRemove,
     transactionCurrencyGuid,
 }: SplitRowProps) {
-    const [showExchangeRate, setShowExchangeRate] = useState(false);
     const [accountCommodity, setAccountCommodity] = useState<string | null>(null);
     const { defaultTaxRate } = useUserPreferences();
     const { success } = useToast();
+    const showExchangeRate = Boolean(
+        split.account_guid &&
+        accountCommodity &&
+        transactionCurrencyGuid &&
+        accountCommodity !== transactionCurrencyGuid
+    );
 
-    // Check for multi-currency when account is selected
-    useEffect(() => {
-        if (split.account_guid && transactionCurrencyGuid) {
-            // Fetch account info to get its commodity
-            fetch(`/api/accounts/${split.account_guid}/info`)
-                .then(res => res.json())
-                .then(data => {
-                    setAccountCommodity(data.commodity_guid);
-                    // Show exchange rate if commodities differ
-                    const needsExchangeRate = data.commodity_guid && data.commodity_guid !== transactionCurrencyGuid;
-                    setShowExchangeRate(needsExchangeRate);
-
-                    // If different, fetch default exchange rate
-                    if (needsExchangeRate && !split.exchange_rate) {
-                        fetchDefaultRate(data.commodity_guid, transactionCurrencyGuid);
-                    }
-                })
-                .catch(err => console.error('Failed to fetch account info:', err));
-        } else {
-            setShowExchangeRate(false);
-            setAccountCommodity(null);
-        }
-    }, [split.account_guid, transactionCurrencyGuid]);
-
-    const fetchDefaultRate = async (fromCommodity: string, toCommodity: string) => {
+    const fetchDefaultRate = useCallback(async (fromCommodity: string, toCommodity: string) => {
         try {
             const res = await fetch(`/api/exchange-rates/pair?from=${fromCommodity}&to=${toCommodity}`);
             if (res.ok) {
@@ -65,7 +46,27 @@ export function SplitRow({
         } catch (err) {
             console.error('Failed to fetch exchange rate:', err);
         }
-    };
+    }, [index, onChange, split.exchange_rate]);
+
+    // Check for multi-currency when account is selected
+    useEffect(() => {
+        if (split.account_guid && transactionCurrencyGuid) {
+            // Fetch account info to get its commodity
+            fetch(`/api/accounts/${split.account_guid}/info`)
+                .then(res => res.json())
+                .then(data => {
+                    setAccountCommodity(data.commodity_guid);
+                    // Show exchange rate if commodities differ
+                    const needsExchangeRate = data.commodity_guid && data.commodity_guid !== transactionCurrencyGuid;
+
+                    // If different, fetch default exchange rate
+                    if (needsExchangeRate && !split.exchange_rate) {
+                        fetchDefaultRate(data.commodity_guid, transactionCurrencyGuid);
+                    }
+                })
+                .catch(err => console.error('Failed to fetch account info:', err));
+        }
+    }, [fetchDefaultRate, split.account_guid, split.exchange_rate, transactionCurrencyGuid]);
 
     const handleAccountChange = (accountGuid: string, accountName: string) => {
         onChange(index, 'account_guid', accountGuid);

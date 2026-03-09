@@ -13,6 +13,20 @@ interface DateRangePickerProps {
 }
 
 export function DateRangePicker({ startDate, endDate, onChange, className = '' }: DateRangePickerProps) {
+    const pickerKey = `${startDate ?? ''}|${endDate ?? ''}`;
+
+    return (
+        <DateRangePickerInner
+            key={pickerKey}
+            startDate={startDate}
+            endDate={endDate}
+            onChange={onChange}
+            className={className}
+        />
+    );
+}
+
+function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: DateRangePickerProps) {
     const { dateFormat } = useUserPreferences();
     const [isOpen, setIsOpen] = useState(false);
     const [customStart, setCustomStart] = useState(startDate || '');
@@ -20,14 +34,6 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
     const [customStartDisplay, setCustomStartDisplay] = useState(() => startDate ? formatIsoToDisplay(startDate, dateFormat) : '');
     const [customEndDisplay, setCustomEndDisplay] = useState(() => endDate ? formatIsoToDisplay(endDate, dateFormat) : '');
     const dropdownRef = useRef<HTMLDivElement>(null);
-
-    // Update custom inputs when props change
-    useEffect(() => {
-        setCustomStart(startDate || '');
-        setCustomEnd(endDate || '');
-        setCustomStartDisplay(startDate ? formatIsoToDisplay(startDate, dateFormat) : '');
-        setCustomEndDisplay(endDate ? formatIsoToDisplay(endDate, dateFormat) : '');
-    }, [startDate, endDate, dateFormat]);
 
     // Close dropdown when clicking outside
     useEffect(() => {

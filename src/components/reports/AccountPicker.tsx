@@ -11,6 +11,18 @@ interface FlatAccount {
     commodity_mnemonic?: string;
 }
 
+interface FlatAccountsResponseAccount {
+    guid: string;
+    name: string;
+    account_type: string;
+    parent_guid?: string | null;
+    fullname?: string;
+    full_name?: string;
+    commodity_mnemonic?: string;
+}
+
+type FlatAccountsResponse = FlatAccount[] | { accounts: FlatAccountsResponseAccount[] };
+
 interface AccountTreeNode {
     guid: string;
     name: string;
@@ -49,8 +61,9 @@ export function AccountPicker({
         try {
             const response = await fetch('/api/accounts?flat=true');
             if (!response.ok) throw new Error('Failed to fetch accounts');
-            const data = await response.json();
-            const accounts: FlatAccount[] = (data.accounts || data).map((a: any) => ({
+            const data = await response.json() as FlatAccountsResponse;
+            const items = Array.isArray(data) ? data : data.accounts;
+            const accounts: FlatAccount[] = items.map((a) => ({
                 guid: a.guid,
                 name: a.name,
                 account_type: a.account_type,

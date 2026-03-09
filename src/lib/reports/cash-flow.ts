@@ -104,32 +104,6 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
         return changes;
     }
 
-    // Get opening cash balance
-    const openingCash = await Promise.all(
-        cashAccounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: {
-                            lt: startDate,
-                        },
-                    },
-                },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                },
-            });
-
-            return splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-        })
-    );
-
-    const totalOpeningCash = openingCash.reduce((sum, val) => sum + val, 0);
-
     // Get changes by category
     const operatingChanges = await getAccountChanges(operatingAccounts);
     const investingChanges = await getAccountChanges(investingAccounts);

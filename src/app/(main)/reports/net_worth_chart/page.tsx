@@ -121,7 +121,7 @@ function NetWorthChartContent() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const [savedReportId, setSavedReportId] = useState<number | null>(savedIdParam ? parseInt(savedIdParam, 10) : null);
+    const [, setSavedReportId] = useState<number | null>(savedIdParam ? parseInt(savedIdParam, 10) : null);
     const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
     const [currentSavedReport, setCurrentSavedReport] = useState<SavedReport | null>(null);
 

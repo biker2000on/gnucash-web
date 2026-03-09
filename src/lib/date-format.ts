@@ -12,7 +12,7 @@ export function formatDateForDisplay(isoDate: string, format: DateFormat): strin
     }
 }
 
-export function parseDateInput(input: string, _preferredFormat?: DateFormat): string | null {
+export function parseDateInput(input: string): string | null {
     if (!input || !input.trim()) return null;
     const s = input.trim();
 

@@ -40,7 +40,6 @@ export function InlineEditRow({
     const { success } = useToast();
 
     // Find the account split and the "other" split for a 2-split transaction
-    const accountSplit = transaction.splits?.find(s => s.account_guid === accountGuid);
     const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
     const [postDate, setPostDate] = useState(
         transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
@@ -144,7 +143,6 @@ export function InlineEditRow({
     }, [handleSave, onCancel]);
 
     // Determine if original amount was negative (debit to this account)
-    const originalAmount = parseFloat(transaction.account_split_value);
     const balanceValue = applyBalanceReversal(parseFloat(transaction.running_balance), accountType, balanceReversal);
 
     return (

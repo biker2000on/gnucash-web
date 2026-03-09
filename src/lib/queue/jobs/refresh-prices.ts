@@ -7,14 +7,15 @@ export async function handleRefreshPrices(job: Job): Promise<void> {
   const { fetchAndStorePrices } = await import('@/lib/yahoo-price-service');
   const { fetchIndexPrices } = await import('@/lib/market-index-service');
 
-  const commodityResult = await fetchAndStorePrices();
+  const { userId, symbols, force } = job.data as { userId?: number; bookGuid?: string; symbols?: string[]; force?: boolean };
+
+  const commodityResult = await fetchAndStorePrices(symbols, force ?? false);
   console.log(`[Job ${job.id}] Commodity prices: ${commodityResult.stored} stored, ${commodityResult.failed} failed`);
 
   const indexResult = await fetchIndexPrices();
   console.log(`[Job ${job.id}] Index prices: ${indexResult.map(r => `${r.symbol}: ${r.stored}`).join(', ')}`);
 
   // SimpleFin sync (if enabled for this user)
-  const { userId } = job.data as { userId?: number; bookGuid?: string };
   if (userId) {
     try {
       const { getPreference } = await import('@/lib/user-preferences');

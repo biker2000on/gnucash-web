@@ -5,6 +5,10 @@ export interface CashByAccount {
   cashBalance: number;
   investmentValue: number;
   cashPercent: number;
+  cashAccountGuid?: string;
+  cashAccountName?: string;
+  cashAccountPath?: string;
+  cashSource?: 'sibling' | 'parent' | 'none';
 }
 
 export interface OverallCash {
@@ -56,6 +60,16 @@ export interface IndicesData {
   russell2000: IndexDataPoint[];
 }
 
+export interface HistoryPoint {
+  date: string;
+  value: number;
+}
+
+export interface CashFlowPoint {
+  date: string;
+  amount: number;
+}
+
 export interface PortfolioData {
   summary: {
     totalValue: number;
@@ -88,10 +102,12 @@ export interface PortfolioData {
   cashByAccount: CashByAccount[];
   overallCash: OverallCash;
   sectorExposure: SectorExposure[];
+  sectorByAccount: Record<string, SectorExposure[]>;
   consolidatedHoldings: ConsolidatedHolding[];
 }
 
 export interface HistoryData {
-  history: Array<{ date: string; value: number }>;
+  history: HistoryPoint[];
+  cashFlows: CashFlowPoint[];
   indices: IndicesData;
 }

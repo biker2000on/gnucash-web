@@ -7,7 +7,7 @@
 
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
-import { SavedReport, SavedReportInput, ReportType } from './types';
+import { SavedReport, SavedReportInput, ReportType, ReportFilters } from './types';
 
 /**
  * Valid report types for validation
@@ -32,7 +32,9 @@ const VALID_REPORT_TYPES = new Set<string>([
 /**
  * Helper to convert DB row to SavedReport interface (snake_case -> camelCase)
  */
-function toSavedReport(row: any): SavedReport {
+type SavedReportRow = Prisma.gnucash_web_saved_reportsGetPayload<Record<string, never>>;
+
+function toSavedReport(row: SavedReportRow): SavedReport {
   return {
     id: row.id,
     userId: row.user_id,
@@ -40,7 +42,7 @@ function toSavedReport(row: any): SavedReport {
     name: row.name,
     description: row.description,
     config: (row.config as Record<string, unknown>) || {},
-    filters: row.filters ? (row.filters as any) : null,
+    filters: row.filters ? (row.filters as ReportFilters) : null,
     isStarred: row.is_starred,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -50,7 +52,7 @@ function toSavedReport(row: any): SavedReport {
 /**
  * Validates that config is a non-null plain object
  */
-function validateConfig(config: any): void {
+function validateConfig(config: unknown): void {
   if (config === null || config === undefined) {
     throw new Error('config must be a non-null object');
   }
@@ -146,7 +148,7 @@ export async function updateSavedReport(
   }
 
   // Build update data
-  const updateData: any = {
+  const updateData: Prisma.gnucash_web_saved_reportsUpdateInput = {
     updated_at: new Date(), // Explicit update timestamp
   };
 

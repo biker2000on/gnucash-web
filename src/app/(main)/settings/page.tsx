@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -141,7 +142,7 @@ export default function SettingsPage() {
 
       setSchedule((prev) => ({ ...prev, enabled }));
       success(`Automatic refresh ${enabled ? 'enabled' : 'disabled'}`);
-    } catch (err) {
+    } catch {
       showError('Failed to update schedule setting');
     }
   };
@@ -172,7 +173,7 @@ export default function SettingsPage() {
 
       setSchedule((prev) => ({ ...prev, intervalHours }));
       success(`Refresh interval set to ${INTERVAL_OPTIONS.find((o) => o.value === intervalHours)?.label}`);
-    } catch (err) {
+    } catch {
       showError('Failed to update refresh interval');
     }
   };
@@ -206,7 +207,7 @@ export default function SettingsPage() {
 
       setSchedule((prev) => ({ ...prev, refreshTime: utcTime }));
       success(`Refresh time set to ${localTime} (${utcTime} UTC)`);
-    } catch (err) {
+    } catch {
       showError('Failed to update refresh time');
     }
   };
@@ -226,7 +227,7 @@ export default function SettingsPage() {
       } else {
         success(data.message);
       }
-    } catch (err) {
+    } catch {
       showError('Failed to start price refresh');
     } finally {
       setRefreshing(false);
@@ -253,7 +254,7 @@ export default function SettingsPage() {
       if (coverageRes.ok) {
         setIndexCoverage(await coverageRes.json());
       }
-    } catch (err) {
+    } catch {
       showError('Failed to backfill index data');
     } finally {
       setBackfilling(false);
@@ -271,7 +272,7 @@ export default function SettingsPage() {
 
       const data = await res.json();
       success(data.message);
-    } catch (err) {
+    } catch {
       showError('Failed to clear cache');
     } finally {
       setClearing(false);
@@ -292,6 +293,23 @@ export default function SettingsPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+
+      <div className="bg-surface rounded-xl border border-border p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Commodity Quote Settings</h2>
+            <p className="text-sm text-foreground-muted mt-1">
+              Manage quote flags and price source configuration for all commodities.
+            </p>
+          </div>
+          <Link
+            href="/settings/commodities"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+          >
+            Open Commodity Settings
+          </Link>
+        </div>
+      </div>
 
       {/* Price Refresh Schedule */}
       <div className="bg-surface rounded-xl border border-border p-6">

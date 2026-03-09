@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getAccountHoldings, getPriceHistory, isInvestmentAccount } from '@/lib/commodities';
+import { getAccountHoldings, getPriceHistory } from '@/lib/commodities';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 

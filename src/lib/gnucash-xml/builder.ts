@@ -55,6 +55,7 @@ export function compressGnuCashXml(xml: string): Uint8Array {
 }
 
 function buildTopLevelCountData(data: GnuCashXmlData): Record<string, unknown>[] {
+  void data;
   return [
     { '@_cd:type': 'book', '#text': '1' },
   ];

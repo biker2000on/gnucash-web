@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useInvestmentData } from '@/contexts/InvestmentDataContext';
 import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummaryCards';
 import { AllocationChart } from '@/components/investments/AllocationChart';
@@ -8,16 +8,27 @@ import { IndustryExposureChart } from '@/components/investments/IndustryExposure
 import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
 import ExpandableChart from '@/components/charts/ExpandableChart';
+import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'cashAcct' | 'sector';
 
 export default function HoldingsPage() {
   const {
-    portfolio, history, indices, loading, fetchingPrices,
+    portfolio, history, portfolioCashFlows, indices, loading, fetchingPrices,
     apiConfigured, handleFetchAllPrices
   } = useInvestmentData();
 
   const [allocationTab, setAllocationTab] = useState<AllocationTab>('holdings');
+  const [performanceMetric, setPerformanceMetric] = useState<'twr' | 'mwr'>('twr');
+
+  const performancePercent = useMemo(() => {
+    if (performanceMetric === 'mwr') {
+      return calculateMoneyWeightedReturn(history, portfolioCashFlows);
+    }
+
+    return calculateTimeWeightedReturn(history, portfolioCashFlows);
+  }, [history, performanceMetric, portfolioCashFlows]);
+  const safePerformancePercent = Number.isFinite(performancePercent) ? performancePercent : 0;
 
   // Cash as % of total portfolio (2-slice pie: Cash vs Investments)
   const cashPctOfPortfolio = portfolio?.overallCash ? [
@@ -126,7 +137,15 @@ export default function HoldingsPage() {
       )}
 
       {/* Summary Cards */}
-      <PortfolioSummaryCards {...portfolio.summary} />
+      <PortfolioSummaryCards
+        totalValue={portfolio.summary.totalValue}
+        totalCostBasis={portfolio.summary.totalCostBasis}
+        totalGainLoss={portfolio.summary.totalGainLoss}
+        dayChange={portfolio.summary.dayChange}
+        dayChangePercent={portfolio.summary.dayChangePercent}
+        performancePercent={safePerformancePercent}
+        performanceMetric={performanceMetric}
+      />
 
       {/* Charts Row */}
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
@@ -160,7 +179,13 @@ export default function HoldingsPage() {
           </ExpandableChart>
         </div>
         <ExpandableChart title="Portfolio Performance">
-          <PerformanceChart data={history} indices={indices} />
+          <PerformanceChart
+            data={history}
+            cashFlows={portfolioCashFlows}
+            indices={indices}
+            returnMetric={performanceMetric}
+            onReturnMetricChange={setPerformanceMetric}
+          />
         </ExpandableChart>
       </div>
 

@@ -4,6 +4,7 @@ import { serializeBigInts } from '@/lib/gnucash';
 import { Prisma } from '@prisma/client';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { buildAccountPathMap } from '@/lib/reports/utils';
 
 export async function GET(
     request: Request,
@@ -177,6 +178,7 @@ export async function GET(
             include: { commodity: true },
         });
         const accountMnemonic = account?.commodity?.mnemonic || '';
+        const accountPathMap = await buildAccountPathMap();
 
         // 5. Build the response with running balance
         let currentRunningBalance = startingBalance;
@@ -196,6 +198,7 @@ export async function GET(
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
+                account_fullname: accountPathMap.get(split.account_guid) || split.account.name,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),

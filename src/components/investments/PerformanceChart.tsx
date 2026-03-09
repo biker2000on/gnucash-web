@@ -10,7 +10,8 @@ import { ExpandedContext } from '@/components/charts/ExpandableChart';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
 import { ChartSettingsPanel } from './ChartSettingsPanel';
 import type { ChartDefaults } from '@/lib/user-preferences';
-import type { IndexDataPoint, IndicesData } from '@/types/investments';
+import type { CashFlowPoint, IndicesData } from '@/types/investments';
+import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
 
 export type { ChartDefaults };
 
@@ -19,11 +20,16 @@ interface PerformanceChartProps {
     date: string;
     value: number;
   }>;
+  cashFlows?: CashFlowPoint[];
   indices?: IndicesData;
   chartDefaults?: ChartDefaults;
+  title?: string;
+  returnMetric?: 'twr' | 'mwr';
+  onReturnMetricChange?: (metric: 'twr' | 'mwr') => void;
 }
 
 type Period = '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | 'ALL';
+type ChartMode = 'value' | 'twr' | 'mwr';
 
 const INDEX_COLORS = {
   sp500: '#f97316',    // orange
@@ -33,14 +39,30 @@ const INDEX_COLORS = {
   portfolio: '#06b6d4', // cyan
 };
 
-export function PerformanceChart({ data, indices, chartDefaults }: PerformanceChartProps) {
+export function PerformanceChart({
+  data,
+  cashFlows = [],
+  indices,
+  chartDefaults,
+  title = 'Portfolio Performance',
+  returnMetric = 'twr',
+  onReturnMetricChange,
+}: PerformanceChartProps) {
   const expanded = useContext(ExpandedContext);
 
   const initialPeriod = (chartDefaults?.defaultPeriod as Period) || '1Y';
-  const initialMode = chartDefaults?.defaultMode === 'percent' ? 'percentChange' : 'value';
+  const resolveChartMode = useCallback((defaultMode?: ChartDefaults['defaultMode']): ChartMode => {
+    if (defaultMode === 'twr' || defaultMode === 'mwr') {
+      return defaultMode;
+    }
+
+    return 'value';
+  }, []);
+
+  const initialMode: ChartMode = resolveChartMode(chartDefaults?.defaultMode);
 
   const [period, setPeriod] = useState<Period>(initialPeriod);
-  const [chartMode, setChartMode] = useState<'value' | 'percentChange'>(initialMode);
+  const [chartMode, setChartMode] = useState<ChartMode>(initialMode);
   const [showSP500, setShowSP500] = useState(chartDefaults?.sp500Enabled ?? false);
   const [showDJIA, setShowDJIA] = useState(chartDefaults?.djiaEnabled ?? false);
   const [showNasdaq, setShowNasdaq] = useState(chartDefaults?.nasdaqEnabled ?? false);
@@ -60,7 +82,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
         if (cancelled) return;
         setCurrentDefaults(data);
         setPeriod((data.defaultPeriod as Period) || '1Y');
-        setChartMode(data.defaultMode === 'percent' ? 'percentChange' : 'value');
+        setChartMode(resolveChartMode(data.defaultMode));
         setShowSP500(data.sp500Enabled);
         setShowDJIA(data.djiaEnabled);
         setShowNasdaq(data.nasdaqEnabled);
@@ -73,7 +95,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     }
     loadDefaults();
     return () => { cancelled = true; };
-  }, [chartDefaults, defaultsLoaded]);
+  }, [chartDefaults, defaultsLoaded, resolveChartMode]);
 
   // Sync with chartDefaults prop when it changes (e.g., after settings save)
   useEffect(() => {
@@ -82,6 +104,16 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     }
   }, [chartDefaults]);
 
+  useEffect(() => {
+    setChartMode((currentMode) => {
+      if (currentMode === 'value') {
+        return currentMode;
+      }
+
+      return returnMetric;
+    });
+  }, [returnMetric]);
+
   const handleSettingsChange = useCallback((newDefaults: ChartDefaults) => {
     setCurrentDefaults(newDefaults);
     setShowSP500(newDefaults.sp500Enabled);
@@ -89,8 +121,8 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     setShowNasdaq(newDefaults.nasdaqEnabled);
     setShowRussell2000(newDefaults.russell2000Enabled);
     setPeriod((newDefaults.defaultPeriod as Period) || '1Y');
-    setChartMode(newDefaults.defaultMode === 'percent' ? 'percentChange' : 'value');
-  }, []);
+    setChartMode(resolveChartMode(newDefaults.defaultMode));
+  }, [resolveChartMode]);
 
   const filteredData = useMemo(() => {
     if (!data || data.length === 0) return [];
@@ -111,7 +143,18 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     return data.filter(d => new Date(d.date) >= cutoffDate);
   }, [data, period]);
 
-  // Build merged data for % mode with index lines
+  const filteredCashFlows = useMemo(() => {
+    if (!cashFlows || cashFlows.length === 0) return [];
+    if (filteredData.length === 0) return [];
+
+    const startDate = filteredData[0]?.date;
+    const endDate = filteredData[filteredData.length - 1]?.date;
+
+    if (!startDate || !endDate) return [];
+
+    return cashFlows.filter((cashFlow) => cashFlow.date >= startDate && cashFlow.date <= endDate);
+  }, [cashFlows, filteredData]);
+
   const displayData = useMemo(() => {
     if (filteredData.length === 0) return [];
 
@@ -119,41 +162,24 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
       return filteredData;
     }
 
-    // Percent change mode
-    const firstValue = filteredData[0].value;
-    if (firstValue === 0) return filteredData;
+    const portfolioSeries = filteredData.map((point, index) => {
+      const historySlice = filteredData.slice(0, index + 1);
+      const pointCashFlows = filteredCashFlows.filter((cashFlow) => cashFlow.date <= point.date);
+      const value = chartMode === 'mwr'
+        ? calculateMoneyWeightedReturn(historySlice, pointCashFlows)
+        : calculateTimeWeightedReturn(historySlice, pointCashFlows);
 
-    // Build a map of index data by date for fast lookup
-    const sp500Map = new Map<string, number>();
-    const djiaMap = new Map<string, number>();
-    const nasdaqMap = new Map<string, number>();
-    const russell2000Map = new Map<string, number>();
+      return {
+        ...point,
+        value: Number.isFinite(value) ? value : 0,
+      };
+    });
 
-    if (indices?.sp500) {
-      for (const pt of indices.sp500) {
-        sp500Map.set(pt.date, pt.percentChange);
-      }
-    }
-    if (indices?.djia) {
-      for (const pt of indices.djia) {
-        djiaMap.set(pt.date, pt.percentChange);
-      }
-    }
-    if (indices?.nasdaq) {
-      for (const pt of indices.nasdaq) {
-        nasdaqMap.set(pt.date, pt.percentChange);
-      }
-    }
-    if (indices?.russell2000) {
-      for (const pt of indices.russell2000) {
-        russell2000Map.set(pt.date, pt.percentChange);
-      }
+    if (chartMode === 'mwr') {
+      return portfolioSeries;
     }
 
-    // Filter index data to the same period cutoff
     const cutoffDateStr = filteredData[0]?.date;
-
-    // Find base values for indices at the start of filtered period
     let sp500Base: number | null = null;
     let djiaBase: number | null = null;
     let nasdaqBase: number | null = null;
@@ -180,7 +206,6 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
       }
     }
 
-    // Recalculate percent change from the filtered period start
     const sp500PctMap = new Map<string, number>();
     const djiaPctMap = new Map<string, number>();
     const nasdaqPctMap = new Map<string, number>();
@@ -215,28 +240,28 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
       }
     }
 
-    return filteredData.map(point => ({
+    return portfolioSeries.map(point => ({
       ...point,
-      value: ((point.value - firstValue) / firstValue) * 100,
       sp500: sp500PctMap.get(point.date) ?? null,
       djia: djiaPctMap.get(point.date) ?? null,
       nasdaq: nasdaqPctMap.get(point.date) ?? null,
       russell2000: russell2000PctMap.get(point.date) ?? null,
     }));
-  }, [filteredData, chartMode, indices]);
+  }, [chartMode, filteredCashFlows, filteredData, indices]);
 
   const zeroOffset = useMemo(() => computeZeroOffset(displayData), [displayData]);
 
   const allPeriods: Period[] = ['1M', '3M', '6M', '1Y', '3Y', '5Y', 'ALL'];
   const periods = expanded ? allPeriods : (['1M', '6M', '1Y', 'ALL'] as Period[]);
 
-  const isPercentMode = chartMode === 'percentChange';
+  const isReturnMode = chartMode !== 'value';
+  const isTimeWeightedMode = chartMode === 'twr';
   const hasIndices = indices && (indices.sp500.length > 0 || indices.djia.length > 0 || indices.nasdaq.length > 0 || indices.russell2000.length > 0);
 
   if (!data || data.length === 0) {
     return (
-      <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Portfolio Performance</h3>
+        <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
+        <h3 className="text-lg font-semibold text-foreground mb-4">{title}</h3>
         <p className="text-foreground-muted">No performance data available</p>
       </div>
     );
@@ -244,9 +269,9 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
 
   const tooltipFormatter = (value: number | undefined, name?: string): [string, string] | [null, null] => {
     if (value === undefined || value === null) return [null, null];
-    if (chartMode === 'percentChange') {
+    if (isReturnMode) {
       const labels: Record<string, string> = {
-        value: 'Portfolio',
+        value: chartMode === 'mwr' ? 'Portfolio MWR' : 'Portfolio TWR',
         sp500: 'S&P 500',
         djia: 'DJIA',
         nasdaq: 'NASDAQ',
@@ -261,7 +286,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
     <div className="bg-background-secondary rounded-lg p-6 border border-border h-full">
       <div className="flex items-center justify-between gap-2 mb-4">
         <div className="flex items-center gap-2">
-          <h3 className="text-lg font-semibold text-foreground shrink-0">Portfolio Performance</h3>
+          <h3 className="text-lg font-semibold text-foreground shrink-0">{title}</h3>
           <ChartSettingsPanel
             currentDefaults={currentDefaults}
             onSettingsChange={handleSettingsChange}
@@ -285,10 +310,11 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
             ))}
           </div>
 
-          {/* Dollar / Percent toggle */}
+          {/* Value / return metric toggle */}
           <div className="flex gap-1 border-l border-border pl-1">
             <button
               onClick={() => setChartMode('value')}
+              title="Show dollar value"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'value'
                   ? 'bg-cyan-600 text-white'
@@ -298,14 +324,32 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
               $
             </button>
             <button
-              onClick={() => setChartMode('percentChange')}
+              onClick={() => {
+                setChartMode('twr');
+                onReturnMetricChange?.('twr');
+              }}
+              title="Time-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
-                chartMode === 'percentChange'
+                chartMode === 'twr'
                   ? 'bg-cyan-600 text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
-              %
+              TWR
+            </button>
+            <button
+              onClick={() => {
+                setChartMode('mwr');
+                onReturnMetricChange?.('mwr');
+              }}
+              title="Money-weighted return"
+              className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
+                chartMode === 'mwr'
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+              }`}
+            >
+              MWR
             </button>
           </div>
 
@@ -313,62 +357,62 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
           {hasIndices && (
             <div className="flex gap-1 border-l border-border pl-1 relative">
               <button
-                onClick={() => isPercentMode && setShowSP500(!showSP500)}
-                disabled={!isPercentMode}
-                title={!isPercentMode ? 'Switch to % mode for index comparison' : (showSP500 ? 'Hide S&P 500' : 'Show S&P 500')}
+                onClick={() => isTimeWeightedMode && setShowSP500(!showSP500)}
+                disabled={!isTimeWeightedMode}
+                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showSP500 ? 'Hide S&P 500' : 'Show S&P 500')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
-                  !isPercentMode
+                  !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showSP500
                       ? 'text-white'
                       : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
-                style={isPercentMode && showSP500 ? { backgroundColor: INDEX_COLORS.sp500 } : undefined}
+                style={isTimeWeightedMode && showSP500 ? { backgroundColor: INDEX_COLORS.sp500 } : undefined}
               >
                 S&P
               </button>
               <button
-                onClick={() => isPercentMode && setShowDJIA(!showDJIA)}
-                disabled={!isPercentMode}
-                title={!isPercentMode ? 'Switch to % mode for index comparison' : (showDJIA ? 'Hide DJIA' : 'Show DJIA')}
+                onClick={() => isTimeWeightedMode && setShowDJIA(!showDJIA)}
+                disabled={!isTimeWeightedMode}
+                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showDJIA ? 'Hide DJIA' : 'Show DJIA')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
-                  !isPercentMode
+                  !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showDJIA
                       ? 'text-white'
                       : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
-                style={isPercentMode && showDJIA ? { backgroundColor: INDEX_COLORS.djia } : undefined}
+                style={isTimeWeightedMode && showDJIA ? { backgroundColor: INDEX_COLORS.djia } : undefined}
               >
                 DJIA
               </button>
               <button
-                onClick={() => isPercentMode && setShowNasdaq(!showNasdaq)}
-                disabled={!isPercentMode}
-                title={!isPercentMode ? 'Switch to % mode for index comparison' : (showNasdaq ? 'Hide NASDAQ' : 'Show NASDAQ')}
+                onClick={() => isTimeWeightedMode && setShowNasdaq(!showNasdaq)}
+                disabled={!isTimeWeightedMode}
+                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showNasdaq ? 'Hide NASDAQ' : 'Show NASDAQ')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
-                  !isPercentMode
+                  !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showNasdaq
                       ? 'text-white'
                       : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
-                style={isPercentMode && showNasdaq ? { backgroundColor: INDEX_COLORS.nasdaq } : undefined}
+                style={isTimeWeightedMode && showNasdaq ? { backgroundColor: INDEX_COLORS.nasdaq } : undefined}
               >
                 NDQ
               </button>
               <button
-                onClick={() => isPercentMode && setShowRussell2000(!showRussell2000)}
-                disabled={!isPercentMode}
-                title={!isPercentMode ? 'Switch to % mode for index comparison' : (showRussell2000 ? 'Hide Russell 2000' : 'Show Russell 2000')}
+                onClick={() => isTimeWeightedMode && setShowRussell2000(!showRussell2000)}
+                disabled={!isTimeWeightedMode}
+                title={!isTimeWeightedMode ? 'Switch to TWR mode for index comparison' : (showRussell2000 ? 'Hide Russell 2000' : 'Show Russell 2000')}
                 className={`px-2.5 py-1.5 min-h-[44px] text-xs rounded transition-colors flex items-center justify-center ${
-                  !isPercentMode
+                  !isTimeWeightedMode
                     ? 'bg-background-tertiary text-foreground-muted opacity-50 cursor-not-allowed'
                     : showRussell2000
                       ? 'text-white'
                       : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
-                style={isPercentMode && showRussell2000 ? { backgroundColor: INDEX_COLORS.russell2000 } : undefined}
+                style={isTimeWeightedMode && showRussell2000 ? { backgroundColor: INDEX_COLORS.russell2000 } : undefined}
               >
                 R2K
               </button>
@@ -378,7 +422,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
       </div>
 
       <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
-        {chartMode === 'percentChange' ? (
+        {isReturnMode ? (
           <AreaChart data={displayData}>
             <defs>
               <linearGradient id="perfFillGradient" x1="0" y1="0" x2="0" y2="1">
@@ -479,7 +523,7 @@ export function PerformanceChart({ data, indices, chartDefaults }: PerformanceCh
                 height={24}
                 formatter={(val: string) => {
                   const labels: Record<string, string> = {
-                    value: 'Portfolio',
+                    value: chartMode === 'mwr' ? 'Portfolio MWR' : 'Portfolio TWR',
                     sp500: 'S&P 500',
                     djia: 'DJIA',
                     nasdaq: 'NASDAQ',
