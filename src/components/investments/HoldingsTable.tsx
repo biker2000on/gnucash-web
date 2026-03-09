@@ -16,6 +16,8 @@ interface Holding {
   marketValue: number;
   gainLoss: number;
   gainLossPercent: number;
+  isCash?: boolean;
+  disableNavigation?: boolean;
 }
 
 interface ConsolidatedHolding {
@@ -247,7 +249,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
   // Fallback: legacy flat view
   const filteredHoldings = showZeroShares
     ? holdings
-    : holdings.filter(h => h.shares !== 0);
+    : holdings.filter(h => h.isCash || h.shares !== 0);
 
   const sortedHoldings = [...filteredHoldings].sort((a, b) => {
     const aVal = a[sortKey];
@@ -277,11 +279,11 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
           {sortedHoldings.map((holding) => (
             <MobileCard
               key={holding.accountGuid}
-              onClick={() => router.push(`/accounts/${holding.accountGuid}`)}
+              onClick={holding.disableNavigation ? undefined : () => router.push(`/accounts/${holding.accountGuid}`)}
               fields={[
                 { label: 'Symbol', value: <><span className="font-medium">{holding.symbol}</span> <span className="text-foreground-muted">{holding.accountName}</span></> },
                 { label: 'Full Name', value: holding.accountName },
-                { label: 'Shares', value: holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+                { label: 'Shares', value: holding.isCash ? 'Cash' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                 { label: 'Market Value', value: formatCurrency(holding.marketValue) },
                 { label: 'Cost Basis', value: formatCurrency(holding.costBasis) },
                 { label: 'Gain/Loss', value: <span className={holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(holding.gainLoss)}</span> },
@@ -307,14 +309,16 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
               {sortedHoldings.map((holding) => (
                 <tr
                   key={holding.accountGuid}
-                  onClick={() => router.push(`/accounts/${holding.accountGuid}`)}
-                  className="hover:bg-surface-hover/50 cursor-pointer transition-colors"
+                  onClick={holding.disableNavigation ? undefined : () => router.push(`/accounts/${holding.accountGuid}`)}
+                  className={`transition-colors ${holding.disableNavigation ? '' : 'hover:bg-surface-hover/50 cursor-pointer'}`}
                 >
                   <td className="px-4 py-3">
                     <div className="font-medium text-foreground" title={holding.accountPath}>{holding.symbol}</div>
                     <div className="text-sm text-foreground-muted">{holding.accountName}</div>
                   </td>
-                  <td className="px-4 py-3 text-foreground-secondary">{holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                  <td className="px-4 py-3 text-foreground-secondary">
+                    {holding.isCash ? '\u2014' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  </td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.costBasis)}</td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
                   <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>

@@ -9,8 +9,14 @@ interface HistoryPoint {
   value: number;
 }
 
+interface CashFlowPoint {
+  date: string;
+  amount: number;
+}
+
 interface InvestmentHistoryResponse {
   history: HistoryPoint[];
+  cashFlows: CashFlowPoint[];
   indices: {
     sp500: IndexPriceData[];
     djia: IndexPriceData[];
@@ -66,7 +72,7 @@ export async function GET(request: NextRequest) {
       : accounts;
 
     if (filteredAccounts.length === 0) {
-      return NextResponse.json({ history: [] });
+      return NextResponse.json({ history: [], cashFlows: [], indices: { sp500: [], djia: [], nasdaq: [], russell2000: [] } });
     }
 
     // Fetch ALL splits for all investment accounts with their transaction post_dates
@@ -78,6 +84,7 @@ export async function GET(request: NextRequest) {
     }
 
     const allSplits: SplitWithDate[] = [];
+    const cashFlowByDate = new Map<string, number>();
 
     for (const account of filteredAccounts) {
       const splits = await prisma.splits.findMany({
@@ -85,6 +92,8 @@ export async function GET(request: NextRequest) {
         select: {
           quantity_num: true,
           quantity_denom: true,
+          value_num: true,
+          value_denom: true,
           transaction: { select: { post_date: true } },
         },
       });
@@ -97,6 +106,10 @@ export async function GET(request: NextRequest) {
           quantity: parseFloat(toDecimal(split.quantity_num, split.quantity_denom)),
           postDate: split.transaction.post_date,
         });
+
+        const dateStr = split.transaction.post_date.toISOString().split('T')[0];
+        const flowAmount = parseFloat(toDecimal(split.value_num, split.value_denom));
+        cashFlowByDate.set(dateStr, (cashFlowByDate.get(dateStr) || 0) + flowAmount);
       }
     }
 
@@ -162,6 +175,13 @@ export async function GET(request: NextRequest) {
     // Get all unique dates and sort
     const allDates = new Set<string>();
     prices.forEach(p => allDates.add(p.date.toISOString().split('T')[0]));
+    allSplits.forEach(split => {
+      const dateStr = split.postDate.toISOString().split('T')[0];
+      if (dateStr >= startDate.toISOString().split('T')[0]) {
+        allDates.add(dateStr);
+      }
+    });
+    allDates.add(startDate.toISOString().split('T')[0]);
     const sortedDates = Array.from(allDates).sort();
 
     // Running share totals per account (accumulated over time)
@@ -209,6 +229,11 @@ export async function GET(request: NextRequest) {
       .map(([date, value]) => ({ date, value }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
+    const cashFlows: CashFlowPoint[] = Array.from(cashFlowByDate.entries())
+      .filter(([date]) => date >= startDate.toISOString().split('T')[0])
+      .map(([date, amount]) => ({ date, amount }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     // Fetch market index data for the same date range (only for portfolio-wide requests)
     let indices: InvestmentHistoryResponse['indices'] = { sp500: [], djia: [], nasdaq: [], russell2000: [] };
     if (!filterAccountGuids) {
@@ -231,7 +256,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ history, indices });
+    return NextResponse.json({ history, cashFlows, indices });
   } catch (error) {
     console.error('Error fetching history:', error);
     return NextResponse.json(

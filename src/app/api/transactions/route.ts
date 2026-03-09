@@ -364,6 +364,8 @@ export async function POST(request: Request) {
             throw new Error('Failed to create transaction');
         }
 
+        const accountPathMap = await buildAccountPathMap(await getBookAccountGuids());
+
         // Log audit event
         await logAudit('CREATE', 'TRANSACTION', txGuid, null, {
             description: body.description,
@@ -405,7 +407,7 @@ export async function POST(request: Request) {
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
-                account_fullname: split.account.fullname,
+                account_fullname: accountPathMap.get(split.account_guid) || split.account.name,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),

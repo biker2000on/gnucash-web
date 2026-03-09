@@ -2,11 +2,12 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useToast } from '@/contexts/ToastContext';
-import type { PortfolioData, IndicesData, HistoryData } from '@/types/investments';
+import type { PortfolioData, IndicesData, HistoryData, CashFlowPoint, HistoryPoint } from '@/types/investments';
 
 interface InvestmentDataContextType {
   portfolio: PortfolioData | null;
-  history: HistoryData['history'];
+  history: HistoryPoint[];
+  portfolioCashFlows: CashFlowPoint[];
   indices: IndicesData;
   loading: boolean;
   apiConfigured: boolean;
@@ -15,7 +16,8 @@ interface InvestmentDataContextType {
   fetchHistory: () => Promise<void>;
   handleFetchAllPrices: () => Promise<void>;
   fetchAccountHistory: (accountGuids: string[]) => Promise<void>;
-  getAccountHistory: (accountGuids: string[]) => Array<{ date: string; value: number }>;
+  getAccountHistory: (accountGuids: string[]) => HistoryPoint[];
+  getAccountCashFlows: (accountGuids: string[]) => CashFlowPoint[];
 }
 
 const InvestmentDataContext = createContext<InvestmentDataContextType | null>(null);
@@ -25,11 +27,12 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
 
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [history, setHistory] = useState<HistoryData['history']>([]);
+  const [portfolioCashFlows, setPortfolioCashFlows] = useState<CashFlowPoint[]>([]);
   const [indices, setIndices] = useState<IndicesData>({ sp500: [], djia: [], nasdaq: [], russell2000: [] });
   const [loading, setLoading] = useState(true);
   const [fetchingPrices, setFetchingPrices] = useState(false);
   const [apiConfigured, setApiConfigured] = useState(true);
-  const [accountHistoryMap, setAccountHistoryMap] = useState<Record<string, Array<{ date: string; value: number }>>>({});
+  const [accountHistoryMap, setAccountHistoryMap] = useState<Record<string, { history: HistoryPoint[]; cashFlows: CashFlowPoint[] }>>({});
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -53,6 +56,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       if (res.ok) {
         setHistory(data.history || []);
+        setPortfolioCashFlows(data.cashFlows || []);
         if (data.indices) {
           setIndices(data.indices);
         }
@@ -75,7 +79,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchAccountHistory = useCallback(async (accountGuids: string[]) => {
-    const key = accountGuids.sort().join(',');
+    const key = [...accountGuids].sort().join(',');
     // Skip if already cached
     if (accountHistoryMap[key]) return;
 
@@ -83,7 +87,13 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`/api/investments/history?days=36500&accountGuids=${accountGuids.join(',')}`);
       const data = await res.json();
       if (res.ok) {
-        setAccountHistoryMap(prev => ({ ...prev, [key]: data.history || [] }));
+        setAccountHistoryMap(prev => ({
+          ...prev,
+          [key]: {
+            history: data.history || [],
+            cashFlows: data.cashFlows || [],
+          },
+        }));
       }
     } catch (err) {
       console.error('Failed to load account history:', err);
@@ -91,8 +101,13 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
   }, [accountHistoryMap]);
 
   const getAccountHistory = useCallback((accountGuids: string[]) => {
-    const key = accountGuids.sort().join(',');
-    return accountHistoryMap[key] || [];
+    const key = [...accountGuids].sort().join(',');
+    return accountHistoryMap[key]?.history || [];
+  }, [accountHistoryMap]);
+
+  const getAccountCashFlows = useCallback((accountGuids: string[]) => {
+    const key = [...accountGuids].sort().join(',');
+    return accountHistoryMap[key]?.cashFlows || [];
   }, [accountHistoryMap]);
 
   const handleFetchAllPrices = useCallback(async () => {
@@ -129,6 +144,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
       value={{
         portfolio,
         history,
+        portfolioCashFlows,
         indices,
         loading,
         apiConfigured,
@@ -138,6 +154,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
         handleFetchAllPrices,
         fetchAccountHistory,
         getAccountHistory,
+        getAccountCashFlows,
       }}
     >
       {children}

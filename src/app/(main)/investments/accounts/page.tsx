@@ -3,40 +3,75 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useInvestmentData } from '@/contexts/InvestmentDataContext';
 import { AllocationChart } from '@/components/investments/AllocationChart';
+import { IndustryExposureChart } from '@/components/investments/IndustryExposureChart';
 import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
 import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummaryCards';
 import ExpandableChart from '@/components/charts/ExpandableChart';
+import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
+
+type AllocationTab = 'holdings' | 'cashPct' | 'sector';
 
 export default function AccountsPage() {
-  const { portfolio, indices, loading, fetchAccountHistory, getAccountHistory } = useInvestmentData();
+  const { portfolio, indices, loading, fetchAccountHistory, getAccountHistory, getAccountCashFlows } = useInvestmentData();
   const [selectedAccount, setSelectedAccount] = useState<string>('');
+  const [allocationTab, setAllocationTab] = useState<AllocationTab>('holdings');
+  const [performanceMetric, setPerformanceMetric] = useState<'twr' | 'mwr'>('twr');
 
-  // Build unique parent accounts list from holdings
   const parentAccounts = useMemo(() => {
     if (!portfolio) return [];
-    const parents = new Map<string, string>();
-    portfolio.holdings.forEach(h => {
-      const parts = h.accountPath.split(':');
-      const parentName = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-      if (!parents.has(parentName)) {
-        parents.set(parentName, parentName);
-      }
-    });
-    return Array.from(parents.keys()).map(name => ({ key: name, name }));
+    return portfolio.cashByAccount.map((account) => ({
+      key: account.parentGuid,
+      name: account.parentName,
+      path: account.parentPath,
+    }));
   }, [portfolio]);
 
   const effectiveSelectedAccount = selectedAccount || parentAccounts[0]?.key || '';
+  const selectedParentAccount = useMemo(
+    () => parentAccounts.find((account) => account.key === effectiveSelectedAccount),
+    [effectiveSelectedAccount, parentAccounts]
+  );
+  const selectedCashAccount = useMemo(
+    () => portfolio?.cashByAccount.find((account) => account.parentGuid === effectiveSelectedAccount),
+    [effectiveSelectedAccount, portfolio]
+  );
 
   // Filter holdings for selected account
   const filteredHoldings = useMemo(() => {
-    if (!portfolio || !effectiveSelectedAccount) return [];
-    return portfolio.holdings.filter(h => {
-      const parts = h.accountPath.split(':');
-      const parentName = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-      return parentName === effectiveSelectedAccount;
-    });
-  }, [effectiveSelectedAccount, portfolio]);
+    if (!portfolio || !selectedParentAccount) return [];
+    const parentPathPrefix = `${selectedParentAccount.path}:`;
+
+    return portfolio.holdings.filter((holding) =>
+      holding.accountPath === selectedParentAccount.path || holding.accountPath.startsWith(parentPathPrefix)
+    );
+  }, [portfolio, selectedParentAccount]);
+
+  const holdingsWithCash = useMemo(() => {
+    if (!selectedCashAccount || Math.abs(selectedCashAccount.cashBalance) < 0.01) {
+      return filteredHoldings;
+    }
+
+    return [
+      {
+        accountGuid: selectedCashAccount.cashAccountGuid || selectedCashAccount.parentGuid,
+        accountName:
+          selectedCashAccount.cashSource === 'parent'
+            ? `${selectedCashAccount.cashAccountName || selectedCashAccount.parentName} (Parent Cash)`
+            : selectedCashAccount.cashAccountName || 'Cash',
+        accountPath: selectedCashAccount.cashAccountPath || selectedCashAccount.parentPath,
+        symbol: 'CASH',
+        shares: 0,
+        costBasis: selectedCashAccount.cashBalance,
+        marketValue: selectedCashAccount.cashBalance,
+        gainLoss: 0,
+        gainLossPercent: 0,
+        isCash: true,
+        disableNavigation: true,
+      },
+      ...filteredHoldings,
+    ];
+  }, [filteredHoldings, selectedCashAccount]);
 
   // Calculate filtered summary
   const filteredSummary = useMemo(() => {
@@ -77,6 +112,28 @@ export default function AccountsPage() {
     }));
   }, [filteredHoldings]);
 
+  const cashPctForAccount = useMemo(() => {
+    if (!selectedCashAccount) return [];
+
+    return [
+      {
+        category: 'Cash',
+        value: selectedCashAccount.cashBalance,
+        percent: selectedCashAccount.cashPercent,
+      },
+      {
+        category: 'Investments',
+        value: selectedCashAccount.investmentValue,
+        percent: 100 - selectedCashAccount.cashPercent,
+      },
+    ];
+  }, [selectedCashAccount]);
+
+  const sectorExposureForAccount = useMemo(() => {
+    if (!portfolio || !effectiveSelectedAccount) return [];
+    return portfolio.sectorByAccount[effectiveSelectedAccount] || [];
+  }, [effectiveSelectedAccount, portfolio]);
+
   // Get account GUIDs for selected parent account
   const filteredAccountGuids = useMemo(() => {
     return filteredHoldings.map(h => h.accountGuid);
@@ -91,6 +148,15 @@ export default function AccountsPage() {
 
   // Get the cached account history
   const accountHistory = getAccountHistory(filteredAccountGuids);
+  const accountCashFlows = getAccountCashFlows(filteredAccountGuids);
+  const performancePercent = useMemo(() => {
+    if (performanceMetric === 'mwr') {
+      return calculateMoneyWeightedReturn(accountHistory, accountCashFlows);
+    }
+
+    return calculateTimeWeightedReturn(accountHistory, accountCashFlows);
+  }, [accountCashFlows, accountHistory, performanceMetric]);
+  const safePerformancePercent = Number.isFinite(performancePercent) ? performancePercent : 0;
 
   if (loading) {
     return (
@@ -122,6 +188,18 @@ export default function AccountsPage() {
     );
   }
 
+  const allocationTabs: { key: AllocationTab; label: string }[] = [
+    { key: 'holdings', label: 'Holdings' },
+    { key: 'cashPct', label: 'Cash %' },
+    { key: 'sector', label: 'Sector' },
+  ];
+
+  const allocationTitle = allocationTab === 'holdings'
+    ? 'Account Allocation'
+    : allocationTab === 'cashPct'
+      ? 'Cash % of Account'
+      : 'Sector Exposure';
+
   return (
     <div className="space-y-6">
       <header className="flex items-center justify-between">
@@ -141,20 +219,58 @@ export default function AccountsPage() {
       </header>
 
       {/* Filtered summary cards */}
-      <PortfolioSummaryCards {...filteredSummary} />
+      <PortfolioSummaryCards
+        totalValue={filteredSummary.totalValue}
+        totalCostBasis={filteredSummary.totalCostBasis}
+        totalGainLoss={filteredSummary.totalGainLoss}
+        dayChange={filteredSummary.dayChange}
+        dayChangePercent={filteredSummary.dayChangePercent}
+        performancePercent={safePerformancePercent}
+        performanceMetric={performanceMetric}
+      />
 
       {/* Charts */}
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
-        <ExpandableChart title="Account Allocation">
-          <AllocationChart data={filteredAllocation} />
-        </ExpandableChart>
+        <div className="flex flex-col gap-0">
+          <div className="flex flex-wrap gap-1 mb-2">
+            {allocationTabs.map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setAllocationTab(tab.key)}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                  allocationTab === tab.key
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <ExpandableChart title={allocationTitle}>
+            {allocationTab === 'holdings' ? (
+              <AllocationChart data={filteredAllocation} />
+            ) : allocationTab === 'cashPct' ? (
+              <AllocationChart data={cashPctForAccount} />
+            ) : (
+              <IndustryExposureChart data={sectorExposureForAccount} />
+            )}
+          </ExpandableChart>
+        </div>
         <ExpandableChart title="Account Performance">
-          <PerformanceChart data={accountHistory} indices={indices} />
+          <PerformanceChart
+            title="Account Performance"
+            data={accountHistory}
+            cashFlows={accountCashFlows}
+            indices={indices}
+            returnMetric={performanceMetric}
+            onReturnMetricChange={setPerformanceMetric}
+          />
         </ExpandableChart>
       </div>
 
       {/* Filtered holdings table */}
-      <HoldingsTable holdings={filteredHoldings} />
+      <HoldingsTable holdings={holdingsWithCash} />
     </div>
   );
 }

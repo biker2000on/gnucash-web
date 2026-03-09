@@ -22,7 +22,7 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
   const [nasdaqEnabled, setNasdaqEnabled] = useState(currentDefaults?.nasdaqEnabled ?? false);
   const [russell2000Enabled, setRussell2000Enabled] = useState(currentDefaults?.russell2000Enabled ?? false);
   const [defaultPeriod, setDefaultPeriod] = useState(currentDefaults?.defaultPeriod ?? '1Y');
-  const [defaultMode, setDefaultMode] = useState<'dollar' | 'percent'>(currentDefaults?.defaultMode ?? 'dollar');
+  const [defaultMode, setDefaultMode] = useState<'dollar' | 'twr' | 'mwr'>(currentDefaults?.defaultMode ?? 'dollar');
 
   // Sync local state when currentDefaults changes
   useEffect(() => {
@@ -173,7 +173,7 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
           {/* Default Display Mode */}
           <div className="space-y-1">
             <label className="text-xs text-foreground-secondary font-medium">Default Mode</label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2">
               <label className="flex items-center gap-1 text-sm text-foreground-secondary cursor-pointer">
                 <input
                   type="radio"
@@ -188,11 +188,21 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
                 <input
                   type="radio"
                   name="defaultMode"
-                  checked={defaultMode === 'percent'}
-                  onChange={() => setDefaultMode('percent')}
+                  checked={defaultMode === 'twr'}
+                  onChange={() => setDefaultMode('twr')}
                   className="border-border bg-background-tertiary"
                 />
-                % Change
+                TWR
+              </label>
+              <label className="flex items-center gap-1 text-sm text-foreground-secondary cursor-pointer">
+                <input
+                  type="radio"
+                  name="defaultMode"
+                  checked={defaultMode === 'mwr'}
+                  onChange={() => setDefaultMode('mwr')}
+                  className="border-border bg-background-tertiary"
+                />
+                MWR
               </label>
             </div>
           </div>
