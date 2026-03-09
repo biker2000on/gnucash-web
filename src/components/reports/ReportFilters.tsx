@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { ReportFilters as ReportFiltersType } from '@/lib/reports/types';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -69,16 +69,24 @@ function getLastYear() {
 }
 
 export function ReportFilters({ filters, onChange, showCompare = true, showAccountTypes = false }: ReportFiltersProps) {
+    const filtersKey = `${filters.startDate ?? ''}|${filters.endDate ?? ''}|${filters.compareToPrevious ?? false}|${showCompare}|${showAccountTypes}`;
+
+    return (
+        <ReportFiltersForm
+            key={filtersKey}
+            filters={filters}
+            onChange={onChange}
+            showCompare={showCompare}
+            showAccountTypes={showAccountTypes}
+        />
+    );
+}
+
+function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFiltersProps) {
     const { dateFormat } = useUserPreferences();
     const [localFilters, setLocalFilters] = useState(filters);
     const [startDateDisplay, setStartDateDisplay] = useState(() => filters.startDate ? formatDateForDisplay(filters.startDate, dateFormat) : '');
     const [endDateDisplay, setEndDateDisplay] = useState(() => filters.endDate ? formatDateForDisplay(filters.endDate, dateFormat) : '');
-
-    useEffect(() => {
-        setLocalFilters(filters);
-        setStartDateDisplay(filters.startDate ? formatDateForDisplay(filters.startDate, dateFormat) : '');
-        setEndDateDisplay(filters.endDate ? formatDateForDisplay(filters.endDate, dateFormat) : '');
-    }, [filters]);
 
     const handlePreset = (preset: typeof PRESETS[number]) => {
         const { startDate, endDate } = preset.getValue();

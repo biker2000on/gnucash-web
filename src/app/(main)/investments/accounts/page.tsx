@@ -26,22 +26,17 @@ export default function AccountsPage() {
     return Array.from(parents.keys()).map(name => ({ key: name, name }));
   }, [portfolio]);
 
-  // Auto-select first account on load
-  useEffect(() => {
-    if (parentAccounts.length > 0 && !selectedAccount) {
-      setSelectedAccount(parentAccounts[0].key);
-    }
-  }, [parentAccounts, selectedAccount]);
+  const effectiveSelectedAccount = selectedAccount || parentAccounts[0]?.key || '';
 
   // Filter holdings for selected account
   const filteredHoldings = useMemo(() => {
-    if (!portfolio || !selectedAccount) return [];
+    if (!portfolio || !effectiveSelectedAccount) return [];
     return portfolio.holdings.filter(h => {
       const parts = h.accountPath.split(':');
       const parentName = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-      return parentName === selectedAccount;
+      return parentName === effectiveSelectedAccount;
     });
-  }, [portfolio, selectedAccount]);
+  }, [effectiveSelectedAccount, portfolio]);
 
   // Calculate filtered summary
   const filteredSummary = useMemo(() => {
@@ -135,7 +130,7 @@ export default function AccountsPage() {
           <p className="text-foreground-muted mt-1">Per-account investment breakdown</p>
         </div>
         <select
-          value={selectedAccount}
+          value={effectiveSelectedAccount}
           onChange={(e) => setSelectedAccount(e.target.value)}
           className="px-4 py-2 bg-background-secondary border border-border rounded-lg text-foreground"
         >

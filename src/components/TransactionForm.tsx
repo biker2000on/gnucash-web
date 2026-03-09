@@ -64,6 +64,7 @@ export function TransactionForm({
     });
     const formRef = useRef<HTMLDivElement>(null);
     const dateInputRef = useRef<HTMLInputElement>(null);
+    const saveAndAnotherRef = useRef<(() => Promise<void>) | null>(null);
     const { success } = useToast();
     const { defaultTaxRate, dateFormat } = useUserPreferences();
     const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
@@ -180,7 +181,7 @@ export function TransactionForm({
                 }
             }
         }
-    }, [transaction]);
+    }, [transaction, dateFormat]);
 
     // Fetch default currency if not provided
     useEffect(() => {
@@ -570,7 +571,7 @@ export function TransactionForm({
         }
     };
 
-    const handleSaveAndAnother = async () => {
+    saveAndAnotherRef.current = async () => {
         const validation = validateForm();
         setErrors(validation.errors);
         setFieldErrors(validation.fieldErrors);
@@ -619,14 +620,14 @@ export function TransactionForm({
             if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Enter') {
                 e.preventDefault();
                 if (onSaveAndAnother) {
-                    handleSaveAndAnother();
+                    saveAndAnotherRef.current?.();
                 }
             }
         };
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [onSaveAndAnother, handleSaveAndAnother]);
+    }, [onSaveAndAnother]);
 
     // Register date field shortcuts for help modal
     useKeyboardShortcut('date-plus', '+', 'Next day', () => {}, 'date-field');
@@ -916,7 +917,7 @@ export function TransactionForm({
                     {onSaveAndAnother && (
                         <button
                             type="button"
-                            onClick={handleSaveAndAnother}
+                            onClick={() => saveAndAnotherRef.current?.()}
                             disabled={saving}
                             className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 text-white rounded-lg transition-colors"
                         >

@@ -87,7 +87,7 @@ export function InlineAmountEditor({
 
             onUpdate(newValue);
             setIsEditing(false);
-        } catch (err) {
+        } catch {
             setError('Save failed');
             setEditValue(value.toString());
         } finally {

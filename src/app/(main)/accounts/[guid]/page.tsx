@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import AccountLedger, { AccountTransaction } from '@/components/AccountLedger';
 import { InvestmentAccount } from '@/components/InvestmentAccount';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';

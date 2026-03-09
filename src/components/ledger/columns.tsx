@@ -7,8 +7,8 @@ export function getColumns(meta: {
     accountGuid: string;
     isReconciling: boolean;
     isEditMode: boolean;
-}): ColumnDef<AccountTransaction, any>[] {
-    const columns: ColumnDef<AccountTransaction, any>[] = [];
+}): ColumnDef<AccountTransaction>[] {
+    const columns: ColumnDef<AccountTransaction>[] = [];
 
     // Checkbox column (reconciliation or edit mode)
     if (meta.isReconciling || meta.isEditMode) {

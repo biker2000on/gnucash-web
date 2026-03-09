@@ -10,7 +10,7 @@ import { ExpandedContext } from '@/components/charts/ExpandableChart';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
 import { ChartSettingsPanel } from './ChartSettingsPanel';
 import type { ChartDefaults } from '@/lib/user-preferences';
-import type { IndexDataPoint, IndicesData } from '@/types/investments';
+import type { IndicesData } from '@/types/investments';
 
 export type { ChartDefaults };
 

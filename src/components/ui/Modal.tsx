@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
@@ -34,15 +34,14 @@ export function Modal({
 }: ModalProps) {
     const modalRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
-    const [mounted, setMounted] = useState(false);
+    const mounted = useSyncExternalStore(
+        () => () => undefined,
+        () => true,
+        () => false
+    );
     const isMobile = useIsMobile();
     const mobileFullscreen = isMobile;
     const effectiveSize = isMobile ? 'fullscreen' : size;
-
-    // Wait for client-side mount before rendering portal
-    useEffect(() => {
-        setMounted(true);
-    }, []);
 
     // Handle escape key
     useEffect(() => {

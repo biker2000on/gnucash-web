@@ -17,15 +17,14 @@ interface DateCellProps {
 export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus }: DateCellProps) {
     const { dateFormat: format } = useUserPreferences();
     const [displayValue, setDisplayValue] = useState(() => formatDateForDisplay(value, format));
+    const [isEditing, setIsEditing] = useState(false);
     const ref = useRef<HTMLInputElement>(null);
     const { handleDateKeyDown } = useDateShortcuts(value, (newIso) => {
         onChange(newIso);
         setDisplayValue(formatDateForDisplay(newIso, format));
+        setIsEditing(false);
     });
-
-    useEffect(() => {
-        setDisplayValue(formatDateForDisplay(value, format));
-    }, [value]);
+    const resolvedDisplayValue = isEditing ? displayValue : formatDateForDisplay(value, format);
 
     useEffect(() => {
         if (autoFocus) {
@@ -57,15 +56,24 @@ export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArr
         } else {
             setDisplayValue(formatDateForDisplay(value, format));
         }
+        setIsEditing(false);
     };
 
     return (
         <input
             ref={ref}
             type="text"
-            value={displayValue}
-            onChange={(e) => setDisplayValue(e.target.value)}
-            onFocus={() => { ref.current?.select(); onFocus?.(); }}
+            value={resolvedDisplayValue}
+            onChange={(e) => {
+                setIsEditing(true);
+                setDisplayValue(e.target.value);
+            }}
+            onFocus={() => {
+                setIsEditing(true);
+                setDisplayValue(formatDateForDisplay(value, format));
+                ref.current?.select();
+                onFocus?.();
+            }}
             onBlur={handleBlur}
             onKeyDown={handleKeyDown}
             placeholder="MM/DD/YYYY"

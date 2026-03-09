@@ -8,6 +8,17 @@ import { AccountService, CreateAccountSchema } from '@/lib/services/account.serv
 import { getBookAccountGuids, getActiveBookRootGuid } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
+type AccountWithCommodityAndSplits = Prisma.accountsGetPayload<{
+    include: {
+        commodity: true;
+        splits: {
+            include: {
+                transaction: true;
+            };
+        };
+    };
+}>;
+
 /**
  * @openapi
  * /api/accounts:
@@ -92,36 +103,6 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(serializeBigInts(flatAccounts));
         }
 
-        // Hierarchical mode with balances
-        // Build date filter conditions for period balance
-        let periodBalanceFilter: Prisma.splitsWhereInput = {};
-        if (startDate && endDate) {
-            periodBalanceFilter = {
-                transaction: {
-                    post_date: {
-                        gte: new Date(startDate),
-                        lte: new Date(endDate),
-                    },
-                },
-            };
-        } else if (startDate) {
-            periodBalanceFilter = {
-                transaction: {
-                    post_date: {
-                        gte: new Date(startDate),
-                    },
-                },
-            };
-        } else if (endDate) {
-            periodBalanceFilter = {
-                transaction: {
-                    post_date: {
-                        lte: new Date(endDate),
-                    },
-                },
-            };
-        }
-
         // Fetch all accounts in the active book with their commodity and optionally splits
         const accountsData = await prisma.accounts.findMany({
             where: {
@@ -175,7 +156,7 @@ export async function GET(request: NextRequest) {
                 }
             }
 
-            accounts = accountsData.map(acc => {
+            accounts = (accountsData as AccountWithCommodityAndSplits[]).map(acc => {
                 const isInvestment = investmentTypes.includes(acc.account_type) && acc.commodity?.namespace !== 'CURRENCY';
                 const pricePerShare = isInvestment && acc.commodity_guid ? (priceCache.get(acc.commodity_guid) || 0) : 0;
 
@@ -183,7 +164,7 @@ export async function GET(request: NextRequest) {
                 let totalBalance = 0;
                 let periodBalance = 0;
 
-                for (const split of (acc as any).splits || []) {
+                for (const split of acc.splits) {
                     const qty = Number(split.quantity_num) / Number(split.quantity_denom);
                     totalBalance += qty;
 

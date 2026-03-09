@@ -141,7 +141,7 @@ export default function SettingsPage() {
 
       setSchedule((prev) => ({ ...prev, enabled }));
       success(`Automatic refresh ${enabled ? 'enabled' : 'disabled'}`);
-    } catch (err) {
+    } catch {
       showError('Failed to update schedule setting');
     }
   };
@@ -172,7 +172,7 @@ export default function SettingsPage() {
 
       setSchedule((prev) => ({ ...prev, intervalHours }));
       success(`Refresh interval set to ${INTERVAL_OPTIONS.find((o) => o.value === intervalHours)?.label}`);
-    } catch (err) {
+    } catch {
       showError('Failed to update refresh interval');
     }
   };
@@ -206,7 +206,7 @@ export default function SettingsPage() {
 
       setSchedule((prev) => ({ ...prev, refreshTime: utcTime }));
       success(`Refresh time set to ${localTime} (${utcTime} UTC)`);
-    } catch (err) {
+    } catch {
       showError('Failed to update refresh time');
     }
   };
@@ -226,7 +226,7 @@ export default function SettingsPage() {
       } else {
         success(data.message);
       }
-    } catch (err) {
+    } catch {
       showError('Failed to start price refresh');
     } finally {
       setRefreshing(false);
@@ -253,7 +253,7 @@ export default function SettingsPage() {
       if (coverageRes.ok) {
         setIndexCoverage(await coverageRes.json());
       }
-    } catch (err) {
+    } catch {
       showError('Failed to backfill index data');
     } finally {
       setBackfilling(false);
@@ -271,7 +271,7 @@ export default function SettingsPage() {
 
       const data = await res.json();
       success(data.message);
-    } catch (err) {
+    } catch {
       showError('Failed to clear cache');
     } finally {
       setClearing(false);

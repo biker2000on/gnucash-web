@@ -2,6 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ChartReportData, ReportType } from '@/lib/reports/types';
 import { requireRole } from '@/lib/auth';
 
+interface DashboardIncomeExpensePoint {
+    month: string;
+    income: number;
+    expenses: number;
+}
+
+interface DashboardIncomeExpenseResponse {
+    monthly: DashboardIncomeExpensePoint[];
+}
+
 export async function GET(request: NextRequest) {
     try {
         const roleResult = await requireRole('readonly');
@@ -29,7 +39,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const dashboardData = await response.json();
+        const dashboardData = await response.json() as DashboardIncomeExpenseResponse;
 
         // Transform to ChartReportData shape
         const chartData: ChartReportData = {
@@ -41,7 +51,7 @@ export async function GET(request: NextRequest) {
                 endDate: searchParams.get('endDate'),
             },
             series: ['income', 'expense'],
-            dataPoints: dashboardData.monthly.map((m: any) => ({
+            dataPoints: dashboardData.monthly.map((m) => ({
                 date: m.month,
                 income: m.income,
                 expense: m.expenses, // Note: dashboard uses 'expenses', we normalize to 'expense'

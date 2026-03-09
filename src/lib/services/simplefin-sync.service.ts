@@ -104,7 +104,7 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   const sfAccountMap = new Map(accountSet.accounts.map(a => [a.id, a]));
 
   // Get the transaction currency for the book
-  const bookCurrency = await prisma.$queryRaw<{ commodity_guid: string; mnemonic: string }[]>`
+  await prisma.$queryRaw<{ commodity_guid: string; mnemonic: string }[]>`
     SELECT c.guid as commodity_guid, c.mnemonic
     FROM books b
     JOIN commodities c ON c.guid = b.root_template_guid

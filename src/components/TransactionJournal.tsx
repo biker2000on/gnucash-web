@@ -271,7 +271,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
 
     // Get reconcile status for warning dialog
     const pendingTx = pendingGuid ? transactions.find(t => t.guid === pendingGuid) : null;
-    const { hasReconciled, hasCleared } = getReconcileStatus(pendingTx?.splits);
+    const { hasReconciled } = getReconcileStatus(pendingTx?.splits);
 
     // Reset and fetch when filter changes
     useEffect(() => {

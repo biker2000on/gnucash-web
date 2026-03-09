@@ -8,7 +8,7 @@ const poolConfig: PoolConfig = {
 
 const pool = new Pool(poolConfig);
 
-export const query = (text: string, params?: any[]) => pool.query(text, params);
+export const query = (text: string, params?: readonly unknown[]) => pool.query(text, params);
 
 /**
  * Converts GnuCash split values (integer + denominator) to a decimal string.

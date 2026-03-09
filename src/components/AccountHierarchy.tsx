@@ -61,10 +61,9 @@ function AccountNode({
 }: AccountNodeProps) {
     // Determine initial expansion state
     // Priority: 1) User manually expanded/collapsed, 2) Global depth setting
-    const hasUserPreference = expandedNodes.has(account.guid);
-    const initialExpanded = hasUserPreference ? expandedNodes.has(account.guid) : (depth < expandToDepth);
-    const [isExpanded, setIsExpanded] = useState(initialExpanded);
-    const [hasManualToggle, setHasManualToggle] = useState(hasUserPreference);
+    const [manualExpanded, setManualExpanded] = useState<boolean | null>(
+        expandedNodes.has(account.guid) ? true : null
+    );
 
     // Recursive search check: does this node or any child match the filter?
     const hasMatch = (acc: AccountWithChildren): boolean => {
@@ -76,25 +75,13 @@ function AccountNode({
     const reviewMatches = showToReview ? hasAnyUnreviewed(account, statusMap) : true;
     const matches = textMatches && reviewMatches;
 
-    // Auto-expand if there's a match inside and search is active
-    useEffect(() => {
-        if ((filterText || showToReview) && matches) {
-            setIsExpanded(true);
-        }
-    }, [filterText, showToReview, matches]);
-
-    // Update expansion state when global expandToDepth changes
-    // But only if the user hasn't manually toggled this node
-    useEffect(() => {
-        if (!hasManualToggle) {
-            setIsExpanded(depth < expandToDepth);
-        }
-    }, [expandToDepth, depth, hasManualToggle]);
-
     if (!matches) return null;
     if (account.hidden && !showHidden) return null;
 
     const hasChildren = account.children.length > 0;
+    const isExpanded = (filterText || showToReview) && matches
+        ? true
+        : manualExpanded ?? (depth < expandToDepth);
 
     // Recursive balance calculation for children that are visible
     const getAggregatedBalances = (acc: AccountWithChildren): { total: number, period: number, totalUsd: number, periodUsd: number } => {
@@ -130,7 +117,7 @@ function AccountNode({
         return { total, period, totalUsd, periodUsd };
     };
 
-    const { total: aggTotal, period: aggPeriod, totalUsd: aggTotalUsd, periodUsd: aggPeriodUsd } = getAggregatedBalances(account);
+    const { totalUsd: aggTotalUsd, periodUsd: aggPeriodUsd } = getAggregatedBalances(account);
 
     const isInvestment = account.account_type === 'STOCK' || account.account_type === 'MUTUAL';
     const hasSimpleFin = statusMap[account.guid]?.hasSimpleFin ?? false;
@@ -138,8 +125,7 @@ function AccountNode({
 
     const handleToggle = () => {
         const newExpanded = !isExpanded;
-        setIsExpanded(newExpanded);
-        setHasManualToggle(true); // Mark that user has manually toggled this node
+        setManualExpanded(newExpanded);
         setExpandedNodes(prev => {
             const next = new Set(prev);
             if (newExpanded) {
@@ -365,7 +351,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         localStorage.setItem('accountHierarchy.expandedNodes', JSON.stringify(Array.from(expandedNodes)));
     }, [expandedNodes]);
 
-    const sortTree = (accs: AccountWithChildren[]): AccountWithChildren[] => {
+    const sortTree = useCallback((accs: AccountWithChildren[]): AccountWithChildren[] => {
         return [...accs].sort((a, b) => {
             if (sortKey === 'name') return a.name.localeCompare(b.name);
             if (sortKey === 'total_balance') return parseFloat(b.total_balance || '0') - parseFloat(a.total_balance || '0');
@@ -375,9 +361,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             ...acc,
             children: sortTree(acc.children)
         }));
-    };
+    }, [sortKey]);
 
-    const sortedAccounts = useMemo(() => sortTree(accounts), [accounts, sortKey]);
+    const sortedAccounts = useMemo(() => sortTree(accounts), [accounts, sortTree]);
 
     // Account CRUD handlers
     const handleNewAccount = useCallback(() => {

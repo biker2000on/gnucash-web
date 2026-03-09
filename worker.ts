@@ -233,7 +233,7 @@ async function main() {
     lockDuration: 300000, // 5 minute lock (acts as job timeout)
   });
 
-  worker.on('completed', (_job) => {
+  worker.on('completed', () => {
     // Already logged above
   });
 

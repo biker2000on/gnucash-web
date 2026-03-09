@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { formatCurrency } from '@/lib/format';
 
 interface Currency {
     guid: string;

@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
 import { toDecimal, buildAccountPathMap } from './utils';
 
@@ -17,7 +18,7 @@ export async function generateReconciliation(
     const accountPathMap = await buildAccountPathMap(filters.bookAccountGuids);
 
     // Build WHERE clause for splits
-    const whereClause: any = {
+    const whereClause: Prisma.splitsWhereInput = {
         transaction: {
             post_date: {
                 ...(startDate && { gte: startDate }),

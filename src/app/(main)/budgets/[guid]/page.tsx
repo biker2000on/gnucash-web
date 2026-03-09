@@ -272,7 +272,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     }, []);
 
     // Build hierarchical tree structure from flat amounts
-    const { treeData, flattenedNodes, periodTotals, grandTotal } = useMemo(() => {
+    const { treeData, flattenedNodes } = useMemo(() => {
         if (!budget) return { treeData: [], flattenedNodes: [], periodTotals: [], grandTotal: 0 };
 
         // First, create a map of all accounts with their budget data
@@ -532,11 +532,6 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             remainingTotal: rem.reduce((s, v) => s + v, 0),
         };
     }, [budget, treeData]);
-
-    // Helper to determine if a value should be display-inverted for budget view
-    const shouldInvertDisplay = (accountType: string) => {
-        return accountType === 'INCOME' || accountType === 'LIABILITY';
-    };
 
     const getPeriodLabel = (num: number, index: number) => {
         const periodType = budget?.recurrence?.period_type;
@@ -881,7 +876,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         );
                                                     } else {
                                                         // Show rolled up value (read-only) or dash for unbudgeted
-                                                        let displayValue = applyBalanceReversal(value, account.type, balanceReversal);
+                                                        const displayValue = applyBalanceReversal(value, account.type, balanceReversal);
                                                         const isSubtotal = showRolledUp && account.rolledUpTotal !== 0;
                                                         return (
                                                             <td key={i} className={`px-2 py-1 text-right font-mono text-sm ${
@@ -895,7 +890,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                     }
                                                 })}
                                                 {(() => {
-                                                    let totalDisplay = applyBalanceReversal(displayTotal, account.type, balanceReversal);
+                                                    const totalDisplay = applyBalanceReversal(displayTotal, account.type, balanceReversal);
                                                     return (
                                                         <td className={`px-4 py-3 text-right font-mono font-semibold bg-background-tertiary/30 ${
                                                             isUnbudgeted

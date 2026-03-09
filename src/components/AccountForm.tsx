@@ -96,13 +96,17 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
                     );
                     setCommodities(comms);
                     // Set default commodity if not set
-                    if (!formData.commodity_guid && comms.length > 0) {
+                    setFormData(prev => {
+                        if (prev.commodity_guid || comms.length === 0) {
+                            return prev;
+                        }
+
                         const usd = comms.find((c: Commodity) => c.mnemonic === 'USD');
-                        setFormData(prev => ({
+                        return {
                             ...prev,
                             commodity_guid: usd?.guid || comms[0].guid,
-                        }));
-                    }
+                        };
+                    });
                 }
             } catch (err) {
                 console.error('Error fetching form data:', err);

@@ -15,6 +15,11 @@ interface AllocationChartProps {
 
 const COLORS = ['#06b6d4', '#10b981', '#a855f7', '#f59e0b', '#f43f5e', '#3b82f6', '#84cc16', '#ec4899'];
 
+interface AllocationLegendPayload {
+  percent?: number;
+  category?: string;
+}
+
 export function AllocationChart({ data }: AllocationChartProps) {
   const expanded = useContext(ExpandedContext);
 
@@ -53,22 +58,26 @@ export function AllocationChart({ data }: AllocationChartProps) {
               color: '#262626'
             }}
             labelStyle={{ color: '#262626' }}
-            formatter={(value, name, entry: any) => {
+            formatter={(value, _name, entry) => {
+              const payload = (entry?.payload ?? {}) as AllocationLegendPayload;
               const numValue = typeof value === 'number' ? value : 0;
               return [
-                `${formatCurrency(numValue)} (${(entry.payload.percent ?? 0).toFixed(1)}%)`,
-                entry.payload.category
+                `${formatCurrency(numValue)} (${(payload.percent ?? 0).toFixed(1)}%)`,
+                payload.category ?? ''
               ];
             }}
           />
           {expanded && (
             <Legend
               wrapperStyle={{ maxHeight: '120px', overflowY: 'auto' }}
-              formatter={(value, entry: any) => (
-                <span style={{ color: '#d4d4d4' }}>
-                  {value} ({entry.payload.percent.toFixed(1)}%)
-                </span>
-              )}
+              formatter={(value, entry) => {
+                const payload = (entry?.payload ?? {}) as AllocationLegendPayload;
+                return (
+                  <span style={{ color: '#d4d4d4' }}>
+                    {value} ({(payload.percent ?? 0).toFixed(1)}%)
+                  </span>
+                );
+              }}
             />
           )}
         </PieChart>

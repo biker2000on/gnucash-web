@@ -266,7 +266,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             } else {
                 showError(responseData.results[0]?.error || 'Failed to fetch price');
             }
-        } catch (err) {
+        } catch {
             showError('Network error fetching price');
         } finally {
             setFetchingPrice(false);

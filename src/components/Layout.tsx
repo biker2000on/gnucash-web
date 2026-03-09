@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef } from 'react';
+import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { UserMenu } from './UserMenu';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
@@ -217,6 +217,8 @@ const DEFAULT_SIDEBAR_WIDTH = 256;
 const MIN_SIDEBAR_WIDTH = 150;
 const MAX_SIDEBAR_WIDTH = 500;
 
+const subscribe = () => () => undefined;
+
 // ---------------------------------------------------------------------------
 // Layout component
 // ---------------------------------------------------------------------------
@@ -228,14 +230,50 @@ export default function Layout({ children }: { children: ReactNode }) {
     const isFullWidthPage = pathname?.startsWith('/budgets/') && pathname !== '/budgets/';
 
     // Desktop collapsed state -- initialised to false, hydrated from localStorage
-    const [collapsed, setCollapsed] = useState(false);
-    const [hydrated, setHydrated] = useState(false);
-    const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
+    const hydrated = useSyncExternalStore(subscribe, () => true, () => false);
+    const storedCollapsed = useSyncExternalStore(
+        subscribe,
+        () => {
+            try {
+                return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+            } catch {
+                return false;
+            }
+        },
+        () => false
+    );
+    const storedSidebarWidth = useSyncExternalStore(
+        subscribe,
+        () => {
+            try {
+                const storedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+                if (!storedWidth) {
+                    return DEFAULT_SIDEBAR_WIDTH;
+                }
+
+                const width = parseInt(storedWidth, 10);
+                return width >= MIN_SIDEBAR_WIDTH && width <= MAX_SIDEBAR_WIDTH
+                    ? width
+                    : DEFAULT_SIDEBAR_WIDTH;
+            } catch {
+                return DEFAULT_SIDEBAR_WIDTH;
+            }
+        },
+        () => DEFAULT_SIDEBAR_WIDTH
+    );
+    const [collapsedOverride, setCollapsedOverride] = useState<boolean | null>(null);
+    const [sidebarWidthOverride, setSidebarWidthOverride] = useState<number | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const sidebarWidthRef = useRef(DEFAULT_SIDEBAR_WIDTH);
+    const collapsed = collapsedOverride ?? storedCollapsed;
+    const sidebarWidth = sidebarWidthOverride ?? storedSidebarWidth;
 
     // Mobile open/close state
-    const [mobileOpen, setMobileOpen] = useState(false);
+    const [mobileSidebarState, setMobileSidebarState] = useState<{ open: boolean; pathname: string | null }>({
+        open: false,
+        pathname,
+    });
+    const mobileOpen = mobileSidebarState.open && mobileSidebarState.pathname === pathname;
 
     // Expandable nav sections (e.g. Investments sub-items)
     const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
@@ -264,38 +302,16 @@ export default function Layout({ children }: { children: ReactNode }) {
         });
     }, [pathname]);
 
-    // Hydrate collapsed state from localStorage on mount
-    useEffect(() => {
-        try {
-            const stored = localStorage.getItem(SIDEBAR_COLLAPSED_KEY);
-            if (stored === 'true') {
-                setCollapsed(true);
-            }
-            const storedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-            if (storedWidth) {
-                const w = parseInt(storedWidth, 10);
-                if (w >= MIN_SIDEBAR_WIDTH && w <= MAX_SIDEBAR_WIDTH) {
-                    setSidebarWidth(w);
-                }
-            }
-        } catch {
-            // SSR or access denied -- ignore
-        }
-        setHydrated(true);
-    }, []);
-
     // Persist collapsed state to localStorage
     const toggleCollapsed = useCallback(() => {
-        setCollapsed((prev) => {
-            const next = !prev;
-            try {
-                localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
-            } catch {
-                // ignore
-            }
-            return next;
-        });
-    }, []);
+        const next = !collapsed;
+        setCollapsedOverride(next);
+        try {
+            localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+        } catch {
+            // ignore
+        }
+    }, [collapsed]);
 
     const handleDragStart = useCallback((e: React.PointerEvent) => {
         e.preventDefault();
@@ -305,7 +321,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
         const handleMove = (moveEvent: PointerEvent) => {
             const newWidth = Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, startWidth + (moveEvent.clientX - startX)));
-            setSidebarWidth(newWidth);
+            setSidebarWidthOverride(newWidth);
         };
 
         const handleUp = () => {
@@ -338,11 +354,6 @@ export default function Layout({ children }: { children: ReactNode }) {
         };
     }, [isDragging]);
 
-    // Close mobile sidebar on pathname change
-    useEffect(() => {
-        setMobileOpen(false);
-    }, [pathname]);
-
     // -----------------------------------------------------------------------
     // Sidebar content (shared between desktop and mobile)
     // -----------------------------------------------------------------------
@@ -353,7 +364,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         const isSectionExpanded = expandedSections.has(item.name);
         const isCollapsed = collapsed && hydrated;
 
-        const handleParentClick = (e: React.MouseEvent) => {
+        const handleParentClick = () => {
             if (item.children && !isCollapsed) {
                 // Toggle expand/collapse of sub-items
                 setExpandedSections((prev) => {
@@ -366,7 +377,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     return next;
                 });
             }
-            setMobileOpen(false);
+            setMobileSidebarState({ open: false, pathname });
         };
 
         return (
@@ -419,7 +430,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                 <Link
                                     key={child.href}
                                     href={child.href}
-                                    onClick={() => setMobileOpen(false)}
+                                    onClick={() => setMobileSidebarState({ open: false, pathname })}
                                     className={`block px-3 py-2.5 min-h-[44px] flex items-center text-sm rounded-lg transition-colors
                                         ${isChildActive
                                             ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
@@ -497,7 +508,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             {mobileOpen && (
                 <div
                     className="fixed inset-0 z-40 bg-black/50 md:hidden"
-                    onClick={() => setMobileOpen(false)}
+                    onClick={() => setMobileSidebarState({ open: false, pathname })}
                     aria-hidden="true"
                 />
             )}
@@ -533,7 +544,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         const Icon = iconMap[item.icon];
                         const isSectionExpanded = expandedSections.has(item.name);
 
-                        const handleMobileParentClick = (e: React.MouseEvent) => {
+                        const handleMobileParentClick = () => {
                             if (item.children) {
                                 setExpandedSections((prev) => {
                                     const next = new Set(prev);
@@ -545,7 +556,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                     return next;
                                 });
                             }
-                            setMobileOpen(false);
+                            setMobileSidebarState({ open: false, pathname });
                         };
 
                         return (
@@ -580,7 +591,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                                 <Link
                                                     key={child.href}
                                                     href={child.href}
-                                                    onClick={() => setMobileOpen(false)}
+                                                    onClick={() => setMobileSidebarState({ open: false, pathname })}
                                                     className={`block px-3 py-2.5 min-h-[44px] flex items-center text-sm rounded-lg transition-colors
                                                         ${isChildActive
                                                             ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
@@ -608,7 +619,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <div className="px-4 md:px-8 py-3 flex items-center justify-between">
                         {/* Hamburger: mobile only */}
                         <button
-                            onClick={() => setMobileOpen(true)}
+                            onClick={() => setMobileSidebarState({ open: true, pathname })}
                             className="p-2 -ml-2 rounded-lg text-foreground-secondary hover:bg-surface-hover hover:text-foreground transition-colors md:hidden"
                             aria-label="Open sidebar"
                         >

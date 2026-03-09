@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { REPORTS, getReportsByCategory, ReportConfig, SavedReport, SavedReportInput, ReportType } from '@/lib/reports/types';
+import { getReportsByCategory, ReportConfig, SavedReport, SavedReportInput, ReportType } from '@/lib/reports/types';
 import SavedReportCard from '@/components/reports/SavedReportCard';
 import SaveReportDialog from '@/components/reports/SaveReportDialog';
 

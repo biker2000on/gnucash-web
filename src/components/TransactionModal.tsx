@@ -128,7 +128,7 @@ export function TransactionModal({
         setPendingAction(null);
     };
 
-    const { hasReconciled, hasCleared } = getReconcileStatus(transaction?.splits);
+    const { hasReconciled } = getReconcileStatus(transaction?.splits);
 
     return (
         <Modal

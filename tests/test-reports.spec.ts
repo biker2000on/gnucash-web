@@ -1,10 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 const BASE_URL = 'http://localhost:3000';
 const USERNAME = 'biker2000on';
 const PASSWORD = '6ujn&dafyOaKWaTmI1OYR666EgpdkaGG';
 
-async function login(page: any) {
+async function login(page: Page) {
     await page.goto(`${BASE_URL}/login`);
     await page.fill('input[name="username"], input[type="text"]', USERNAME);
     await page.fill('input[type="password"]', PASSWORD);
@@ -16,7 +16,7 @@ async function login(page: any) {
  * Wait for "Generating report..." to disappear, meaning report data loaded.
  * Falls back after maxWait ms.
  */
-async function waitForReportLoad(page: any, maxWait = 30000) {
+async function waitForReportLoad(page: Page, maxWait = 30000) {
     try {
         // Wait for the loading text to appear first (may already be gone)
         const loadingText = page.locator('text=Generating report...');

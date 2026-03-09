@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimal } from '@/lib/prisma';
-import { getAllExchangeRates, getBaseCurrency, getCurrencyByMnemonic } from '@/lib/currency';
+import { getAllExchangeRates, getCurrencyByMnemonic } from '@/lib/currency';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 

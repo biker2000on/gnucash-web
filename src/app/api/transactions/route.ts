@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
-import { Transaction, Split, CreateTransactionRequest } from '@/lib/types';
+import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { Prisma } from '@prisma/client';
 import { logAudit } from '@/lib/services/audit.service';
@@ -146,9 +146,6 @@ export async function GET(request: Request) {
 
         // Amount range filters (need raw SQL for these due to computed values)
         // For minAmount and maxAmount, we'll use Prisma's raw filter
-        let minAmountFilter: Prisma.transactionsWhereInput | undefined;
-        let maxAmountFilter: Prisma.transactionsWhereInput | undefined;
-
         if (minAmount || maxAmount || reconcileStates) {
             // These require post-filtering or raw SQL
             // For now, we'll fetch and filter in JS for complex cases
@@ -310,7 +307,7 @@ export async function POST(request: Request) {
             totalSplitsCount = allSplits.length;
 
             // Insert transaction
-            const newTx = await tx.transactions.create({
+            await tx.transactions.create({
                 data: {
                     guid: txGuid,
                     currency_guid: body.currency_guid,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Transaction, Split } from '@/lib/types';
+import { Transaction } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
