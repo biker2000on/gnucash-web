@@ -159,6 +159,7 @@ export function PWAInstallProvider({ children }: { children: React.ReactNode }) 
         }
 
         const handleBeforeInstallPrompt = (event: Event) => {
+            console.log('[PWA] beforeinstallprompt event fired', event);
             event.preventDefault();
             setDeferredPrompt(event as BeforeInstallPromptEvent);
         };
@@ -175,6 +176,7 @@ export function PWAInstallProvider({ children }: { children: React.ReactNode }) 
             setIsInstalled(isStandaloneMode());
         };
 
+        console.log('[PWA] beforeinstallprompt listener attached');
         window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
         window.addEventListener('appinstalled', handleAppInstalled);
         mediaQuery.addEventListener('change', handleDisplayModeChange);
@@ -208,6 +210,7 @@ export function PWAInstallProvider({ children }: { children: React.ReactNode }) 
                     scope: '/',
                     updateViaCache: 'none',
                 });
+                console.log('[PWA] Service worker registered', { scope: registration.scope });
 
                 const activateWaitingWorker = () => {
                     if (!registration.waiting) {
@@ -253,7 +256,8 @@ export function PWAInstallProvider({ children }: { children: React.ReactNode }) 
                 return () => {
                     document.removeEventListener('visibilitychange', handleVisibilityChange);
                 };
-            } catch {
+            } catch (error) {
+                console.error('[PWA] Service worker registration failed', error);
                 return undefined;
             }
         };
@@ -274,6 +278,16 @@ export function PWAInstallProvider({ children }: { children: React.ReactNode }) 
             }
         };
     }, []);
+
+    useEffect(() => {
+        const canInstall = !isInstalled && (Boolean(deferredPrompt) || (deviceInfo.isIos && deviceInfo.isSafari));
+        console.log('[PWA] Install state', {
+            canInstall,
+            isInstalled,
+            hasDeferredPrompt: Boolean(deferredPrompt),
+            ...deviceInfo,
+        });
+    }, [deferredPrompt, isInstalled, deviceInfo]);
 
     const showLoginInstallPrompt = useMemo(() => (
         !isInstalled &&
