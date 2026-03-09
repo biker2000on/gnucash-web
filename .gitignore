@@ -3,6 +3,7 @@ nul
 .playwright*/
 playwright*/
 *.png
+!public/icons/*.png
 
 # dependencies
 /node_modules
