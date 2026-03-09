@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider, ThemeScript } from "@/contexts/ThemeContext";
 import { UserPreferencesProvider } from "@/contexts/UserPreferencesContext";
-import { ServiceWorkerRegistration } from "@/components/ServiceWorkerRegistration";
+import { PWAInstallProvider } from "@/contexts/PWAInstallContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -49,8 +49,9 @@ export default function RootLayout({
       >
         <ThemeProvider>
           <UserPreferencesProvider>
-            <ServiceWorkerRegistration />
-            {children}
+            <PWAInstallProvider>
+              {children}
+            </PWAInstallProvider>
           </UserPreferencesProvider>
         </ThemeProvider>
       </body>

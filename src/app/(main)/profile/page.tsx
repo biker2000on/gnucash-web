@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
+import { usePWAInstall } from '@/contexts/PWAInstallContext';
 
 interface User {
     id: number;
@@ -31,12 +32,15 @@ const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; descri
 
 export default function ProfilePage() {
     const { theme, setTheme } = useTheme();
+    const { canInstall, isInstalled, isIos, isAndroid, isMobile, promptInstall } = usePWAInstall();
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [changingPassword, setChangingPassword] = useState(false);
+    const [installingApp, setInstallingApp] = useState(false);
+    const [installMessage, setInstallMessage] = useState<string | null>(null);
     const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     useEffect(() => {
@@ -94,6 +98,29 @@ export default function ProfilePage() {
             setPasswordMessage({ type: 'error', text: 'Failed to change password' });
         } finally {
             setChangingPassword(false);
+        }
+    };
+
+    const handleInstallApp = async () => {
+        setInstallMessage(null);
+        setInstallingApp(true);
+
+        try {
+            const result = await promptInstall();
+
+            if (result === 'unavailable') {
+                setInstallMessage('Install is not available in this browser. Use the browser menu to add the app to your home screen.');
+                return;
+            }
+
+            if (result === 'dismissed') {
+                setInstallMessage('Install prompt dismissed. You can try again from this page at any time.');
+                return;
+            }
+
+            setInstallMessage('Install prompt opened. Once accepted, the app will appear on your device.');
+        } finally {
+            setInstallingApp(false);
         }
     };
 
@@ -184,6 +211,65 @@ export default function ProfilePage() {
                         </label>
                     ))}
                 </div>
+            </div>
+
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-foreground mb-2">Install App</h3>
+                <p className="text-sm text-foreground-muted mb-6">
+                    Install GnuCash Web on your phone or computer for a faster app-like experience. Updates are applied automatically through the service worker.
+                </p>
+
+                {installMessage && (
+                    <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-cyan-500/10 border border-cyan-500/30 text-cyan-300">
+                        {installMessage}
+                    </div>
+                )}
+
+                {isInstalled ? (
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+                        This app is already installed on this device.
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        {canInstall && !isIos && (
+                            <button
+                                type="button"
+                                onClick={handleInstallApp}
+                                disabled={installingApp}
+                                className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {installingApp && (
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                )}
+                                <span>{installingApp ? 'Opening Install Prompt...' : 'Install on This Device'}</span>
+                            </button>
+                        )}
+
+                        <div className="rounded-xl border border-border bg-background-tertiary/40 px-4 py-4 text-sm text-foreground-secondary space-y-2">
+                            {isIos ? (
+                                <>
+                                    <p className="text-foreground font-medium">iPhone or iPad</p>
+                                    <p>Open this site in Safari, tap Share, then choose Add to Home Screen.</p>
+                                </>
+                            ) : isAndroid ? (
+                                <>
+                                    <p className="text-foreground font-medium">Android</p>
+                                    <p>Use the install button above. If it is unavailable, open the browser menu and choose Install app or Add to Home screen.</p>
+                                </>
+                            ) : isMobile ? (
+                                <>
+                                    <p className="text-foreground font-medium">Mobile browser</p>
+                                    <p>Use your browser menu to add this app to your home screen if the install button is unavailable.</p>
+                                </>
+                            ) : (
+                                <>
+                                    <p className="text-foreground font-medium">Desktop</p>
+                                    <p>Use the install button above. If your browser does not support it, check the address bar or browser menu for an install action.</p>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Change Password */}

@@ -9,6 +9,9 @@ interface LoginFormProps {
     redirectTo?: string;
 }
 
+const LOGIN_INSTALL_PENDING_KEY = 'pwa-install-pending-after-login';
+const INSTALL_STATE_CHANGE_EVENT = 'pwa-install-state-change';
+
 export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormProps) {
     const router = useRouter();
     const [username, setUsername] = useState('');
@@ -41,6 +44,9 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
             if (!res.ok) {
                 throw new Error(data.error || 'Authentication failed');
             }
+
+            sessionStorage.setItem(LOGIN_INSTALL_PENDING_KEY, 'true');
+            window.dispatchEvent(new Event(INSTALL_STATE_CHANGE_EVENT));
 
             // Redirect to original page (or default) on success
             router.push(redirectTo);
