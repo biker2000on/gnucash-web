@@ -201,6 +201,7 @@ const navItems: NavItem[] = [
         icon: 'Settings',
         children: [
             { name: 'General', href: '/settings' },
+            { name: 'Commodities', href: '/settings/commodities' },
             { name: 'Connections', href: '/settings/connections' },
             { name: 'Users', href: '/settings/users' },
         ],
@@ -230,6 +231,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     const isFullWidthPage =
         (pathname?.startsWith('/budgets/') && pathname !== '/budgets/') ||
         pathname === '/ledger' ||
+        pathname === '/settings/commodities' ||
         (pathname?.startsWith('/accounts/') && pathname !== '/accounts/');
 
     // Desktop collapsed state -- initialised to false, hydrated from localStorage

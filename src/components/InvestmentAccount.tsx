@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
@@ -57,7 +56,6 @@ interface InvestmentAccountProps {
 }
 
 export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
-    const router = useRouter();
     const { success, error: showError } = useToast();
     const { dateFormat } = useUserPreferences();
     const [data, setData] = useState<ValuationData | null>(null);
@@ -260,11 +258,24 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                 return;
             }
 
+            if (responseData.queued) {
+                success('Price refresh queued');
+                return;
+            }
+
             if (responseData.stored > 0) {
-                success(`Price updated: $${responseData.results[0]?.price?.toFixed(2)}`);
-                router.refresh();
+                await fetchData();
+                success(
+                    `Updated ${responseData.results?.[0]?.symbol || data.commodity.mnemonic}: ${responseData.stored} historical price${responseData.stored === 1 ? '' : 's'} stored`
+                );
             } else {
-                showError(responseData.results[0]?.error || 'Failed to fetch price');
+                const result = responseData.results?.[0];
+                if (result?.success === false) {
+                    showError(result.error || 'Failed to fetch price');
+                } else {
+                    success(`${data.commodity.mnemonic} is already up to date`);
+                    await fetchData();
+                }
             }
         } catch {
             showError('Network error fetching price');

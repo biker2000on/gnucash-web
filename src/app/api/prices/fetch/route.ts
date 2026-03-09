@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchAndStorePrices, ensureIndexCommodities, fetchIndexPrices } from '@/lib/price-service';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
+import { enqueueJob } from '@/lib/queue/queues';
 
 /**
  * POST /api/prices/fetch
@@ -29,6 +30,7 @@ import { requireRole } from '@/lib/auth';
 const FetchPricesSchema = z.object({
   symbols: z.array(z.string()).optional(),
   force: z.boolean().optional(),
+  async: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -39,6 +41,7 @@ export async function POST(request: NextRequest) {
     // Parse request body
     let symbols: string[] | undefined;
     let force = false;
+    let runAsync = false;
 
     const contentType = request.headers.get('content-type');
     if (contentType?.includes('application/json')) {
@@ -54,6 +57,18 @@ export async function POST(request: NextRequest) {
 
       symbols = parseResult.data.symbols;
       force = parseResult.data.force ?? false;
+      runAsync = parseResult.data.async ?? false;
+    }
+
+    if (runAsync) {
+      const jobId = await enqueueJob('refresh-prices', { symbols, force });
+      if (jobId) {
+        return NextResponse.json({
+          queued: true,
+          jobId,
+          message: 'Price refresh job queued',
+        });
+      }
     }
 
     // Fetch and store historical prices

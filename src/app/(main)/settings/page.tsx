@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -292,6 +293,23 @@ export default function SettingsPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+
+      <div className="bg-surface rounded-xl border border-border p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Commodity Quote Settings</h2>
+            <p className="text-sm text-foreground-muted mt-1">
+              Manage quote flags and price source configuration for all commodities.
+            </p>
+          </div>
+          <Link
+            href="/settings/commodities"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+          >
+            Open Commodity Settings
+          </Link>
+        </div>
+      </div>
 
       {/* Price Refresh Schedule */}
       <div className="bg-surface rounded-xl border border-border p-6">

@@ -46,6 +46,13 @@ export interface FetchAndStoreResult {
   results: PriceFetchResult[];
 }
 
+export interface AuditPricesResult {
+  stored: number;
+  audited: number;
+  failed: number;
+  results: PriceFetchResult[];
+}
+
 /**
  * A single historical price row returned from Yahoo Finance
  */
@@ -77,6 +84,82 @@ export async function getLastPriceDate(commodityGuid: string): Promise<Date | nu
   });
 
   return latestPrice?.date ?? null;
+}
+
+/**
+ * Get the earliest stored price date for a commodity.
+ */
+async function getFirstPriceDate(commodityGuid: string): Promise<Date | null> {
+  const { default: prisma } = await import('./prisma');
+
+  const firstPrice = await prisma.prices.findFirst({
+    where: { commodity_guid: commodityGuid },
+    orderBy: { date: 'asc' },
+    select: { date: true },
+  });
+
+  return firstPrice?.date ?? null;
+}
+
+/**
+ * Get the earliest transaction date for accounts using a commodity.
+ */
+async function getFirstCommodityTransactionDate(commodityGuid: string): Promise<Date | null> {
+  const { default: prisma } = await import('./prisma');
+
+  const accounts = await prisma.accounts.findMany({
+    where: {
+      commodity_guid: commodityGuid,
+      account_type: { in: ['STOCK', 'MUTUAL'] },
+    },
+    select: { guid: true },
+  });
+
+  if (accounts.length === 0) {
+    return null;
+  }
+
+  const firstSplit = await prisma.splits.findFirst({
+    where: {
+      account_guid: { in: accounts.map((account) => account.guid) },
+    },
+    orderBy: {
+      transaction: {
+        post_date: 'asc',
+      },
+    },
+    select: {
+      transaction: {
+        select: {
+          post_date: true,
+        },
+      },
+    },
+  });
+
+  return firstSplit?.transaction.post_date ?? null;
+}
+
+/**
+ * Determine the earliest date that should have historical prices for a commodity.
+ */
+async function getCommodityAuditStartDate(commodityGuid: string): Promise<Date> {
+  const [firstTransactionDate, firstPriceDate] = await Promise.all([
+    getFirstCommodityTransactionDate(commodityGuid),
+    getFirstPriceDate(commodityGuid),
+  ]);
+
+  const candidates = [firstTransactionDate, firstPriceDate].filter((date): date is Date => Boolean(date));
+  if (candidates.length > 0) {
+    const earliest = new Date(Math.min(...candidates.map((date) => date.getTime())));
+    earliest.setUTCHours(0, 0, 0, 0);
+    return earliest;
+  }
+
+  const fallback = new Date();
+  fallback.setUTCMonth(fallback.getUTCMonth() - 3);
+  fallback.setUTCHours(0, 0, 0, 0);
+  return fallback;
 }
 
 /**
@@ -528,6 +611,91 @@ export async function fetchAndStorePrices(
     stored: totalBackfilled + totalGapsFilled,
     backfilled: totalBackfilled,
     gapsFilled: totalGapsFilled,
+    failed: totalFailed,
+    results,
+  };
+}
+
+/**
+ * Audit each commodity's full historical coverage from its first transaction
+ * or earliest known price and backfill every missing trading day.
+ */
+export async function auditAndBackfillPrices(
+  symbols?: string[]
+): Promise<AuditPricesResult> {
+  const endDate = new Date();
+  const commodities = await getQuotableCommodities();
+
+  let targetCommodities = commodities;
+  if (symbols && symbols.length > 0) {
+    const symbolSet = new Set(symbols.map((symbol) => symbol.toUpperCase()));
+    targetCommodities = commodities.filter((commodity) => symbolSet.has(commodity.mnemonic.toUpperCase()));
+  }
+
+  if (targetCommodities.length === 0) {
+    return { stored: 0, audited: 0, failed: 0, results: [] };
+  }
+
+  const results: PriceFetchResult[] = [];
+  let totalStored = 0;
+  let totalAudited = 0;
+  let totalFailed = 0;
+
+  for (const commodity of targetCommodities) {
+    const symbol = commodity.mnemonic;
+
+    try {
+      const startDate = await getCommodityAuditStartDate(commodity.guid);
+      const existingDates = await getExistingPriceDates(commodity.guid, startDate, endDate);
+      const historicalPrices = await fetchHistoricalPrices(symbol, startDate, endDate);
+
+      let pricesStored = 0;
+      let earliestStored: string | null = null;
+      let latestStored: string | null = null;
+
+      for (const row of historicalPrices) {
+        const dateStr = formatDateYMD(row.date);
+        if (existingDates.has(dateStr)) {
+          continue;
+        }
+
+        const stored = await storeFetchedPrice(commodity.guid, symbol, row.close, row.date);
+        if (stored) {
+          pricesStored++;
+          existingDates.add(dateStr);
+          if (!earliestStored || dateStr < earliestStored) earliestStored = dateStr;
+          if (!latestStored || dateStr > latestStored) latestStored = dateStr;
+        }
+      }
+
+      totalStored += pricesStored;
+      totalAudited++;
+      results.push({
+        symbol,
+        pricesStored,
+        dateRange: {
+          from: formatDateYMD(startDate),
+          to: latestStored ?? formatDateYMD(endDate),
+        },
+        success: true,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`Failed to audit ${symbol}:`, errorMessage);
+      totalFailed++;
+      results.push({
+        symbol,
+        pricesStored: 0,
+        dateRange: null,
+        success: false,
+        error: errorMessage,
+      });
+    }
+  }
+
+  return {
+    stored: totalStored,
+    audited: totalAudited,
     failed: totalFailed,
     results,
   };
