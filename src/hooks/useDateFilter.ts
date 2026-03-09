@@ -12,6 +12,8 @@ export function useDateFilter() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const pathname = usePathname();
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
     const subscribe = useCallback((onStoreChange: () => void) => {
         const handleChange = () => onStoreChange();
         window.addEventListener(DATE_FILTER_EVENT, handleChange);
@@ -32,9 +34,6 @@ export function useDateFilter() {
         },
         () => false
     );
-
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
 
     // On mount, restore from localStorage if URL params are empty
     useEffect(() => {

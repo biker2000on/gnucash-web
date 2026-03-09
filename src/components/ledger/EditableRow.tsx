@@ -7,6 +7,7 @@ import { AccountCell } from './cells/AccountCell';
 import { AmountCell } from './cells/AmountCell';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { formatDisplayAccountPath } from '@/lib/account-path';
 
 export interface EditableRowHandle {
     save: () => Promise<boolean>;
@@ -37,6 +38,7 @@ interface EditableRowProps {
     onArrowUp?: () => void;
     onArrowDown?: () => void;
     onColumnFocus?: (columnIndex: number) => void;
+    onTabFromActions?: (direction: 'next' | 'previous') => void;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -56,6 +58,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onArrowUp,
         onArrowDown,
         onColumnFocus,
+        onTabFromActions,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -198,7 +201,9 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
                     <td className="px-6 py-4 text-sm text-foreground font-medium">{transaction.description}</td>
-                    <td className="px-6 py-4 text-sm text-foreground-secondary">{otherSplit?.account_name || ''}</td>
+                    <td className="px-6 py-4 text-sm text-foreground-secondary">
+                        {formatDisplayAccountPath(otherSplit?.account_fullname, otherSplit?.account_name)}
+                    </td>
                     <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
                         {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
                     </td>
@@ -281,7 +286,17 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                 </td>
                 <td className="px-2 py-2 align-middle">
-                    <button onClick={() => onEditModal(transaction.guid)} className="text-foreground-muted hover:text-cyan-400 transition-colors" title="Edit">
+                    <button
+                        onClick={() => onEditModal(transaction.guid)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Tab') {
+                                e.preventDefault();
+                                onTabFromActions?.(e.shiftKey ? 'previous' : 'next');
+                            }
+                        }}
+                        className="text-foreground-muted hover:text-cyan-400 transition-colors"
+                        title="Edit"
+                    >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>

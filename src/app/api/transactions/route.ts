@@ -9,6 +9,7 @@ import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { requireRole } from '@/lib/auth';
+import { buildAccountPathMap } from '@/lib/reports/utils';
 
 /**
  * @openapi
@@ -173,6 +174,8 @@ export async function GET(request: Request) {
             },
         });
 
+        const accountPathMap = await buildAccountPathMap(bookAccountGuids);
+
         // Post-filter for amount range and reconcile states if needed
         let filteredTransactions = transactions;
 
@@ -225,6 +228,7 @@ export async function GET(request: Request) {
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
+                account_fullname: accountPathMap.get(split.account_guid) || split.account.name,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
@@ -401,6 +405,7 @@ export async function POST(request: Request) {
                 quantity_denom: split.quantity_denom,
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
+                account_fullname: split.account.fullname,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),

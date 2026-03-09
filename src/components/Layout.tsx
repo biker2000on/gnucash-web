@@ -226,8 +226,11 @@ const subscribe = () => () => undefined;
 export default function Layout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
 
-    // Budget detail pages need full width for the period columns
-    const isFullWidthPage = pathname?.startsWith('/budgets/') && pathname !== '/budgets/';
+    // Data-dense pages use the full content width to reduce horizontal scrolling.
+    const isFullWidthPage =
+        (pathname?.startsWith('/budgets/') && pathname !== '/budgets/') ||
+        pathname === '/ledger' ||
+        (pathname?.startsWith('/accounts/') && pathname !== '/accounts/');
 
     // Desktop collapsed state -- initialised to false, hydrated from localStorage
     const hydrated = useSyncExternalStore(subscribe, () => true, () => false);

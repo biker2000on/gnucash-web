@@ -3,6 +3,7 @@
 import { Transaction } from '@/lib/types';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
+import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import { TransactionModal } from './TransactionModal';
@@ -904,6 +905,21 @@ export default function AccountLedger({
                                         setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                                     }}
                                     onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                    onTabFromActions={async (direction) => {
+                                        const handle = editableRowRefs.current.get(tx.guid);
+                                        if (handle?.isDirty()) {
+                                            await handle.save();
+                                        }
+
+                                        if (direction === 'next') {
+                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                            setFocusedColumnIndex(0);
+                                            return;
+                                        }
+
+                                        setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                        setFocusedColumnIndex(4);
+                                    }}
                                 />
                             ))
                         ) : (
@@ -1012,8 +1028,8 @@ export default function AccountLedger({
                                                             <div className="space-y-1">
                                                                 {otherSplits.map((split) => (
                                                                     <div key={split.guid} className="flex justify-between items-center text-xs">
-                                                                        <span className="text-foreground-secondary truncate max-w-[180px]">
-                                                                            {split.account_name}
+                                                                        <span className="text-foreground-secondary whitespace-normal break-words">
+                                                                            {formatDisplayAccountPath(split.account_fullname, split.account_name)}
                                                                         </span>
                                                                         {isExpanded && (
                                                                             <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
