@@ -2,10 +2,13 @@
     "name": "GnuCash Web",
     "short_name": "GnuCash",
     "description": "Modern web interface for GnuCash",
+    "id": "/",
+    "scope": "/",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#0a0a0a",
     "theme_color": "#10b981",
+    "categories": ["finance"],
     "icons": [
         {
             "src": "/icons/icon.svg",
@@ -36,6 +39,22 @@
             "sizes": "512x512",
             "type": "image/png",
             "purpose": "maskable"
+        }
+    ],
+    "screenshots": [
+        {
+            "src": "/icons/screenshot-mobile.png",
+            "sizes": "1080x1920",
+            "type": "image/png",
+            "form_factor": "narrow",
+            "label": "GnuCash Web on mobile"
+        },
+        {
+            "src": "/icons/screenshot-desktop.png",
+            "sizes": "1920x1080",
+            "type": "image/png",
+            "form_factor": "wide",
+            "label": "GnuCash Web on desktop"
         }
     ]
 }
