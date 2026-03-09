@@ -35,6 +35,10 @@ const VALID_REPORT_TYPES = new Set<string>([
 type SavedReportRow = Prisma.gnucash_web_saved_reportsGetPayload<Record<string, never>>;
 
 function toSavedReport(row: SavedReportRow): SavedReport {
+  if (row.user_id == null) {
+    throw new Error(`Saved report ${row.id} is missing a user_id`);
+  }
+
   return {
     id: row.id,
     userId: row.user_id,
@@ -42,7 +46,7 @@ function toSavedReport(row: SavedReportRow): SavedReport {
     name: row.name,
     description: row.description,
     config: (row.config as Record<string, unknown>) || {},
-    filters: row.filters ? (row.filters as ReportFilters) : null,
+    filters: row.filters ? (row.filters as unknown as ReportFilters) : null,
     isStarred: row.is_starred,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),

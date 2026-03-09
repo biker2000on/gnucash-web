@@ -529,7 +529,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         GnuCash Web
                     </h1>
                     <button
-                        onClick={() => setMobileOpen(false)}
+                        onClick={() => setMobileSidebarState({ open: false, pathname })}
                         className="p-2.5 rounded-lg text-sidebar-text hover:bg-sidebar-hover hover:text-foreground transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         aria-label="Close sidebar"
                     >

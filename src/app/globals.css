@@ -5,6 +5,9 @@
    ======================================== */
 
 :root {
+    --font-geist-sans: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-geist-mono: "SFMono-Regular", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+
     /* Light theme colors (default) */
     --background: #ffffff;
     --background-secondary: #f8fafc;

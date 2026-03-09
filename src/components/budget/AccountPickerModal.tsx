@@ -86,7 +86,7 @@ export function AccountPickerModal({
                 name: a.name,
                 account_type: a.account_type,
                 parent_guid: a.parent_guid || null,
-                fullname: a.fullname || a.full_name || a.name,
+                fullname: a.fullname || ('full_name' in a ? a.full_name : undefined) || a.name,
                 commodity_mnemonic: a.commodity_mnemonic,
             }));
             setRawAccounts(accounts);

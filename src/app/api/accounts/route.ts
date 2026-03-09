@@ -103,26 +103,18 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(serializeBigInts(flatAccounts));
         }
 
-        // Fetch all accounts in the active book with their commodity and optionally splits
-        const accountsData = await prisma.accounts.findMany({
-            where: {
-                guid: { in: bookAccountGuids },
-            },
-            include: {
-                commodity: true,
-                ...(noBalances ? {} : {
-                    splits: {
-                        include: {
-                            transaction: true,
-                        },
-                    },
-                }),
-            },
-        });
-
         let accounts: Account[];
 
         if (noBalances) {
+            const accountsData = await prisma.accounts.findMany({
+                where: {
+                    guid: { in: bookAccountGuids },
+                },
+                include: {
+                    commodity: true,
+                },
+            });
+
             // Skip balance calculation when noBalances is true
             accounts = accountsData.map(acc => ({
                 guid: acc.guid,
@@ -143,6 +135,20 @@ export async function GET(request: NextRequest) {
                 period_balance_usd: undefined,
             }));
         } else {
+            const accountsData: AccountWithCommodityAndSplits[] = await prisma.accounts.findMany({
+                where: {
+                    guid: { in: bookAccountGuids },
+                },
+                include: {
+                    commodity: true,
+                    splits: {
+                        include: {
+                            transaction: true,
+                        },
+                    },
+                },
+            });
+
             // Calculate balances for each account
             // Pre-fetch prices for investment accounts (STOCK/MUTUAL with non-currency commodities)
             const investmentTypes = ['STOCK', 'MUTUAL'];
@@ -156,7 +162,7 @@ export async function GET(request: NextRequest) {
                 }
             }
 
-            accounts = (accountsData as AccountWithCommodityAndSplits[]).map(acc => {
+            accounts = accountsData.map(acc => {
                 const isInvestment = investmentTypes.includes(acc.account_type) && acc.commodity?.namespace !== 'CURRENCY';
                 const pricePerShare = isInvestment && acc.commodity_guid ? (priceCache.get(acc.commodity_guid) || 0) : 0;
 

@@ -8,86 +8,66 @@ export function getColumns(meta: {
     isReconciling: boolean;
     isEditMode: boolean;
 }): ColumnDef<AccountTransaction>[] {
-    const columns: ColumnDef<AccountTransaction>[] = [];
-
-    // Checkbox column (reconciliation or edit mode)
-    if (meta.isReconciling || meta.isEditMode) {
-        columns.push(
+    return [
+        // Checkbox column (reconciliation or edit mode)
+        ...(meta.isReconciling || meta.isEditMode ? [
             columnHelper.display({
                 id: 'select',
                 header: 'select',
                 size: 40,
-            })
-        );
-    }
+            }),
+        ] : []),
 
-    // Reconcile state
-    columns.push(
+        // Reconcile state
         columnHelper.accessor('account_split_reconcile_state', {
             id: 'reconcile',
             header: 'R',
             size: 40,
-        })
-    );
+        }),
 
-    // Date
-    columns.push(
+        // Date
         columnHelper.accessor('post_date', {
             id: 'date',
             header: 'Date',
-        })
-    );
+        }),
 
-    // Description
-    columns.push(
+        // Description
         columnHelper.accessor('description', {
             id: 'description',
             header: 'Description',
-        })
-    );
+        }),
 
-    // Transfer / Splits
-    columns.push(
+        // Transfer / Splits
         columnHelper.display({
             id: 'transfer',
             header: 'Transfer / Splits',
-        })
-    );
+        }),
 
-    // Debit
-    columns.push(
+        // Debit
         columnHelper.accessor('account_split_value', {
             id: 'debit',
             header: 'Debit',
-        })
-    );
+        }),
 
-    // Credit
-    columns.push(
+        // Credit
         columnHelper.display({
             id: 'credit',
             header: 'Credit',
-        })
-    );
+        }),
 
-    // Balance
-    columns.push(
+        // Balance
         columnHelper.accessor('running_balance', {
             id: 'balance',
             header: 'Balance',
-        })
-    );
+        }),
 
-    // Edit button (edit mode)
-    if (meta.isEditMode) {
-        columns.push(
+        // Edit button (edit mode)
+        ...(meta.isEditMode ? [
             columnHelper.display({
                 id: 'actions',
                 header: '',
                 size: 40,
-            })
-        );
-    }
-
-    return columns;
+            }),
+        ] : []),
+    ] as ColumnDef<AccountTransaction>[];
 }

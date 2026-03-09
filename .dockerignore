@@ -11,3 +11,11 @@ yarn-debug.log
 yarn-error.log
 .idea
 .vscode
+nul
+*.png
+playwright-screenshots
+test-results
+.playwright
+.playwright-cli
+.playwright-mcp
+tsconfig.tsbuildinfo
