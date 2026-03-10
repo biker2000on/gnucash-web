@@ -170,6 +170,7 @@ function AccountPageContent() {
                     startDate={startDate}
                     endDate={endDate}
                     accountType={account?.account_type}
+                    commodityNamespace={account?.commodity_namespace}
                 />
             )}
         </div>
