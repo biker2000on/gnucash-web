@@ -9,6 +9,7 @@ export interface InvestmentRowData {
     description: string;
     transferAccount: string;
     transferAccountGuid: string;
+    currencyMnemonic: string;    // transaction currency (e.g., "USD") for formatting monetary values
     shares: number | null;       // null for non-share transactions (cash dividends)
     price: number | null;        // null when shares is 0
     buyAmount: number | null;    // positive number or null
@@ -125,12 +126,17 @@ export function transformToInvestmentRow(
     const shareBalance = parseFloat(tx.share_balance ?? '0');
     const costBasis = parseFloat(tx.cost_basis ?? '0');
 
+    // Currency mnemonic for monetary formatting — use the transfer split's commodity
+    // (e.g., "USD") rather than the account's commodity (e.g., "AAPL")
+    const currencyMnemonic = transferSplit?.commodity_mnemonic ?? 'USD';
+
     return {
         guid: tx.guid,
         post_date: tx.post_date,
         description: tx.description,
         transferAccount,
         transferAccountGuid,
+        currencyMnemonic,
         shares: shares !== 0 ? shares : null,
         price,
         buyAmount,

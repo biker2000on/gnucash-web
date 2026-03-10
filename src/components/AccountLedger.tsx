@@ -908,23 +908,23 @@ export default function AccountLedger({
                                         )}
                                         {invRow.price !== null && (
                                             <div className="text-xs text-foreground-muted">
-                                                @ {formatCurrency(invRow.price, tx.commodity_mnemonic)}
+                                                @ {formatCurrency(invRow.price, invRow.currencyMnemonic)}
                                             </div>
                                         )}
                                     </div>
                                 </div>
                                 <div className="flex justify-between text-xs border-t border-border/30 pt-1.5">
                                     {invRow.buyAmount !== null && (
-                                        <span className="text-emerald-400">Buy: {formatCurrency(invRow.buyAmount, tx.commodity_mnemonic)}</span>
+                                        <span className="text-emerald-400">Buy: {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}</span>
                                     )}
                                     {invRow.sellAmount !== null && (
-                                        <span className="text-rose-400">Sell: {formatCurrency(invRow.sellAmount, tx.commodity_mnemonic)}</span>
+                                        <span className="text-rose-400">Sell: {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}</span>
                                     )}
                                     {invRow.transactionType === 'dividend' && (
                                         <span className="text-foreground-muted">Dividend</span>
                                     )}
                                     <span>Bal: {invRow.shareBalance.toFixed(4)}</span>
-                                    <span>Cost: {formatCurrency(invRow.costBasis, tx.commodity_mnemonic)}</span>
+                                    <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
                                 </div>
                             </div>
                         ) : (
@@ -988,10 +988,16 @@ export default function AccountLedger({
                                     if (colId === 'reconcile') return <th key={header.id} className="px-4 py-4 w-10">R</th>;
                                     if (colId === 'date') return <th key={header.id} className="px-6 py-4">Date</th>;
                                     if (colId === 'description') return <th key={header.id} className="px-6 py-4">Description</th>;
-                                    if (colId === 'transfer') return <th key={header.id} className="px-6 py-4">Transfer / Splits</th>;
+                                    if (colId === 'transfer') return <th key={header.id} className="px-6 py-4">{isInvestmentAccount ? 'Transfer' : 'Transfer / Splits'}</th>;
                                     if (colId === 'debit') return <th key={header.id} className="px-6 py-4 text-right">Debit</th>;
                                     if (colId === 'credit') return <th key={header.id} className="px-6 py-4 text-right">Credit</th>;
                                     if (colId === 'balance') return <th key={header.id} className="px-6 py-4 text-right">Balance</th>;
+                                    if (colId === 'shares') return <th key={header.id} className="px-6 py-4 text-right">Shares</th>;
+                                    if (colId === 'price') return <th key={header.id} className="px-6 py-4 text-right">Price</th>;
+                                    if (colId === 'buy') return <th key={header.id} className="px-6 py-4 text-right">Buy</th>;
+                                    if (colId === 'sell') return <th key={header.id} className="px-6 py-4 text-right">Sell</th>;
+                                    if (colId === 'shareBalance') return <th key={header.id} className="px-6 py-4 text-right">Share Bal</th>;
+                                    if (colId === 'costBasis') return <th key={header.id} className="px-6 py-4 text-right">Cost Basis</th>;
                                     if (colId === 'actions') return <th key={header.id} className="px-2 py-4 w-10"></th>;
                                     return <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
                                 })}
@@ -1291,7 +1297,7 @@ export default function AccountLedger({
                                                         <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
                                                             {invRow?.price != null ? (
                                                                 <span className="text-foreground">
-                                                                    {formatCurrency(invRow.price, tx.commodity_mnemonic)}
+                                                                    {formatCurrency(invRow.price, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
@@ -1305,7 +1311,7 @@ export default function AccountLedger({
                                                         <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
                                                             {invRow?.buyAmount != null ? (
                                                                 <span className="text-emerald-400">
-                                                                    {formatCurrency(invRow.buyAmount, tx.commodity_mnemonic)}
+                                                                    {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
@@ -1319,7 +1325,7 @@ export default function AccountLedger({
                                                         <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
                                                             {invRow?.sellAmount != null ? (
                                                                 <span className="text-rose-400">
-                                                                    {formatCurrency(invRow.sellAmount, tx.commodity_mnemonic)}
+                                                                    {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
@@ -1339,7 +1345,7 @@ export default function AccountLedger({
                                                 if (colId === 'costBasis') {
                                                     return (
                                                         <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top font-bold text-foreground">
-                                                            {invRow ? formatCurrency(invRow.costBasis, tx.commodity_mnemonic) : '\u2014'}
+                                                            {invRow ? formatCurrency(invRow.costBasis, invRow.currencyMnemonic) : '\u2014'}
                                                         </td>
                                                     );
                                                 }

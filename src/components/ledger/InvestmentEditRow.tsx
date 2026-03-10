@@ -228,19 +228,19 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         {invRow.shares != null ? invRow.shares.toFixed(4) : '\u2014'}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right">
-                        {invRow.price != null ? formatCurrency(invRow.price, transaction.commodity_mnemonic) : '\u2014'}
+                        {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : '\u2014'}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
-                        {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, transaction.commodity_mnemonic) : ''}
+                        {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : ''}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
-                        {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, transaction.commodity_mnemonic) : ''}
+                        {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : ''}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
                         {invRow.shareBalance.toFixed(4)}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
-                        {formatCurrency(invRow.costBasis, transaction.commodity_mnemonic)}
+                        {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                     </td>
                     <td className="px-2 py-4 align-top">
                         <button
@@ -278,19 +278,19 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         ) : <span className="opacity-30">&mdash;</span>}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right text-foreground">
-                        {invRow.price != null ? formatCurrency(invRow.price, transaction.commodity_mnemonic) : <span className="opacity-30">&mdash;</span>}
+                        {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
-                        {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, transaction.commodity_mnemonic) : <span className="opacity-30">&mdash;</span>}
+                        {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
-                        {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, transaction.commodity_mnemonic) : <span className="opacity-30">&mdash;</span>}
+                        {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
                         {invRow.shareBalance.toFixed(4)}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
-                        {formatCurrency(invRow.costBasis, transaction.commodity_mnemonic)}
+                        {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                     </td>
                     {editButton}
                 </tr>
@@ -469,7 +469,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                 </td>
                 {/* Cost Basis (read-only) */}
                 <td className="px-6 py-2 text-sm font-mono text-right align-middle opacity-40 font-bold">
-                    {formatCurrency(invRow.costBasis, transaction.commodity_mnemonic)}
+                    {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                 </td>
                 {editButton}
             </tr>
