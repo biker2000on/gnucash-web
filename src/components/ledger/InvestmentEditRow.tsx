@@ -225,7 +225,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         {invRow.transferAccount || '\u2014'}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right">
-                        {invRow.shares != null ? Math.abs(invRow.shares).toFixed(4) : '\u2014'}
+                        {invRow.shares != null ? invRow.shares.toFixed(4) : '\u2014'}
                     </td>
                     <td className="px-6 py-4 text-sm font-mono text-right">
                         {invRow.price != null ? formatCurrency(invRow.price, transaction.commodity_mnemonic) : '\u2014'}
@@ -273,7 +273,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     <td className="px-6 py-4 text-sm font-mono text-right">
                         {invRow.shares != null ? (
                             <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                                {Math.abs(invRow.shares).toFixed(4)}
+                                {invRow.shares.toFixed(4)}
                             </span>
                         ) : <span className="opacity-30">&mdash;</span>}
                     </td>

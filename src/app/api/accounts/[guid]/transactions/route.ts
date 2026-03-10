@@ -62,6 +62,9 @@ export async function GET(
             `;
             unreviewedGuids = unreviewedMeta.map(m => m.transaction_guid);
             if (unreviewedGuids.length === 0) {
+                if (isInvestmentAccount) {
+                    return NextResponse.json({ transactions: [], is_investment: true });
+                }
                 return NextResponse.json([]);
             }
         }
@@ -211,6 +214,9 @@ export async function GET(
         });
 
         if (transactions.length === 0) {
+            if (isInvestmentAccount) {
+                return NextResponse.json({ transactions: [], is_investment: true });
+            }
             return NextResponse.json([]);
         }
 
