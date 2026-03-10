@@ -48,4 +48,5 @@ next-env.d.ts
 /src/generated/prisma
 *prompt*
 test-results/
-.omc/.superpowers/
+.omc/
+.superpowers/
