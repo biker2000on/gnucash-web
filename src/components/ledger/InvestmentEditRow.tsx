@@ -69,7 +69,12 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             onClick?.();
         };
 
-        const isMultiSplit = (transaction.splits?.length || 0) > 2;
+        // For investment accounts, trading splits are auto-generated and shouldn't
+        // count toward the multi-split threshold. Only count non-trading splits.
+        const nonTradingSplits = (transaction.splits ?? []).filter(
+            s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+        );
+        const isMultiSplit = nonTradingSplits.length > 2;
         const invRow = transformToInvestmentRow(
             transaction as AccountTransaction & { share_balance?: string; cost_basis?: string },
             accountGuid,
