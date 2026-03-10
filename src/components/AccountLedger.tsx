@@ -888,8 +888,46 @@ export default function AccountLedger({
                         const balanceValue = tx.running_balance
                             ? applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal)
                             : null;
+                        const invRow = investmentRowMap?.get(tx.guid);
 
-                        return (
+                        return isInvestmentAccount && invRow ? (
+                            <div key={tx.guid} className="bg-surface/30 backdrop-blur border border-border rounded-xl p-3 space-y-2" onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <div className="text-xs text-foreground-muted">
+                                            {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                                        </div>
+                                        <div className="text-sm font-medium">{tx.description}</div>
+                                        <div className="text-xs text-foreground-muted">{invRow.transferAccount}</div>
+                                    </div>
+                                    <div className="text-right">
+                                        {invRow.shares !== null && (
+                                            <div className={`text-sm font-mono ${invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {invRow.shares > 0 ? '+' : ''}{invRow.shares.toFixed(4)} shares
+                                            </div>
+                                        )}
+                                        {invRow.price !== null && (
+                                            <div className="text-xs text-foreground-muted">
+                                                @ {formatCurrency(invRow.price, tx.commodity_mnemonic)}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex justify-between text-xs border-t border-border/30 pt-1.5">
+                                    {invRow.buyAmount !== null && (
+                                        <span className="text-emerald-400">Buy: {formatCurrency(invRow.buyAmount, tx.commodity_mnemonic)}</span>
+                                    )}
+                                    {invRow.sellAmount !== null && (
+                                        <span className="text-rose-400">Sell: {formatCurrency(invRow.sellAmount, tx.commodity_mnemonic)}</span>
+                                    )}
+                                    {invRow.transactionType === 'dividend' && (
+                                        <span className="text-foreground-muted">Dividend</span>
+                                    )}
+                                    <span>Bal: {invRow.shareBalance.toFixed(4)}</span>
+                                    <span>Cost: {formatCurrency(invRow.costBasis, tx.commodity_mnemonic)}</span>
+                                </div>
+                            </div>
+                        ) : (
                             <MobileCard
                                 key={tx.guid}
                                 onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}
