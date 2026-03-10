@@ -432,13 +432,13 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Gain/Loss</div>
-                        <div className={`text-lg sm:text-xl font-mono font-semibold mt-1 ${
+                        <div className={`font-mono font-semibold mt-1 ${
                             holdings.gainLoss >= 0 ? 'text-emerald-400' : 'text-rose-400'
                         }`}>
-                            <span className="whitespace-nowrap">{holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}</span>
-                            <span className="text-xs sm:text-sm ml-1 sm:ml-2">
+                            <div className="text-lg sm:text-xl">{holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}</div>
+                            <div className="text-xs sm:text-sm">
                                 ({holdings.gainLoss >= 0 ? '+' : ''}{holdings.gainLossPercent.toFixed(2)}%)
-                            </span>
+                            </div>
                         </div>
                     </div>
                 </div>
