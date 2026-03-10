@@ -345,7 +345,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
         <div className="space-y-6">
             {/* Header */}
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6">
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
                         <div className="flex items-center gap-3">
                             <h2 className="text-2xl font-bold text-foreground">
@@ -361,7 +361,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             <p className="text-foreground-muted mt-1">{commodity.fullname}</p>
                         )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         <button
                             onClick={() => setShowTransactionModal(true)}
                             className="flex items-center gap-2 px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
@@ -412,31 +412,31 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
             {/* Holdings Summary */}
             {holdings && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Shares</div>
-                        <div className="text-xl font-mono font-semibold text-foreground mt-1">
+                        <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {holdings.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
                         </div>
                     </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Cost Basis</div>
-                        <div className="text-xl font-mono font-semibold text-foreground mt-1">
+                        <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(Math.abs(holdings.costBasis), 'USD')}
                         </div>
                     </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Market Value</div>
-                        <div className="text-xl font-mono font-semibold text-foreground mt-1">
+                        <div className="text-lg sm:text-xl font-mono font-semibold text-foreground mt-1">
                             {formatCurrency(holdings.marketValue, 'USD')}
                         </div>
                     </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
+                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Gain/Loss</div>
-                        <div className={`text-xl font-mono font-semibold mt-1 ${
+                        <div className={`text-lg sm:text-xl font-mono font-semibold mt-1 ${
                             holdings.gainLoss >= 0 ? 'text-emerald-400' : 'text-rose-400'
                         }`}>
-                            {holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}
-                            <span className="text-sm ml-2">
+                            <span className="whitespace-nowrap">{holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}</span>
+                            <span className="text-xs sm:text-sm ml-1 sm:ml-2">
                                 ({holdings.gainLoss >= 0 ? '+' : ''}{holdings.gainLossPercent.toFixed(2)}%)
                             </span>
                         </div>
@@ -446,16 +446,16 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             {/* Price History Chart */}
             {data?.priceHistory && data.priceHistory.length > 0 && (
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6">
-                    <div className="flex items-center justify-between mb-4">
+                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-4 sm:p-6 overflow-hidden">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
                         <h3 className="text-lg font-semibold text-foreground">Price History</h3>
-                        <div className="flex items-center gap-2">
-                            <div className="flex gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex flex-wrap gap-1">
                                 {(['1M', '3M', '6M', '1Y', '3Y', '5Y', 'ALL'] as const).map(period => (
                                     <button
                                         key={period}
                                         onClick={() => handlePeriodChange(period)}
-                                        className={`px-3 py-1 text-sm rounded-lg transition-colors ${
+                                        className={`px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg transition-colors ${
                                             selectedPeriod === period
                                                 ? 'bg-cyan-600 text-white'
                                                 : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
@@ -465,7 +465,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     </button>
                                 ))}
                             </div>
-                            <div className="flex gap-1 ml-2 border-l border-border pl-2">
+                            <div className="flex gap-1 sm:ml-2 sm:border-l sm:border-border sm:pl-2">
                                 <button
                                     onClick={() => setChartMode('price')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${
