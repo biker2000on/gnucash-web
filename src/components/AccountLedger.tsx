@@ -11,6 +11,7 @@ import { TransactionFormModal } from './TransactionFormModal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { InlineEditRow } from './InlineEditRow';
 import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
+import { InvestmentEditRow, InvestmentEditRowHandle, InvestmentSaveData } from './ledger/InvestmentEditRow';
 import { useToast } from '@/contexts/ToastContext';
 import { toNumDenom } from '@/lib/validation';
 import {
@@ -95,7 +96,7 @@ export default function AccountLedger({
     const [editReviewedCount, setEditReviewedCount] = useState(0);
     const [editSelectedGuids, setEditSelectedGuids] = useState<Set<string>>(new Set());
     const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
-    const editableRowRefs = useRef<Map<string, EditableRowHandle>>(new Map());
+    const editableRowRefs = useRef<Map<string, EditableRowHandle | InvestmentEditRowHandle>>(new Map());
 
     // Initialize edit mode from preference on mount (once preferences are loaded)
     useEffect(() => {
@@ -331,6 +332,79 @@ export default function AccountLedger({
             error('Failed to update transaction');
         }
     }, [transactions, accountGuid, fetchTransactions, success, error, isEditMode]);
+
+    // Investment inline edit save handler
+    const handleInvestmentInlineSave = useCallback(async (guid: string, data: InvestmentSaveData) => {
+        try {
+            const tx = transactions.find(t => t.guid === guid);
+            if (!tx) return;
+
+            const shares = parseFloat(data.shares);
+            const total = parseFloat(data.total);
+
+            // GnuCash sign convention for stock account split:
+            // Buy: positive quantity (shares in), negative value (money out)
+            // Sell: negative quantity (shares out), positive value (money in)
+            const stockQuantity = data.isBuy ? shares : -shares;
+            const stockValue = data.isBuy ? -total : total;
+
+            // Transfer split is the opposite of stock value
+            const transferValue = -stockValue;
+
+            const { num: stockValueNum, denom: stockValueDenom } = toNumDenom(stockValue);
+            const { num: stockQtyNum, denom: stockQtyDenom } = toNumDenom(stockQuantity, 4);
+            const { num: transferValueNum, denom: transferValueDenom } = toNumDenom(transferValue);
+
+            const body: Record<string, unknown> = {
+                currency_guid: tx.currency_guid,
+                post_date: data.post_date,
+                description: data.description,
+                splits: [
+                    {
+                        account_guid: accountGuid,
+                        value_num: stockValueNum,
+                        value_denom: stockValueDenom,
+                        quantity_num: stockQtyNum,
+                        quantity_denom: stockQtyDenom,
+                        reconcile_state: tx.account_split_reconcile_state || 'n',
+                    },
+                    {
+                        account_guid: data.transferAccountGuid,
+                        value_num: transferValueNum,
+                        value_denom: transferValueDenom,
+                        quantity_num: transferValueNum,
+                        quantity_denom: transferValueDenom,
+                        reconcile_state: 'n',
+                    },
+                ],
+            };
+
+            if (data.original_enter_date) {
+                body.original_enter_date = data.original_enter_date;
+            }
+
+            const res = await fetch(`/api/transactions/${guid}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+            if (res.status === 409) {
+                error('Transaction was modified by another user. Refreshing...');
+                await fetchTransactions();
+                return;
+            }
+
+            if (!res.ok) throw new Error('Failed to update');
+
+            success('Transaction updated');
+            await fetchTransactions();
+        } catch (err) {
+            console.error('Investment inline save failed:', err);
+            error('Failed to update transaction');
+            throw err; // Re-throw so InvestmentEditRow knows save failed
+        }
+    }, [transactions, accountGuid, fetchTransactions, success, error]);
 
     // Toggle reviewed status
     const toggleReviewed = useCallback(async (transactionGuid: string) => {
@@ -889,56 +963,108 @@ export default function AccountLedger({
                     <tbody className="divide-y divide-border/50">
                         {isEditMode ? (
                             displayTransactions.map((tx, index) => (
-                                <EditableRow
-                                    key={tx.guid}
-                                    ref={(handle) => {
-                                        if (handle) editableRowRefs.current.set(tx.guid, handle);
-                                        else editableRowRefs.current.delete(tx.guid);
-                                    }}
-                                    transaction={tx}
-                                    accountGuid={accountGuid}
-                                    accountType={accountType}
-                                    isActive={index === focusedRowIndex}
-                                    showCheckbox={true}
-                                    isChecked={editSelectedGuids.has(tx.guid)}
-                                    onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
-                                    onSave={handleInlineSave}
-                                    onEditModal={handleEditDirect}
-                                    columnCount={table.getVisibleFlatColumns().length}
-                                    onClick={() => setFocusedRowIndex(index)}
-                                    focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
-                                    onEnter={async () => {
-                                        const handle = editableRowRefs.current.get(tx.guid);
-                                        if (handle?.isDirty()) await handle.save();
-                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                    }}
-                                    onArrowUp={async () => {
-                                        const handle = editableRowRefs.current.get(tx.guid);
-                                        if (handle?.isDirty()) await handle.save();
-                                        setFocusedRowIndex(i => Math.max(i - 1, 0));
-                                    }}
-                                    onArrowDown={async () => {
-                                        const handle = editableRowRefs.current.get(tx.guid);
-                                        if (handle?.isDirty()) await handle.save();
-                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                    }}
-                                    onColumnFocus={(col) => setFocusedColumnIndex(col)}
-                                    onTabFromActions={async (direction) => {
-                                        const handle = editableRowRefs.current.get(tx.guid);
-                                        if (handle?.isDirty()) {
-                                            await handle.save();
-                                        }
-
-                                        if (direction === 'next') {
+                                isInvestmentAccount ? (
+                                    <InvestmentEditRow
+                                        key={tx.guid}
+                                        ref={(handle) => {
+                                            if (handle) editableRowRefs.current.set(tx.guid, handle);
+                                            else editableRowRefs.current.delete(tx.guid);
+                                        }}
+                                        transaction={tx}
+                                        accountGuid={accountGuid}
+                                        isActive={index === focusedRowIndex}
+                                        showCheckbox={true}
+                                        isChecked={editSelectedGuids.has(tx.guid)}
+                                        onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
+                                        onSave={handleInvestmentInlineSave}
+                                        onEditModal={handleEditDirect}
+                                        columnCount={table.getVisibleFlatColumns().length}
+                                        onClick={() => setFocusedRowIndex(index)}
+                                        focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
+                                        onEnter={async () => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) await handle.save();
                                             setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                            setFocusedColumnIndex(0);
-                                            return;
-                                        }
+                                        }}
+                                        onArrowUp={async () => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) await handle.save();
+                                            setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                        }}
+                                        onArrowDown={async () => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) await handle.save();
+                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                        }}
+                                        onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                        onTabFromActions={async (direction) => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) {
+                                                await handle.save();
+                                            }
 
-                                        setFocusedRowIndex(i => Math.max(i - 1, 0));
-                                        setFocusedColumnIndex(4);
-                                    }}
-                                />
+                                            if (direction === 'next') {
+                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                setFocusedColumnIndex(0);
+                                                return;
+                                            }
+
+                                            setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                            setFocusedColumnIndex(4);
+                                        }}
+                                    />
+                                ) : (
+                                    <EditableRow
+                                        key={tx.guid}
+                                        ref={(handle) => {
+                                            if (handle) editableRowRefs.current.set(tx.guid, handle);
+                                            else editableRowRefs.current.delete(tx.guid);
+                                        }}
+                                        transaction={tx}
+                                        accountGuid={accountGuid}
+                                        accountType={accountType}
+                                        isActive={index === focusedRowIndex}
+                                        showCheckbox={true}
+                                        isChecked={editSelectedGuids.has(tx.guid)}
+                                        onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
+                                        onSave={handleInlineSave}
+                                        onEditModal={handleEditDirect}
+                                        columnCount={table.getVisibleFlatColumns().length}
+                                        onClick={() => setFocusedRowIndex(index)}
+                                        focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
+                                        onEnter={async () => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) await handle.save();
+                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                        }}
+                                        onArrowUp={async () => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) await handle.save();
+                                            setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                        }}
+                                        onArrowDown={async () => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) await handle.save();
+                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                        }}
+                                        onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                        onTabFromActions={async (direction) => {
+                                            const handle = editableRowRefs.current.get(tx.guid);
+                                            if (handle?.isDirty()) {
+                                                await handle.save();
+                                            }
+
+                                            if (direction === 'next') {
+                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                setFocusedColumnIndex(0);
+                                                return;
+                                            }
+
+                                            setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                            setFocusedColumnIndex(4);
+                                        }}
+                                    />
+                                )
                             ))
                         ) : (
                             table.getRowModel().rows.map((row) => {
