@@ -17,15 +17,6 @@ interface PriceData {
     source: string | null;
 }
 
-interface TransactionData {
-    guid: string;
-    date: string;
-    description: string;
-    shares: number;
-    amount: number;
-    action: string;
-}
-
 interface ValuationData {
     isInvestment: boolean;
     account: {
@@ -48,7 +39,6 @@ interface ValuationData {
         latestPrice: PriceData | null;
     };
     priceHistory?: PriceData[];
-    transactions?: TransactionData[];
 }
 
 interface InvestmentAccountProps {
@@ -349,7 +339,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
         return null; // Not an investment account
     }
 
-    const { commodity, holdings, transactions } = data;
+    const { commodity, holdings } = data;
 
     return (
         <div className="space-y-6">
@@ -652,53 +642,6 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 </LineChart>
                             )}
                         </ResponsiveContainer>
-                    </div>
-                </div>
-            )}
-
-            {/* Transaction History */}
-            {transactions && transactions.length > 0 && (
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
-                    <div className="p-4 border-b border-border">
-                        <h3 className="text-lg font-semibold text-foreground">Transaction History</h3>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead>
-                                <tr className="border-b border-border text-foreground-secondary text-sm uppercase tracking-wider">
-                                    <th className="py-3 px-4 text-left font-medium">Date</th>
-                                    <th className="py-3 px-4 text-left font-medium">Description</th>
-                                    <th className="py-3 px-4 text-left font-medium">Action</th>
-                                    <th className="py-3 px-4 text-right font-medium">Shares</th>
-                                    <th className="py-3 px-4 text-right font-medium">Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/50">
-                                {transactions.map(tx => (
-                                    <tr key={tx.guid} className="hover:bg-background-tertiary/20 transition-colors">
-                                        <td className="py-2 px-4 text-foreground-secondary font-mono text-sm">
-                                            {tx.date}
-                                        </td>
-                                        <td className="py-2 px-4 text-foreground">
-                                            {tx.description}
-                                        </td>
-                                        <td className="py-2 px-4 text-foreground-secondary text-sm">
-                                            {tx.action || '-'}
-                                        </td>
-                                        <td className="py-2 px-4 text-right font-mono">
-                                            <span className={tx.shares >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                                                {tx.shares >= 0 ? '+' : ''}{tx.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                                            </span>
-                                        </td>
-                                        <td className="py-2 px-4 text-right font-mono">
-                                            <span className={tx.amount >= 0 ? 'text-rose-400' : 'text-emerald-400'}>
-                                                {formatCurrency(Math.abs(tx.amount), 'USD')}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
                     </div>
                 </div>
             )}
