@@ -71,3 +71,78 @@ export function getColumns(meta: {
         ] : []),
     ] as ColumnDef<AccountTransaction>[];
 }
+
+export function getInvestmentColumns(meta: {
+    accountGuid: string;
+    isReconciling: boolean;
+    isEditMode: boolean;
+}): ColumnDef<AccountTransaction>[] {
+    return [
+        ...(meta.isReconciling || meta.isEditMode ? [
+            columnHelper.display({
+                id: 'select',
+                header: 'select',
+                size: 40,
+            }),
+        ] : []),
+
+        columnHelper.accessor('account_split_reconcile_state', {
+            id: 'reconcile',
+            header: 'R',
+            size: 40,
+        }),
+
+        columnHelper.accessor('post_date', {
+            id: 'date',
+            header: 'Date',
+        }),
+
+        columnHelper.accessor('description', {
+            id: 'description',
+            header: 'Description',
+        }),
+
+        columnHelper.display({
+            id: 'transfer',
+            header: 'Transfer',
+        }),
+
+        columnHelper.display({
+            id: 'shares',
+            header: 'Shares',
+        }),
+
+        columnHelper.display({
+            id: 'price',
+            header: 'Price',
+        }),
+
+        columnHelper.display({
+            id: 'buy',
+            header: 'Buy',
+        }),
+
+        columnHelper.display({
+            id: 'sell',
+            header: 'Sell',
+        }),
+
+        columnHelper.display({
+            id: 'shareBalance',
+            header: 'Share Bal',
+        }),
+
+        columnHelper.display({
+            id: 'costBasis',
+            header: 'Cost Basis',
+        }),
+
+        ...(meta.isEditMode ? [
+            columnHelper.display({
+                id: 'actions',
+                header: '',
+                size: 40,
+            }),
+        ] : []),
+    ] as ColumnDef<AccountTransaction>[];
+}
