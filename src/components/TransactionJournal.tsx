@@ -217,24 +217,24 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     }, [transactions]);
 
     const performDelete = async (guid: string) => {
-        setIsDeleting(true);
+        // Optimistically remove from local state
+        const prevTransactions = transactions;
+        setTransactions(prev => prev.filter(t => t.guid !== guid));
+        setDeleteConfirmOpen(false);
+        setDeletingGuid(null);
+        setIsModalOpen(false);
+
         try {
             const res = await fetch(`/api/transactions/${guid}`, {
                 method: 'DELETE',
             });
             if (!res.ok) throw new Error('Failed to delete');
-
             success('Transaction deleted successfully');
-            // Refresh transactions
-            fetchTransactions();
-            setIsModalOpen(false);
         } catch (err) {
             console.error('Delete failed:', err);
             error('Failed to delete transaction');
-        } finally {
-            setIsDeleting(false);
-            setDeleteConfirmOpen(false);
-            setDeletingGuid(null);
+            // Rollback on failure
+            setTransactions(prevTransactions);
         }
     };
 

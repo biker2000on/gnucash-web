@@ -226,21 +226,38 @@ export default function AccountLedger({
 
     const handleDeleteConfirm = useCallback(async () => {
         if (!deletingGuid) return;
-        setIsDeleting(true);
+
+        // Optimistically remove from local state and advance focus
+        const deletedGuid = deletingGuid;
+        const prevTransactions = transactions;
+        const deleteIndex = transactions.findIndex(tx => tx.guid === deletedGuid);
+
+        setTransactions(prev => prev.filter(t => t.guid !== deletedGuid));
+        setDeleteConfirmOpen(false);
+        setDeletingGuid(null);
+
+        // Move focus to next row (or previous if deleting last)
+        if (deleteIndex >= 0) {
+            const remainingCount = transactions.length - 1;
+            if (remainingCount > 0) {
+                setFocusedRowIndex(Math.min(deleteIndex, remainingCount - 1));
+            } else {
+                setFocusedRowIndex(-1);
+            }
+        }
+
+        // Fire API call in background
         try {
-            const res = await fetch(`/api/transactions/${deletingGuid}`, { method: 'DELETE' });
+            const res = await fetch(`/api/transactions/${deletedGuid}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Failed to delete');
             success('Transaction deleted successfully');
-            fetchTransactions();
         } catch (err) {
             console.error('Delete failed:', err);
             error('Failed to delete transaction');
-        } finally {
-            setIsDeleting(false);
-            setDeleteConfirmOpen(false);
-            setDeletingGuid(null);
+            // Rollback on failure
+            setTransactions(prevTransactions);
         }
-    }, [deletingGuid, fetchTransactions, success, error]);
+    }, [deletingGuid, transactions, success, error]);
 
     // Inline edit save handler
     const handleInlineSave = useCallback(async (guid: string, data: {
@@ -428,29 +445,53 @@ export default function AccountLedger({
         const tx = transactions.find(t => t.guid === transactionGuid);
         if (!tx) return;
 
+        // Build splits from the original, excluding trading splits
+        const nonTradingSplits = (tx.splits ?? []).filter(
+            s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+        );
+
+        const splits = nonTradingSplits.map(s => ({
+            account_guid: s.account_guid,
+            value_num: Number(s.value_num),
+            value_denom: Number(s.value_denom),
+            quantity_num: Number(s.quantity_num),
+            quantity_denom: Number(s.quantity_denom),
+            memo: s.memo || '',
+            action: s.action || '',
+            reconcile_state: 'n' as const,
+        }));
+
+        const today = new Date().toISOString().split('T')[0];
+        const tempGuid = crypto.randomUUID().replace(/-/g, '');
+
+        // Optimistically insert duplicate at top of list
+        const optimisticTx: AccountTransaction = {
+            ...tx,
+            guid: tempGuid,
+            post_date: new Date(today + 'T00:00:00') as unknown as Date,
+            enter_date: new Date() as unknown as Date,
+            running_balance: '0',
+            account_split_reconcile_state: 'n',
+            reviewed: undefined,
+            source: undefined,
+            splits: nonTradingSplits.map(s => ({
+                ...s,
+                guid: crypto.randomUUID().replace(/-/g, ''),
+                reconcile_state: 'n',
+            })),
+        };
+        const prevTransactions = transactions;
+        setTransactions(prev => [optimisticTx, ...prev]);
+        setFocusedRowIndex(0);
+        setFocusedColumnIndex(0);
+
         try {
-            // Build splits from the original, excluding trading splits
-            const nonTradingSplits = (tx.splits ?? []).filter(
-                s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
-            );
-
-            const splits = nonTradingSplits.map(s => ({
-                account_guid: s.account_guid,
-                value_num: Number(s.value_num),
-                value_denom: Number(s.value_denom),
-                quantity_num: Number(s.quantity_num),
-                quantity_denom: Number(s.quantity_denom),
-                memo: s.memo || '',
-                action: s.action || '',
-                reconcile_state: 'n' as const,
-            }));
-
             const res = await fetch('/api/transactions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     currency_guid: tx.currency_guid,
-                    post_date: new Date().toISOString().split('T')[0],
+                    post_date: today,
                     description: tx.description,
                     splits,
                 }),
@@ -459,13 +500,13 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to duplicate transaction');
 
             success('Transaction duplicated');
-            await fetchTransactions();
-            // Focus the first row (newest) with date column selected
-            setFocusedRowIndex(0);
-            setFocusedColumnIndex(0);
+            // Refresh to get real data (running balances, server guid, etc.)
+            fetchTransactions();
         } catch (err) {
             console.error('Duplicate failed:', err);
             error('Failed to duplicate transaction');
+            // Rollback on failure
+            setTransactions(prevTransactions);
         }
     }, [transactions, fetchTransactions, success, error]);
 

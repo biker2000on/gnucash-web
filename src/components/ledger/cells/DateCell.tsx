@@ -67,6 +67,9 @@ export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArr
             onChange={(e) => {
                 setIsEditing(true);
                 setDisplayValue(e.target.value);
+                // Eagerly commit valid dates so Ctrl+Enter saves current value
+                const parsed = parseDateInput(e.target.value);
+                if (parsed) onChange(parsed);
             }}
             onFocus={() => {
                 setIsEditing(true);

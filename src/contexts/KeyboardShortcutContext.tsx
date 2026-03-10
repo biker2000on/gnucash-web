@@ -53,6 +53,12 @@ function matchShortcutKey(event: KeyboardEvent, key: string): boolean {
     return primaryModifier && event.key === 'Enter' && event.shiftKey
   }
 
+  // Handle generic Ctrl+<key> shortcuts (e.g., Ctrl+p, Ctrl+k)
+  if (key.startsWith('Ctrl+') && key !== 'Ctrl+Enter' && key !== 'Ctrl+Shift+Enter') {
+    const targetKey = key.slice(5).toLowerCase()
+    return primaryModifier && event.key.toLowerCase() === targetKey && !event.shiftKey && !event.altKey
+  }
+
   // Handle plain single keys
   return event.key === key && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
 }
