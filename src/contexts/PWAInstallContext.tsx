@@ -388,7 +388,7 @@ function LoginInstallPrompt() {
     };
 
     return (
-        <div className="fixed bottom-4 right-4 left-4 md:left-auto md:w-[28rem] z-50">
+        <div className="fixed top-4 right-4 left-4 md:left-auto md:w-[28rem] z-50">
             <div className="rounded-2xl border border-emerald-500/30 bg-surface/95 backdrop-blur-xl shadow-2xl p-5">
                 <div className="flex items-start justify-between gap-4">
                     <div>
