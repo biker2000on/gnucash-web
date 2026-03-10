@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useParams } from 'next/navigation';
 import AccountLedger, { AccountTransaction } from '@/components/AccountLedger';
 import { InvestmentAccount } from '@/components/InvestmentAccount';
+import { parseTransactionsResponse } from '@/components/ledger/investment-utils';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { useDateFilter } from '@/hooks/useDateFilter';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
@@ -65,7 +66,7 @@ function AccountPageContent() {
                 const txRes = await fetch(`/api/accounts/${guid}/transactions?${txParams.toString()}`);
                 if (!txRes.ok) throw new Error('Failed to fetch transactions');
                 const txData = await txRes.json();
-                setTransactions(txData);
+                setTransactions(parseTransactionsResponse(txData));
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'An error occurred');
             } finally {

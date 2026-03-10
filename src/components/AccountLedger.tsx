@@ -21,6 +21,7 @@ import {
 import { getColumns } from './ledger/columns';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
+import { parseTransactionsResponse } from './ledger/investment-utils';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -189,7 +190,7 @@ export default function AccountLedger({
             const params = buildUrlParams();
             const res = await fetch(`/api/accounts/${accountGuid}/transactions?${params}`);
             if (!res.ok) throw new Error('Failed to fetch');
-            const data: AccountTransaction[] = await res.json();
+            const data = parseTransactionsResponse(await res.json());
             setTransactions(data);
             setOffset(data.length);
             setHasMore(data.length >= 100);
@@ -649,7 +650,7 @@ export default function AccountLedger({
             const params = buildUrlParams({ offset });
             const res = await fetch(`/api/accounts/${accountGuid}/transactions?${params}`);
             if (!res.ok) throw new Error('Failed to fetch');
-            const data: AccountTransaction[] = await res.json();
+            const data = parseTransactionsResponse(await res.json());
 
             if (data.length === 0) {
                 setHasMore(false);

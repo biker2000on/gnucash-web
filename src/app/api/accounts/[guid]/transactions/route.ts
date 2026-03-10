@@ -27,6 +27,15 @@ export async function GET(
             return NextResponse.json({ error: 'Account not found' }, { status: 404 });
         }
 
+        // Fetch account early so we can detect investment accounts
+        const account = await prisma.accounts.findUnique({
+            where: { guid: accountGuid },
+            include: { commodity: true },
+        });
+        const accountMnemonic = account?.commodity?.mnemonic || '';
+        const isInvestmentAccount = account?.commodity?.namespace !== undefined
+            && account.commodity.namespace !== 'CURRENCY';
+
         // Build date filter for transactions
         const dateFilter: Prisma.transactionsWhereInput = {};
         if (startDate) {
@@ -125,6 +134,52 @@ export async function GET(
             }
         }
 
+        // Compute per-row investment running totals (share balance & cost basis)
+        let investmentRunningTotals: Map<string, { shareBalance: number; costBasis: number }> | null = null;
+
+        if (isInvestmentAccount && !unreviewedOnly) {
+            const allSplitsWithTx = await prisma.$queryRaw<{
+                tx_guid: string;
+                quantity_num: bigint;
+                quantity_denom: bigint;
+                value_num: bigint;
+                value_denom: bigint;
+            }[]>`
+                SELECT s.tx_guid, s.quantity_num, s.quantity_denom, s.value_num, s.value_denom
+                FROM splits s
+                JOIN transactions t ON t.guid = s.tx_guid
+                WHERE s.account_guid = ${accountGuid}
+                ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
+                ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
+                ORDER BY t.post_date ASC, t.enter_date ASC
+            `;
+
+            let runShares = 0;
+            let runCostBasis = 0;
+            investmentRunningTotals = new Map();
+
+            for (const split of allSplitsWithTx) {
+                const shares = Number(split.quantity_num) / Number(split.quantity_denom);
+                const value = Math.abs(Number(split.value_num) / Number(split.value_denom));
+
+                if (shares > 0) {
+                    runShares += shares;
+                    runCostBasis += value;
+                } else if (shares < 0) {
+                    const soldShares = Math.abs(shares);
+                    if (runShares > 0) {
+                        const avgCost = runCostBasis / runShares;
+                        runCostBasis -= avgCost * soldShares;
+                    }
+                    runShares += shares;
+                }
+                investmentRunningTotals.set(split.tx_guid, {
+                    shareBalance: runShares,
+                    costBasis: runCostBasis,
+                });
+            }
+        }
+
         // 3. Fetch transactions for this account with date filtering
         const transactions = await prisma.transactions.findMany({
             where: {
@@ -172,12 +227,7 @@ export async function GET(
         `;
         const metaMap = new Map(transactionMeta.map(m => [m.transaction_guid, m]));
 
-        // 4. Get account mnemonic
-        const account = await prisma.accounts.findUnique({
-            where: { guid: accountGuid },
-            include: { commodity: true },
-        });
-        const accountMnemonic = account?.commodity?.mnemonic || '';
+        // 4. Build account path map
         const accountPathMap = await buildAccountPathMap();
 
         // 5. Build the response with running balance
@@ -227,13 +277,25 @@ export async function GET(
                 // Transaction meta: reviewed status and source
                 reviewed: meta?.reviewed ?? true, // default to reviewed if no meta row
                 source: meta?.source ?? 'manual',
+                // Investment running totals (only present for investment accounts)
+                ...(investmentRunningTotals ? {
+                    share_balance: investmentRunningTotals.get(tx.guid)?.shareBalance.toString() ?? '0',
+                    cost_basis: investmentRunningTotals.get(tx.guid)?.costBasis.toString() ?? '0',
+                } : {}),
             };
 
             if (!unreviewedOnly) currentRunningBalance -= splitValue;
             return row;
         });
 
-        return NextResponse.json(serializeBigInts(result));
+        if (isInvestmentAccount) {
+            return NextResponse.json(serializeBigInts({
+                transactions: result,
+                is_investment: true,
+            }));
+        } else {
+            return NextResponse.json(serializeBigInts(result));
+        }
     } catch (error) {
         console.error('Error fetching account transactions:', error);
         return NextResponse.json({ error: 'Failed' }, { status: 500 });
