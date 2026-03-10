@@ -7,7 +7,7 @@ import { AccountCell } from './cells/AccountCell';
 import { AmountCell } from './cells/AmountCell';
 import { formatCurrency } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
-import { transformToInvestmentRow } from './investment-utils';
+import { transformToInvestmentRow, isMultiSplitTransaction } from './investment-utils';
 
 export interface InvestmentEditRowHandle {
     save: () => Promise<boolean>;
@@ -69,12 +69,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             onClick?.();
         };
 
-        // For investment accounts, trading splits are auto-generated and shouldn't
-        // count toward the multi-split threshold. Only count non-trading splits.
-        const nonTradingSplits = (transaction.splits ?? []).filter(
-            s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
-        );
-        const isMultiSplit = nonTradingSplits.length > 2;
+        const isMultiSplit = isMultiSplitTransaction(transaction.splits);
         const invRow = transformToInvestmentRow(
             transaction as AccountTransaction & { share_balance?: string; cost_basis?: string },
             accountGuid,

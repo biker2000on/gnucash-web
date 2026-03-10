@@ -22,7 +22,7 @@ import {
 import { getColumns, getInvestmentColumns } from './ledger/columns';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
-import { parseTransactionsResponse, transformToInvestmentRow, InvestmentRowData } from './ledger/investment-utils';
+import { parseTransactionsResponse, transformToInvestmentRow, isMultiSplitTransaction, InvestmentRowData } from './ledger/investment-utils';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -615,7 +615,7 @@ export default function AccountLedger({
                     e.preventDefault();
                     if (focusedRowIndex >= 0) {
                         const currentTx = displayTransactions[focusedRowIndex];
-                        const isMultiSplit = (currentTx.splits?.length || 0) > 2;
+                        const isMultiSplit = isMultiSplitTransaction(currentTx.splits);
                         if (isMultiSplit) {
                             handleEditDirect(currentTx.guid);
                         } else {
@@ -663,7 +663,7 @@ export default function AccountLedger({
                 if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
                     e.preventDefault();
                     const tx = displayTransactions[focusedRowIndex];
-                    const isMultiSplit = (tx.splits?.length || 0) > 2;
+                    const isMultiSplit = isMultiSplitTransaction(tx.splits);
                     if (isMultiSplit) {
                         handleRowClick(tx.guid);
                     } else {
@@ -1114,7 +1114,7 @@ export default function AccountLedger({
                             table.getRowModel().rows.map((row) => {
                                 const tx = row.original;
                                 const index = row.index;
-                                const isMultiSplit = (tx.splits?.length || 0) > 2;
+                                const isMultiSplit = isMultiSplitTransaction(tx.splits);
                                 const isExpanded = expandedTxs[tx.guid];
                                 const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
                                 const isUnreviewed = tx.reviewed === false;

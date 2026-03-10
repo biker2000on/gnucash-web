@@ -1,6 +1,19 @@
 import { AccountTransaction } from '../AccountLedger';
 import { Split } from '@/lib/types';
 
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Check if a transaction is truly multi-split, excluding auto-generated
+ * Trading: splits which shouldn't count toward the multi-split threshold.
+ */
+export function isMultiSplitTransaction(splits: Split[] | undefined): boolean {
+    const nonTrading = (splits ?? []).filter(
+        s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+    );
+    return nonTrading.length > 2;
+}
+
 // ── Interfaces ──────────────────────────────────────────────────────────
 
 export interface InvestmentRowData {
