@@ -5,6 +5,7 @@ export interface LedgerMeta {
     accountType: string;
     isReconciling: boolean;
     isEditMode: boolean;
+    isInvestmentAccount: boolean;
     focusedRowIndex: number;
     editingGuid: string | null;
     balanceReversal: string;

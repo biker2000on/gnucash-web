@@ -18,10 +18,10 @@ import {
     getCoreRowModel,
     flexRender,
 } from '@tanstack/react-table';
-import { getColumns } from './ledger/columns';
+import { getColumns, getInvestmentColumns } from './ledger/columns';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
-import { parseTransactionsResponse } from './ledger/investment-utils';
+import { parseTransactionsResponse, transformToInvestmentRow, InvestmentRowData } from './ledger/investment-utils';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -41,6 +41,7 @@ interface AccountLedgerProps {
     accountCurrency?: string;
     currentBalance?: number;
     accountType?: string;
+    commodityNamespace?: string;
 }
 
 export default function AccountLedger({
@@ -51,10 +52,12 @@ export default function AccountLedger({
     accountCurrency = 'USD',
     currentBalance = 0,
     accountType = 'ASSET',
+    commodityNamespace,
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode } = useUserPreferences();
     const { success, error } = useToast();
     const isMobile = useIsMobile();
+    const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -352,6 +355,17 @@ export default function AccountLedger({
         return transactions.filter(tx => tx.reviewed === false);
     }, [transactions, showUnreviewedOnly]);
 
+    // Build investment row data map for investment accounts
+    const investmentRowMap = useMemo(() => {
+        if (!isInvestmentAccount) return null;
+        const map = new Map<string, InvestmentRowData>();
+        displayTransactions.forEach(tx => {
+            const row = transformToInvestmentRow(tx as any, accountGuid);
+            map.set(row.guid, row);
+        });
+        return map;
+    }, [isInvestmentAccount, displayTransactions, accountGuid]);
+
     // Edit mode toggle with mutual exclusivity
     const handleToggleEditMode = useCallback(() => {
         setIsEditMode(prev => {
@@ -450,11 +464,14 @@ export default function AccountLedger({
     }, [transactions]);
 
     // TanStack Table setup
-    const columns = useMemo(() => getColumns({
-        accountGuid,
-        isReconciling,
-        isEditMode,
-    }), [accountGuid, isReconciling, isEditMode]);
+    const columns = useMemo(() => {
+        const colFn = isInvestmentAccount ? getInvestmentColumns : getColumns;
+        return colFn({
+            accountGuid,
+            isReconciling,
+            isEditMode,
+        });
+    }, [accountGuid, isReconciling, isEditMode, isInvestmentAccount]);
 
     const table = useReactTable({
         data: displayTransactions,
@@ -1015,6 +1032,16 @@ export default function AccountLedger({
                                             }
 
                                             if (colId === 'transfer') {
+                                                if (isInvestmentAccount) {
+                                                    const invRow = investmentRowMap?.get(tx.guid);
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm text-foreground-secondary align-top">
+                                                            <span className="text-xs whitespace-normal break-words">
+                                                                {invRow?.transferAccount || '\u2014'}
+                                                            </span>
+                                                        </td>
+                                                    );
+                                                }
                                                 return (
                                                     <td key={cell.id} className="px-6 py-4 text-sm align-top">
                                                         {isMultiSplit && !isExpanded ? (
@@ -1075,6 +1102,83 @@ export default function AccountLedger({
                                                         {tx.running_balance ? formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic) : '\u2014'}
                                                     </td>
                                                 );
+                                            }
+
+                                            // Investment-specific columns
+                                            if (isInvestmentAccount) {
+                                                const invRow = investmentRowMap?.get(tx.guid);
+
+                                                if (colId === 'shares') {
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
+                                                            {invRow?.shares != null ? (
+                                                                <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                                    {invRow.shares.toFixed(4)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="opacity-30">&mdash;</span>
+                                                            )}
+                                                        </td>
+                                                    );
+                                                }
+
+                                                if (colId === 'price') {
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
+                                                            {invRow?.price != null ? (
+                                                                <span className="text-foreground">
+                                                                    {formatCurrency(invRow.price, tx.commodity_mnemonic)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="opacity-30">&mdash;</span>
+                                                            )}
+                                                        </td>
+                                                    );
+                                                }
+
+                                                if (colId === 'buy') {
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
+                                                            {invRow?.buyAmount != null ? (
+                                                                <span className="text-emerald-400">
+                                                                    {formatCurrency(invRow.buyAmount, tx.commodity_mnemonic)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="opacity-30">&mdash;</span>
+                                                            )}
+                                                        </td>
+                                                    );
+                                                }
+
+                                                if (colId === 'sell') {
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top">
+                                                            {invRow?.sellAmount != null ? (
+                                                                <span className="text-rose-400">
+                                                                    {formatCurrency(invRow.sellAmount, tx.commodity_mnemonic)}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="opacity-30">&mdash;</span>
+                                                            )}
+                                                        </td>
+                                                    );
+                                                }
+
+                                                if (colId === 'shareBalance') {
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top font-bold text-foreground">
+                                                            {invRow ? invRow.shareBalance.toFixed(4) : '\u2014'}
+                                                        </td>
+                                                    );
+                                                }
+
+                                                if (colId === 'costBasis') {
+                                                    return (
+                                                        <td key={cell.id} className="px-6 py-4 text-sm font-mono text-right align-top font-bold text-foreground">
+                                                            {invRow ? formatCurrency(invRow.costBasis, tx.commodity_mnemonic) : '\u2014'}
+                                                        </td>
+                                                    );
+                                                }
                                             }
 
                                             return <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>;
