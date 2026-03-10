@@ -878,7 +878,10 @@ export default function AccountLedger({
                 <div>
                     {displayTransactions.map((tx) => {
                         const amount = parseFloat(tx.account_split_value);
-                        const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
+                        const otherSplits = tx.splits?.filter(s =>
+                            s.account_guid !== accountGuid
+                            && !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+                        ) || [];
                         const transferName = otherSplits.length === 1
                             ? otherSplits[0].account_name
                             : otherSplits.length > 1
@@ -1116,7 +1119,10 @@ export default function AccountLedger({
                                 const index = row.index;
                                 const isMultiSplit = isMultiSplitTransaction(tx.splits);
                                 const isExpanded = expandedTxs[tx.guid];
-                                const otherSplits = tx.splits?.filter(s => s.account_guid !== accountGuid) || [];
+                                const otherSplits = tx.splits?.filter(s =>
+                                    s.account_guid !== accountGuid
+                                    && !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+                                ) || [];
                                 const isUnreviewed = tx.reviewed === false;
                                 const amount = parseFloat(tx.account_split_value);
                                 const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
