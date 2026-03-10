@@ -423,6 +423,52 @@ export default function AccountLedger({
         }
     }, [error]);
 
+    // Duplicate a transaction
+    const handleDuplicate = useCallback(async (transactionGuid: string) => {
+        const tx = transactions.find(t => t.guid === transactionGuid);
+        if (!tx) return;
+
+        try {
+            // Build splits from the original, excluding trading splits
+            const nonTradingSplits = (tx.splits ?? []).filter(
+                s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+            );
+
+            const splits = nonTradingSplits.map(s => ({
+                account_guid: s.account_guid,
+                value_num: Number(s.value_num),
+                value_denom: Number(s.value_denom),
+                quantity_num: Number(s.quantity_num),
+                quantity_denom: Number(s.quantity_denom),
+                memo: s.memo || '',
+                action: s.action || '',
+                reconcile_state: 'n' as const,
+            }));
+
+            const res = await fetch('/api/transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    currency_guid: tx.currency_guid,
+                    post_date: new Date().toISOString().split('T')[0],
+                    description: tx.description,
+                    splits,
+                }),
+            });
+
+            if (!res.ok) throw new Error('Failed to duplicate transaction');
+
+            success('Transaction duplicated');
+            await fetchTransactions();
+            // Focus the first row (newest) with date column selected
+            setFocusedRowIndex(0);
+            setFocusedColumnIndex(0);
+        } catch (err) {
+            console.error('Duplicate failed:', err);
+            error('Failed to duplicate transaction');
+        }
+    }, [transactions, fetchTransactions, success, error]);
+
     // Filter transactions based on reviewed filter
     const displayTransactions = useMemo(() => {
         if (!showUnreviewedOnly) return transactions;
@@ -578,6 +624,24 @@ export default function AccountLedger({
                     }
                     return;
                 }
+                if (e.key === 'd' && e.ctrlKey) {
+                    e.preventDefault();
+                    if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                        const tx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(tx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                        await handleDuplicate(tx.guid);
+                    }
+                    return;
+                }
+                if (e.key === 'x' && e.ctrlKey) {
+                    e.preventDefault();
+                    if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                        const tx = displayTransactions[focusedRowIndex];
+                        handleDeleteClick(tx.guid);
+                    }
+                    return;
+                }
                 if (e.key === 'Escape') {
                     e.preventDefault();
                     (e.target as HTMLElement).blur();
@@ -637,6 +701,24 @@ export default function AccountLedger({
                         if (focusedRowIndex < displayTransactions.length - 1) {
                             setFocusedRowIndex(prev => prev + 1);
                         }
+                    }
+                    break;
+                }
+                case 'd': {
+                    if (focusedRowIndex >= 0) {
+                        e.preventDefault();
+                        const tx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(tx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                        await handleDuplicate(tx.guid);
+                    }
+                    break;
+                }
+                case 'x': {
+                    if (focusedRowIndex >= 0) {
+                        e.preventDefault();
+                        const tx = displayTransactions[focusedRowIndex];
+                        handleDeleteClick(tx.guid);
                     }
                     break;
                 }
@@ -1025,6 +1107,7 @@ export default function AccountLedger({
                                         onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
                                         onSave={handleInvestmentInlineSave}
                                         onEditModal={handleEditDirect}
+                                        onDuplicate={handleDuplicate}
                                         columnCount={table.getVisibleFlatColumns().length}
                                         onClick={() => setFocusedRowIndex(index)}
                                         focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
@@ -1076,6 +1159,7 @@ export default function AccountLedger({
                                         onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
                                         onSave={handleInlineSave}
                                         onEditModal={handleEditDirect}
+                                        onDuplicate={handleDuplicate}
                                         columnCount={table.getVisibleFlatColumns().length}
                                         onClick={() => setFocusedRowIndex(index)}
                                         focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}

@@ -32,6 +32,7 @@ interface EditableRowProps {
         original_enter_date?: string;
     }) => Promise<void>;
     onEditModal: (guid: string) => void;
+    onDuplicate?: (guid: string) => void;
     columnCount: number;
     onClick?: () => void;
     focusedColumn?: number;
@@ -53,6 +54,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onToggleCheck,
         onSave,
         onEditModal,
+        onDuplicate,
         onClick,
         focusedColumn,
         onEnter,
@@ -151,13 +153,22 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             </td>
         );
 
-        const editButton = (
+        const actionsCell = (
             <td className="px-2 py-4 align-top">
-                <button onClick={() => onEditModal(transaction.guid)} className="text-foreground-muted hover:text-cyan-400 transition-colors" title="Edit">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                </button>
+                <div className="flex items-center gap-1">
+                    {onDuplicate && (
+                        <button onClick={() => onDuplicate(transaction.guid)} className="text-foreground-muted hover:text-emerald-400 transition-colors" title="Duplicate (d)">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                        </button>
+                    )}
+                    <button onClick={() => onEditModal(transaction.guid)} className="text-foreground-muted hover:text-cyan-400 transition-colors" title="Edit in modal">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                    </button>
+                </div>
             </td>
         );
 
@@ -187,7 +198,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     <td className={`px-6 py-4 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                     </td>
-                    {editButton}
+                    {actionsCell}
                 </tr>
             );
         }
@@ -214,7 +225,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     <td className={`px-6 py-4 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                     </td>
-                    {editButton}
+                    {actionsCell}
                 </tr>
             );
         }
@@ -287,21 +298,34 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                 </td>
                 <td className="px-2 py-2 align-middle">
-                    <button
-                        onClick={() => onEditModal(transaction.guid)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Tab') {
-                                e.preventDefault();
-                                onTabFromActions?.(e.shiftKey ? 'previous' : 'next');
-                            }
-                        }}
-                        className="text-foreground-muted hover:text-cyan-400 transition-colors"
-                        title="Edit"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
-                    </button>
+                    <div className="flex items-center gap-1">
+                        {onDuplicate && (
+                            <button
+                                onClick={() => onDuplicate(transaction.guid)}
+                                className="text-foreground-muted hover:text-emerald-400 transition-colors"
+                                title="Duplicate (d)"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                            </button>
+                        )}
+                        <button
+                            onClick={() => onEditModal(transaction.guid)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Tab') {
+                                    e.preventDefault();
+                                    onTabFromActions?.(e.shiftKey ? 'previous' : 'next');
+                                }
+                            }}
+                            className="text-foreground-muted hover:text-cyan-400 transition-colors"
+                            title="Edit in modal"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                        </button>
+                    </div>
                 </td>
             </tr>
         );

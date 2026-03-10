@@ -23,8 +23,11 @@ export function GlobalShortcuts() {
     window.dispatchEvent(new CustomEvent('enter-edit-mode'))
   })
 
-  // Escape to close modal / exit edit mode
+  // Escape to exit edit mode (only when no modal/dialog is open)
   useKeyboardShortcut('close-modal', 'Escape', 'Close modal / Exit edit mode', () => {
+    // Don't exit edit mode if a modal or dialog is currently open
+    const hasOpenModal = document.querySelector('[role="dialog"], [data-modal-open="true"]');
+    if (hasOpenModal) return;
     window.dispatchEvent(new CustomEvent('exit-edit-mode'))
   })
 
