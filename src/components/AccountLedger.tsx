@@ -23,6 +23,7 @@ import { getColumns, getInvestmentColumns } from './ledger/columns';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
 import { parseTransactionsResponse, transformToInvestmentRow, isMultiSplitTransaction, InvestmentRowData } from './ledger/investment-utils';
+import { toLocalDateString } from '@/lib/datePresets';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -450,7 +451,7 @@ export default function AccountLedger({
             s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
         );
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = toLocalDateString(new Date());
         const txGuid = crypto.randomUUID().replace(/-/g, '');
 
         // Generate split GUIDs upfront so client and server match

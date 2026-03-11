@@ -6,6 +6,7 @@ import { toNumDenom } from '@/lib/validation';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { toLocalDateString } from '@/lib/datePresets';
 
 type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -47,7 +48,7 @@ interface FormState {
 
 const INITIAL_FORM_STATE: FormState = {
     action: 'Buy',
-    date: new Date().toISOString().split('T')[0],
+    date: toLocalDateString(new Date()),
     shares: '',
     pricePerShare: '',
     total: '',

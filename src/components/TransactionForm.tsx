@@ -14,6 +14,7 @@ import { useAccounts } from '@/lib/hooks/useAccounts';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
+import { toLocalDateString } from '@/lib/datePresets';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -47,7 +48,7 @@ export function TransactionForm({
     onSaveAndAnother,
 }: TransactionFormProps) {
     const [formData, setFormData] = useState<TransactionFormData>({
-        post_date: new Date().toISOString().split('T')[0],
+        post_date: toLocalDateString(new Date()),
         description: '',
         num: '',
         currency_guid: defaultCurrencyGuid || '',
@@ -67,7 +68,7 @@ export function TransactionForm({
     const saveAndAnotherRef = useRef<(() => Promise<void>) | null>(null);
     const { success } = useToast();
     const { defaultTaxRate, dateFormat } = useUserPreferences();
-    const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
+    const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(toLocalDateString(new Date()), dateFormat));
 
     // Fetch accounts for commodity info (used for multi-currency detection)
     const { data: accounts = [] } = useAccounts({ flat: true });
@@ -519,19 +520,19 @@ export function TransactionForm({
             e.preventDefault();
             const current = new Date(formData.post_date + 'T12:00:00');
             current.setDate(current.getDate() + 1);
-            const newDate = current.toISOString().split('T')[0];
+            const newDate = toLocalDateString(current);
             setFormData(f => ({ ...f, post_date: newDate }));
             setDateDisplay(formatDateForDisplay(newDate, dateFormat));
         } else if (e.key === '-') {
             e.preventDefault();
             const current = new Date(formData.post_date + 'T12:00:00');
             current.setDate(current.getDate() - 1);
-            const newDate = current.toISOString().split('T')[0];
+            const newDate = toLocalDateString(current);
             setFormData(f => ({ ...f, post_date: newDate }));
             setDateDisplay(formatDateForDisplay(newDate, dateFormat));
         } else if (e.key === 't' || e.key === 'T') {
             e.preventDefault();
-            const newDate = new Date().toISOString().split('T')[0];
+            const newDate = toLocalDateString(new Date());
             setFormData(f => ({ ...f, post_date: newDate }));
             setDateDisplay(formatDateForDisplay(newDate, dateFormat));
         }

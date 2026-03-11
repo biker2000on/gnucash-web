@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { toLocalDateString } from '@/lib/datePresets';
 
 interface AccountOption {
   guid: string;
@@ -46,13 +47,13 @@ export function DepreciationScheduleForm({
   const [saving, setSaving] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [contraAccounts, setContraAccounts] = useState<AccountOption[]>([]);
-  const initialDate = existingSchedule?.purchaseDate ?? new Date().toISOString().split('T')[0];
+  const initialDate = existingSchedule?.purchaseDate ?? toLocalDateString(new Date());
   const [purchaseDateDisplay, setPurchaseDateDisplay] = useState(() => formatDateForDisplay(initialDate, dateFormat));
 
   const [form, setForm] = useState<ScheduleData>({
     accountGuid: assetAccountGuid,
     purchasePrice: existingSchedule?.purchasePrice ?? 0,
-    purchaseDate: existingSchedule?.purchaseDate ?? new Date().toISOString().split('T')[0],
+    purchaseDate: existingSchedule?.purchaseDate ?? toLocalDateString(new Date()),
     usefulLifeYears: existingSchedule?.usefulLifeYears ?? 5,
     salvageValue: existingSchedule?.salvageValue ?? 0,
     method: existingSchedule?.method ?? 'straight-line',

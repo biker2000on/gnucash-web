@@ -9,6 +9,7 @@ import {
 } from 'recharts';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
+import { toLocalDateString } from '@/lib/datePresets';
 import { DepreciationScheduleForm } from './DepreciationScheduleForm';
 
 interface Transaction {
@@ -67,8 +68,8 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
 
   // Manual adjustment form state
   const [adjustTarget, setAdjustTarget] = useState('');
-  const [adjustDate, setAdjustDate] = useState(new Date().toISOString().split('T')[0]);
-  const [adjustDateDisplay, setAdjustDateDisplay] = useState(() => formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat));
+  const [adjustDate, setAdjustDate] = useState(toLocalDateString(new Date()));
+  const [adjustDateDisplay, setAdjustDateDisplay] = useState(() => formatDateForDisplay(toLocalDateString(new Date()), dateFormat));
   const [adjustContraGuid, setAdjustContraGuid] = useState('');
   const [adjustNotes, setAdjustNotes] = useState('');
   const [adjusting, setAdjusting] = useState(false);

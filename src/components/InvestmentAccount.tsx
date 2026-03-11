@@ -9,6 +9,7 @@ import type { CategoricalChartFunc } from 'recharts/types/chart/types';
 import { computeZeroOffset, CHART_COLORS, GRADIENT_FILL_OPACITY } from '@/lib/chart-utils';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { toLocalDateString } from '@/lib/datePresets';
 
 interface PriceData {
     guid: string;
@@ -384,7 +385,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         </button>
                         <button
                             onClick={() => {
-                                setNewPrice({ date: new Date().toISOString().split('T')[0], value: '' });
+                                setNewPrice({ date: toLocalDateString(new Date()), value: '' });
                                 setShowPriceModal(true);
                             }}
                             className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"

@@ -8,6 +8,7 @@ import { AmountCell } from './cells/AmountCell';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDisplayAccountPath } from '@/lib/account-path';
+import { toLocalDateString } from '@/lib/datePresets';
 import { isMultiSplitTransaction } from './investment-utils';
 
 export interface EditableRowHandle {
@@ -73,7 +74,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
 
         const [postDate, setPostDate] = useState(
-            transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : ''
+            transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : ''
         );
         const [description, setDescription] = useState(transaction.description || '');
         const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');
@@ -88,7 +89,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             : undefined;
 
         const isDirty = useCallback(() => {
-            const origDate = transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : '';
+            const origDate = transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : '';
             const origDebit = splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '';
             const origCredit = splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '';
             return postDate !== origDate

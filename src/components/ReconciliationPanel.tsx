@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { toLocalDateString } from '@/lib/datePresets';
 
 interface ReconciliationPanelProps {
     accountGuid: string;
@@ -37,10 +38,10 @@ export function ReconciliationPanel({
     const { dateFormat } = useUserPreferences();
     const [statementBalance, setStatementBalance] = useState('');
     const [statementDate, setStatementDate] = useState(
-        new Date().toISOString().split('T')[0]
+        toLocalDateString(new Date())
     );
     const [statementDateDisplay, setStatementDateDisplay] = useState(() =>
-        formatDateForDisplay(new Date().toISOString().split('T')[0], dateFormat)
+        formatDateForDisplay(toLocalDateString(new Date()), dateFormat)
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);

@@ -7,6 +7,7 @@ import { AccountCell } from './cells/AccountCell';
 import { AmountCell } from './cells/AmountCell';
 import { formatCurrency } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
+import { toLocalDateString } from '@/lib/datePresets';
 import { transformToInvestmentRow, isMultiSplitTransaction } from './investment-utils';
 
 export interface InvestmentEditRowHandle {
@@ -85,7 +86,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         const initIsBuy = invRow.transactionType !== 'sell';
 
         const [postDate, setPostDate] = useState(
-            transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : ''
+            transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : ''
         );
         const [description, setDescription] = useState(transaction.description || '');
         const [transferAccountGuid, setTransferAccountGuid] = useState(invRow.transferAccountGuid);
@@ -124,7 +125,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         }
 
         const isDirty = useCallback(() => {
-            const origDate = transaction.post_date ? new Date(transaction.post_date).toISOString().split('T')[0] : '';
+            const origDate = transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : '';
             return postDate !== origDate
                 || description !== (transaction.description || '')
                 || transferAccountGuid !== invRow.transferAccountGuid

@@ -8,8 +8,16 @@ export interface DatePreset {
     getValue: () => DateRange;
 }
 
+/**
+ * Format a Date to YYYY-MM-DD using local timezone (not UTC).
+ * Exported as toLocalDateString for reuse across the app.
+ */
+export function toLocalDateString(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 function formatDate(date: Date): string {
-    return date.toISOString().split('T')[0];
+    return toLocalDateString(date);
 }
 
 function startOfMonth(date: Date): Date {
