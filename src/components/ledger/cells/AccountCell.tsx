@@ -17,6 +17,7 @@ export function AccountCell({ value, onChange, onEnter, onArrowUp, onArrowDown, 
             value={value}
             onChange={(guid, name) => onChange(guid, name)}
             placeholder="Account..."
+            compact
             onEnter={onEnter}
             onArrowUp={onArrowUp}
             onArrowDown={onArrowDown}

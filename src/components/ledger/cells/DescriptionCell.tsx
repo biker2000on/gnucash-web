@@ -20,7 +20,8 @@ export function DescriptionCell({ value, onChange, onSelectSuggestion, onEnter, 
             onChange={onChange}
             onSelectSuggestion={onSelectSuggestion}
             placeholder="Description..."
-            className="text-sm"
+            className="text-xs"
+            compact
             onEnter={onEnter}
             onArrowUp={onArrowUp}
             onArrowDown={onArrowDown}

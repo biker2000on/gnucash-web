@@ -135,7 +135,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         const rowClass = `transition-colors ${isActive ? 'ring-2 ring-cyan-500/30 ring-inset bg-cyan-500/5' : 'hover:bg-white/[0.02]'} ${saveError ? 'ring-2 ring-rose-500/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-amber-500' : ''}`;
 
         const checkboxCell = showCheckbox && (
-            <td className="px-4 py-4 align-top">
+            <td className="px-3 py-2 align-top">
                 <input
                     type="checkbox"
                     checked={isChecked}
@@ -147,7 +147,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         );
 
         const reconcileCell = (
-            <td className="px-4 py-4 align-top">
+            <td className="px-3 py-2 align-top">
                 <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold text-foreground-muted bg-surface/10">
                     {reconcileIcon}
                 </span>
@@ -155,7 +155,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         );
 
         const actionsCell = (
-            <td className="px-2 py-4 align-top">
+            <td className="px-2 py-2 align-top">
                 <div className="flex items-center gap-1">
                     {onDuplicate && (
                         <button onClick={() => onDuplicate(transaction.guid)} className="text-foreground-muted hover:text-emerald-400 transition-colors" title="Duplicate (d)">
@@ -180,23 +180,23 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 <tr className={rowClass} onClick={handleRowClick}>
                     {checkboxCell}
                     {reconcileCell}
-                    <td className="px-6 py-4 text-xs text-foreground-secondary font-mono">
+                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground">
+                    <td className="px-4 py-2 text-sm text-foreground leading-tight">
                         <span className="font-medium">{transaction.description}</span>
                         {transaction.source && transaction.source !== 'manual' && (
                             <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
                         )}
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground-muted italic text-xs">-- {otherSplits.length + 1} splits --</td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
+                    <td className="px-4 py-2 text-xs text-foreground-muted italic">-- {otherSplits.length + 1} splits --</td>
+                    <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
                         {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
                         {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                     </td>
                     {actionsCell}
@@ -210,20 +210,20 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 <tr className={rowClass} onClick={handleRowClick}>
                     {checkboxCell}
                     {reconcileCell}
-                    <td className="px-6 py-4 text-xs text-foreground-secondary font-mono">
+                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground font-medium">{transaction.description}</td>
-                    <td className="px-6 py-4 text-sm text-foreground-secondary">
+                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
+                    <td className="px-4 py-2 text-sm text-foreground-secondary leading-tight">
                         {formatDisplayAccountPath(otherSplit?.account_fullname, otherSplit?.account_name)}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
                         {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
                         {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                     </td>
                     {actionsCell}
@@ -235,12 +235,12 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         return (
             <tr className={rowClass}>
                 {checkboxCell}
-                <td className="px-4 py-2 align-middle">
+                <td className="px-3 py-1 align-middle">
                     <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold text-foreground-muted bg-surface/10">
                         {reconcileIcon}
                     </span>
                 </td>
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <DateCell
                         value={postDate}
                         onChange={setPostDate}
@@ -251,7 +251,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         onFocus={() => onColumnFocus?.(0)}
                     />
                 </td>
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <DescriptionCell
                         value={description}
                         onChange={setDescription}
@@ -262,7 +262,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         onFocus={() => onColumnFocus?.(1)}
                     />
                 </td>
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <AccountCell
                         value={otherAccountGuid}
                         onChange={(guid, name) => { setOtherAccountGuid(guid); setOtherAccountName(name); }}
@@ -273,7 +273,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         onFocus={() => onColumnFocus?.(2)}
                     />
                 </td>
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <AmountCell
                         value={debit}
                         onChange={(v) => { setDebit(v); if (v) setCredit(''); }}
@@ -284,7 +284,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         onFocus={() => onColumnFocus?.(3)}
                     />
                 </td>
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <AmountCell
                         value={credit}
                         onChange={(v) => { setCredit(v); if (v) setDebit(''); }}
@@ -295,10 +295,10 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         onFocus={() => onColumnFocus?.(4)}
                     />
                 </td>
-                <td className="px-6 py-2 text-sm font-mono text-right align-middle opacity-40">
+                <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40">
                     {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                 </td>
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <div className="flex items-center gap-1">
                         {onDuplicate && (
                             <button

@@ -17,6 +17,7 @@ interface DescriptionAutocompleteProps {
   onArrowDown?: () => void;
   autoFocus?: boolean;
   onFocus?: () => void;
+  compact?: boolean;
 }
 
 export function DescriptionAutocomplete({
@@ -32,6 +33,7 @@ export function DescriptionAutocomplete({
   onArrowDown,
   autoFocus,
   onFocus,
+  compact = false,
 }: DescriptionAutocompleteProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<TransactionSuggestion[]>([]);
@@ -235,7 +237,7 @@ export function DescriptionAutocomplete({
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         data-field="description"
-        className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none ${
+        className={`w-full bg-input-bg border rounded-lg ${compact ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'} text-foreground placeholder-foreground-muted focus:outline-none ${
           isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border focus:border-cyan-500/50'
         }`}
       />

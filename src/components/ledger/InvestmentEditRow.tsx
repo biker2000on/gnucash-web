@@ -173,7 +173,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         const rowClass = `transition-colors ${isActive ? 'ring-2 ring-cyan-500/30 ring-inset bg-cyan-500/5' : 'hover:bg-white/[0.02]'} ${saveError ? 'ring-2 ring-rose-500/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-amber-500' : ''}`;
 
         const checkboxCell = showCheckbox && (
-            <td className="px-4 py-4 align-top">
+            <td className="px-3 py-2 align-top">
                 <input
                     type="checkbox"
                     checked={isChecked}
@@ -185,7 +185,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         );
 
         const reconcileCell = (
-            <td className="px-4 py-2 align-middle">
+            <td className="px-3 py-1 align-middle">
                 <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold text-foreground-muted bg-surface/10">
                     {reconcileIcon}
                 </span>
@@ -193,7 +193,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         );
 
         const actionsCell = (
-            <td className="px-2 py-2 align-middle">
+            <td className="px-2 py-1 align-middle">
                 <div className="flex items-center gap-1">
                     {onDuplicate && (
                         <button
@@ -231,34 +231,34 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                 <tr className={rowClass} onClick={handleRowClick}>
                     {checkboxCell}
                     {reconcileCell}
-                    <td className="px-6 py-4 text-xs text-foreground-secondary font-mono">
+                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground">
+                    <td className="px-4 py-2 text-sm text-foreground leading-tight">
                         <span className="font-medium">{transaction.description}</span>
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground-muted italic text-xs">
+                    <td className="px-4 py-2 text-xs text-foreground-muted italic">
                         {invRow.transferAccount || '\u2014'}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right">
+                    <td className="px-4 py-2 text-sm font-mono text-right">
                         {invRow.shares != null ? invRow.shares.toFixed(4) : '\u2014'}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right">
+                    <td className="px-4 py-2 text-sm font-mono text-right">
                         {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : '\u2014'}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
                         {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : ''}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
                         {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : ''}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
+                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
                         {invRow.shareBalance.toFixed(4)}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
+                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
                         {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                     </td>
-                    <td className="px-2 py-4 align-top">
+                    <td className="px-2 py-2 align-top">
                         <div className="flex items-center gap-1">
                             {onDuplicate && (
                                 <button
@@ -292,33 +292,33 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                 <tr className={rowClass} onClick={handleRowClick}>
                     {checkboxCell}
                     {reconcileCell}
-                    <td className="px-6 py-4 text-xs text-foreground-secondary font-mono">
+                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
-                    <td className="px-6 py-4 text-sm text-foreground font-medium">{transaction.description}</td>
-                    <td className="px-6 py-4 text-sm text-foreground-secondary">
+                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
+                    <td className="px-4 py-2 text-sm text-foreground-secondary leading-tight">
                         {formatDisplayAccountPath(invRow.transferAccount, invRow.transferAccount)}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right">
+                    <td className="px-4 py-2 text-sm font-mono text-right">
                         {invRow.shares != null ? (
                             <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
                                 {invRow.shares.toFixed(4)}
                             </span>
                         ) : <span className="opacity-30">&mdash;</span>}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-foreground">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-foreground">
                         {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-emerald-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
                         {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right text-rose-400">
+                    <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
                         {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
+                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
                         {invRow.shareBalance.toFixed(4)}
                     </td>
-                    <td className="px-6 py-4 text-sm font-mono text-right font-bold text-foreground">
+                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
                         {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                     </td>
                     {actionsCell}
@@ -332,7 +332,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                 {checkboxCell}
                 {reconcileCell}
                 {/* Date */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <DateCell
                         value={postDate}
                         onChange={setPostDate}
@@ -344,7 +344,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     />
                 </td>
                 {/* Description */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <DescriptionCell
                         value={description}
                         onChange={setDescription}
@@ -356,7 +356,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     />
                 </td>
                 {/* Transfer Account */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <AccountCell
                         value={transferAccountGuid}
                         onChange={(guid, name) => { setTransferAccountGuid(guid); setTransferAccountName(name); }}
@@ -368,7 +368,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     />
                 </td>
                 {/* Shares */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <AmountCell
                         value={userSharesStr}
                         onChange={setUserSharesStr}
@@ -380,7 +380,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     />
                 </td>
                 {/* Price (may be auto-calculated) */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     <div className="relative">
                         <input
                             type="text"
@@ -405,12 +405,12 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                 else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
                             }}
                             placeholder="0.0000"
-                            className={`w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-right focus:outline-none focus:border-cyan-500/50 font-mono ${autoCalcField === 'price' ? 'italic text-foreground-muted' : 'text-foreground'}`}
+                            className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-cyan-500/50 font-mono leading-tight ${autoCalcField === 'price' ? 'italic text-foreground-muted' : 'text-foreground'}`}
                         />
                     </div>
                 </td>
                 {/* Buy total */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     {isBuy ? (
                         <div className="relative">
                             <input
@@ -434,7 +434,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                     else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
                                 }}
                                 placeholder="0.00"
-                                className={`w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-right focus:outline-none focus:border-cyan-500/50 font-mono ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-emerald-400'}`}
+                                className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-cyan-500/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-emerald-400'}`}
                             />
                         </div>
                     ) : (
@@ -444,7 +444,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                 // Move total value to buy
                                 setAutoCalcField('price');
                             }}
-                            className="w-full text-center text-foreground-muted hover:text-emerald-400 transition-colors text-xs py-1"
+                            className="w-full text-center text-foreground-muted hover:text-emerald-400 transition-colors text-xs py-0.5"
                             tabIndex={-1}
                         >
                             &mdash;
@@ -452,7 +452,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     )}
                 </td>
                 {/* Sell total */}
-                <td className="px-2 py-2 align-middle">
+                <td className="px-2 py-1 align-middle">
                     {!isBuy ? (
                         <div className="relative">
                             <input
@@ -476,7 +476,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                     else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
                                 }}
                                 placeholder="0.00"
-                                className={`w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-right focus:outline-none focus:border-cyan-500/50 font-mono ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-rose-400'}`}
+                                className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-cyan-500/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-rose-400'}`}
                             />
                         </div>
                     ) : (
@@ -485,7 +485,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                 setIsBuy(false);
                                 setAutoCalcField('price');
                             }}
-                            className="w-full text-center text-foreground-muted hover:text-rose-400 transition-colors text-xs py-1"
+                            className="w-full text-center text-foreground-muted hover:text-rose-400 transition-colors text-xs py-0.5"
                             tabIndex={-1}
                         >
                             &mdash;
@@ -493,11 +493,11 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     )}
                 </td>
                 {/* Share Balance (read-only) */}
-                <td className="px-6 py-2 text-sm font-mono text-right align-middle opacity-40 font-bold">
+                <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
                     {invRow.shareBalance.toFixed(4)}
                 </td>
                 {/* Cost Basis (read-only) */}
-                <td className="px-6 py-2 text-sm font-mono text-right align-middle opacity-40 font-bold">
+                <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
                     {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                 </td>
                 {actionsCell}

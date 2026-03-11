@@ -20,6 +20,7 @@ interface AccountSelectorProps {
     autoFocus?: boolean;
     onFocus?: () => void;
     accountTypes?: string[];
+    compact?: boolean;
 }
 
 export function AccountSelector({
@@ -35,6 +36,7 @@ export function AccountSelector({
     autoFocus,
     onFocus,
     accountTypes,
+    compact = false,
 }: AccountSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -254,7 +256,7 @@ export function AccountSelector({
     return (
         <div ref={containerRef} className={`relative ${className}`}>
             <div
-                className={`flex items-center bg-input-bg border rounded-lg px-3 py-2 cursor-pointer ${
+                className={`flex items-center bg-input-bg border rounded-lg ${compact ? 'px-2 py-1' : 'px-3 py-2'} cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-border-hover'
                 } ${isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'}`}
                 onClick={() => !disabled && inputRef.current?.focus()}
@@ -271,10 +273,10 @@ export function AccountSelector({
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={disabled}
-                    className="flex-1 bg-transparent text-sm text-foreground placeholder-foreground-muted focus:outline-none"
+                    className={`flex-1 bg-transparent ${compact ? 'text-xs' : 'text-sm'} text-foreground placeholder-foreground-muted focus:outline-none`}
                 />
                 <svg
-                    className={`w-4 h-4 text-foreground-muted transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                    className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-foreground-muted transition-transform ${isOpen ? 'rotate-180' : ''}`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"

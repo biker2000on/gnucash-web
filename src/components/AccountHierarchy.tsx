@@ -1,10 +1,21 @@
 "use client";
 
-import { AccountWithChildren } from '@/lib/types';
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import {
+    ColumnDef,
+    ExpandedState,
+    VisibilityState,
+    flexRender,
+    getCoreRowModel,
+    getExpandedRowModel,
+    useReactTable,
+} from '@tanstack/react-table';
+import { AccountWithChildren } from '@/lib/types';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/format';
+import { formatDateForDisplay } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useInvalidateAccounts } from '@/lib/hooks/useAccounts';
 import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
@@ -14,6 +25,70 @@ import { AccountForm } from './AccountForm';
 
 type SortKey = 'name' | 'total_balance' | 'period_balance';
 
+type ColumnId =
+    | 'accountName'
+    | 'periodBalance'
+    | 'totalBalanceUsd'
+    | 'totalBalanceCommodity'
+    | 'lastReconcileDate'
+    | 'reconciledUsd'
+    | 'placeholderBadge';
+
+interface ReconcileSummaryRow {
+    guid: string;
+    last_reconcile_date: string | null;
+    reconciled_usd: string;
+}
+
+interface DerivedAccount extends AccountWithChildren {
+    children: DerivedAccount[];
+    ownCommodityBalance: number;
+    ownCommodityBalanceLabel: string;
+    periodBalanceUsd: number;
+    totalBalanceUsd: number;
+    reconciledUsd: number;
+    aggregatedUnreviewed: number;
+    hasSimpleFin: boolean;
+    lastReconcileDate: string | null;
+}
+
+const COLUMN_VISIBILITY_KEY = 'account_hierarchy.column_visibility';
+const COLUMN_ORDER_KEY = 'account_hierarchy.column_order';
+const REQUIRED_COLUMNS: ColumnId[] = [
+    'accountName',
+    'periodBalance',
+    'totalBalanceUsd',
+    'totalBalanceCommodity',
+];
+const ALWAYS_VISIBLE_COLUMNS: ColumnId[] = ['accountName'];
+const DEFAULT_COLUMN_ORDER: ColumnId[] = [
+    'accountName',
+    'periodBalance',
+    'totalBalanceUsd',
+    'totalBalanceCommodity',
+    'lastReconcileDate',
+    'reconciledUsd',
+    'placeholderBadge',
+];
+const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
+    accountName: true,
+    periodBalance: true,
+    totalBalanceUsd: true,
+    totalBalanceCommodity: true,
+    lastReconcileDate: false,
+    reconciledUsd: false,
+    placeholderBadge: false,
+};
+const MOBILE_DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
+    accountName: true,
+    periodBalance: false,
+    totalBalanceUsd: false,
+    totalBalanceCommodity: false,
+    lastReconcileDate: false,
+    reconciledUsd: false,
+    placeholderBadge: false,
+};
+
 function aggregateUnreviewed(account: AccountWithChildren, statusMap: ReviewStatusMap): number {
     let count = statusMap[account.guid]?.unreviewedCount || 0;
     for (const child of account.children || []) {
@@ -22,248 +97,191 @@ function aggregateUnreviewed(account: AccountWithChildren, statusMap: ReviewStat
     return count;
 }
 
-function hasAnyUnreviewed(account: AccountWithChildren, statusMap: ReviewStatusMap): boolean {
-    return aggregateUnreviewed(account, statusMap) > 0;
+function getSortValue(account: AccountWithChildren, sortKey: SortKey): number | string {
+    if (sortKey === 'name') return account.name;
+    if (sortKey === 'total_balance') return parseFloat(account.total_balance || '0');
+    return parseFloat(account.period_balance || '0');
 }
 
-interface AccountNodeProps {
-    account: AccountWithChildren;
-    showHidden: boolean;
-    filterText: string;
-    showToReview: boolean;
-    statusMap: ReviewStatusMap;
-    depth?: number;
-    expandToDepth?: number;
-    expandedNodes: Set<string>;
-    setExpandedNodes: (updater: (prev: Set<string>) => Set<string>) => void;
-    onEdit?: (account: AccountWithChildren) => void;
-    onDelete?: (account: AccountWithChildren) => void;
-    onNewChild?: (parent: AccountWithChildren) => void;
-    balanceReversal: BalanceReversal;
-    isMobile?: boolean;
+function sortTree(accounts: AccountWithChildren[], sortKey: SortKey): AccountWithChildren[] {
+    return [...accounts]
+        .sort((a, b) => {
+            const aValue = getSortValue(a, sortKey);
+            const bValue = getSortValue(b, sortKey);
+
+            if (typeof aValue === 'string' && typeof bValue === 'string') {
+                return aValue.localeCompare(bValue);
+            }
+
+            return Number(bValue) - Number(aValue);
+        })
+        .map((account) => ({
+            ...account,
+            children: sortTree(account.children, sortKey),
+        }));
 }
 
-function AccountNode({
-    account,
-    showHidden,
-    filterText,
-    showToReview,
-    statusMap,
-    depth = 0,
-    expandToDepth = Infinity,
-    expandedNodes,
-    setExpandedNodes,
-    onEdit,
-    onDelete,
-    onNewChild,
-    balanceReversal,
-    isMobile = false,
-}: AccountNodeProps) {
-    // Determine initial expansion state
-    // Priority: 1) User manually expanded/collapsed, 2) Global depth setting
-    const [manualExpanded, setManualExpanded] = useState<boolean | null>(
-        expandedNodes.has(account.guid) ? true : null
-    );
-
-    // Recursive search check: does this node or any child match the filter?
-    const hasMatch = (acc: AccountWithChildren): boolean => {
-        if (acc.name.toLowerCase().includes(filterText.toLowerCase())) return true;
-        return acc.children.some(child => (showHidden || !child.hidden) && hasMatch(child));
+function buildExpandedDefaults(accounts: AccountWithChildren[], expandToDepth: number): ExpandedState {
+    const expanded: Record<string, boolean> = {};
+    const visit = (nodes: AccountWithChildren[], depth: number) => {
+        for (const node of nodes) {
+            if (node.children.length === 0) continue;
+            if (expandToDepth === Infinity || depth < expandToDepth) {
+                expanded[node.guid] = true;
+                visit(node.children, depth + 1);
+            }
+        }
     };
+    visit(accounts, 0);
+    return expanded;
+}
 
-    const textMatches = filterText ? hasMatch(account) : true;
-    const reviewMatches = showToReview ? hasAnyUnreviewed(account, statusMap) : true;
-    const matches = textMatches && reviewMatches;
+function applyManualExpanded(defaultExpanded: ExpandedState, manualExpanded: Record<string, boolean>): ExpandedState {
+    if (defaultExpanded === true) return true;
 
-    if (!matches) return null;
-    if (account.hidden && !showHidden) return null;
+    const merged = { ...defaultExpanded };
+    for (const [guid, isExpanded] of Object.entries(manualExpanded)) {
+        if (isExpanded) {
+            merged[guid] = true;
+        } else {
+            delete merged[guid];
+        }
+    }
+    return merged;
+}
 
-    const hasChildren = account.children.length > 0;
-    const isExpanded = (filterText || showToReview) && matches
-        ? true
-        : manualExpanded ?? (depth < expandToDepth);
+function getMaxDate(a: string | null, b: string | null): string | null {
+    if (!a) return b;
+    if (!b) return a;
+    return a > b ? a : b;
+}
 
-    // Recursive balance calculation for children that are visible
-    const getAggregatedBalances = (acc: AccountWithChildren): { total: number, period: number, totalUsd: number, periodUsd: number } => {
-        // Apply balance reversal to this account's balances based on its type
-        let total = applyBalanceReversal(
-            parseFloat(acc.total_balance || '0'),
-            acc.account_type,
+function deriveTree(
+    accounts: AccountWithChildren[],
+    statusMap: ReviewStatusMap,
+    reconcileMap: Map<string, ReconcileSummaryRow>,
+    balanceReversal: BalanceReversal
+): DerivedAccount[] {
+    const deriveNode = (account: AccountWithChildren): DerivedAccount => {
+        const ownCommodityBalance = applyBalanceReversal(
+            parseFloat(account.total_balance || '0'),
+            account.account_type,
             balanceReversal
         );
-        let period = applyBalanceReversal(
-            parseFloat(acc.period_balance || '0'),
-            acc.account_type,
+        const ownPeriodBalance = applyBalanceReversal(
+            parseFloat(account.period_balance || '0'),
+            account.account_type,
             balanceReversal
         );
-        // For investment accounts, use USD values; for regular accounts, USD = native
-        let totalUsd = acc.total_balance_usd
-            ? applyBalanceReversal(parseFloat(acc.total_balance_usd), acc.account_type, balanceReversal)
-            : total;
-        let periodUsd = acc.period_balance_usd
-            ? applyBalanceReversal(parseFloat(acc.period_balance_usd), acc.account_type, balanceReversal)
-            : period;
+        const ownTotalUsd = account.total_balance_usd
+            ? applyBalanceReversal(parseFloat(account.total_balance_usd), account.account_type, balanceReversal)
+            : ownCommodityBalance;
+        const ownPeriodUsd = account.period_balance_usd
+            ? applyBalanceReversal(parseFloat(account.period_balance_usd), account.account_type, balanceReversal)
+            : ownPeriodBalance;
+        const ownReconciledUsd = applyBalanceReversal(
+            parseFloat(reconcileMap.get(account.guid)?.reconciled_usd || '0'),
+            account.account_type,
+            balanceReversal
+        );
 
-        acc.children.forEach(child => {
-            if (!child.hidden || showHidden) {
-                const childBal = getAggregatedBalances(child);
-                total += childBal.total;
-                period += childBal.period;
-                totalUsd += childBal.totalUsd;
-                periodUsd += childBal.periodUsd;
-            }
-        });
+        const children = account.children.map(deriveNode);
 
-        return { total, period, totalUsd, periodUsd };
+        let totalBalanceUsd = ownTotalUsd;
+        let periodBalanceUsd = ownPeriodUsd;
+        let reconciledUsd = ownReconciledUsd;
+        let lastReconcileDate = reconcileMap.get(account.guid)?.last_reconcile_date || null;
+
+        for (const child of children) {
+            totalBalanceUsd += child.totalBalanceUsd;
+            periodBalanceUsd += child.periodBalanceUsd;
+            reconciledUsd += child.reconciledUsd;
+            lastReconcileDate = getMaxDate(lastReconcileDate, child.lastReconcileDate);
+        }
+
+        const fractionDigits =
+            account.account_type === 'STOCK' || account.account_type === 'MUTUAL' ? 4 : 2;
+
+        return {
+            ...account,
+            children,
+            ownCommodityBalance,
+            ownCommodityBalanceLabel: new Intl.NumberFormat('en-US', {
+                minimumFractionDigits: fractionDigits,
+                maximumFractionDigits: fractionDigits,
+            }).format(ownCommodityBalance),
+            periodBalanceUsd,
+            totalBalanceUsd,
+            reconciledUsd,
+            aggregatedUnreviewed: aggregateUnreviewed(account, statusMap),
+            hasSimpleFin: statusMap[account.guid]?.hasSimpleFin ?? false,
+            lastReconcileDate,
+        };
     };
 
-    const { totalUsd: aggTotalUsd, periodUsd: aggPeriodUsd } = getAggregatedBalances(account);
+    return accounts.map(deriveNode);
+}
 
-    const isInvestment = account.account_type === 'STOCK' || account.account_type === 'MUTUAL';
-    const hasSimpleFin = statusMap[account.guid]?.hasSimpleFin ?? false;
-    const aggregatedUnreviewed = aggregateUnreviewed(account, statusMap);
+function filterTree(
+    accounts: DerivedAccount[],
+    filterText: string,
+    showHidden: boolean,
+    showToReview: boolean
+): DerivedAccount[] {
+    const normalizedFilter = filterText.trim().toLowerCase();
 
-    const handleToggle = () => {
-        const newExpanded = !isExpanded;
-        setManualExpanded(newExpanded);
-        setExpandedNodes(prev => {
-            const next = new Set(prev);
-            if (newExpanded) {
-                next.add(account.guid);
-            } else {
-                next.delete(account.guid);
-            }
-            return next;
-        });
+    const visit = (account: DerivedAccount): DerivedAccount | null => {
+        if (account.hidden && !showHidden) {
+            return null;
+        }
+
+        const filteredChildren = account.children
+            .map(visit)
+            .filter((child): child is DerivedAccount => child !== null);
+
+        const selfMatchesText =
+            normalizedFilter.length === 0 ||
+            account.name.toLowerCase().includes(normalizedFilter);
+        const descendantMatchesText = filteredChildren.length > 0;
+        const textMatches = selfMatchesText || descendantMatchesText;
+        const reviewMatches = !showToReview || account.aggregatedUnreviewed > 0;
+
+        if (!textMatches || !reviewMatches) {
+            return null;
+        }
+
+        return {
+            ...account,
+            children: filteredChildren,
+        };
     };
 
-    return (
-        <>
-            <div
-                className={`group flex items-center gap-2 py-2 px-3 cursor-pointer rounded-l-lg transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'} ${account.hidden ? 'opacity-50 grayscale' : ''}`}
-                style={{ paddingLeft: `${depth * (isMobile ? 10 : 20) + 12}px` }}
-                onClick={handleToggle}
-            >
-                {hasChildren && (
-                    <span className={`text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
-                        ▶
-                    </span>
-                )}
-                <Link
-                    href={`/accounts/${account.guid}`}
-                    className={`text-foreground-secondary font-medium truncate hover:text-emerald-400 transition-colors ${filterText && account.name.toLowerCase().includes(filterText.toLowerCase()) ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50' : ''}`}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    {account.name}
-                </Link>
-                {hasSimpleFin && (
-                    <svg className="w-3 h-3 text-foreground-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Linked to SimpleFin">
-                        <title>Linked to SimpleFin</title>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                )}
-                {aggregatedUnreviewed > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex-shrink-0">
-                        {aggregatedUnreviewed}
-                    </span>
-                )}
-                <Link
-                    href={`/accounts/${account.guid}`}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-border-hover rounded text-foreground-muted hover:text-emerald-400 ml-1"
-                    title="View Ledger"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                    </svg>
-                </Link>
-                {account.hidden === 1 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-background-tertiary text-foreground-muted border border-border-hover ml-2">
-                        HIDDEN
-                    </span>
-                )}
-                {/* Action buttons - visible on hover */}
-                <div className="opacity-0 group-hover:opacity-100 flex gap-0 ml-1 transition-opacity">
-                    {onNewChild && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onNewChild(account); }}
-                            className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded hover:bg-emerald-500/20 text-foreground-muted hover:text-emerald-400 transition-colors"
-                            title="Add Child Account"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                        </button>
-                    )}
-                    {onEdit && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onEdit(account); }}
-                            className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
-                            title="Edit Account"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                        </button>
-                    )}
-                    {onDelete && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onDelete(account); }}
-                            className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded hover:bg-rose-500/20 text-foreground-muted hover:text-rose-400 transition-colors"
-                            title="Delete Account"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                        </button>
-                    )}
-                </div>
-            </div>
-            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'}`} onClick={handleToggle}>
-                {isInvestment && (
-                    <>
-                        <span className="text-[10px] text-foreground-muted uppercase tracking-tighter">{account.commodity_mnemonic || 'Shares'}</span>
-                        <span className="text-sm text-foreground-secondary">
-                            {new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(parseFloat(account.total_balance || '0'))}
-                        </span>
-                    </>
-                )}
-            </div>
-            <div className={`flex flex-col justify-center text-right py-2 px-4 font-mono transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'}`} onClick={handleToggle}>
-                <span className="text-[10px] text-foreground-muted uppercase tracking-tighter">Period</span>
-                <span className={`text-sm ${aggPeriodUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                    {formatCurrency(aggPeriodUsd, 'USD')}
-                </span>
-            </div>
-            <div className={`flex flex-col justify-center text-right py-2 pr-3 pl-4 font-mono rounded-r-lg transition-colors ${hasChildren ? 'hover:bg-surface-hover/50' : 'hover:bg-surface-hover/20'}`} onClick={handleToggle}>
-                <span className="text-[10px] text-foreground-muted uppercase tracking-tighter">Total</span>
-                <span className={`text-sm font-bold ${aggTotalUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                    {formatCurrency(aggTotalUsd, 'USD')}
-                </span>
-            </div>
-            {isExpanded && hasChildren && account.children.map(child => (
-                (!child.hidden || showHidden) && (
-                    <AccountNode
-                        key={child.guid}
-                        account={child}
-                        showHidden={showHidden}
-                        filterText={filterText}
-                        showToReview={showToReview}
-                        statusMap={statusMap}
-                        depth={depth + 1}
-                        expandToDepth={expandToDepth}
-                        expandedNodes={expandedNodes}
-                        setExpandedNodes={setExpandedNodes}
-                        onEdit={onEdit}
-                        onDelete={onDelete}
-                        onNewChild={onNewChild}
-                        balanceReversal={balanceReversal}
-                        isMobile={isMobile}
-                    />
-                )
-            ))}
-        </>
+    return accounts
+        .map(visit)
+        .filter((account): account is DerivedAccount => account !== null);
+}
+
+function normalizeVisibility(state: VisibilityState): VisibilityState {
+    const next = { ...DEFAULT_COLUMN_VISIBILITY, ...state };
+    for (const key of ALWAYS_VISIBLE_COLUMNS) {
+        next[key] = true;
+    }
+    return next;
+}
+
+function getDefaultVisibility(isMobile: boolean): VisibilityState {
+    return isMobile ? MOBILE_DEFAULT_COLUMN_VISIBILITY : DEFAULT_COLUMN_VISIBILITY;
+}
+
+function normalizeColumnOrder(order: string[] | ColumnId[] | undefined): ColumnId[] {
+    const requested = Array.isArray(order) ? order : [];
+    const filtered = requested.filter(
+        (id): id is ColumnId => id !== 'accountName' && DEFAULT_COLUMN_ORDER.includes(id as ColumnId)
     );
+    const remaining = DEFAULT_COLUMN_ORDER.filter(
+        (id) => id !== 'accountName' && !filtered.includes(id)
+    );
+    return ['accountName', ...filtered, ...remaining];
 }
 
 interface AccountHierarchyProps {
@@ -273,12 +291,21 @@ interface AccountHierarchyProps {
 
 export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarchyProps) {
     const isMobile = useIsMobile();
-    const { balanceReversal } = useUserPreferences();
+    const { balanceReversal, dateFormat } = useUserPreferences();
     const invalidateAccounts = useInvalidateAccounts();
     const { data: reviewStatusData } = useReviewStatus();
-    const statusMap: ReviewStatusMap = reviewStatusData ?? {};
+    const statusMap = useMemo<ReviewStatusMap>(() => reviewStatusData ?? {}, [reviewStatusData]);
 
-    // Initialize state from localStorage with fallback defaults
+    const { data: reconcileSummary = [] } = useQuery<ReconcileSummaryRow[]>({
+        queryKey: ['accounts', 'reconcile-summary'],
+        queryFn: async () => {
+            const res = await fetch('/api/accounts/reconcile-summary');
+            if (!res.ok) throw new Error('Failed to fetch account reconcile summary');
+            return res.json() as Promise<ReconcileSummaryRow[]>;
+        },
+        staleTime: 1000 * 60 * 5,
+    });
+
     const [showHidden, setShowHidden] = useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('accountHierarchy.showHidden');
@@ -286,7 +313,6 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         }
         return false;
     });
-
     const [showToReview, setShowToReview] = useState(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('accountHierarchy.showToReview');
@@ -294,9 +320,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         }
         return false;
     });
-
     const [filterText, setFilterText] = useState('');
-
     const [sortKey, setSortKey] = useState<SortKey>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('accountHierarchy.sortKey');
@@ -304,24 +328,27 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         }
         return 'name';
     });
-
     const [expandToDepth, setExpandToDepth] = useState<number>(() => {
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('accountHierarchy.expandToDepth');
-            return saved ? (saved === 'Infinity' ? Infinity : parseInt(saved)) : Infinity;
+            return saved ? (saved === 'Infinity' ? Infinity : parseInt(saved, 10)) : Infinity;
         }
         return Infinity;
     });
-
-    const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => {
+    const [manualExpanded, setManualExpanded] = useState<Record<string, boolean>>(() => {
         if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('accountHierarchy.expandedNodes');
-            return saved ? new Set(JSON.parse(saved)) : new Set();
+            const saved = localStorage.getItem('accountHierarchy.manualExpanded');
+            return saved ? JSON.parse(saved) : {};
         }
-        return new Set();
+        return {};
     });
+    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => getDefaultVisibility(false));
+    const [columnOrder, setColumnOrder] = useState<ColumnId[]>(DEFAULT_COLUMN_ORDER);
+    const [columnPrefsLoaded, setColumnPrefsLoaded] = useState(false);
+    const [draggedColumnId, setDraggedColumnId] = useState<ColumnId | null>(null);
+    const [isColumnsMenuOpen, setIsColumnsMenuOpen] = useState(false);
+    const columnsMenuRef = useRef<HTMLDivElement | null>(null);
 
-    // Modal state
     const [modalOpen, setModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
     const [selectedAccount, setSelectedAccount] = useState<AccountWithChildren | null>(null);
@@ -330,7 +357,6 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
 
-    // Persist state changes to localStorage
     useEffect(() => {
         localStorage.setItem('accountHierarchy.showHidden', JSON.stringify(showHidden));
     }, [showHidden]);
@@ -344,28 +370,140 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     }, [sortKey]);
 
     useEffect(() => {
-        localStorage.setItem('accountHierarchy.expandToDepth', expandToDepth === Infinity ? 'Infinity' : expandToDepth.toString());
+        localStorage.setItem(
+            'accountHierarchy.expandToDepth',
+            expandToDepth === Infinity ? 'Infinity' : expandToDepth.toString()
+        );
     }, [expandToDepth]);
 
     useEffect(() => {
-        localStorage.setItem('accountHierarchy.expandedNodes', JSON.stringify(Array.from(expandedNodes)));
-    }, [expandedNodes]);
+        localStorage.setItem('accountHierarchy.manualExpanded', JSON.stringify(manualExpanded));
+    }, [manualExpanded]);
 
-    const sortTree = useCallback((accs: AccountWithChildren[]): AccountWithChildren[] => {
-        return [...accs].sort((a, b) => {
-            if (sortKey === 'name') return a.name.localeCompare(b.name);
-            if (sortKey === 'total_balance') return parseFloat(b.total_balance || '0') - parseFloat(a.total_balance || '0');
-            if (sortKey === 'period_balance') return parseFloat(b.period_balance || '0') - parseFloat(a.period_balance || '0');
-            return 0;
-        }).map(acc => ({
-            ...acc,
-            children: sortTree(acc.children)
+    useEffect(() => {
+        if (!isColumnsMenuOpen) return;
+
+        const handlePointerDown = (event: MouseEvent) => {
+            if (columnsMenuRef.current && !columnsMenuRef.current.contains(event.target as Node)) {
+                setIsColumnsMenuOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handlePointerDown);
+        return () => document.removeEventListener('mousedown', handlePointerDown);
+    }, [isColumnsMenuOpen]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadColumnPrefs() {
+            try {
+                const res = await fetch('/api/user/preferences?key=account_hierarchy.*');
+                if (!res.ok) throw new Error('Failed to load column preferences');
+                const data = await res.json() as { preferences?: Record<string, unknown> };
+                const savedVisibility = data.preferences?.[COLUMN_VISIBILITY_KEY];
+                const savedOrder = data.preferences?.[COLUMN_ORDER_KEY];
+
+                if (!cancelled && savedVisibility && typeof savedVisibility === 'object' && !Array.isArray(savedVisibility)) {
+                    setColumnVisibility(normalizeVisibility(savedVisibility as VisibilityState));
+                } else if (!cancelled) {
+                    setColumnVisibility(getDefaultVisibility(isMobile));
+                }
+
+                if (!cancelled && Array.isArray(savedOrder)) {
+                    setColumnOrder(normalizeColumnOrder(savedOrder as string[]));
+                }
+            } catch {
+                if (!cancelled) {
+                    setColumnVisibility(getDefaultVisibility(isMobile));
+                    setColumnOrder(DEFAULT_COLUMN_ORDER);
+                }
+            } finally {
+                if (!cancelled) {
+                    setColumnPrefsLoaded(true);
+                }
+            }
+        }
+
+        loadColumnPrefs();
+        return () => {
+            cancelled = true;
+        };
+    }, [isMobile]);
+
+    useEffect(() => {
+        if (!columnPrefsLoaded) return;
+
+        const timeoutId = window.setTimeout(() => {
+            fetch('/api/user/preferences', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    preferences: {
+                        [COLUMN_VISIBILITY_KEY]: normalizeVisibility(columnVisibility),
+                        [COLUMN_ORDER_KEY]: normalizeColumnOrder(columnOrder),
+                    },
+                }),
+            }).catch(() => {
+                console.error('Failed to save account hierarchy column preferences');
+            });
+        }, 250);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [columnOrder, columnVisibility, columnPrefsLoaded]);
+
+    const reconcileMap = useMemo(
+        () => new Map(reconcileSummary.map((row) => [row.guid, row])),
+        [reconcileSummary]
+    );
+
+    const sortedAccounts = useMemo(() => sortTree(accounts, sortKey), [accounts, sortKey]);
+    const derivedAccounts = useMemo(
+        () => deriveTree(sortedAccounts, statusMap, reconcileMap, balanceReversal),
+        [sortedAccounts, statusMap, reconcileMap, balanceReversal]
+    );
+    const filteredAccounts = useMemo(
+        () => filterTree(derivedAccounts, filterText, showHidden, showToReview),
+        [derivedAccounts, filterText, showHidden, showToReview]
+    );
+
+    const defaultExpanded = useMemo(
+        () => buildExpandedDefaults(filteredAccounts, expandToDepth),
+        [filteredAccounts, expandToDepth]
+    );
+    const expanded = useMemo<ExpandedState>(() => {
+        if (filterText || showToReview) return true;
+        return applyManualExpanded(defaultExpanded, manualExpanded);
+    }, [defaultExpanded, filterText, manualExpanded, showToReview]);
+
+    const handleRowToggle = useCallback((guid: string, isExpanded: boolean) => {
+        setManualExpanded((prev) => ({
+            ...prev,
+            [guid]: !isExpanded,
         }));
-    }, [sortKey]);
+    }, []);
 
-    const sortedAccounts = useMemo(() => sortTree(accounts), [accounts, sortTree]);
+    const moveColumn = useCallback((fromId: ColumnId, toId: ColumnId) => {
+        if (fromId === toId || fromId === 'accountName' || toId === 'accountName') {
+            return;
+        }
 
-    // Account CRUD handlers
+        setColumnOrder((prev) => {
+            const current = normalizeColumnOrder(prev);
+            const fromIndex = current.indexOf(fromId);
+            const toIndex = current.indexOf(toId);
+
+            if (fromIndex === -1 || toIndex === -1) {
+                return current;
+            }
+
+            const next = [...current];
+            next.splice(fromIndex, 1);
+            next.splice(toIndex, 0, fromId);
+            return normalizeColumnOrder(next);
+        });
+    }, []);
+
     const handleNewAccount = useCallback(() => {
         setSelectedAccount(null);
         setParentGuid(null);
@@ -449,6 +587,213 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         onRefresh?.();
     }, [modalMode, selectedAccount, invalidateAccounts, onRefresh]);
 
+    const columns = useMemo<ColumnDef<DerivedAccount>[]>(() => [
+        {
+            id: 'accountName',
+            header: 'Account Name',
+            cell: ({ row }) => {
+                const account = row.original;
+                const canExpand = row.getCanExpand();
+                const isExpanded = row.getIsExpanded();
+                const indent = row.depth * (isMobile ? 10 : 20) + 12;
+
+                return (
+                    <div
+                        className={`group flex w-full min-w-[18rem] items-center gap-1.5 py-1 px-1.5 rounded-l-lg transition-colors ${
+                            account.hidden ? 'opacity-50 grayscale' : ''
+                        }`}
+                        style={{ paddingLeft: `${indent}px` }}
+                    >
+                        {canExpand ? (
+                            <button
+                                type="button"
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleRowToggle(account.guid, isExpanded);
+                                }}
+                                className={`text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}
+                                aria-label={isExpanded ? 'Collapse account' : 'Expand account'}
+                            >
+                                ▶
+                            </button>
+                        ) : (
+                            <span className="w-3" />
+                        )}
+                        <Link
+                            href={`/accounts/${account.guid}`}
+                            className={`text-foreground-secondary font-medium truncate hover:text-emerald-400 transition-colors ${
+                                filterText && account.name.toLowerCase().includes(filterText.toLowerCase())
+                                    ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50'
+                                    : ''
+                            }`}
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            {account.name}
+                        </Link>
+                        {account.hasSimpleFin && (
+                            <svg className="w-3 h-3 text-foreground-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Linked to SimpleFin">
+                                <title>Linked to SimpleFin</title>
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        )}
+                        {account.aggregatedUnreviewed > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex-shrink-0">
+                                {account.aggregatedUnreviewed}
+                            </span>
+                        )}
+                        {account.hidden === 1 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-background-tertiary text-foreground-muted border border-border-hover">
+                                HIDDEN
+                            </span>
+                        )}
+                        <Link
+                            href={`/accounts/${account.guid}`}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 min-h-[24px] min-w-[24px] flex items-center justify-center hover:bg-border-hover rounded text-foreground-muted hover:text-emerald-400 ml-0.5"
+                            title="View Ledger"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                            </svg>
+                        </Link>
+                        <div className="opacity-0 group-hover:opacity-100 flex gap-0 ml-0.5 transition-opacity">
+                            <button
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleNewChild(account);
+                                }}
+                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-emerald-500/20 text-foreground-muted hover:text-emerald-400 transition-colors"
+                                title="Add Child Account"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleEdit(account);
+                                }}
+                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
+                                title="Edit Account"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                            </button>
+                            <button
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleDeleteConfirm(account);
+                                }}
+                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-rose-500/20 text-foreground-muted hover:text-rose-400 transition-colors"
+                                title="Delete Account"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                );
+            },
+        },
+        {
+            id: 'periodBalance',
+            header: 'Period Balance',
+            cell: ({ row }) => (
+                <div className="text-right py-1 px-3 font-mono leading-tight">
+                    <span className={`text-sm ${row.original.periodBalanceUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {formatCurrency(row.original.periodBalanceUsd, 'USD')}
+                    </span>
+                </div>
+            ),
+        },
+        {
+            id: 'totalBalanceUsd',
+            header: 'Total Balance $',
+            cell: ({ row }) => (
+                <div className="text-right py-1 px-3 font-mono leading-tight">
+                    <span className={`text-sm font-bold ${row.original.totalBalanceUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {formatCurrency(row.original.totalBalanceUsd, 'USD')}
+                    </span>
+                </div>
+            ),
+        },
+        {
+            id: 'totalBalanceCommodity',
+            header: 'Balance in Commodity',
+            cell: ({ row }) => (
+                <div className="text-right py-1 px-3 font-mono leading-tight">
+                    <span className="text-sm text-foreground-secondary">
+                        {row.original.ownCommodityBalanceLabel} {row.original.commodity_mnemonic || ''}
+                    </span>
+                </div>
+            ),
+        },
+        {
+            id: 'lastReconcileDate',
+            header: 'Last Reconcile Date',
+            cell: ({ row }) => (
+                <div className="px-3 py-1 text-sm leading-tight text-right text-foreground-secondary">
+                    {row.original.lastReconcileDate
+                        ? formatDateForDisplay(row.original.lastReconcileDate, dateFormat)
+                        : '—'}
+                </div>
+            ),
+        },
+        {
+            id: 'reconciledUsd',
+            header: 'Reconciled (USD)',
+            cell: ({ row }) => (
+                <div className="px-3 py-1 text-sm leading-tight text-right font-mono text-foreground-secondary">
+                    {formatCurrency(row.original.reconciledUsd, 'USD')}
+                </div>
+            ),
+        },
+        {
+            id: 'placeholderBadge',
+            header: 'Placeholder',
+            cell: ({ row }) => (
+                <div className="px-3 py-1 leading-tight text-right">
+                    {row.original.placeholder === 1 ? (
+                        <span className="text-[10px] px-2 py-1 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 uppercase tracking-wide">
+                            Placeholder
+                        </span>
+                    ) : (
+                        <span className="text-sm text-foreground-muted">—</span>
+                    )}
+                </div>
+            ),
+        },
+    ], [dateFormat, filterText, handleDeleteConfirm, handleEdit, handleNewChild, handleRowToggle, isMobile]);
+
+    const table = useReactTable({
+        data: filteredAccounts,
+        columns,
+        state: {
+            expanded,
+            columnVisibility: normalizeVisibility(columnVisibility),
+            columnOrder: normalizeColumnOrder(columnOrder),
+        },
+        getRowId: (row) => row.guid,
+        getSubRows: (row) => row.children,
+        getCoreRowModel: getCoreRowModel(),
+        getExpandedRowModel: getExpandedRowModel(),
+        onColumnVisibilityChange: (updater) => {
+            setColumnVisibility((prev) => {
+                const next = typeof updater === 'function' ? updater(prev) : updater;
+                return normalizeVisibility(next);
+            });
+        },
+        onColumnOrderChange: (updater) => {
+            setColumnOrder((prev) => {
+                const next = typeof updater === 'function' ? updater(prev) : updater;
+                return normalizeColumnOrder(next);
+            });
+        },
+    });
+
     return (
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
             <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-border/50">
@@ -480,11 +825,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             <span className="text-sm text-foreground-secondary">Show Hidden</span>
                             <button
                                 onClick={() => setShowHidden(!showHidden)}
-                                className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-border-hover'
-                                    }`}
+                                className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-border-hover'}`}
                             >
-                                <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'
-                                    }`} />
+                                <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'}`} />
                             </button>
                         </div>
                     </div>
@@ -497,7 +840,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             placeholder="Filter accounts..."
                             className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
                             value={filterText}
-                            onChange={(e) => setFilterText(e.target.value)}
+                            onChange={(event) => setFilterText(event.target.value)}
                         />
                         {filterText && (
                             <button
@@ -509,14 +852,13 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         )}
                     </div>
 
-                    {/* Tree Expansion Controls */}
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Expand</span>
                         <div className="flex gap-1">
                             <button
                                 onClick={() => {
                                     setExpandToDepth(0);
-                                    setExpandedNodes(new Set()); // Clear manual toggles
+                                    setManualExpanded({});
                                 }}
                                 className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-emerald-500/50 transition-all flex items-center"
                                 title="Collapse All"
@@ -526,7 +868,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             <button
                                 onClick={() => {
                                     setExpandToDepth(Infinity);
-                                    setExpandedNodes(new Set()); // Clear manual toggles
+                                    setManualExpanded({});
                                 }}
                                 className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-emerald-500/50 transition-all flex items-center"
                                 title="Expand All"
@@ -537,9 +879,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <select
                             className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
                             value={expandToDepth === Infinity ? 'all' : expandToDepth}
-                            onChange={(e) => {
-                                setExpandToDepth(e.target.value === 'all' ? Infinity : parseInt(e.target.value));
-                                setExpandedNodes(new Set()); // Clear manual toggles
+                            onChange={(event) => {
+                                setExpandToDepth(event.target.value === 'all' ? Infinity : parseInt(event.target.value, 10));
+                                setManualExpanded({});
                             }}
                             title="Expand to Depth"
                         >
@@ -558,39 +900,144 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <select
                             className="bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
                             value={sortKey}
-                            onChange={(e) => setSortKey(e.target.value as SortKey)}
+                            onChange={(event) => setSortKey(event.target.value as SortKey)}
                         >
                             <option value="name">Name</option>
                             <option value="total_balance">Total Balance</option>
                             <option value="period_balance">Period Balance</option>
                         </select>
                     </div>
+
+                    <div className="relative" ref={columnsMenuRef}>
+                        <button
+                            type="button"
+                            onClick={() => setIsColumnsMenuOpen((prev) => !prev)}
+                            className="list-none bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground-secondary hover:bg-surface-hover transition-all cursor-pointer flex items-center"
+                        >
+                            Columns
+                        </button>
+                        {isColumnsMenuOpen && (
+                        <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-border bg-surface shadow-2xl p-3 space-y-2">
+                            {table.getAllLeafColumns().map((column) => {
+                                const isRequired = ALWAYS_VISIBLE_COLUMNS.includes(column.id as ColumnId);
+                                const label = String(column.columnDef.header);
+                                const draggable = column.id !== 'accountName';
+
+                                return (
+                                    <label key={column.id} className={`flex items-center gap-2 text-sm ${isRequired ? 'text-foreground-muted' : 'text-foreground-secondary cursor-pointer'}`}>
+                                        <span
+                                            draggable={draggable}
+                                            onDragStart={() => {
+                                                if (draggable) setDraggedColumnId(column.id as ColumnId);
+                                            }}
+                                            onDragEnd={() => setDraggedColumnId(null)}
+                                            onDragOver={(event) => {
+                                                if (!draggable || !draggedColumnId) return;
+                                                event.preventDefault();
+                                            }}
+                                            onDrop={(event) => {
+                                                if (!draggable || !draggedColumnId) return;
+                                                event.preventDefault();
+                                                moveColumn(draggedColumnId, column.id as ColumnId);
+                                                setDraggedColumnId(null);
+                                            }}
+                                            className={`text-xs ${draggable ? 'cursor-grab text-foreground-muted' : 'text-foreground-muted/40'}`}
+                                            title={draggable ? 'Drag to reorder column' : 'Account Name stays first'}
+                                        >
+                                            ≡
+                                        </span>
+                                        <input
+                                            type="checkbox"
+                                            checked={column.getIsVisible()}
+                                            disabled={isRequired}
+                                            onChange={column.getToggleVisibilityHandler()}
+                                            className="w-4 h-4 rounded border-border bg-background-tertiary disabled:opacity-50"
+                                        />
+                                        {label}
+                                    </label>
+                                );
+                            })}
+                        </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            <div className="grid overflow-x-hidden" style={{ gridTemplateColumns: '1fr auto auto auto' }}>
-                {sortedAccounts.map(acc => (
-                    <AccountNode
-                        key={acc.guid}
-                        account={acc}
-                        showHidden={showHidden}
-                        filterText={filterText}
-                        showToReview={showToReview}
-                        statusMap={statusMap}
-                        depth={0}
-                        expandToDepth={expandToDepth}
-                        expandedNodes={expandedNodes}
-                        setExpandedNodes={setExpandedNodes}
-                        onEdit={handleEdit}
-                        onDelete={handleDeleteConfirm}
-                        onNewChild={handleNewChild}
-                        balanceReversal={balanceReversal}
-                        isMobile={isMobile}
-                    />
-                ))}
+            <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] table-auto">
+                    <thead className="border-b border-border/60">
+                        {table.getHeaderGroups().map((headerGroup) => (
+                            <tr key={headerGroup.id}>
+                                {headerGroup.headers.map((header) => (
+                                    <th
+                                        key={header.id}
+                                        draggable={!header.isPlaceholder && header.column.id !== 'accountName'}
+                                        onDragStart={() => {
+                                            if (!header.isPlaceholder && header.column.id !== 'accountName') {
+                                                setDraggedColumnId(header.column.id as ColumnId);
+                                            }
+                                        }}
+                                        onDragEnd={() => setDraggedColumnId(null)}
+                                        onDragOver={(event) => {
+                                            if (header.isPlaceholder || header.column.id === 'accountName' || !draggedColumnId) return;
+                                            event.preventDefault();
+                                        }}
+                                        onDrop={(event) => {
+                                            if (header.isPlaceholder || header.column.id === 'accountName' || !draggedColumnId) return;
+                                            event.preventDefault();
+                                            moveColumn(draggedColumnId, header.column.id as ColumnId);
+                                            setDraggedColumnId(null);
+                                        }}
+                                        className={`px-2 py-2 text-left text-[11px] font-bold uppercase tracking-wider text-foreground-muted ${
+                                            header.column.id === 'accountName' ? 'w-full' : 'whitespace-nowrap'
+                                        } ${
+                                            !header.isPlaceholder && header.column.id !== 'accountName' ? 'cursor-grab select-none' : ''
+                                        } ${
+                                            draggedColumnId && draggedColumnId === header.column.id ? 'opacity-50' : ''
+                                        }`}
+                                        title={!header.isPlaceholder && header.column.id !== 'accountName' ? 'Drag to reorder column' : undefined}
+                                    >
+                                        {header.isPlaceholder ? null : (
+                                            <div className="flex items-center gap-1.5">
+                                                {header.column.id !== 'accountName' && (
+                                                    <span className="text-[10px] text-foreground-muted/80">≡</span>
+                                                )}
+                                                <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
+                                            </div>
+                                        )}
+                                    </th>
+                                ))}
+                            </tr>
+                        ))}
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                        {table.getRowModel().rows.map((row) => (
+                            <tr
+                                key={row.id}
+                                className="group hover:bg-surface-hover/20 transition-colors"
+                                onClick={() => {
+                                    if (row.getCanExpand()) {
+                                        handleRowToggle(row.original.guid, row.getIsExpanded());
+                                    }
+                                }}
+                            >
+                                {row.getVisibleCells().map((cell) => (
+                                    <td key={cell.id} className="align-middle">
+                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                    </td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
             </div>
 
-            {/* Account Form Modal */}
+            {table.getRowModel().rows.length === 0 && (
+                <div className="py-12 text-center text-foreground-secondary">
+                    No accounts match the current filters.
+                </div>
+            )}
+
             <Modal
                 isOpen={modalOpen}
                 onClose={() => setModalOpen(false)}
@@ -617,7 +1064,6 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 </div>
             </Modal>
 
-            {/* Delete Confirmation Modal */}
             <Modal
                 isOpen={deleteConfirm !== null}
                 onClose={() => setDeleteConfirm(null)}

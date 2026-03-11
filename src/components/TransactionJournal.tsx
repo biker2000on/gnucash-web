@@ -464,31 +464,31 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     <table className="w-full text-left">
                         <thead>
                             <tr className="bg-background-secondary/50 text-foreground-secondary text-xs uppercase tracking-widest">
-                                <th className="px-6 py-4 font-semibold">Date</th>
-                                <th className="px-6 py-4 font-semibold">Description</th>
-                                <th className="px-6 py-4 font-semibold">Account</th>
-                                <th className="px-6 py-4 font-semibold text-right">Debit</th>
-                                <th className="px-6 py-4 font-semibold text-right">Credit</th>
+                                <th className="px-4 py-2 font-semibold">Date</th>
+                                <th className="px-4 py-2 font-semibold">Description</th>
+                                <th className="px-4 py-2 font-semibold">Account</th>
+                                <th className="px-4 py-2 font-semibold text-right">Debit</th>
+                                <th className="px-4 py-2 font-semibold text-right">Credit</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
                             {transactions.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5} className="px-6 py-12 text-center text-foreground-muted">
+                                    <td colSpan={5} className="px-4 py-10 text-center text-foreground-muted">
                                         {loading ? 'Loading...' : 'No transactions found matching your filters.'}
                                     </td>
                                 </tr>
                             ) : (
                                 transactions.map(tx => (
                                     <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-foreground-secondary align-top">
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-foreground-secondary align-top">
                                             {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                         </td>
-                                        <td className="px-6 py-4 text-sm text-foreground align-top max-w-xs">
+                                        <td className="px-4 py-2 text-sm text-foreground align-top max-w-xs leading-tight">
                                             <div className="font-medium">{tx.description}</div>
                                             {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
                                         </td>
-                                        <td className="px-6 py-4 text-sm align-top">
+                                        <td className="px-4 py-2 text-sm align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => (
                                                     <div key={split.guid} className="text-foreground-secondary whitespace-normal break-words">
@@ -497,7 +497,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                                 ))}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-sm font-mono text-right align-top">
+                                        <td className="px-4 py-2 text-sm font-mono text-right align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => {
                                                     const val = parseFloat(split.quantity_decimal || '0');
@@ -509,7 +509,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                                 })}
                                             </div>
                                         </td>
-                                        <td className="px-6 py-4 text-sm font-mono text-right align-top">
+                                        <td className="px-4 py-2 text-sm font-mono text-right align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => {
                                                     const val = parseFloat(split.quantity_decimal || '0');

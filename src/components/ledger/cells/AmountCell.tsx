@@ -62,7 +62,7 @@ export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onA
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
                 placeholder="0.00"
-                className="w-full bg-input-bg border border-border rounded px-2 py-1 text-xs text-foreground text-right focus:outline-none focus:border-cyan-500/50 font-mono"
+                className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground text-right focus:outline-none focus:border-cyan-500/50 font-mono leading-tight"
             />
             {containsMathExpression(value) && (
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
