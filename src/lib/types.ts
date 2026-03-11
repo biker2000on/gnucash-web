@@ -130,11 +130,13 @@ export interface TransactionFormData {
 
 // API request/response types
 export interface CreateTransactionRequest {
+    guid?: string; // Client-generated GUID for optimistic matching
     currency_guid: string;
     num?: string;
     post_date: string;
     description: string;
     splits: {
+        guid?: string; // Client-generated split GUID for optimistic matching
         account_guid: string;
         value_num: number;
         value_denom: number;

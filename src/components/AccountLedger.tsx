@@ -450,7 +450,14 @@ export default function AccountLedger({
             s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
         );
 
-        const splits = nonTradingSplits.map(s => ({
+        const today = new Date().toISOString().split('T')[0];
+        const txGuid = crypto.randomUUID().replace(/-/g, '');
+
+        // Generate split GUIDs upfront so client and server match
+        const splitGuids = nonTradingSplits.map(() => crypto.randomUUID().replace(/-/g, ''));
+
+        const splits = nonTradingSplits.map((s, i) => ({
+            guid: splitGuids[i],
             account_guid: s.account_guid,
             value_num: Number(s.value_num),
             value_denom: Number(s.value_denom),
@@ -461,22 +468,23 @@ export default function AccountLedger({
             reconcile_state: 'n' as const,
         }));
 
-        const today = new Date().toISOString().split('T')[0];
-        const tempGuid = crypto.randomUUID().replace(/-/g, '');
+        // Find which split index corresponds to this account for account_split_guid
+        const accountSplitIndex = nonTradingSplits.findIndex(s => s.account_guid === accountGuid);
 
         // Optimistically insert duplicate at top of list
         const optimisticTx: AccountTransaction = {
             ...tx,
-            guid: tempGuid,
+            guid: txGuid,
             post_date: new Date(today + 'T00:00:00') as unknown as Date,
             enter_date: new Date() as unknown as Date,
             running_balance: '0',
             account_split_reconcile_state: 'n',
+            account_split_guid: accountSplitIndex >= 0 ? splitGuids[accountSplitIndex] : splitGuids[0],
             reviewed: undefined,
             source: undefined,
-            splits: nonTradingSplits.map(s => ({
+            splits: nonTradingSplits.map((s, i) => ({
                 ...s,
-                guid: crypto.randomUUID().replace(/-/g, ''),
+                guid: splitGuids[i],
                 reconcile_state: 'n',
             })),
         };
@@ -490,6 +498,7 @@ export default function AccountLedger({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    guid: txGuid,
                     currency_guid: tx.currency_guid,
                     post_date: today,
                     description: tx.description,
@@ -500,15 +509,17 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to duplicate transaction');
 
             success('Transaction duplicated');
-            // Refresh to get real data (running balances, server guid, etc.)
-            fetchTransactions();
+            // In edit mode, skip refetch since optimistic GUIDs match server GUIDs
+            if (!isEditMode) {
+                fetchTransactions();
+            }
         } catch (err) {
             console.error('Duplicate failed:', err);
             error('Failed to duplicate transaction');
             // Rollback on failure
             setTransactions(prevTransactions);
         }
-    }, [transactions, fetchTransactions, success, error]);
+    }, [transactions, fetchTransactions, success, error, isEditMode]);
 
     // Filter transactions based on reviewed filter
     const displayTransactions = useMemo(() => {

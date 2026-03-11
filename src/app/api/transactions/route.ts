@@ -3,6 +3,7 @@ import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
+import { isValidGuid } from '@/lib/guid';
 import { Prisma } from '@prisma/client';
 import { logAudit } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
@@ -291,8 +292,8 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        // Generate GUIDs
-        const txGuid = generateGuid();
+        // Use client-provided GUID or generate one (validate format if provided)
+        const txGuid = (body.guid && isValidGuid(body.guid)) ? body.guid : generateGuid();
         const now = new Date();
 
         // Track multi-currency status for audit log
@@ -324,7 +325,7 @@ export async function POST(request: Request) {
 
             // Insert all splits (including auto-generated trading splits)
             for (const split of allSplits) {
-                const splitGuid = generateGuid();
+                const splitGuid = (split.guid && isValidGuid(split.guid)) ? split.guid : generateGuid();
                 await tx.splits.create({
                     data: {
                         guid: splitGuid,

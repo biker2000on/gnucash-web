@@ -204,6 +204,7 @@ export function generateTradingSplits(
  */
 export async function processMultiCurrencySplits(
   splits: Array<{
+    guid?: string;
     account_guid: string;
     value_num: number;
     value_denom: number;
@@ -217,6 +218,7 @@ export async function processMultiCurrencySplits(
 ): Promise<{
   isMultiCurrency: boolean;
   allSplits: Array<{
+    guid?: string;
     account_guid: string;
     value_num: number;
     value_denom: number;
