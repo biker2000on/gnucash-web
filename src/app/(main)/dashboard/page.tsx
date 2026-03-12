@@ -12,6 +12,8 @@ import CashFlowChart from '@/components/charts/CashFlowChart';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { DashboardPeriodProvider, useDashboardPeriod, PERIOD_OPTIONS } from '@/contexts/DashboardPeriodContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { DateRangePicker } from '@/components/ui/DateRangePicker';
+import { DATE_PRESETS } from '@/lib/datePresets';
 
 // ------------------------------------------------------------------
 // Types matching API responses
@@ -109,7 +111,7 @@ function deriveTaxCategoriesFromTree(expense: SankeyHierarchyNode[]): CategoryDa
 // ------------------------------------------------------------------
 
 function DashboardContent() {
-    const { period, setPeriod, queryString } = useDashboardPeriod();
+    const { period, setPeriod, startDate, endDate, queryString } = useDashboardPeriod();
     const { dashboardDefaultPeriod, setDashboardDefaultPeriod } = useUserPreferences();
 
     // Data states
@@ -230,22 +232,25 @@ function DashboardContent() {
                         Your financial overview at a glance
                     </p>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                    <div className="flex flex-wrap gap-1">
-                        {PERIOD_OPTIONS.map((opt) => (
-                            <button
-                                key={opt.key}
-                                onClick={() => setPeriod(opt.key)}
-                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                    period === opt.key
-                                        ? 'bg-primary text-white'
-                                        : 'bg-surface-hover text-foreground-secondary hover:bg-background-secondary'
-                                }`}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
+                <div className="flex items-center gap-2">
+                    <DateRangePicker
+                        startDate={startDate}
+                        endDate={endDate}
+                        onChange={(range) => {
+                            // Match against named periods
+                            for (const opt of PERIOD_OPTIONS) {
+                                const preset = DATE_PRESETS.find(p => p.label === opt.label);
+                                if (preset) {
+                                    const pv = preset.getValue();
+                                    if (pv.startDate === range.startDate && pv.endDate === range.endDate) {
+                                        setPeriod(opt.key);
+                                        return;
+                                    }
+                                }
+                            }
+                            setPeriod('allTime');
+                        }}
+                    />
                     {period !== dashboardDefaultPeriod && (
                         <button
                             onClick={() => setDashboardDefaultPeriod(period)}

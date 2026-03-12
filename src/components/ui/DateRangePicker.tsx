@@ -99,7 +99,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
             </button>
 
             {isOpen && (
-                <div className="absolute top-full left-0 mt-2 w-80 bg-background-secondary border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                <div className="absolute top-full left-0 sm:right-0 sm:left-auto mt-2 w-80 max-w-[calc(100vw-2rem)] bg-background-secondary border border-border rounded-xl shadow-xl z-50">
                     {/* Presets */}
                     <div className="p-2 border-b border-border">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider px-2 py-1">Quick Select</div>
@@ -127,7 +127,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                     {/* Custom Range */}
                     <div className="p-3">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider mb-2">Custom Range</div>
-                        <div className="flex gap-2 items-center mb-3">
+                        <div className="flex gap-2 items-center mb-3 min-w-0">
                             <input
                                 type="text"
                                 value={customStartDisplay}
@@ -145,7 +145,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                                     }
                                 }}
                                 placeholder="MM/DD/YYYY"
-                                className="flex-1 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
                             />
                             <span className="text-foreground-muted">to</span>
                             <input
@@ -165,7 +165,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                                     }
                                 }}
                                 placeholder="MM/DD/YYYY"
-                                className="flex-1 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
                             />
                         </div>
                         <button
