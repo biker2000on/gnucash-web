@@ -9,9 +9,9 @@ export async function POST() {
     const roleResult = await requireRole('admin');
     if (roleResult instanceof NextResponse) return roleResult;
 
-    const { user, bookGuid } = roleResult;
+    const { bookGuid } = roleResult;
 
-    const jobId = await enqueueJob('refresh-prices', { userId: user.id, bookGuid });
+    const jobId = await enqueueJob('refresh-prices', { bookGuid });
 
     if (!jobId) {
       // No Redis configured, run directly
@@ -21,15 +21,13 @@ export async function POST() {
       // Check if SimpleFin sync is enabled and run it too
       let simplefinResult = null;
       try {
-        const syncPref = await getPreference<string>(user.id, 'simplefin_sync_with_refresh', 'false');
-        const syncEnabled = syncPref === 'true';
-
-        if (syncEnabled) {
-          const connections = await prisma.$queryRaw<{ id: number; book_guid: string }[]>`
-            SELECT id, book_guid FROM gnucash_web_simplefin_connections
-            WHERE user_id = ${user.id} AND sync_enabled = TRUE
-          `;
-          if (connections.length > 0) {
+        const connections = await prisma.$queryRaw<{ id: number; book_guid: string; user_id: number }[]>`
+          SELECT id, book_guid, user_id FROM gnucash_web_simplefin_connections
+          WHERE book_guid = ${bookGuid} AND sync_enabled = TRUE
+        `;
+        if (connections.length > 0) {
+          const syncPref = await getPreference<string>(connections[0].user_id, 'simplefin_sync_with_refresh', 'false');
+          if (syncPref === 'true') {
             const { syncSimpleFin } = await import('@/lib/services/simplefin-sync.service');
             simplefinResult = await syncSimpleFin(connections[0].id, connections[0].book_guid);
           }

@@ -63,7 +63,7 @@ export async function PATCH(request: NextRequest) {
     const effectiveTime = refreshTime !== undefined
       ? refreshTime
       : await getPreference<string>(roleResult.user.id, 'refresh_time', '21:00');
-    await signalScheduleChanged(roleResult.user.id, isEnabled, effectiveHours, effectiveTime);
+    await signalScheduleChanged(roleResult.bookGuid, isEnabled, effectiveHours, effectiveTime);
 
     return NextResponse.json({ success: true });
   } catch (error) {

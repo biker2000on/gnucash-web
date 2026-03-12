@@ -2,7 +2,7 @@
  * GnuCash Web Background Worker
  *
  * Processes BullMQ jobs and manages internal refresh schedules.
- * Reads user preferences from DB on startup to recover schedules after restart.
+ * Schedules are book-based: each book with refresh enabled gets its own timer.
  * Exposes HTTP health endpoint on WORKER_HEALTH_PORT (default 9090).
  */
 
@@ -11,13 +11,12 @@ import http from 'http';
 
 // --- Internal schedule state ---
 interface ScheduleEntry {
-  userId: number;
   bookGuid: string;
   refreshTime: string; // HH:MM in UTC
   timer: ReturnType<typeof setTimeout> | null;
 }
 
-const schedules = new Map<number, ScheduleEntry>(); // keyed by userId
+const schedules = new Map<string, ScheduleEntry>(); // keyed by bookGuid
 let workerReady = false;
 
 // --- Health check server ---
@@ -38,15 +37,15 @@ function startHealthServer(port: number) {
 }
 
 // --- Schedule management ---
-async function runRefreshForUser(userId: number, bookGuid: string) {
-  console.log(`[${new Date().toISOString()}] Scheduled refresh for user ${userId}, book ${bookGuid}`);
+async function runRefreshForBook(bookGuid: string) {
+  console.log(`[${new Date().toISOString()}] Scheduled refresh for book ${bookGuid}`);
   try {
     const { handleRefreshPrices } = await import('./src/lib/queue/jobs/refresh-prices');
-    const fakeJob = { id: `scheduled-${Date.now()}`, name: 'refresh-prices', data: { userId, bookGuid } } as Job;
+    const fakeJob = { id: `scheduled-${Date.now()}`, name: 'refresh-prices', data: { bookGuid } } as Job;
     await handleRefreshPrices(fakeJob);
-    console.log(`[${new Date().toISOString()}] Scheduled refresh completed for user ${userId}`);
+    console.log(`[${new Date().toISOString()}] Scheduled refresh completed for book ${bookGuid}`);
   } catch (err) {
-    console.error(`Scheduled refresh failed for user ${userId}:`, err);
+    console.error(`Scheduled refresh failed for book ${bookGuid}:`, err);
   }
 }
 
@@ -68,39 +67,39 @@ function msUntilNext(timeStr: string): number {
   return target.getTime() - now.getTime();
 }
 
-function setSchedule(userId: number, bookGuid: string, refreshTime: string) {
-  clearSchedule(userId);
+function setSchedule(bookGuid: string, refreshTime: string) {
+  clearSchedule(bookGuid);
 
   function scheduleNext() {
     const ms = msUntilNext(refreshTime);
     const nextRun = new Date(Date.now() + ms);
-    console.log(`Next refresh for user ${userId} at ${nextRun.toISOString()} (${refreshTime} UTC)`);
+    console.log(`Next refresh for book ${bookGuid} at ${nextRun.toISOString()} (${refreshTime} UTC)`);
 
     const timer = setTimeout(async () => {
-      await runRefreshForUser(userId, bookGuid);
+      await runRefreshForBook(bookGuid);
       // Reschedule for the next day
       scheduleNext();
     }, ms);
 
-    schedules.set(userId, { userId, bookGuid, refreshTime, timer });
+    schedules.set(bookGuid, { bookGuid, refreshTime, timer });
   }
 
   scheduleNext();
-  console.log(`Schedule set: user ${userId}, daily at ${refreshTime} UTC`);
+  console.log(`Schedule set: book ${bookGuid}, daily at ${refreshTime} UTC`);
 }
 
-function clearSchedule(userId: number) {
-  const existing = schedules.get(userId);
+function clearSchedule(bookGuid: string) {
+  const existing = schedules.get(bookGuid);
   if (existing?.timer) {
     clearTimeout(existing.timer);
-    schedules.delete(userId);
-    console.log(`Schedule cleared: user ${userId}`);
+    schedules.delete(bookGuid);
+    console.log(`Schedule cleared: book ${bookGuid}`);
   }
 }
 
 /**
  * On startup, query DB for all users with refresh_enabled=true
- * and set up their schedules.
+ * and set up schedules keyed by their book.
  */
 async function recoverSchedules() {
   try {
@@ -129,12 +128,13 @@ async function recoverSchedules() {
           ? JSON.parse(timePref.preference_value) || '21:00'
           : '21:00';
 
+        // Find books this user has access to (via user_books or all books for admin)
         const firstBook = await prisma.books.findFirst({
           select: { guid: true },
         });
 
-        if (firstBook) {
-          setSchedule(pref.user_id, firstBook.guid, refreshTime);
+        if (firstBook && !schedules.has(firstBook.guid)) {
+          setSchedule(firstBook.guid, refreshTime);
         }
       }
 
@@ -200,25 +200,32 @@ async function main() {
           break;
         }
         case 'schedule-changed': {
-          const { userId, enabled, refreshTime } = job.data as {
-            userId: number;
+          const { bookGuid, enabled, refreshTime } = job.data as {
+            userId?: number; // deprecated, kept for backward compat
+            bookGuid?: string;
             enabled: boolean;
             refreshTime: string;
           };
 
-          if (enabled) {
+          // Resolve bookGuid: use provided value, or look up from DB
+          let resolvedBookGuid = bookGuid;
+          if (!resolvedBookGuid) {
             const { PrismaClient } = await import('@prisma/client');
             const prisma = new PrismaClient();
             try {
               const firstBook = await prisma.books.findFirst({ select: { guid: true } });
-              if (firstBook) {
-                setSchedule(userId, firstBook.guid, refreshTime || '21:00');
-              }
+              resolvedBookGuid = firstBook?.guid;
             } finally {
               await prisma.$disconnect();
             }
-          } else {
-            clearSchedule(userId);
+          }
+
+          if (resolvedBookGuid) {
+            if (enabled) {
+              setSchedule(resolvedBookGuid, refreshTime || '21:00');
+            } else {
+              clearSchedule(resolvedBookGuid);
+            }
           }
           break;
         }
@@ -252,8 +259,8 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('Shutting down worker...');
-    for (const [userId] of schedules) {
-      clearSchedule(userId);
+    for (const [bookGuid] of schedules) {
+      clearSchedule(bookGuid);
     }
     healthServer.close();
     await worker.close();

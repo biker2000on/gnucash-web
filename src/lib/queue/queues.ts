@@ -19,10 +19,10 @@ export function getJobQueue(): Queue | null {
 
 /**
  * Signal the worker to update its internal refresh schedule.
- * The worker reads the preference from DB and reconfigures its timer.
+ * Schedule is keyed by bookGuid. The worker manages timers per book.
  */
-export async function signalScheduleChanged(userId: number, enabled: boolean, intervalHours: number, refreshTime: string = '21:00'): Promise<void> {
-  await enqueueJob('schedule-changed', { userId, enabled, intervalHours, refreshTime });
+export async function signalScheduleChanged(bookGuid: string, enabled: boolean, intervalHours: number, refreshTime: string = '21:00'): Promise<void> {
+  await enqueueJob('schedule-changed', { bookGuid, enabled, intervalHours, refreshTime });
 }
 
 /**

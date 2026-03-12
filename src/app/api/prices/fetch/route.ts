@@ -61,7 +61,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (runAsync) {
-      const jobId = await enqueueJob('refresh-prices', { symbols, force });
+      const { bookGuid } = roleResult;
+      const jobId = await enqueueJob('refresh-prices', { bookGuid, symbols, force });
       if (jobId) {
         return NextResponse.json({
           queued: true,
