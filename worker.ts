@@ -8,6 +8,15 @@
 
 import { Worker, Job } from 'bullmq';
 import http from 'http';
+import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+function createWorkerPrisma() {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const adapter = new PrismaPg(pool);
+  return new PrismaClient({ adapter });
+}
 
 // --- Internal schedule state ---
 interface ScheduleEntry {
@@ -103,8 +112,7 @@ function clearSchedule(bookGuid: string) {
  */
 async function recoverSchedules() {
   try {
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = createWorkerPrisma();
 
     try {
       // Find all users with refresh_enabled = true
@@ -210,8 +218,7 @@ async function main() {
           // Resolve bookGuid: use provided value, or look up from DB
           let resolvedBookGuid = bookGuid;
           if (!resolvedBookGuid) {
-            const { PrismaClient } = await import('@prisma/client');
-            const prisma = new PrismaClient();
+            const prisma = createWorkerPrisma();
             try {
               const firstBook = await prisma.books.findFirst({ select: { guid: true } });
               resolvedBookGuid = firstBook?.guid;
