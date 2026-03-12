@@ -173,7 +173,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         const rowClass = `transition-colors ${isActive ? 'ring-2 ring-cyan-500/30 ring-inset bg-cyan-500/5' : 'hover:bg-white/[0.02]'} ${saveError ? 'ring-2 ring-rose-500/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-amber-500' : ''}`;
 
         const checkboxCell = showCheckbox && (
-            <td className="px-3 py-2 align-top">
+            <td className="px-3 py-2 align-middle">
                 <input
                     type="checkbox"
                     checked={isChecked}
@@ -258,7 +258,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
                         {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
                     </td>
-                    <td className="px-2 py-2 align-top">
+                    <td className="px-2 py-2 align-middle">
                         <div className="flex items-center gap-1">
                             {onDuplicate && (
                                 <button

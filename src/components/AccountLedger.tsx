@@ -1469,7 +1469,7 @@ export default function AccountLedger({
 
                                             if (colId === 'select') {
                                                 return (
-                                                    <td key={cell.id} className="px-3 py-2 align-top">
+                                                    <td key={cell.id} className="px-3 py-2 align-middle">
                                                         {tx.account_split_reconcile_state !== 'y' && (
                                                             <input
                                                                 type="checkbox"
@@ -1484,7 +1484,7 @@ export default function AccountLedger({
 
                                             if (colId === 'reconcile') {
                                                 return (
-                                                    <td key={cell.id} className="px-3 py-2 align-top">
+                                                    <td key={cell.id} className="px-3 py-2 align-middle">
                                                         <span
                                                             className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}
                                                             title={reconcileInfo.label}
@@ -1497,7 +1497,7 @@ export default function AccountLedger({
 
                                             if (colId === 'date') {
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 whitespace-nowrap text-[11px] text-foreground-secondary align-top font-mono">
+                                                    <td key={cell.id} className="px-4 py-2 whitespace-nowrap text-[11px] text-foreground-secondary align-middle font-mono">
                                                         {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                                     </td>
                                                 );
@@ -1505,7 +1505,7 @@ export default function AccountLedger({
 
                                             if (colId === 'description') {
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 text-sm text-foreground align-top leading-tight">
+                                                    <td key={cell.id} className="px-4 py-2 text-sm text-foreground align-middle leading-tight">
                                                         <div className="flex items-center gap-2">
                                                             <span className="font-medium">{tx.description}</span>
                                                             {tx.source && tx.source !== 'manual' && (
@@ -1523,7 +1523,7 @@ export default function AccountLedger({
                                                 if (isInvestmentAccount) {
                                                     const invRow = investmentRowMap?.get(tx.guid);
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm text-foreground-secondary align-top leading-tight">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm text-foreground-secondary align-middle leading-tight">
                                                             <span className="text-xs whitespace-normal break-words">
                                                                 {invRow?.transferAccount || '\u2014'}
                                                             </span>
@@ -1531,7 +1531,7 @@ export default function AccountLedger({
                                                     );
                                                 }
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 text-sm align-top">
+                                                    <td key={cell.id} className="px-4 py-2 text-sm align-middle">
                                                         {isMultiSplit && !isExpanded ? (
                                                             <button
                                                                 onClick={() => toggleExpand(tx.guid)}
@@ -1570,7 +1570,7 @@ export default function AccountLedger({
 
                                             if (colId === 'debit') {
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top text-emerald-400">
+                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle text-emerald-400">
                                                         {amount >= 0 ? formatCurrency(amount, tx.commodity_mnemonic) : ''}
                                                     </td>
                                                 );
@@ -1578,7 +1578,7 @@ export default function AccountLedger({
 
                                             if (colId === 'credit') {
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top text-rose-400">
+                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle text-rose-400">
                                                         {amount < 0 ? formatCurrency(Math.abs(amount), tx.commodity_mnemonic) : ''}
                                                     </td>
                                                 );
@@ -1586,7 +1586,7 @@ export default function AccountLedger({
 
                                             if (colId === 'balance') {
                                                 return (
-                                                    <td key={cell.id} className={`px-4 py-2 text-sm font-mono text-right align-top font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400') : 'text-foreground-muted'}`}>
+                                                    <td key={cell.id} className={`px-4 py-2 text-sm font-mono text-right align-middle font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400') : 'text-foreground-muted'}`}>
                                                         {tx.running_balance ? formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic) : '\u2014'}
                                                     </td>
                                                 );
@@ -1598,7 +1598,7 @@ export default function AccountLedger({
 
                                                 if (colId === 'shares') {
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.shares != null ? (
                                                                 <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
                                                                     {invRow.shares.toFixed(4)}
@@ -1612,7 +1612,7 @@ export default function AccountLedger({
 
                                                 if (colId === 'price') {
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.price != null ? (
                                                                 <span className="text-foreground">
                                                                     {formatCurrency(invRow.price, invRow.currencyMnemonic)}
@@ -1626,7 +1626,7 @@ export default function AccountLedger({
 
                                                 if (colId === 'buy') {
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.buyAmount != null ? (
                                                                 <span className="text-emerald-400">
                                                                     {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}
@@ -1640,7 +1640,7 @@ export default function AccountLedger({
 
                                                 if (colId === 'sell') {
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.sellAmount != null ? (
                                                                 <span className="text-rose-400">
                                                                     {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}
@@ -1654,7 +1654,7 @@ export default function AccountLedger({
 
                                                 if (colId === 'shareBalance') {
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top font-bold text-foreground">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle font-bold text-foreground">
                                                             {invRow ? invRow.shareBalance.toFixed(4) : '\u2014'}
                                                         </td>
                                                     );
@@ -1662,7 +1662,7 @@ export default function AccountLedger({
 
                                                 if (colId === 'costBasis') {
                                                     return (
-                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-top font-bold text-foreground">
+                                                        <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle font-bold text-foreground">
                                                             {invRow ? formatCurrency(invRow.costBasis, invRow.currencyMnemonic) : '\u2014'}
                                                         </td>
                                                     );
