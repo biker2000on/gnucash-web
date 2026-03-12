@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -86,6 +86,35 @@ export function ReconciliationPanel({
         }
     }, [selectedSplits, statementDate, onReconcileComplete, onCancelReconcile]);
 
+    // Drag state
+    const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+    const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    const handlePointerDown = useCallback((e: React.PointerEvent) => {
+        // Don't drag if clicking on interactive elements
+        if ((e.target as HTMLElement).closest('button, input, a')) return;
+        e.preventDefault();
+        const panel = panelRef.current;
+        if (!panel) return;
+        const rect = panel.getBoundingClientRect();
+        const currentX = position?.x ?? rect.left;
+        const currentY = position?.y ?? rect.top;
+        dragRef.current = { startX: e.clientX, startY: e.clientY, origX: currentX, origY: currentY };
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    }, [position]);
+
+    const handlePointerMove = useCallback((e: React.PointerEvent) => {
+        if (!dragRef.current) return;
+        const dx = e.clientX - dragRef.current.startX;
+        const dy = e.clientY - dragRef.current.startY;
+        setPosition({ x: dragRef.current.origX + dx, y: dragRef.current.origY + dy });
+    }, []);
+
+    const handlePointerUp = useCallback(() => {
+        dragRef.current = null;
+    }, []);
+
     const parsedStatementBalance = parseFloat(statementBalance) || 0;
     const difference = parsedStatementBalance - selectedBalance;
 
@@ -93,7 +122,7 @@ export function ReconciliationPanel({
         return (
             <button
                 onClick={onStartReconcile}
-                className="px-4 py-2 text-sm bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-colors flex items-center gap-2"
+                className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center gap-2"
             >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -104,33 +133,42 @@ export function ReconciliationPanel({
     }
 
     return (
-        <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4 space-y-4">
-            <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-amber-400 flex items-center gap-2">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div
+            ref={panelRef}
+            className="fixed z-50 w-[380px] max-w-[calc(100vw-2rem)] bg-surface border border-amber-500/30 rounded-xl p-4 space-y-3 shadow-2xl"
+            style={position ? { left: position.x, top: position.y, bottom: 'auto', right: 'auto' } : { bottom: 16, right: 16 }}
+        >
+            <div
+                className="flex items-center justify-between cursor-grab active:cursor-grabbing select-none"
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+            >
+                <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    Reconciliation Mode
+                    Reconciliation
                 </h3>
                 <button
                     onClick={onCancelReconcile}
                     className="text-foreground-secondary hover:text-foreground transition-colors"
                 >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                 </button>
             </div>
 
             {error && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2 text-sm text-rose-400">
+                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-1.5 text-xs text-rose-400">
                     {error}
                 </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
                 <div>
-                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                    <label className="block text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
                         Statement Date
                     </label>
                     <input
@@ -148,11 +186,11 @@ export function ReconciliationPanel({
                             }
                         }}
                         placeholder="MM/DD/YYYY"
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-amber-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-amber-500/50"
                     />
                 </div>
                 <div>
-                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                    <label className="block text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
                         Statement Balance
                     </label>
                     <input
@@ -161,38 +199,38 @@ export function ReconciliationPanel({
                         value={statementBalance}
                         onChange={(e) => setStatementBalance(e.target.value)}
                         placeholder="0.00"
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
+                        className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />
                     {simpleFinBalance && (
-                        <p className="text-[10px] text-foreground-muted mt-1">
+                        <p className="text-[9px] text-foreground-muted mt-0.5">
                             from SimpleFin, synced {new Date(simpleFinBalance.balanceDate).toLocaleDateString()}
                         </p>
                     )}
                 </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4 text-sm">
-                <div className="bg-background/30 rounded-lg p-3">
-                    <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">
-                        Current Balance
+            <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-background/30 rounded-lg p-2">
+                    <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
+                        Current
                     </div>
-                    <div className="font-mono text-foreground">
+                    <div className="font-mono text-foreground text-xs">
                         {formatCurrency(currentBalance.toFixed(2), accountCurrency)}
                     </div>
                 </div>
-                <div className="bg-background/30 rounded-lg p-3">
-                    <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">
+                <div className="bg-background/30 rounded-lg p-2">
+                    <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Selected ({selectedSplits.size})
                     </div>
-                    <div className="font-mono text-cyan-400">
+                    <div className="font-mono text-cyan-400 text-xs">
                         {formatCurrency(selectedBalance.toFixed(2), accountCurrency)}
                     </div>
                 </div>
-                <div className="bg-background/30 rounded-lg p-3">
-                    <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">
+                <div className="bg-background/30 rounded-lg p-2">
+                    <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Difference
                     </div>
-                    <div className={`font-mono ${Math.abs(difference) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <div className={`font-mono text-xs ${Math.abs(difference) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
                         {formatCurrency(difference.toFixed(2), accountCurrency)}
                     </div>
                 </div>
@@ -202,35 +240,35 @@ export function ReconciliationPanel({
                 <div className="flex items-center gap-2">
                     <button
                         onClick={onSelectAll}
-                        className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                        className="text-[10px] text-foreground-secondary hover:text-foreground transition-colors"
                     >
-                        Select All Unreconciled
+                        Select All
                     </button>
-                    <span className="text-foreground-muted">|</span>
+                    <span className="text-foreground-muted text-[10px]">|</span>
                     <button
                         onClick={onClearSelection}
-                        className="text-xs text-foreground-secondary hover:text-foreground transition-colors"
+                        className="text-[10px] text-foreground-secondary hover:text-foreground transition-colors"
                     >
-                        Clear Selection
+                        Clear
                     </button>
                 </div>
 
                 <button
                     onClick={handleFinish}
                     disabled={saving || selectedSplits.size === 0}
-                    className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-2"
+                    className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-1.5"
                 >
                     {saving ? (
                         <>
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             Saving...
                         </>
                     ) : (
                         <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                             </svg>
-                            Finish Reconciliation
+                            Finish
                         </>
                     )}
                 </button>
