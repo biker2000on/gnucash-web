@@ -109,7 +109,7 @@ export default function HoldingsPage() {
         <button
           onClick={handleFetchAllPrices}
           disabled={fetchingPrices}
-          className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50 font-medium"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path

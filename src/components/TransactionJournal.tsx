@@ -371,7 +371,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        className="w-full md:w-auto px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
+                        className="w-full md:w-auto px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 whitespace-nowrap"
                     >
                         <span>+</span>
                         New Transaction
@@ -481,10 +481,10 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             ) : (
                                 transactions.map(tx => (
                                     <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
-                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-foreground-secondary align-top">
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-foreground-secondary align-middle">
                                             {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                         </td>
-                                        <td className="px-4 py-2 text-sm text-foreground align-top max-w-xs leading-tight">
+                                        <td className="px-4 py-2 text-sm text-foreground align-middle max-w-xs leading-tight">
                                             <div className="font-medium">{tx.description}</div>
                                             {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
                                         </td>
