@@ -49,13 +49,17 @@ function ChangeIndicator({ value, suffix = '' }: { value: number; suffix?: strin
 
 function KPICardSkeleton() {
     return (
-        <div className="bg-surface border border-border rounded-xl p-6 animate-pulse">
-            <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-background-secondary rounded-lg" />
-                <div className="h-4 w-24 bg-background-secondary rounded" />
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 animate-pulse">
+            <div className="flex items-center gap-3 sm:mb-4">
+                <div className="w-10 h-10 bg-background-secondary rounded-lg flex-shrink-0" />
+                <div className="sm:hidden flex-1">
+                    <div className="h-3 w-16 bg-background-secondary rounded mb-1" />
+                    <div className="h-5 w-24 bg-background-secondary rounded" />
+                </div>
+                <div className="hidden sm:block h-4 w-24 bg-background-secondary rounded" />
             </div>
-            <div className="h-7 w-32 bg-background-secondary rounded mb-2" />
-            <div className="h-4 w-20 bg-background-secondary rounded" />
+            <div className="hidden sm:block h-7 w-32 bg-background-secondary rounded mb-2" />
+            <div className="hidden sm:block h-4 w-20 bg-background-secondary rounded" />
         </div>
     );
 }
@@ -70,16 +74,28 @@ interface KPICardProps {
 
 function KPICard({ icon, label, value, change, sublabel }: KPICardProps) {
     return (
-        <div className="bg-surface border border-border rounded-xl p-6 transition-all hover:border-emerald-500/30">
-            <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-lg bg-background-secondary flex items-center justify-center text-foreground-secondary">
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 transition-all hover:border-emerald-500/30">
+            <div className="flex items-center gap-3 sm:mb-4">
+                <div className="w-10 h-10 rounded-lg bg-background-secondary flex items-center justify-center text-foreground-secondary flex-shrink-0">
                     {icon}
                 </div>
-                <span className="text-sm text-foreground-secondary font-medium">{label}</span>
+                <div className="sm:hidden flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                        <div className="text-xs text-foreground-secondary font-medium">{label}</div>
+                        <div className="text-sm font-bold text-foreground">{value}</div>
+                    </div>
+                    {(change || sublabel) && (
+                        <div className="flex items-center gap-2 justify-end">
+                            {change && <div>{change}</div>}
+                            {sublabel && <div className="text-xs text-foreground-muted">{sublabel}</div>}
+                        </div>
+                    )}
+                </div>
+                <span className="hidden sm:inline text-sm text-foreground-secondary font-medium">{label}</span>
             </div>
-            <div className="text-2xl font-bold text-foreground mb-1">{value}</div>
-            {change && <div>{change}</div>}
-            {sublabel && <div className="text-xs text-foreground-muted mt-1">{sublabel}</div>}
+            <div className="hidden sm:block text-2xl font-bold text-foreground mb-1">{value}</div>
+            {change && <div className="hidden sm:block">{change}</div>}
+            {sublabel && <div className="hidden sm:block text-xs text-foreground-muted mt-1">{sublabel}</div>}
         </div>
     );
 }
