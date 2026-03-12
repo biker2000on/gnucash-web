@@ -24,6 +24,7 @@ import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
 import { parseTransactionsResponse, transformToInvestmentRow, isMultiSplitTransaction, InvestmentRowData } from './ledger/investment-utils';
 import { toLocalDateString } from '@/lib/datePresets';
+import { FilterPanel, AmountFilter, ReconcileFilter } from './filters';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -91,6 +92,17 @@ export default function AccountLedger({
     // Reviewed filter state
     const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
 
+    // Search and filter state
+    const [searchText, setSearchText] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const [filters, setFilters] = useState<{ minAmount: string; maxAmount: string; reconcileStates: string[] }>({
+        minAmount: '',
+        maxAmount: '',
+        reconcileStates: [],
+    });
+    const [debouncedFilters, setDebouncedFilters] = useState(filters);
+    const prevFiltersRef = useRef<{ hadSearch: boolean; hadFilters: boolean }>({ hadSearch: false, hadFilters: false });
+
     // Edit mode state (initialized from defaultLedgerMode preference)
     const [isEditMode, setIsEditMode] = useState(false);
     const [editModeInitialized, setEditModeInitialized] = useState(false);
@@ -106,6 +118,29 @@ export default function AccountLedger({
             setEditModeInitialized(true);
         }
     }, [defaultLedgerMode, editModeInitialized]);
+
+    // Debounce search text
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(searchText), 300);
+        return () => clearTimeout(timer);
+    }, [searchText]);
+
+    // Debounce advanced filters
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedFilters(filters), 300);
+        return () => clearTimeout(timer);
+    }, [filters]);
+
+    // Count active filters
+    const activeFilterCount = [
+        filters.minAmount !== '',
+        filters.maxAmount !== '',
+        filters.reconcileStates.length > 0,
+    ].filter(Boolean).length;
+
+    const clearAllFilters = () => {
+        setFilters({ minAmount: '', maxAmount: '', reconcileStates: [] });
+    };
 
     // Fetch SimpleFin balance for this account on mount
     useEffect(() => {
@@ -186,11 +221,17 @@ export default function AccountLedger({
         if (startDate) params.set('startDate', startDate);
         if (endDate) params.set('endDate', endDate);
         if (showUnreviewedOnly) params.set('unreviewedOnly', 'true');
+        if (debouncedSearch) params.set('search', debouncedSearch);
+        if (debouncedFilters.minAmount) params.set('minAmount', debouncedFilters.minAmount);
+        if (debouncedFilters.maxAmount) params.set('maxAmount', debouncedFilters.maxAmount);
+        if (debouncedFilters.reconcileStates.length > 0) {
+            params.set('reconcileStates', debouncedFilters.reconcileStates.join(','));
+        }
         Object.entries(extraParams).forEach(([key, value]) => {
             params.set(key, String(value));
         });
         return params.toString();
-    }, [startDate, endDate, showUnreviewedOnly]);
+    }, [startDate, endDate, showUnreviewedOnly, debouncedSearch, debouncedFilters]);
 
     // Refresh transactions helper
     const fetchTransactions = useCallback(async () => {
@@ -932,6 +973,26 @@ export default function AccountLedger({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [showUnreviewedOnly]);
 
+    // Reset and re-fetch when search or advanced filters change
+    useEffect(() => {
+        const hasSearch = debouncedSearch !== '';
+        const hasFilters = debouncedFilters.minAmount !== '' ||
+            debouncedFilters.maxAmount !== '' ||
+            debouncedFilters.reconcileStates.length > 0;
+        const filtersWereCleared =
+            (prevFiltersRef.current.hadSearch || prevFiltersRef.current.hadFilters) &&
+            !hasSearch && !hasFilters;
+        prevFiltersRef.current = { hadSearch: hasSearch, hadFilters: hasFilters };
+
+        if (hasSearch || hasFilters || filtersWereCleared) {
+            setOffset(0);
+            setHasMore(true);
+            setFocusedRowIndex(-1);
+            fetchTransactions();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedSearch, debouncedFilters]);
+
     const toggleExpand = (guid: string) => {
         setExpandedTxs(prev => ({ ...prev, [guid]: !prev[guid] }));
     };
@@ -986,15 +1047,57 @@ export default function AccountLedger({
     return (
         <>
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-clip shadow-2xl">
-            {/* Top Bar: New Transaction + Reconciliation Panel */}
-            <div className="p-4 border-b border-border flex flex-col md:flex-row md:justify-between md:items-center gap-3">
-                <div className="flex flex-wrap gap-2">
+            {/* Top Bar: Filters + Search left, Buttons right */}
+            <div className="p-4 border-b border-border flex flex-col md:flex-row gap-3">
+                {/* Filters and Search */}
+                <div className="flex gap-2 items-center flex-1 min-w-0">
+                    <FilterPanel
+                        activeFilterCount={activeFilterCount}
+                        onClearAll={clearAllFilters}
+                    >
+                        <AmountFilter
+                            minAmount={filters.minAmount}
+                            maxAmount={filters.maxAmount}
+                            onMinChange={(val) => setFilters(f => ({ ...f, minAmount: val }))}
+                            onMaxChange={(val) => setFilters(f => ({ ...f, maxAmount: val }))}
+                        />
+                        <ReconcileFilter
+                            selectedStates={filters.reconcileStates}
+                            onChange={(states) => setFilters(f => ({ ...f, reconcileStates: states }))}
+                        />
+                    </FilterPanel>
+                    <div className="relative flex-1 min-w-0">
+                        <input
+                            type="text"
+                            placeholder="Search description, # or account..."
+                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
+                            value={searchText}
+                            onChange={(e) => setSearchText(e.target.value)}
+                        />
+                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        {searchText && (
+                            <button
+                                onClick={() => setSearchText('')}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary min-h-[44px] min-w-[44px] flex items-center justify-center"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                {/* Action buttons - right aligned */}
+                <div className="flex flex-wrap gap-2 items-center md:justify-end">
                     <button
                         onClick={() => {
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        className="w-full md:w-auto px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2"
+                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2"
                     >
                         New Transaction
                     </button>
@@ -1050,30 +1153,29 @@ export default function AccountLedger({
                             )}
                         </div>
                     )}
+                    {/* Reconcile button in toolbar; panel floats separately */}
+                    {!isReconciling && (
+                        <ReconciliationPanel
+                            accountGuid={accountGuid}
+                            accountCurrency={accountCurrency}
+                            currentBalance={currentBalance}
+                            selectedBalance={selectedBalance}
+                            onReconcileComplete={handleReconcileComplete}
+                            selectedSplits={selectedSplits}
+                            onToggleSplit={toggleSplitSelection}
+                            onSelectAll={selectAllUnreconciled}
+                            onClearSelection={clearSelection}
+                            isReconciling={isReconciling}
+                            onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
+                            onCancelReconcile={() => {
+                                setIsReconciling(false);
+                                setSelectedSplits(new Set());
+                            }}
+                            simpleFinBalance={simpleFinBalance}
+                        />
+                    )}
                 </div>
-                {/* Reconcile button in toolbar; panel floats separately */}
-                {!isReconciling && (
-                    <ReconciliationPanel
-                        accountGuid={accountGuid}
-                        accountCurrency={accountCurrency}
-                        currentBalance={currentBalance}
-                        selectedBalance={selectedBalance}
-                        onReconcileComplete={handleReconcileComplete}
-                        selectedSplits={selectedSplits}
-                        onToggleSplit={toggleSplitSelection}
-                        onSelectAll={selectAllUnreconciled}
-                        onClearSelection={clearSelection}
-                        isReconciling={isReconciling}
-                        onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
-                        onCancelReconcile={() => {
-                            setIsReconciling(false);
-                            setSelectedSplits(new Set());
-                        }}
-                        simpleFinBalance={simpleFinBalance}
-                    />
-                )}
             </div>
-
 
             {isMobile && isEditMode ? (
                 <div className="p-8 text-center">

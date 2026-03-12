@@ -20,6 +20,10 @@ export async function GET(
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
         const unreviewedOnly = searchParams.get('unreviewedOnly') === 'true';
+        const search = searchParams.get('search')?.trim() || '';
+        const minAmount = searchParams.get('minAmount') ? parseFloat(searchParams.get('minAmount')!) : null;
+        const maxAmount = searchParams.get('maxAmount') ? parseFloat(searchParams.get('maxAmount')!) : null;
+        const reconcileStates = searchParams.get('reconcileStates')?.split(',').filter(Boolean) || [];
         const { guid: accountGuid } = await params;
 
         // Verify account belongs to active book
@@ -183,10 +187,20 @@ export async function GET(
             }
         }
 
+        // Build search filter
+        const searchFilter: Prisma.transactionsWhereInput = search ? {
+            OR: [
+                { description: { contains: search, mode: 'insensitive' } },
+                { num: { contains: search, mode: 'insensitive' } },
+                { splits: { some: { account: { name: { contains: search, mode: 'insensitive' } } } } },
+            ],
+        } : {};
+
         // 3. Fetch transactions for this account with date filtering
         const transactions = await prisma.transactions.findMany({
             where: {
                 ...dateFilter,
+                ...searchFilter,
                 ...(unreviewedGuids ? { guid: { in: unreviewedGuids } } : {}),
                 splits: {
                     some: {
@@ -294,13 +308,25 @@ export async function GET(
             return row;
         });
 
+        // Post-fetch filtering: amount range and reconcile states
+        let filtered = result;
+        if (minAmount !== null) {
+            filtered = filtered.filter(tx => Math.abs(parseFloat(tx.account_split_value)) >= minAmount);
+        }
+        if (maxAmount !== null) {
+            filtered = filtered.filter(tx => Math.abs(parseFloat(tx.account_split_value)) <= maxAmount);
+        }
+        if (reconcileStates.length > 0) {
+            filtered = filtered.filter(tx => reconcileStates.includes(tx.account_split_reconcile_state));
+        }
+
         if (isInvestmentAccount) {
             return NextResponse.json(serializeBigInts({
-                transactions: result,
+                transactions: filtered,
                 is_investment: true,
             }));
         } else {
-            return NextResponse.json(serializeBigInts(result));
+            return NextResponse.json(serializeBigInts(filtered));
         }
     } catch (error) {
         console.error('Error fetching account transactions:', error);
