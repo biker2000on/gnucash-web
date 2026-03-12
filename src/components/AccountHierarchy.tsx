@@ -599,7 +599,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
                 return (
                     <div
-                        className={`group flex w-full min-w-[18rem] items-center gap-1.5 py-1 px-1.5 rounded-l-lg transition-colors ${
+                        className={`group flex w-full min-w-[18rem] items-center gap-1.5 py-2.5 sm:py-1 px-2 sm:px-1.5 rounded-l-lg transition-colors ${
                             account.hidden ? 'opacity-50 grayscale' : ''
                         }`}
                         style={{ paddingLeft: `${indent}px` }}
@@ -795,7 +795,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     });
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-3 sm:p-6 shadow-2xl">
             <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-border/50">
                 <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
                     <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
