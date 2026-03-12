@@ -35,6 +35,13 @@ function formatCurrency(value: number): string {
     }).format(value);
 }
 
+function formatCompactCurrency(value: number): string {
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
+    return `$${value.toFixed(0)}`;
+}
+
 function ChartSkeleton() {
     return (
         <div className="bg-surface border border-border rounded-xl p-6 animate-pulse">
@@ -49,7 +56,7 @@ interface CustomTooltipProps {
     payload?: Array<{
         name: string;
         value: number;
-        payload: CategoryData & { percent: number };
+        payload: CategoryData & { percent: number; total: number };
     }>;
 }
 
@@ -57,11 +64,13 @@ function CustomTooltip({ active, payload }: CustomTooltipProps) {
     if (!active || !payload || payload.length === 0) return null;
 
     const entry = payload[0];
+    const total = entry.payload?.total || 0;
+    const percent = total > 0 ? (entry.value / total) * 100 : 0;
     return (
         <div className="bg-background border border-border rounded-lg p-3 shadow-xl">
             <p className="text-sm font-medium text-foreground">{entry.name}</p>
             <p className="text-sm text-foreground-secondary">
-                {formatCurrency(entry.value)} ({((entry.payload?.percent ?? 0) * 100).toFixed(1)}%)
+                {formatCurrency(entry.value)} ({percent.toFixed(1)}%)
             </p>
         </div>
     );
@@ -113,16 +122,20 @@ export default function ExpensePieChart({ data, loading }: ExpensePieChartProps)
         );
     }
 
+    const total = data.reduce((sum, d) => sum + d.value, 0);
+    const dataWithTotal = data.map(d => ({ ...d, total }));
+
     return (
         <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
             <h3 className="text-lg font-semibold text-foreground mb-4">Expenses by Category</h3>
             <ResponsiveContainer width="100%" height={expanded ? "100%" : 300}>
                 <PieChart>
                     <Pie
-                        data={data}
+                        data={dataWithTotal}
                         cx="50%"
                         cy="50%"
                         outerRadius={expanded ? "80%" : 90}
+                        innerRadius={expanded ? "50%" : 55}
                         dataKey="value"
                         label={renderCustomLabel}
                         labelLine={false}
@@ -133,6 +146,10 @@ export default function ExpensePieChart({ data, loading }: ExpensePieChartProps)
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                     </Pie>
+                    <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central">
+                        <tspan x="50%" dy="-0.5em" fill="var(--foreground-muted)" fontSize={11}>Total</tspan>
+                        <tspan x="50%" dy="1.3em" fill="var(--foreground)" fontSize={14} fontWeight="bold">{formatCompactCurrency(total)}</tspan>
+                    </text>
                     <Tooltip content={<CustomTooltip />} />
                 </PieChart>
             </ResponsiveContainer>

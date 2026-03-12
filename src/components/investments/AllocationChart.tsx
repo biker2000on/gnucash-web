@@ -20,6 +20,13 @@ interface AllocationLegendPayload {
   category?: string;
 }
 
+function formatCompactCurrency(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
+  return `$${value.toFixed(0)}`;
+}
+
 export function AllocationChart({ data }: AllocationChartProps) {
   const expanded = useContext(ExpandedContext);
 
@@ -31,6 +38,8 @@ export function AllocationChart({ data }: AllocationChartProps) {
       </div>
     );
   }
+
+  const total = data.reduce((sum, d) => sum + d.value, 0);
 
   return (
     <div className={`bg-background-secondary rounded-lg p-6 border border-border ${expanded ? 'h-full flex flex-col' : 'h-full'}`}>
@@ -44,27 +53,34 @@ export function AllocationChart({ data }: AllocationChartProps) {
             nameKey="category"
             cx="50%"
             cy="50%"
+            innerRadius={expanded ? "50%" : 60}
             outerRadius={expanded ? "80%" : 100}
+            stroke="var(--background)"
+            strokeWidth={2}
           >
             {data.map((entry, index) => (
               <Cell key={entry.category} fill={COLORS[index % COLORS.length]} />
             ))}
           </Pie>
+          <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central">
+            <tspan x="50%" dy="-0.5em" fill="var(--foreground-muted)" fontSize={11}>Total</tspan>
+            <tspan x="50%" dy="1.3em" fill="var(--foreground)" fontSize={14} fontWeight="bold">{formatCompactCurrency(total)}</tspan>
+          </text>
           <Tooltip
-            contentStyle={{
-              backgroundColor: '#f5f5f5',
-              border: '1px solid #d4d4d4',
-              borderRadius: '8px',
-              color: '#262626'
-            }}
-            labelStyle={{ color: '#262626' }}
-            formatter={(value, _name, entry) => {
-              const payload = (entry?.payload ?? {}) as AllocationLegendPayload;
-              const numValue = typeof value === 'number' ? value : 0;
-              return [
-                `${formatCurrency(numValue)} (${(payload.percent ?? 0).toFixed(1)}%)`,
-                payload.category ?? ''
-              ];
+            content={({ active, payload: tooltipPayload }) => {
+              if (!active || !tooltipPayload || tooltipPayload.length === 0) return null;
+              const entry = tooltipPayload[0];
+              const entryPayload = (entry?.payload ?? {}) as AllocationLegendPayload & { value?: number };
+              const numValue = typeof entry?.value === 'number' ? entry.value : 0;
+              const percent = total > 0 ? (numValue / total) * 100 : 0;
+              return (
+                <div className="bg-background border border-border rounded-lg p-3 shadow-xl">
+                  <p className="text-sm font-medium text-foreground">{entryPayload.category ?? ''}</p>
+                  <p className="text-sm text-foreground-secondary">
+                    {formatCurrency(numValue)} ({percent.toFixed(1)}%)
+                  </p>
+                </div>
+              );
             }}
           />
           {expanded && (

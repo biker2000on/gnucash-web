@@ -928,7 +928,7 @@ export default function AccountLedger({
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        className="w-full md:w-auto px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
+                        className="w-full md:w-auto px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2"
                     >
                         New Transaction
                     </button>
