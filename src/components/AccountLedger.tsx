@@ -119,9 +119,12 @@ export default function AccountLedger({
             .catch(() => {}); // silently ignore - not all accounts have SimpleFin mapping
     }, [accountGuid]);
 
-    // Listen for global 'n' key shortcut to open new transaction
+    // Listen for global 'n' key shortcut to open new transaction (skip in edit mode)
+    const isEditModeRef = useRef(isEditMode);
+    isEditModeRef.current = isEditMode;
     useEffect(() => {
         const handler = () => {
+            if (isEditModeRef.current) return; // edit mode handles 'n' separately
             setEditingTransaction(null);
             setIsEditModalOpen(true);
         };
@@ -778,6 +781,68 @@ export default function AccountLedger({
                     }
                     break;
                 }
+                case 'n': {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    // Save any dirty row first
+                    if (focusedRowIndex >= 0) {
+                        const currentTx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(currentTx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                    }
+                    // Create a blank transaction at the top
+                    const today = toLocalDateString(new Date());
+                    const txGuid = crypto.randomUUID().replace(/-/g, '');
+                    const splitGuid1 = crypto.randomUUID().replace(/-/g, '');
+                    const splitGuid2 = crypto.randomUUID().replace(/-/g, '');
+
+                    const blankTx: AccountTransaction = {
+                        guid: txGuid,
+                        currency_guid: '',
+                        num: '',
+                        post_date: new Date(today + 'T00:00:00') as unknown as Date,
+                        enter_date: new Date() as unknown as Date,
+                        description: '',
+                        splits: [{
+                            guid: splitGuid1,
+                            tx_guid: txGuid,
+                            account_guid: accountGuid,
+                            account_name: '',
+                            value_num: BigInt(0),
+                            value_denom: BigInt(100),
+                            quantity_num: BigInt(0),
+                            quantity_denom: BigInt(100),
+                            memo: '',
+                            action: '',
+                            reconcile_state: 'n',
+                            reconcile_date: null,
+                            lot_guid: null,
+                        }, {
+                            guid: splitGuid2,
+                            tx_guid: txGuid,
+                            account_guid: '',
+                            account_name: '',
+                            value_num: BigInt(0),
+                            value_denom: BigInt(100),
+                            quantity_num: BigInt(0),
+                            quantity_denom: BigInt(100),
+                            memo: '',
+                            action: '',
+                            reconcile_state: 'n',
+                            reconcile_date: null,
+                            lot_guid: null,
+                        }],
+                        running_balance: '0',
+                        account_split_value: '0',
+                        commodity_mnemonic: '',
+                        account_split_guid: splitGuid1,
+                        account_split_reconcile_state: 'n',
+                    };
+                    setTransactions(prev => [blankTx, ...prev]);
+                    setFocusedRowIndex(0);
+                    setFocusedColumnIndex(0);
+                    break;
+                }
                 case 'Escape':
                     setFocusedRowIndex(-1);
                     break;
@@ -919,7 +984,8 @@ export default function AccountLedger({
     };
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden shadow-2xl">
+        <>
+        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-clip shadow-2xl">
             {/* Top Bar: New Transaction + Reconciliation Panel */}
             <div className="p-4 border-b border-border flex flex-col md:flex-row md:justify-between md:items-center gap-3">
                 <div className="flex flex-wrap gap-2">
@@ -970,14 +1036,14 @@ export default function AccountLedger({
                             <button
                                 onClick={handleBulkReview}
                                 disabled={editSelectedGuids.size === 0}
-                                className="px-3 py-2 min-h-[44px] text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center"
+                                className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
                             >
                                 Mark Reviewed ({editSelectedGuids.size})
                             </button>
                             {editSelectedGuids.size > 0 && (
                                 <button
                                     onClick={() => setBulkDeleteConfirmOpen(true)}
-                                    className="px-3 py-2 min-h-[44px] text-xs bg-rose-700 hover:bg-rose-600 text-white rounded-lg transition-colors flex items-center"
+                                    className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-colors flex items-center"
                                 >
                                     Delete Selected ({editSelectedGuids.size})
                                 </button>
@@ -985,25 +1051,29 @@ export default function AccountLedger({
                         </div>
                     )}
                 </div>
-                <ReconciliationPanel
-                    accountGuid={accountGuid}
-                    accountCurrency={accountCurrency}
-                    currentBalance={currentBalance}
-                    selectedBalance={selectedBalance}
-                    onReconcileComplete={handleReconcileComplete}
-                    selectedSplits={selectedSplits}
-                    onToggleSplit={toggleSplitSelection}
-                    onSelectAll={selectAllUnreconciled}
-                    onClearSelection={clearSelection}
-                    isReconciling={isReconciling}
-                    onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
-                    onCancelReconcile={() => {
-                        setIsReconciling(false);
-                        setSelectedSplits(new Set());
-                    }}
-                    simpleFinBalance={simpleFinBalance}
-                />
+                {/* Reconcile button in toolbar; panel floats separately */}
+                {!isReconciling && (
+                    <ReconciliationPanel
+                        accountGuid={accountGuid}
+                        accountCurrency={accountCurrency}
+                        currentBalance={currentBalance}
+                        selectedBalance={selectedBalance}
+                        onReconcileComplete={handleReconcileComplete}
+                        selectedSplits={selectedSplits}
+                        onToggleSplit={toggleSplitSelection}
+                        onSelectAll={selectAllUnreconciled}
+                        onClearSelection={clearSelection}
+                        isReconciling={isReconciling}
+                        onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
+                        onCancelReconcile={() => {
+                            setIsReconciling(false);
+                            setSelectedSplits(new Set());
+                        }}
+                        simpleFinBalance={simpleFinBalance}
+                    />
+                )}
             </div>
+
 
             {isMobile && isEditMode ? (
                 <div className="p-8 text-center">
@@ -1588,5 +1658,28 @@ export default function AccountLedger({
                 confirmVariant="danger"
             />
         </div>
+
+        {/* Floating reconciliation panel - outside overflow-clip container */}
+        {isReconciling && (
+            <ReconciliationPanel
+                accountGuid={accountGuid}
+                accountCurrency={accountCurrency}
+                currentBalance={currentBalance}
+                selectedBalance={selectedBalance}
+                onReconcileComplete={handleReconcileComplete}
+                selectedSplits={selectedSplits}
+                onToggleSplit={toggleSplitSelection}
+                onSelectAll={selectAllUnreconciled}
+                onClearSelection={clearSelection}
+                isReconciling={isReconciling}
+                onStartReconcile={() => { setIsEditMode(false); setIsReconciling(true); }}
+                onCancelReconcile={() => {
+                    setIsReconciling(false);
+                    setSelectedSplits(new Set());
+                }}
+                simpleFinBalance={simpleFinBalance}
+            />
+        )}
+        </>
     );
 }
