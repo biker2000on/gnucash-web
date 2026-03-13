@@ -1,6 +1,7 @@
 "use client";
 
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -356,6 +357,13 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const [deleteConfirm, setDeleteConfirm] = useState<AccountWithChildren | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+
+    // Keyboard navigation
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const [focusedRowIndex, setFocusedRowIndex] = useState(-1);
+    const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
+    const focusGuid = searchParams.get('focus');
 
     useEffect(() => {
         localStorage.setItem('accountHierarchy.showHidden', JSON.stringify(showHidden));
@@ -794,6 +802,99 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         },
     });
 
+    // Keyboard navigation handler
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            if (modalOpen || deleteConfirm !== null) return;
+
+            const rows = table.getRowModel().rows;
+            if (rows.length === 0) return;
+
+            switch (e.key) {
+                case 'ArrowDown':
+                case 'j': {
+                    e.preventDefault();
+                    setFocusedRowIndex(prev => Math.min(prev + 1, rows.length - 1));
+                    break;
+                }
+                case 'ArrowUp':
+                case 'k': {
+                    e.preventDefault();
+                    setFocusedRowIndex(prev => Math.max(prev - 1, 0));
+                    break;
+                }
+                case 'Enter': {
+                    if (focusedRowIndex < 0 || focusedRowIndex >= rows.length) break;
+                    e.preventDefault();
+                    const row = rows[focusedRowIndex];
+                    if (row.getCanExpand()) {
+                        handleRowToggle(row.original.guid, row.getIsExpanded());
+                    } else {
+                        router.push(`/accounts/${row.original.guid}`);
+                    }
+                    break;
+                }
+                case 'ArrowRight':
+                case 'l': {
+                    if (focusedRowIndex < 0 || focusedRowIndex >= rows.length) break;
+                    const row = rows[focusedRowIndex];
+                    if (row.getCanExpand() && !row.getIsExpanded()) {
+                        e.preventDefault();
+                        handleRowToggle(row.original.guid, false);
+                    }
+                    break;
+                }
+                case 'ArrowLeft':
+                case 'h': {
+                    if (focusedRowIndex < 0 || focusedRowIndex >= rows.length) break;
+                    const row = rows[focusedRowIndex];
+                    if (row.getIsExpanded()) {
+                        e.preventDefault();
+                        handleRowToggle(row.original.guid, true);
+                    } else if (row.depth > 0) {
+                        // Move to parent row
+                        e.preventDefault();
+                        const parentId = row.parentId;
+                        if (parentId) {
+                            const parentIndex = rows.findIndex(r => r.id === parentId);
+                            if (parentIndex >= 0) setFocusedRowIndex(parentIndex);
+                        }
+                    }
+                    break;
+                }
+                case 'Escape': {
+                    setFocusedRowIndex(-1);
+                    break;
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [focusedRowIndex, modalOpen, deleteConfirm, table, handleRowToggle, router]);
+
+    // Auto-scroll focused row into view
+    useEffect(() => {
+        if (focusedRowIndex >= 0) {
+            const el = rowRefs.current.get(focusedRowIndex);
+            el?.scrollIntoView({ block: 'nearest' });
+        }
+    }, [focusedRowIndex]);
+
+    // Focus row from query param (e.g. navigating back from ledger)
+    const tableRows = table.getRowModel().rows;
+    useEffect(() => {
+        if (!focusGuid) return;
+        const idx = tableRows.findIndex(r => r.original.guid === focusGuid);
+        if (idx >= 0) {
+            setFocusedRowIndex(idx);
+            // Clean up the query param
+            router.replace('/accounts', { scroll: false });
+        }
+    }, [focusGuid, tableRows, router]);
+
     return (
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-3 sm:p-6 shadow-2xl">
             <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-border/50">
@@ -1011,11 +1112,16 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         ))}
                     </thead>
                     <tbody className="divide-y divide-border/40">
-                        {table.getRowModel().rows.map((row) => (
+                        {table.getRowModel().rows.map((row, rowIndex) => (
                             <tr
                                 key={row.id}
-                                className="group hover:bg-surface-hover/20 transition-colors"
+                                ref={(el) => {
+                                    if (el) rowRefs.current.set(rowIndex, el);
+                                    else rowRefs.current.delete(rowIndex);
+                                }}
+                                className={`group hover:bg-surface-hover/20 transition-colors ${row.getCanExpand() ? 'cursor-pointer' : ''} ${rowIndex === focusedRowIndex ? 'ring-2 ring-emerald-500/50 ring-inset bg-white/[0.03]' : ''}`}
                                 onClick={() => {
+                                    setFocusedRowIndex(rowIndex);
                                     if (row.getCanExpand()) {
                                         handleRowToggle(row.original.guid, row.getIsExpanded());
                                     }

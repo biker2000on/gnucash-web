@@ -45,6 +45,7 @@ interface AccountLedgerProps {
     currentBalance?: number;
     accountType?: string;
     commodityNamespace?: string;
+    onEscape?: () => void;
 }
 
 export default function AccountLedger({
@@ -56,6 +57,7 @@ export default function AccountLedger({
     currentBalance = 0,
     accountType = 'ASSET',
     commodityNamespace,
+    onEscape,
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode } = useUserPreferences();
     const { success, error } = useToast();
@@ -931,10 +933,14 @@ export default function AccountLedger({
                 }
                 break;
             case 'Escape':
-                setFocusedRowIndex(-1);
+                if (focusedRowIndex === -1) {
+                    onEscape?.();
+                } else {
+                    setFocusedRowIndex(-1);
+                }
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed, onEscape]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -1202,15 +1208,21 @@ export default function AccountLedger({
                             ? applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal)
                             : null;
                         const invRow = investmentRowMap?.get(tx.guid);
+                        const isUnreviewed = tx.reviewed === false;
 
                         return isInvestmentAccount && invRow ? (
-                            <div key={tx.guid} className="bg-surface/30 backdrop-blur border border-border rounded-xl p-3 space-y-2" onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
+                            <div key={tx.guid} className={`bg-surface/30 backdrop-blur border border-border rounded-xl p-3 space-y-2 ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <div className="text-xs text-foreground-muted">
                                             {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                         </div>
-                                        <div className="text-sm font-medium">{tx.description}</div>
+                                        <div className="text-sm font-medium flex items-center gap-2">
+                                            {tx.description}
+                                            {tx.source && tx.source !== 'manual' && (
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                                            )}
+                                        </div>
                                         <div className="text-xs text-foreground-muted">{invRow.transferAccount}</div>
                                     </div>
                                     <div className="text-right">
@@ -1244,9 +1256,10 @@ export default function AccountLedger({
                             <MobileCard
                                 key={tx.guid}
                                 onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}
+                                className={isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}
                                 fields={[
                                     { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
-                                    { label: 'Description', value: <span className="font-medium">{tx.description}</span> },
+                                    { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}</span> },
                                     { label: 'Transfer', value: transferName },
                                     ...(amount >= 0
                                         ? [{ label: 'Debit', value: <span className="text-emerald-400 font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]

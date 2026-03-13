@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
-import { useParams } from 'next/navigation';
+import { useCallback, useEffect, useState, Suspense } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import AccountLedger, { AccountTransaction } from '@/components/AccountLedger';
 import { InvestmentAccount } from '@/components/InvestmentAccount';
 import { parseTransactionsResponse } from '@/components/ledger/investment-utils';
@@ -34,8 +34,12 @@ interface AccountData {
 function AccountPageContent() {
     const params = useParams();
     const guid = params.guid as string;
+    const router = useRouter();
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
     const { balanceReversal } = useUserPreferences();
+    const handleEscapeBack = useCallback(() => {
+        router.push(`/accounts?focus=${guid}`);
+    }, [router, guid]);
 
     const [account, setAccount] = useState<AccountData | null>(null);
     const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
@@ -171,6 +175,7 @@ function AccountPageContent() {
                     endDate={endDate}
                     accountType={account?.account_type}
                     commodityNamespace={account?.commodity_namespace}
+                    onEscape={handleEscapeBack}
                 />
             )}
         </div>
