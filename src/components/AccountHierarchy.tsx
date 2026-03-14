@@ -122,6 +122,17 @@ function sortTree(accounts: AccountWithChildren[], sortKey: SortKey): AccountWit
         }));
 }
 
+function findAncestorPath(accounts: AccountWithChildren[], targetGuid: string): string[] | null {
+    for (const account of accounts) {
+        if (account.guid === targetGuid) return [];
+        if (account.children.length > 0) {
+            const childPath = findAncestorPath(account.children, targetGuid);
+            if (childPath !== null) return [account.guid, ...childPath];
+        }
+    }
+    return null;
+}
+
 function buildExpandedDefaults(accounts: AccountWithChildren[], expandToDepth: number): ExpandedState {
     const expanded: Record<string, boolean> = {};
     const visit = (nodes: AccountWithChildren[], depth: number) => {
@@ -357,6 +368,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const [deleteConfirm, setDeleteConfirm] = useState<AccountWithChildren | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+    const filterInputRef = useRef<HTMLInputElement>(null);
 
     // Keyboard navigation
     const router = useRouter();
@@ -806,7 +818,27 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const tag = (e.target as HTMLElement)?.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+            const isInInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+            // Handle Esc in filter input: clear text first, then blur
+            if (isInInput && e.key === 'Escape' && e.target === filterInputRef.current) {
+                e.preventDefault();
+                if (filterText) {
+                    setFilterText('');
+                } else {
+                    filterInputRef.current?.blur();
+                }
+                return;
+            }
+
+            // '/' to focus filter input (when not in an input)
+            if (!isInInput && e.key === '/') {
+                e.preventDefault();
+                filterInputRef.current?.focus();
+                return;
+            }
+
+            if (isInInput) return;
             if (modalOpen || deleteConfirm !== null) return;
 
             const rows = table.getRowModel().rows;
@@ -828,12 +860,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 case 'Enter': {
                     if (focusedRowIndex < 0 || focusedRowIndex >= rows.length) break;
                     e.preventDefault();
-                    const row = rows[focusedRowIndex];
-                    if (row.getCanExpand()) {
-                        handleRowToggle(row.original.guid, row.getIsExpanded());
-                    } else {
-                        router.push(`/accounts/${row.original.guid}`);
-                    }
+                    router.push(`/accounts/${rows[focusedRowIndex].original.guid}`);
                     break;
                 }
                 case 'ArrowRight':
@@ -873,7 +900,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [focusedRowIndex, modalOpen, deleteConfirm, table, handleRowToggle, router]);
+    }, [focusedRowIndex, modalOpen, deleteConfirm, table, handleRowToggle, router, filterText]);
 
     // Auto-scroll focused row into view
     useEffect(() => {
@@ -884,16 +911,39 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     }, [focusedRowIndex]);
 
     // Focus row from query param (e.g. navigating back from ledger)
-    const tableRows = table.getRowModel().rows;
+    const hasFocusExpanded = useRef(false);
     useEffect(() => {
-        if (!focusGuid) return;
-        const idx = tableRows.findIndex(r => r.original.guid === focusGuid);
+        if (!focusGuid) {
+            hasFocusExpanded.current = false;
+            return;
+        }
+
+        const rows = table.getRowModel().rows;
+        const idx = rows.findIndex(r => r.original.guid === focusGuid);
         if (idx >= 0) {
             setFocusedRowIndex(idx);
+            hasFocusExpanded.current = false;
             // Clean up the query param
             router.replace('/accounts', { scroll: false });
+            return;
         }
-    }, [focusGuid, tableRows, router]);
+
+        // Row not visible - expand ancestors (only try once to avoid infinite loop)
+        if (!hasFocusExpanded.current) {
+            hasFocusExpanded.current = true;
+            const path = findAncestorPath(accounts, focusGuid);
+            if (path && path.length > 0) {
+                setManualExpanded(prev => {
+                    const next = { ...prev };
+                    for (const guid of path) {
+                        next[guid] = true;
+                    }
+                    return next;
+                });
+            }
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusGuid, expanded, accounts]);
 
     return (
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-3 sm:p-6 shadow-2xl">
@@ -937,8 +987,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 <div className="flex flex-col md:flex-row gap-4">
                     <div className="relative flex-1">
                         <input
+                            ref={filterInputRef}
                             type="text"
-                            placeholder="Filter accounts..."
+                            placeholder="Filter accounts... (press / to focus)"
                             className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
                             value={filterText}
                             onChange={(event) => setFilterText(event.target.value)}

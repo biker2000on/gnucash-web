@@ -46,6 +46,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [filterText, setFilterText] = useState('');
     const [debouncedFilter, setDebouncedFilter] = useState('');
     const loader = useRef<HTMLDivElement>(null);
+    const filterInputRef = useRef<HTMLInputElement>(null);
 
     // Modal state
     const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
@@ -64,6 +65,31 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         window.addEventListener('open-new-transaction', handler);
         return () => window.removeEventListener('open-new-transaction', handler);
     }, []);
+
+    // '/' to focus filter input, Esc to clear/blur
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName;
+            const isInInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+            if (isInInput && e.key === 'Escape' && e.target === filterInputRef.current) {
+                e.preventDefault();
+                if (filterText) {
+                    setFilterText('');
+                } else {
+                    filterInputRef.current?.blur();
+                }
+                return;
+            }
+
+            if (!isInInput && e.key === '/') {
+                e.preventDefault();
+                filterInputRef.current?.focus();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [filterText]);
 
     // Reconcile warning state
     const [reconcileWarningOpen, setReconcileWarningOpen] = useState(false);
@@ -399,8 +425,9 @@ export default function TransactionJournal({ initialTransactions, startDate, end
 
                     <div className="relative w-full md:w-64 md:flex-1">
                         <input
+                            ref={filterInputRef}
                             type="text"
-                            placeholder="Search description, # or account..."
+                            placeholder="Search... (press / to focus)"
                             className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
                             value={filterText}
                             onChange={(e) => setFilterText(e.target.value)}

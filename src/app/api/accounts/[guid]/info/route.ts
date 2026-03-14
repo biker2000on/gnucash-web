@@ -41,6 +41,7 @@ export async function GET(
             level5: string | null;
             level6: string | null;
             depth: number | null;
+            child_count: bigint;
         }>>`
             SELECT
                 a.name,
@@ -51,7 +52,8 @@ export async function GET(
                 c.mnemonic as commodity_mnemonic,
                 ah.guid1, ah.guid2, ah.guid3, ah.guid4, ah.guid5, ah.guid6,
                 ah.level1, ah.level2, ah.level3, ah.level4, ah.level5, ah.level6,
-                ah.depth
+                ah.depth,
+                (SELECT COUNT(*) FROM accounts child WHERE child.parent_guid = a.guid)::bigint as child_count
             FROM accounts a
             LEFT JOIN account_hierarchy ah ON a.guid = ah.guid
             LEFT JOIN commodities c ON a.commodity_guid = c.guid

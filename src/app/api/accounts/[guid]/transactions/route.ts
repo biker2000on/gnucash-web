@@ -24,6 +24,7 @@ export async function GET(
         const minAmount = searchParams.get('minAmount') ? parseFloat(searchParams.get('minAmount')!) : null;
         const maxAmount = searchParams.get('maxAmount') ? parseFloat(searchParams.get('maxAmount')!) : null;
         const reconcileStates = searchParams.get('reconcileStates')?.split(',').filter(Boolean) || [];
+        const includeSubaccounts = searchParams.get('includeSubaccounts') === 'true';
         const { guid: accountGuid } = await params;
 
         // Verify account belongs to active book
@@ -37,8 +38,24 @@ export async function GET(
             include: { commodity: true },
         });
         const accountMnemonic = account?.commodity?.mnemonic || '';
-        const isInvestmentAccount = account?.commodity?.namespace !== undefined
+        const isInvestmentAccount = !includeSubaccounts
+            && account?.commodity?.namespace !== undefined
             && account.commodity.namespace !== 'CURRENCY';
+
+        // Build the set of account GUIDs to query
+        let targetAccountGuids = [accountGuid];
+        if (includeSubaccounts) {
+            const descendants = await prisma.$queryRaw<{ guid: string }[]>`
+                WITH RECURSIVE descendants AS (
+                    SELECT guid FROM accounts WHERE guid = ${accountGuid}
+                    UNION ALL
+                    SELECT a.guid FROM accounts a
+                    JOIN descendants d ON a.parent_guid = d.guid
+                )
+                SELECT guid FROM descendants
+            `;
+            targetAccountGuids = descendants.map(d => d.guid);
+        }
 
         // Build date filter for transactions
         const dateFilter: Prisma.transactionsWhereInput = {};
@@ -62,7 +79,7 @@ export async function GET(
                 SELECT m.transaction_guid
                 FROM gnucash_web_transaction_meta m
                 JOIN splits s ON s.tx_guid = m.transaction_guid
-                WHERE s.account_guid = ${accountGuid} AND m.reviewed = false
+                WHERE s.account_guid = ANY(${targetAccountGuids}::text[]) AND m.reviewed = false
             `;
             unreviewedGuids = unreviewedMeta.map(m => m.transaction_guid);
             if (unreviewedGuids.length === 0) {
@@ -79,7 +96,7 @@ export async function GET(
 
         if (!unreviewedOnly) {
             const balanceWhere: Prisma.splitsWhereInput = {
-                account_guid: accountGuid,
+                account_guid: { in: targetAccountGuids },
                 ...(endDate ? {
                     transaction: {
                         post_date: {
@@ -106,7 +123,7 @@ export async function GET(
                         ...dateFilter,
                         splits: {
                             some: {
-                                account_guid: accountGuid,
+                                account_guid: { in: targetAccountGuids },
                             },
                         },
                     },
@@ -125,7 +142,7 @@ export async function GET(
                 if (newerTxGuids.length > 0) {
                     const newerSplits = await prisma.splits.findMany({
                         where: {
-                            account_guid: accountGuid,
+                            account_guid: { in: targetAccountGuids },
                             tx_guid: {
                                 in: newerTxGuids,
                             },
@@ -144,7 +161,7 @@ export async function GET(
         // Compute per-row investment running totals (share balance & cost basis)
         let investmentRunningTotals: Map<string, { shareBalance: number; costBasis: number }> | null = null;
 
-        if (isInvestmentAccount && !unreviewedOnly) {
+        if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
             const allSplitsWithTx = await prisma.$queryRaw<{
                 tx_guid: string;
                 quantity_num: bigint;
@@ -204,7 +221,7 @@ export async function GET(
                 ...(unreviewedGuids ? { guid: { in: unreviewedGuids } } : {}),
                 splits: {
                     some: {
-                        account_guid: accountGuid,
+                        account_guid: { in: targetAccountGuids },
                     },
                 },
             },
@@ -274,8 +291,8 @@ export async function GET(
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
             }));
 
-            // Find the split corresponding to the current account
-            const accountSplit = enrichedSplits.find(s => s.account_guid === accountGuid);
+            // Find the split corresponding to the current account (or any target account in subaccounts mode)
+            const accountSplit = enrichedSplits.find(s => targetAccountGuids.includes(s.account_guid));
             const splitValue = accountSplit
                 ? Number(accountSplit.quantity_num) / Number(accountSplit.quantity_denom)
                 : 0;

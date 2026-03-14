@@ -45,6 +45,7 @@ interface AccountLedgerProps {
     currentBalance?: number;
     accountType?: string;
     commodityNamespace?: string;
+    hasChildren?: boolean;
     onEscape?: () => void;
 }
 
@@ -57,6 +58,7 @@ export default function AccountLedger({
     currentBalance = 0,
     accountType = 'ASSET',
     commodityNamespace,
+    hasChildren = false,
     onEscape,
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode } = useUserPreferences();
@@ -93,6 +95,10 @@ export default function AccountLedger({
 
     // Reviewed filter state
     const [showUnreviewedOnly, setShowUnreviewedOnly] = useState(false);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    // Sub-accounts view state
+    const [showSubaccounts, setShowSubaccounts] = useState(false);
 
     // Search and filter state
     const [searchText, setSearchText] = useState('');
@@ -223,6 +229,7 @@ export default function AccountLedger({
         if (startDate) params.set('startDate', startDate);
         if (endDate) params.set('endDate', endDate);
         if (showUnreviewedOnly) params.set('unreviewedOnly', 'true');
+        if (showSubaccounts) params.set('includeSubaccounts', 'true');
         if (debouncedSearch) params.set('search', debouncedSearch);
         if (debouncedFilters.minAmount) params.set('minAmount', debouncedFilters.minAmount);
         if (debouncedFilters.maxAmount) params.set('maxAmount', debouncedFilters.maxAmount);
@@ -233,7 +240,7 @@ export default function AccountLedger({
             params.set(key, String(value));
         });
         return params.toString();
-    }, [startDate, endDate, showUnreviewedOnly, debouncedSearch, debouncedFilters]);
+    }, [startDate, endDate, showUnreviewedOnly, showSubaccounts, debouncedSearch, debouncedFilters]);
 
     // Refresh transactions helper
     const fetchTransactions = useCallback(async () => {
@@ -709,6 +716,24 @@ export default function AccountLedger({
         const target = e.target as HTMLElement;
         const isInInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
 
+        // Handle Esc in search input: clear text first, then blur
+        if (isInInput && e.key === 'Escape' && target === searchInputRef.current) {
+            e.preventDefault();
+            if (searchText) {
+                setSearchText('');
+            } else {
+                searchInputRef.current?.blur();
+            }
+            return;
+        }
+
+        // '/' to focus search input (when not in an input)
+        if (!isInInput && e.key === '/') {
+            e.preventDefault();
+            searchInputRef.current?.focus();
+            return;
+        }
+
         if (isInInput) {
             // In edit mode, still handle Ctrl+R and Escape even in input fields
             if (isEditMode) {
@@ -932,6 +957,12 @@ export default function AccountLedger({
                     toggleReviewed(displayTransactions[focusedRowIndex].guid);
                 }
                 break;
+            case 's':
+                if (hasChildren) {
+                    e.preventDefault();
+                    setShowSubaccounts(prev => !prev);
+                }
+                break;
             case 'Escape':
                 if (focusedRowIndex === -1) {
                     onEscape?.();
@@ -940,7 +971,7 @@ export default function AccountLedger({
                 }
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed, onEscape]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed, onEscape, searchText, hasChildren]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -970,14 +1001,14 @@ export default function AccountLedger({
         setHasMore(initialTransactions.length >= 100);
     }, [initialTransactions]);
 
-    // Reset and re-fetch when unreviewed filter changes
+    // Reset and re-fetch when unreviewed filter or sub-accounts toggle changes
     useEffect(() => {
         setOffset(0);
         setHasMore(true);
         setFocusedRowIndex(-1);
         fetchTransactions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showUnreviewedOnly]);
+    }, [showUnreviewedOnly, showSubaccounts]);
 
     // Reset and re-fetch when search or advanced filters change
     useEffect(() => {
@@ -1074,8 +1105,9 @@ export default function AccountLedger({
                     </FilterPanel>
                     <div className="relative flex-1 min-w-0">
                         <input
+                            ref={searchInputRef}
                             type="text"
-                            placeholder="Search description, # or account..."
+                            placeholder="Search... (press / to focus)"
                             className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
                             value={searchText}
                             onChange={(e) => setSearchText(e.target.value)}
@@ -1116,6 +1148,21 @@ export default function AccountLedger({
                         }`}
                     >
                         {showUnreviewedOnly ? 'Showing Unreviewed' : 'Show Unreviewed Only'}
+                    </button>
+                    <button
+                        onClick={() => setShowSubaccounts(prev => !prev)}
+                        disabled={!hasChildren}
+                        title={!hasChildren ? 'No sub-accounts' : showSubaccounts ? 'Showing sub-accounts (s)' : 'Show sub-accounts (s)'}
+                        className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-colors flex items-center gap-1.5 ${
+                            showSubaccounts
+                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                                : 'border-border text-foreground-muted hover:text-foreground'
+                        } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-foreground-muted`}
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                        </svg>
+                        {showSubaccounts ? 'Sub-accounts' : 'Sub-accounts'}
                     </button>
                     <button
                         onClick={handleToggleEditMode}
@@ -1444,10 +1491,12 @@ export default function AccountLedger({
                                 const index = row.index;
                                 const isMultiSplit = isMultiSplitTransaction(tx.splits);
                                 const isExpanded = expandedTxs[tx.guid];
-                                const otherSplits = tx.splits?.filter(s =>
-                                    s.account_guid !== accountGuid
-                                    && !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+                                const nonTradingSplits = tx.splits?.filter(s =>
+                                    !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
                                 ) || [];
+                                const otherSplits = showSubaccounts
+                                    ? nonTradingSplits
+                                    : nonTradingSplits.filter(s => s.account_guid !== accountGuid);
                                 const isUnreviewed = tx.reviewed === false;
                                 const amount = parseFloat(tx.account_split_value);
                                 const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
@@ -1533,7 +1582,7 @@ export default function AccountLedger({
                                             }
 
                                             if (colId === 'transfer') {
-                                                if (isInvestmentAccount) {
+                                                if (isInvestmentAccount && !showSubaccounts) {
                                                     const invRow = investmentRowMap?.get(tx.guid);
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm text-foreground-secondary align-middle leading-tight">
@@ -1543,6 +1592,27 @@ export default function AccountLedger({
                                                         </td>
                                                     );
                                                 }
+
+                                                // Sub-accounts mode: always show all splits with amounts
+                                                if (showSubaccounts) {
+                                                    return (
+                                                        <td key={cell.id} className="px-4 py-2 text-sm align-middle">
+                                                            <div className="space-y-1">
+                                                                {otherSplits.map((split) => (
+                                                                    <div key={split.guid} className="flex justify-between items-center text-xs">
+                                                                        <span className="text-foreground-secondary whitespace-normal break-words">
+                                                                            {formatDisplayAccountPath(split.account_fullname, split.account_name)}
+                                                                        </span>
+                                                                        <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                            {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </td>
+                                                    );
+                                                }
+
                                                 return (
                                                     <td key={cell.id} className="px-4 py-2 text-sm align-middle">
                                                         {isMultiSplit && !isExpanded ? (

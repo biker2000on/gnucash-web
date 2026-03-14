@@ -365,7 +365,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                     <div className="flex flex-wrap items-center gap-2">
                         <button
                             onClick={() => setShowTransactionModal(true)}
-                            className="flex items-center gap-2 px-3 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -375,7 +375,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <button
                             onClick={handleFetchPrice}
                             disabled={fetchingPrice}
-                            className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-cyan-400 hover:border-cyan-500/30 hover:bg-cyan-500/10 transition-colors disabled:opacity-50"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -388,7 +388,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 setNewPrice({ date: toLocalDateString(new Date()), value: '' });
                                 setShowPriceModal(true);
                             }}
-                            className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-cyan-400 hover:border-cyan-500/30 hover:bg-cyan-500/10 transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
