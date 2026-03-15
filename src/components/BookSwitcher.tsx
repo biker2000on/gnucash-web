@@ -177,6 +177,23 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                         setEditingBook(null);
                         refreshBooks();
                     }}
+                    onDeleted={async (remainingBooks) => {
+                        setEditingBook(null);
+                        if (remainingBooks > 0) {
+                            await refreshBooks();
+                            // Switch to the first available book
+                            const booksRes = await fetch('/api/books');
+                            if (booksRes.ok) {
+                                const updatedBooks = await booksRes.json();
+                                if (updatedBooks.length > 0) {
+                                    await switchBook(updatedBooks[0].guid);
+                                }
+                            }
+                        } else {
+                            await refreshBooks();
+                            setWizardOpen(true);
+                        }
+                    }}
                 />
             )}
 
