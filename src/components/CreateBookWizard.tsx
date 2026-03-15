@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { CurrencySelect } from '@/components/CurrencySelect';
 
 interface TemplateFile {
   locale: string;
@@ -192,14 +193,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
               Base Currency
             </label>
-            <input
-              type="text"
-              value={currency}
-              onChange={e => setCurrency(e.target.value.toUpperCase())}
-              maxLength={3}
-              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
-              placeholder="USD"
-            />
+            <CurrencySelect value={currency} onChange={setCurrency} />
           </div>
 
           <button
@@ -311,14 +305,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
               Currency
             </label>
-            <input
-              type="text"
-              value={currency}
-              onChange={e => setCurrency(e.target.value.toUpperCase())}
-              maxLength={3}
-              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
-              placeholder="USD"
-            />
+            <CurrencySelect value={currency} onChange={setCurrency} />
           </div>
 
           <button
