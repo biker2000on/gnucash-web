@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { CurrencySelect } from '@/components/CurrencySelect';
 import {
   getAvailableTemplates,
   type TemplateLocale,
@@ -14,12 +15,6 @@ interface NewBookWizardProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (bookGuid: string) => void;
-}
-
-interface Currency {
-  guid: string;
-  mnemonic: string;
-  fullname: string;
 }
 
 const STEPS = ['Name & Currency', 'Template', 'Confirm'];
@@ -160,8 +155,6 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
   const [bookName, setBookName] = useState('');
   const [bookDescription, setBookDescription] = useState('');
   const [selectedCurrency, setSelectedCurrency] = useState('USD');
-  const [currencies, setCurrencies] = useState<Currency[]>([]);
-  const [loadingCurrencies, setLoadingCurrencies] = useState(false);
 
   // Step 2 state
   const [locales] = useState<TemplateLocale[]>(() => getAvailableTemplates());
@@ -171,28 +164,6 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
   // Step 3 / submission
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-
-  // Fetch currencies from API
-  const fetchCurrencies = useCallback(async () => {
-    setLoadingCurrencies(true);
-    try {
-      const res = await fetch('/api/commodities?type=CURRENCY');
-      if (res.ok) {
-        const data: Currency[] = await res.json();
-        setCurrencies(data);
-      }
-    } catch {
-      // Currencies will remain empty; user can still type
-    } finally {
-      setLoadingCurrencies(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isOpen) {
-      fetchCurrencies();
-    }
-  }, [isOpen, fetchCurrencies]);
 
   // Reset state when wizard opens
   useEffect(() => {
@@ -319,32 +290,11 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
         <label htmlFor="wizard-currency" className="block text-sm font-medium text-foreground mb-1.5">
           Default Currency <span className="text-red-400">*</span>
         </label>
-        {loadingCurrencies ? (
-          <div className="flex items-center gap-2 text-sm text-foreground-tertiary py-2">
-            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Loading currencies...
-          </div>
-        ) : (
-          <select
-            id="wizard-currency"
-            value={selectedCurrency}
-            onChange={(e) => setSelectedCurrency(e.target.value)}
-            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500"
-          >
-            {currencies.length === 0 ? (
-              <option value="USD">USD - US Dollar</option>
-            ) : (
-              currencies.map((c) => (
-                <option key={c.guid} value={c.mnemonic}>
-                  {c.mnemonic} - {c.fullname}
-                </option>
-              ))
-            )}
-          </select>
-        )}
+        <CurrencySelect
+          id="wizard-currency"
+          value={selectedCurrency}
+          onChange={setSelectedCurrency}
+        />
       </div>
     </div>
   );

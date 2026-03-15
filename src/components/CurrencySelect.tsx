@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { CURRENCIES } from '@/lib/currencies';
 
 interface CurrencySelectProps {
@@ -14,6 +15,7 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -38,17 +40,48 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
     item?.scrollIntoView({ block: 'nearest' });
   }, [highlightedIndex, open]);
 
+  // Position the portal dropdown relative to the container
+  useEffect(() => {
+    if (!open || !containerRef.current) return;
+
+    function updatePosition() {
+      const rect = containerRef.current!.getBoundingClientRect();
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 99999,
+      });
+    }
+
+    updatePosition();
+
+    // Reposition on scroll/resize (e.g. modal content scrolling)
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [open]);
+
   // Close on outside click
   useEffect(() => {
+    if (!open) return;
     function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (
+        containerRef.current && !containerRef.current.contains(target) &&
+        listRef.current && !listRef.current.contains(target)
+      ) {
         setOpen(false);
         setSearch('');
       }
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  }, [open]);
 
   const selectedCurrency = CURRENCIES.find(c => c.code === value);
   const displayValue = selectedCurrency
@@ -96,6 +129,43 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
 
   const listboxId = id ? `${id}-listbox` : 'currency-listbox';
 
+  const dropdownList = open ? createPortal(
+    <ul
+      ref={listRef}
+      id={listboxId}
+      role="listbox"
+      aria-label="Currencies"
+      className="max-h-60 overflow-auto bg-surface border border-border rounded-lg shadow-lg"
+      style={dropdownStyle}
+    >
+      {filtered.length === 0 ? (
+        <li className="px-4 py-3 text-foreground-muted text-sm">No currencies found</li>
+      ) : (
+        filtered.map((c, i) => (
+          <li
+            key={c.code}
+            id={`currency-option-${c.code}`}
+            role="option"
+            aria-selected={c.code === value}
+            onClick={() => handleSelect(c.code)}
+            onMouseEnter={() => setHighlightedIndex(i)}
+            className={`px-4 py-2 cursor-pointer text-sm transition-colors ${
+              i === highlightedIndex
+                ? 'bg-cyan-500/10 text-foreground'
+                : c.code === value
+                  ? 'text-cyan-400'
+                  : 'text-foreground hover:bg-surface-hover'
+            }`}
+          >
+            <span className="font-medium">{c.code}</span>
+            <span className="text-foreground-muted"> &mdash; {c.name}</span>
+          </li>
+        ))
+      )}
+    </ul>,
+    document.body
+  ) : null;
+
   return (
     <div ref={containerRef} className={`relative ${className ?? ''}`}>
       {/* Trigger / display button */}
@@ -141,41 +211,8 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
         />
       )}
 
-      {/* Dropdown list */}
-      {open && (
-        <ul
-          ref={listRef}
-          id={listboxId}
-          role="listbox"
-          aria-label="Currencies"
-          className="absolute z-50 mt-1 w-full max-h-60 overflow-auto bg-surface border border-border rounded-lg shadow-lg"
-        >
-          {filtered.length === 0 ? (
-            <li className="px-4 py-3 text-foreground-muted text-sm">No currencies found</li>
-          ) : (
-            filtered.map((c, i) => (
-              <li
-                key={c.code}
-                id={`currency-option-${c.code}`}
-                role="option"
-                aria-selected={c.code === value}
-                onClick={() => handleSelect(c.code)}
-                onMouseEnter={() => setHighlightedIndex(i)}
-                className={`px-4 py-2 cursor-pointer text-sm transition-colors ${
-                  i === highlightedIndex
-                    ? 'bg-cyan-500/10 text-foreground'
-                    : c.code === value
-                      ? 'text-cyan-400'
-                      : 'text-foreground hover:bg-surface-hover'
-                }`}
-              >
-                <span className="font-medium">{c.code}</span>
-                <span className="text-foreground-muted"> &mdash; {c.name}</span>
-              </li>
-            ))
-          )}
-        </ul>
-      )}
+      {/* Dropdown rendered via portal to escape modal overflow */}
+      {dropdownList}
     </div>
   );
 }

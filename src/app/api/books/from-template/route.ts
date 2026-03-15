@@ -4,6 +4,7 @@ import { generateGuid } from '@/lib/gnucash';
 import { getTemplate, flattenTemplate } from '@/lib/account-templates';
 import { requireAuth } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
+import { getCurrencyName } from '@/lib/currencies';
 
 /**
  * POST /api/books/from-template
@@ -34,17 +35,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find the currency commodity
-    const currencyCommodity = await prisma.commodities.findFirst({
+    // Find or create the currency commodity
+    let currencyCommodity = await prisma.commodities.findFirst({
       where: { namespace: 'CURRENCY', mnemonic: currency.toUpperCase() },
       select: { guid: true, fraction: true },
     });
 
     if (!currencyCommodity) {
-      return NextResponse.json(
-        { error: `Currency "${currency}" not found. Please ensure it exists in your commodities.` },
-        { status: 400 }
-      );
+      // Auto-create the currency commodity from the hard-coded ISO 4217 list
+      const newGuid = generateGuid();
+      const fullname = getCurrencyName(currency.toUpperCase());
+      currencyCommodity = await prisma.commodities.create({
+        data: {
+          guid: newGuid,
+          namespace: 'CURRENCY',
+          mnemonic: currency.toUpperCase(),
+          fullname,
+          cusip: '',
+          fraction: 100,
+          quote_flag: 1,
+          quote_source: 'currency',
+          quote_tz: '',
+        },
+        select: { guid: true, fraction: true },
+      });
     }
 
     const currencyGuid = currencyCommodity.guid;
