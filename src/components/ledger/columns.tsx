@@ -86,6 +86,7 @@ export function getInvestmentColumns(meta: {
     accountGuid: string;
     isReconciling: boolean;
     isEditMode: boolean;
+    viewStyle?: string;
 }): ColumnDef<AccountTransaction>[] {
     return [
         ...(meta.isReconciling || meta.isEditMode ? [

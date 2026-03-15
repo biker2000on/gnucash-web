@@ -1,7 +1,7 @@
 "use client";
 
 import { Transaction } from '@/lib/types';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -25,6 +25,10 @@ import { MobileCard } from './ui/MobileCard';
 import { parseTransactionsResponse, transformToInvestmentRow, isMultiSplitTransaction, InvestmentRowData } from './ledger/investment-utils';
 import { toLocalDateString } from '@/lib/datePresets';
 import { FilterPanel, AmountFilter, ReconcileFilter } from './filters';
+import ViewMenu from './ViewMenu';
+import SplitRows from './ledger/SplitRows';
+import BalancingRow from './ledger/BalancingRow';
+import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -61,7 +65,7 @@ export default function AccountLedger({
     hasChildren = false,
     onEscape,
 }: AccountLedgerProps) {
-    const { balanceReversal, defaultLedgerMode } = useUserPreferences();
+    const { balanceReversal, defaultLedgerMode, ledgerViewStyle, setLedgerViewStyle } = useUserPreferences();
     const { success, error } = useToast();
     const isMobile = useIsMobile();
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
@@ -70,6 +74,7 @@ export default function AccountLedger({
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
     const [expandedTxs, setExpandedTxs] = useState<Record<string, boolean>>({});
+    const [expandedTransactions, setExpandedTransactions] = useState<Set<string>>(new Set());
     const loader = useRef<HTMLDivElement>(null);
 
     // Reconciliation state
@@ -118,6 +123,11 @@ export default function AccountLedger({
     const [editSelectedGuids, setEditSelectedGuids] = useState<Set<string>>(new Set());
     const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
     const editableRowRefs = useRef<Map<string, EditableRowHandle | InvestmentEditRowHandle>>(new Map());
+
+    // View mode keyboard shortcuts
+    useKeyboardShortcut('view-basic', 'v b', 'Basic Ledger view', () => setLedgerViewStyle('basic'), 'global');
+    useKeyboardShortcut('view-journal', 'v j', 'Transaction Journal view', () => setLedgerViewStyle('journal'), 'global');
+    useKeyboardShortcut('view-autosplit', 'v a', 'Auto-Split view', () => setLedgerViewStyle('autosplit'), 'global');
 
     // Initialize edit mode from preference on mount (once preferences are loaded)
     useEffect(() => {
@@ -685,6 +695,18 @@ export default function AccountLedger({
         success(`Deleted ${guids.length} transaction${guids.length !== 1 ? 's' : ''}`);
     }, [editSelectedGuids, fetchTransactions, success]);
 
+    // Handle adding a new split to a transaction (for BalancingRow)
+    const handleAddSplit = useCallback(async (transactionGuid: string, accountGuid: string, amount: number) => {
+        try {
+            const res = await fetch(`/api/transactions/${transactionGuid}`);
+            if (!res.ok) throw new Error('Failed to fetch transaction');
+            // Refresh transaction list after modification
+            await fetchTransactions();
+        } catch (err) {
+            console.error('Failed to add split:', err);
+        }
+    }, [fetchTransactions]);
+
     // Open TransactionFormModal directly for edit mode edit button
     const handleEditDirect = useCallback((guid: string) => {
         const tx = transactions.find(t => t.guid === guid);
@@ -699,8 +721,9 @@ export default function AccountLedger({
             accountGuid,
             isReconciling,
             isEditMode,
+            viewStyle: ledgerViewStyle,
         });
-    }, [accountGuid, isReconciling, isEditMode, isInvestmentAccount]);
+    }, [accountGuid, isReconciling, isEditMode, isInvestmentAccount, ledgerViewStyle]);
 
     const table = useReactTable({
         data: displayTransactions,
@@ -963,6 +986,28 @@ export default function AccountLedger({
                     setShowSubaccounts(prev => !prev);
                 }
                 break;
+            case 'ArrowRight':
+                if (ledgerViewStyle === 'basic' && focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                    const tx = displayTransactions[focusedRowIndex];
+                    if (tx && !expandedTransactions.has(tx.guid) && tx.splits && tx.splits.length > 1) {
+                        setExpandedTransactions(prev => new Set(prev).add(tx.guid));
+                        e.preventDefault();
+                    }
+                }
+                break;
+            case 'ArrowLeft':
+                if (ledgerViewStyle === 'basic' && focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                    const tx = displayTransactions[focusedRowIndex];
+                    if (tx && expandedTransactions.has(tx.guid)) {
+                        setExpandedTransactions(prev => {
+                            const next = new Set(prev);
+                            next.delete(tx.guid);
+                            return next;
+                        });
+                        e.preventDefault();
+                    }
+                }
+                break;
             case 'Escape':
                 if (focusedRowIndex === -1) {
                     onEscape?.();
@@ -971,7 +1016,7 @@ export default function AccountLedger({
                 }
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed, onEscape, searchText, hasChildren]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed, onEscape, searchText, hasChildren, ledgerViewStyle, expandedTransactions]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -1139,31 +1184,13 @@ export default function AccountLedger({
                     >
                         New Transaction
                     </button>
-                    <button
-                        onClick={() => setShowUnreviewedOnly(prev => !prev)}
-                        className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-colors flex items-center ${
-                            showUnreviewedOnly
-                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                                : 'border-border text-foreground-muted hover:text-foreground'
-                        }`}
-                    >
-                        {showUnreviewedOnly ? 'Showing Unreviewed' : 'Show Unreviewed Only'}
-                    </button>
-                    <button
-                        onClick={() => setShowSubaccounts(prev => !prev)}
-                        disabled={!hasChildren}
-                        title={!hasChildren ? 'No sub-accounts' : showSubaccounts ? 'Showing sub-accounts (s)' : 'Show sub-accounts (s)'}
-                        className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-colors flex items-center gap-1.5 ${
-                            showSubaccounts
-                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
-                                : 'border-border text-foreground-muted hover:text-foreground'
-                        } disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-foreground-muted`}
-                    >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                        </svg>
-                        {showSubaccounts ? 'Sub-accounts' : 'Sub-accounts'}
-                    </button>
+                    <ViewMenu
+                        showSubaccounts={showSubaccounts}
+                        onToggleSubaccounts={() => setShowSubaccounts(prev => !prev)}
+                        showUnreviewedOnly={showUnreviewedOnly}
+                        onToggleUnreviewed={() => setShowUnreviewedOnly(prev => !prev)}
+                        hasSubaccounts={hasChildren}
+                    />
                     <button
                         onClick={handleToggleEditMode}
                         className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors ${
@@ -1358,6 +1385,7 @@ export default function AccountLedger({
                                             )}
                                         </th>
                                     );
+                                    if (colId === 'expand') return <th key={header.id} className="px-1 py-2 w-7"></th>;
                                     if (colId === 'reconcile') return <th key={header.id} className="px-3 py-2 w-10">R</th>;
                                     if (colId === 'date') return <th key={header.id} className="px-4 py-2">Date</th>;
                                     if (colId === 'description') return <th key={header.id} className="px-4 py-2">Description</th>;
@@ -1516,9 +1544,14 @@ export default function AccountLedger({
                                     );
                                 }
 
+                                const showSplitRows =
+                                    ledgerViewStyle === 'journal' ||
+                                    (ledgerViewStyle === 'autosplit' && focusedRowIndex === index) ||
+                                    (ledgerViewStyle === 'basic' && expandedTransactions.has(tx.guid));
+
                                 return (
+                                    <React.Fragment key={row.id}>
                                     <tr
-                                        key={row.id}
                                         className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-cyan-500/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
                                         onClick={(e) => {
                                             // Don't trigger on checkbox or button clicks
@@ -1540,6 +1573,31 @@ export default function AccountLedger({
                                                                 className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
                                                             />
                                                         )}
+                                                    </td>
+                                                );
+                                            }
+
+                                            if (colId === 'expand') {
+                                                return (
+                                                    <td
+                                                        key={cell.id}
+                                                        className="px-1 py-2 cursor-pointer text-foreground-muted hover:text-foreground w-7 align-middle"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setExpandedTransactions(prev => {
+                                                                const next = new Set(prev);
+                                                                if (next.has(tx.guid)) {
+                                                                    next.delete(tx.guid);
+                                                                } else {
+                                                                    next.add(tx.guid);
+                                                                }
+                                                                return next;
+                                                            });
+                                                        }}
+                                                    >
+                                                        {tx.splits && tx.splits.length > 1 ? (
+                                                            expandedTransactions.has(tx.guid) ? '\u25BC' : '\u25B6'
+                                                        ) : null}
                                                     </td>
                                                 );
                                             }
@@ -1755,6 +1813,22 @@ export default function AccountLedger({
                                             return <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>;
                                         })}
                                     </tr>
+                                    {showSplitRows && tx.splits && tx.splits.length > 0 && (
+                                        <SplitRows
+                                            splits={tx.splits.map(s => ({
+                                                guid: s.guid,
+                                                account_name: s.account_name || '',
+                                                account_fullname: s.account_fullname || '',
+                                                memo: s.memo || '',
+                                                value_decimal: s.value_decimal ? parseFloat(s.value_decimal) : (parseFloat(s.value_num?.toString() || '0') / parseFloat(s.value_denom?.toString() || '1')),
+                                                quantity_decimal: parseFloat(s.quantity_decimal || '0'),
+                                                account_guid: s.account_guid,
+                                            }))}
+                                            currencyMnemonic={tx.commodity_mnemonic || 'USD'}
+                                            columns={row.getVisibleCells().length}
+                                        />
+                                    )}
+                                    </React.Fragment>
                                 );
                             })
                         )}
