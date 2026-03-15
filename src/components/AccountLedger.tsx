@@ -29,6 +29,7 @@ import ViewMenu from './ViewMenu';
 import SplitRows from './ledger/SplitRows';
 import BalancingRow from './ledger/BalancingRow';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
+import AccountPickerDialog from './AccountPickerDialog';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -49,6 +50,7 @@ interface AccountLedgerProps {
     currentBalance?: number;
     accountType?: string;
     commodityNamespace?: string;
+    accountCommodityGuid?: string;
     hasChildren?: boolean;
     onEscape?: () => void;
 }
@@ -62,6 +64,7 @@ export default function AccountLedger({
     currentBalance = 0,
     accountType = 'ASSET',
     commodityNamespace,
+    accountCommodityGuid,
     hasChildren = false,
     onEscape,
 }: AccountLedgerProps) {
@@ -91,6 +94,7 @@ export default function AccountLedger({
     const [deletingGuid, setDeletingGuid] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+    const [showMoveDialog, setShowMoveDialog] = useState(false);
 
     // Keyboard navigation state
     const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
@@ -710,6 +714,48 @@ export default function AccountLedger({
         }
     }, [fetchTransactions]);
 
+    // Bulk move handler
+    const handleBulkMove = useCallback(async (targetAccountGuid: string, targetAccountName: string) => {
+        // Resolve transaction GUIDs to split GUIDs
+        const splitGuids: string[] = [];
+        transactions.forEach(tx => {
+            if (editSelectedGuids.has(tx.guid)) {
+                let foundSplits = false;
+                tx.splits?.forEach(split => {
+                    if (split.account_guid === accountGuid) {
+                        splitGuids.push(split.guid);
+                        foundSplits = true;
+                    }
+                });
+                if (!foundSplits && tx.account_split_guid) {
+                    splitGuids.push(tx.account_split_guid);
+                }
+            }
+        });
+
+        if (splitGuids.length === 0) return;
+
+        try {
+            const res = await fetch('/api/splits/bulk/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ splitGuids, targetAccountGuid }),
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to move splits');
+            }
+
+            const data = await res.json();
+            setEditSelectedGuids(new Set());
+            await fetchTransactions();
+            success(`Moved ${data.updated} split${data.updated !== 1 ? 's' : ''} to ${targetAccountName}`);
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to move splits');
+        }
+    }, [transactions, editSelectedGuids, accountGuid, fetchTransactions, success, error]);
+
     // Open TransactionFormModal directly for edit mode edit button
     const handleEditDirect = useCallback((guid: string) => {
         const tx = transactions.find(t => t.guid === guid);
@@ -1227,12 +1273,20 @@ export default function AccountLedger({
                                 Mark Reviewed ({editSelectedGuids.size})
                             </button>
                             {editSelectedGuids.size > 0 && (
-                                <button
-                                    onClick={() => setBulkDeleteConfirmOpen(true)}
-                                    className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-colors flex items-center"
-                                >
-                                    Delete Selected ({editSelectedGuids.size})
-                                </button>
+                                <>
+                                    <button
+                                        onClick={() => setShowMoveDialog(true)}
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-blue-400 hover:border-blue-500/30 hover:bg-blue-500/10 transition-colors flex items-center"
+                                    >
+                                        Move to Account ({editSelectedGuids.size})
+                                    </button>
+                                    <button
+                                        onClick={() => setBulkDeleteConfirmOpen(true)}
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-colors flex items-center"
+                                    >
+                                        Delete Selected ({editSelectedGuids.size})
+                                    </button>
+                                </>
                             )}
                         </div>
                     )}
@@ -1920,6 +1974,18 @@ export default function AccountLedger({
                 confirmVariant="danger"
             />
         </div>
+
+        <AccountPickerDialog
+            isOpen={showMoveDialog}
+            onClose={() => setShowMoveDialog(false)}
+            onSelect={(guid, name) => {
+                handleBulkMove(guid, name);
+                setShowMoveDialog(false);
+            }}
+            excludeAccountGuid={accountGuid}
+            commodityGuid={accountCommodityGuid}
+            title={`Move ${editSelectedGuids.size} transaction${editSelectedGuids.size !== 1 ? 's' : ''} to...`}
+        />
 
         {/* Floating reconciliation panel - outside overflow-clip container */}
         {isReconciling && (

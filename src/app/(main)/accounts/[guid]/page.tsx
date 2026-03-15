@@ -17,6 +17,7 @@ interface AccountData {
     depth: number;
     account_type?: string;
     commodity_namespace?: string;
+    commodity_guid?: string;
     child_count?: number;
     guid1?: string;
     guid2?: string;
@@ -176,6 +177,7 @@ function AccountPageContent() {
                     endDate={endDate}
                     accountType={account?.account_type}
                     commodityNamespace={account?.commodity_namespace}
+                    accountCommodityGuid={account?.commodity_guid}
                     hasChildren={(account?.child_count ?? 0) > 0}
                     onEscape={handleEscapeBack}
                 />
