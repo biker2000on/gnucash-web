@@ -174,25 +174,21 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
         return
       }
 
-      // Check if this is the start of a chord (g key)
-      if (event.key === 'g' && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
-        // Check if any chord shortcuts are registered
-        const hasChordShortcuts = Array.from(shortcuts.values()).some(
-          (s) => s.scope === 'global' && s.enabled && s.key.startsWith('g ')
-        )
-
-        if (hasChordShortcuts) {
-          event.preventDefault()
-          chordPrefixRef.current = 'g'
-
-          // Set 500ms timeout for chord completion
-          const timer = setTimeout(() => {
-            chordPrefixRef.current = null
-            chordTimerRef.current = null
-          }, 500)
-          chordTimerRef.current = timer
-          return
+      // Detect chord prefixes dynamically from registered shortcuts
+      const chordPrefixes = new Set<string>()
+      shortcuts.forEach((s) => {
+        if (s.scope === 'global' && s.enabled && s.key.includes(' ')) {
+          chordPrefixes.add(s.key.split(' ')[0])
         }
+      })
+
+      if (chordPrefixes.has(event.key) && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        chordPrefixRef.current = event.key
+        chordTimerRef.current = setTimeout(() => {
+          chordPrefixRef.current = null
+        }, 500)
+        return
       }
 
       // Handle regular global shortcuts
