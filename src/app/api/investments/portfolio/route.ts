@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getAccountHoldings } from '@/lib/commodities';
+import { getAccountHoldings, type CostBasisOptions } from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getCachedMetadata, getPortfolioSectorExposure } from '@/lib/commodity-metadata';
 import type { SectorExposure } from '@/lib/commodity-metadata';
 import { requireRole } from '@/lib/auth';
+import { createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
 
 interface CashByAccount {
   parentGuid: string;
@@ -128,10 +129,20 @@ async function getAccountBalance(accountGuid: string): Promise<number> {
   }, 0);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const roleResult = await requireRole('readonly');
     if (roleResult instanceof NextResponse) return roleResult;
+
+    // Parse cost basis preferences from query params
+    const { searchParams } = new URL(request.url);
+    const costBasisCarryOver = searchParams.get('costBasisCarryOver') !== 'false'; // default true
+    const costBasisMethod = (searchParams.get('costBasisMethod') || 'fifo') as CostBasisMethod;
+
+    const costBasisCache = createCostBasisCache();
+    const costBasisOptions: CostBasisOptions | undefined = costBasisCarryOver
+      ? { enabled: true, method: costBasisMethod, cache: costBasisCache }
+      : undefined;
 
     // Get book account GUIDs for scoping
     const bookAccountGuids = await getBookAccountGuids();
@@ -165,7 +176,7 @@ export async function GET() {
 
     // Build holdings data for each account
     const holdingsPromises = stockAccounts.map(async (account) => {
-      const holdings = await getAccountHoldings(account.guid);
+      const holdings = await getAccountHoldings(account.guid, undefined, costBasisOptions);
       const accountPath = buildAccountPathFromMap(account.guid, accountLookup);
 
       return {

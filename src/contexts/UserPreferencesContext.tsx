@@ -7,6 +7,7 @@ import { DateFormat } from '@/lib/date-format';
 export type DefaultLedgerMode = 'readonly' | 'edit';
 export type DashboardPeriod = 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'thisYear' | 'lastYear' | 'allTime';
 export type LedgerViewStyle = 'basic' | 'journal' | 'autosplit';
+export type CostBasisMethod = 'fifo' | 'lifo' | 'average';
 
 interface UserPreferencesContextType {
     balanceReversal: BalanceReversal;
@@ -21,6 +22,10 @@ interface UserPreferencesContextType {
     setDashboardDefaultPeriod: (period: DashboardPeriod) => Promise<void>;
     ledgerViewStyle: LedgerViewStyle;
     setLedgerViewStyle: (style: LedgerViewStyle) => Promise<void>;
+    costBasisCarryOver: boolean;
+    setCostBasisCarryOver: (enabled: boolean) => Promise<void>;
+    costBasisMethod: CostBasisMethod;
+    setCostBasisMethod: (method: CostBasisMethod) => Promise<void>;
     loading: boolean;
 }
 
@@ -39,6 +44,8 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
     const [dateFormat, setDateFormatState] = useState<DateFormat>('MM/DD/YYYY');
     const [dashboardDefaultPeriod, setDashboardDefaultPeriodState] = useState<DashboardPeriod>('thisYear');
     const [ledgerViewStyle, setLedgerViewStyleState] = useState<LedgerViewStyle>('basic');
+    const [costBasisCarryOver, setCostBasisCarryOverState] = useState(true);
+    const [costBasisMethod, setCostBasisMethodState] = useState<CostBasisMethod>('fifo');
     const [loading, setLoading] = useState(true);
 
     // Load preferences from API on mount
@@ -68,6 +75,12 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         if (parsed.ledgerViewStyle) {
                             setLedgerViewStyleState(parsed.ledgerViewStyle);
                         }
+                        if (parsed.costBasisCarryOver !== undefined) {
+                            setCostBasisCarryOverState(parsed.costBasisCarryOver);
+                        }
+                        if (parsed.costBasisMethod) {
+                            setCostBasisMethodState(parsed.costBasisMethod);
+                        }
                     } catch {
                         // Invalid cache, ignore
                     }
@@ -83,6 +96,12 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                     setDateFormatState(data.dateFormat || 'MM/DD/YYYY');
                     setDashboardDefaultPeriodState(data.dashboardDefaultPeriod || 'thisYear');
                     setLedgerViewStyleState(data.ledgerViewStyle || 'basic');
+                    if (data.costBasisCarryOver !== undefined) {
+                        setCostBasisCarryOverState(data.costBasisCarryOver);
+                    }
+                    if (data.costBasisMethod) {
+                        setCostBasisMethodState(data.costBasisMethod);
+                    }
                     // Update cache
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 }
@@ -228,7 +247,47 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         }
     }, []);
 
-    const value = useMemo<UserPreferencesContextType>(() => ({
+    const setCostBasisCarryOver = useCallback(async (value: boolean) => {
+        setCostBasisCarryOverState(value);
+
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, costBasisCarryOver: value }));
+
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ costBasisCarryOver: value }),
+            });
+            if (!res.ok) throw new Error('Failed to save preference');
+        } catch (error) {
+            console.error('Failed to save costBasisCarryOver preference:', error);
+            throw error;
+        }
+    }, []);
+
+    const setCostBasisMethod = useCallback(async (value: CostBasisMethod) => {
+        setCostBasisMethodState(value);
+
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, costBasisMethod: value }));
+
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ costBasisMethod: value }),
+            });
+            if (!res.ok) throw new Error('Failed to save preference');
+        } catch (error) {
+            console.error('Failed to save costBasisMethod preference:', error);
+            throw error;
+        }
+    }, []);
+
+    const contextValue = useMemo<UserPreferencesContextType>(() => ({
         balanceReversal,
         setBalanceReversal,
         defaultTaxRate,
@@ -241,11 +300,15 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         setDashboardDefaultPeriod,
         ledgerViewStyle,
         setLedgerViewStyle,
+        costBasisCarryOver,
+        setCostBasisCarryOver,
+        costBasisMethod,
+        setCostBasisMethod,
         loading,
-    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, dashboardDefaultPeriod, setDashboardDefaultPeriod, ledgerViewStyle, setLedgerViewStyle, loading]);
+    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, dashboardDefaultPeriod, setDashboardDefaultPeriod, ledgerViewStyle, setLedgerViewStyle, costBasisCarryOver, setCostBasisCarryOver, costBasisMethod, setCostBasisMethod, loading]);
 
     return (
-        <UserPreferencesContext.Provider value={value}>
+        <UserPreferencesContext.Provider value={contextValue}>
             {children}
         </UserPreferencesContext.Provider>
     );

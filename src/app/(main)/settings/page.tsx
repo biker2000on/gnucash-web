@@ -3,9 +3,15 @@
 import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
-import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { useUserPreferences, type CostBasisMethod } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
+
+const COST_BASIS_METHOD_OPTIONS: { value: CostBasisMethod; label: string; description: string }[] = [
+  { value: 'fifo', label: 'FIFO', description: 'First-in, first-out. Oldest shares are used first.' },
+  { value: 'lifo', label: 'LIFO', description: 'Last-in, first-out. Newest shares are used first.' },
+  { value: 'average', label: 'Average', description: 'Weighted average cost of all shares.' },
+];
 
 interface ScheduleSettings {
   enabled: boolean;
@@ -45,7 +51,7 @@ const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; descrip
 
 export default function SettingsPage() {
   const { success, error: showError } = useToast();
-  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode, balanceReversal, setBalanceReversal } = useUserPreferences();
+  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode, balanceReversal, setBalanceReversal, costBasisCarryOver, setCostBasisCarryOver, costBasisMethod, setCostBasisMethod } = useUserPreferences();
 
   const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24, refreshTime: '21:00' });
   const [loading, setLoading] = useState(true);
@@ -559,6 +565,64 @@ export default function SettingsPage() {
             </p>
           </div>
         </details>
+      </div>
+
+      {/* Cost Basis */}
+      <div className="bg-surface rounded-xl border border-border p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-2">Cost Basis</h2>
+        <p className="text-sm text-foreground-muted mb-4">
+          Control how cost basis is calculated when shares are transferred between investment accounts.
+        </p>
+
+        <div className="space-y-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={costBasisCarryOver}
+              onChange={(e) => setCostBasisCarryOver(e.target.checked)}
+              className="w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover rounded focus:ring-emerald-500/50"
+            />
+            <div>
+              <span className="text-sm text-foreground">Carry over cost basis on transfers</span>
+              <p className="text-xs text-foreground-muted mt-0.5">
+                When shares are transferred between accounts, trace the original purchase cost instead of showing $0.
+              </p>
+            </div>
+          </label>
+
+          {costBasisCarryOver && (
+            <div className="space-y-2 pl-7">
+              <label className="block text-sm text-foreground-secondary">Cost Basis Method</label>
+              <div className="space-y-2">
+                {COST_BASIS_METHOD_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={`block p-3 rounded-lg border cursor-pointer transition-all ${
+                      costBasisMethod === option.value
+                        ? 'bg-emerald-500/10 border-emerald-500/50'
+                        : 'bg-surface border-border hover:border-border-hover'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="radio"
+                        name="costBasisMethod"
+                        value={option.value}
+                        checked={costBasisMethod === option.value}
+                        onChange={() => setCostBasisMethod(option.value)}
+                        className="mt-0.5 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
+                      />
+                      <div className="flex-1">
+                        <span className="font-medium text-foreground text-sm">{option.label}</span>
+                        <p className="text-xs text-foreground-muted mt-0.5">{option.description}</p>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Display Preferences */}

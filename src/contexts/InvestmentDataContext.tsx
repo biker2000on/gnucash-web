@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import type { PortfolioData, IndicesData, HistoryData, CashFlowPoint, HistoryPoint } from '@/types/investments';
 
 interface InvestmentDataContextType {
@@ -24,6 +25,7 @@ const InvestmentDataContext = createContext<InvestmentDataContextType | null>(nu
 
 export function InvestmentDataProvider({ children }: { children: ReactNode }) {
   const { success, error, warning } = useToast();
+  const { costBasisCarryOver, costBasisMethod } = useUserPreferences();
 
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [history, setHistory] = useState<HistoryData['history']>([]);
@@ -36,7 +38,11 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
 
   const fetchPortfolio = useCallback(async () => {
     try {
-      const res = await fetch('/api/investments/portfolio');
+      const params = new URLSearchParams({
+        costBasisCarryOver: String(costBasisCarryOver),
+        costBasisMethod: costBasisMethod,
+      });
+      const res = await fetch(`/api/investments/portfolio?${params}`);
       const data = await res.json();
       if (res.ok) {
         setPortfolio(data);
@@ -48,7 +54,7 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [error]);
+  }, [error, costBasisCarryOver, costBasisMethod]);
 
   const fetchHistory = useCallback(async () => {
     try {
