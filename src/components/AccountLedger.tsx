@@ -61,7 +61,7 @@ export default function AccountLedger({
     hasChildren = false,
     onEscape,
 }: AccountLedgerProps) {
-    const { balanceReversal, defaultLedgerMode } = useUserPreferences();
+    const { balanceReversal, defaultLedgerMode, costBasisCarryOver, costBasisMethod } = useUserPreferences();
     const { success, error } = useToast();
     const isMobile = useIsMobile();
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
@@ -236,11 +236,14 @@ export default function AccountLedger({
         if (debouncedFilters.reconcileStates.length > 0) {
             params.set('reconcileStates', debouncedFilters.reconcileStates.join(','));
         }
+        // Cost basis carry-over preferences
+        params.set('costBasisCarryOver', String(costBasisCarryOver));
+        params.set('costBasisMethod', costBasisMethod);
         Object.entries(extraParams).forEach(([key, value]) => {
             params.set(key, String(value));
         });
         return params.toString();
-    }, [startDate, endDate, showUnreviewedOnly, showSubaccounts, debouncedSearch, debouncedFilters]);
+    }, [startDate, endDate, showUnreviewedOnly, showSubaccounts, debouncedSearch, debouncedFilters, costBasisCarryOver, costBasisMethod]);
 
     // Refresh transactions helper
     const fetchTransactions = useCallback(async () => {

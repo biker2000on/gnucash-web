@@ -7,6 +7,7 @@
 
 import prisma from './prisma';
 import { toDecimal as toDecimalString } from './gnucash';
+import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod } from './cost-basis';
 
 /**
  * Convert GnuCash fraction to a number
@@ -118,9 +119,17 @@ export function calculateShares(splits: Array<{ quantity_num: bigint; quantity_d
 
 /**
  * Calculate cost basis from splits (value_num/value_denom)
- * This is the total amount paid for the shares
+ * This is the total amount paid for the shares.
+ * If tracedCostBasis is provided (from cost basis carry-over tracing),
+ * it is used directly instead of summing split values.
  */
-export function calculateCostBasis(splits: Array<{ value_num: bigint; value_denom: bigint }>): number {
+export function calculateCostBasis(
+    splits: Array<{ value_num: bigint; value_denom: bigint }>,
+    tracedCostBasis?: number,
+): number {
+    if (tracedCostBasis !== undefined) {
+        return tracedCostBasis;
+    }
     return splits.reduce((sum, split) => {
         return sum + toDecimal(split.value_num, split.value_denom);
     }, 0);
@@ -149,11 +158,23 @@ export function calculateGainLossPercent(gainLoss: number, costBasis: number): n
 }
 
 /**
- * Get full holdings data for an investment account
+ * Options for cost basis carry-over in holdings calculations
+ */
+export interface CostBasisOptions {
+    enabled: boolean;
+    method: CostBasisMethod;
+    cache?: Map<string, import('./cost-basis').CostBasisResult>;
+}
+
+/**
+ * Get full holdings data for an investment account.
+ * When costBasisOptions is provided and enabled, traces transfer-in splits
+ * back to their original purchase cost.
  */
 export async function getAccountHoldings(
     accountGuid: string,
-    asOfDate?: Date
+    asOfDate?: Date,
+    costBasisOptions?: CostBasisOptions,
 ): Promise<HoldingsData> {
     // Get account with commodity info
     const account = await prisma.accounts.findUnique({
@@ -174,6 +195,8 @@ export async function getAccountHoldings(
         };
     }
 
+    const commodityGuid = account.commodity_guid!;
+
     // Get all splits for this account
     const splits = await prisma.splits.findMany({
         where: {
@@ -183,6 +206,7 @@ export async function getAccountHoldings(
             } : undefined,
         },
         select: {
+            guid: true,
             quantity_num: true,
             quantity_denom: true,
             value_num: true,
@@ -191,10 +215,73 @@ export async function getAccountHoldings(
     });
 
     const shares = calculateShares(splits);
-    const rawCostBasis = calculateCostBasis(splits);
+
+    // Calculate cost basis -- with optional carry-over tracing
+    let rawCostBasis: number;
+
+    if (costBasisOptions?.enabled && commodityGuid) {
+        // Fetch splits with transaction/account data for transfer detection
+        const splitsWithTx = await prisma.splits.findMany({
+            where: {
+                account_guid: accountGuid,
+                transaction: asOfDate ? {
+                    post_date: { lte: asOfDate },
+                } : undefined,
+            },
+            include: {
+                transaction: {
+                    include: {
+                        splits: {
+                            include: {
+                                account: { select: { guid: true, commodity_guid: true } },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        // Sort by date for proper cost basis accumulation
+        splitsWithTx.sort((a, b) => {
+            const dateA = a.transaction?.post_date?.getTime() || 0;
+            const dateB = b.transaction?.post_date?.getTime() || 0;
+            return dateA - dateB;
+        });
+
+        const cache = costBasisOptions.cache || createCostBasisCache();
+        let runShares = 0;
+        let runCostBasis = 0;
+
+        for (const split of splitsWithTx) {
+            const qty = toDecimal(split.quantity_num, split.quantity_denom);
+            const val = Math.abs(toDecimal(split.value_num, split.value_denom));
+
+            if (qty > 0) {
+                runShares += qty;
+                const txSplits = split.transaction?.splits || [];
+                if (isTransferIn(split, txSplits, commodityGuid)) {
+                    const traced = await traceCostBasis(split.guid, costBasisOptions.method, commodityGuid, qty, cache);
+                    runCostBasis += traced.totalCost;
+                } else {
+                    runCostBasis += val;
+                }
+            } else if (qty < 0) {
+                const soldShares = Math.abs(qty);
+                if (runShares > 0) {
+                    const avgCost = runCostBasis / runShares;
+                    runCostBasis -= avgCost * soldShares;
+                }
+                runShares += qty;
+            }
+        }
+
+        rawCostBasis = runCostBasis;
+    } else {
+        rawCostBasis = calculateCostBasis(splits);
+    }
 
     // Get latest price
-    const latestPrice = await getLatestPrice(account.commodity_guid!, undefined, asOfDate);
+    const latestPrice = await getLatestPrice(commodityGuid, undefined, asOfDate);
     const pricePerShare = latestPrice?.value || 0;
 
     // Zero-share holdings should have zero cost basis and market value

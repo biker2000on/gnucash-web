@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getAccountHoldings, getPriceHistory } from '@/lib/commodities';
+import { getAccountHoldings, getPriceHistory, type CostBasisOptions } from '@/lib/commodities';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
 
 export async function GET(
     request: NextRequest,
@@ -24,6 +25,12 @@ export async function GET(
         const asOfDate = asOfDateStr ? new Date(asOfDateStr) : undefined;
         const daysParam = searchParams.get('days');
         const days = daysParam ? parseInt(daysParam, 10) : 365;
+        const costBasisCarryOver = searchParams.get('costBasisCarryOver') !== 'false';
+        const costBasisMethod = (searchParams.get('costBasisMethod') || 'fifo') as CostBasisMethod;
+
+        const costBasisOptions: CostBasisOptions | undefined = costBasisCarryOver
+            ? { enabled: true, method: costBasisMethod, cache: createCostBasisCache() }
+            : undefined;
 
         // Get account details
         const account = await prisma.accounts.findUnique({
@@ -55,7 +62,7 @@ export async function GET(
         }
 
         // Get holdings data
-        const holdings = await getAccountHoldings(guid, asOfDate);
+        const holdings = await getAccountHoldings(guid, asOfDate, costBasisOptions);
 
         // Get price history
         const priceHistory = account.commodity_guid
