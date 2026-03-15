@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
+import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
 
 export async function GET(
     request: Request,
@@ -25,6 +26,8 @@ export async function GET(
         const maxAmount = searchParams.get('maxAmount') ? parseFloat(searchParams.get('maxAmount')!) : null;
         const reconcileStates = searchParams.get('reconcileStates')?.split(',').filter(Boolean) || [];
         const includeSubaccounts = searchParams.get('includeSubaccounts') === 'true';
+        const costBasisCarryOver = searchParams.get('costBasisCarryOver') !== 'false'; // default true
+        const costBasisMethod = (searchParams.get('costBasisMethod') || 'fifo') as CostBasisMethod;
         const { guid: accountGuid } = await params;
 
         // Verify account belongs to active book
@@ -162,45 +165,117 @@ export async function GET(
         let investmentRunningTotals: Map<string, { shareBalance: number; costBasis: number }> | null = null;
 
         if (isInvestmentAccount && !unreviewedOnly && !includeSubaccounts) {
-            const allSplitsWithTx = await prisma.$queryRaw<{
-                tx_guid: string;
-                quantity_num: bigint;
-                quantity_denom: bigint;
-                value_num: bigint;
-                value_denom: bigint;
-            }[]>`
-                SELECT s.tx_guid, s.quantity_num, s.quantity_denom, s.value_num, s.value_denom
-                FROM splits s
-                JOIN transactions t ON t.guid = s.tx_guid
-                WHERE s.account_guid = ${accountGuid}
-                ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
-                ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
-                ORDER BY t.post_date ASC, t.enter_date ASC
-            `;
+            const accountCommodityGuid = account?.commodity_guid || '';
 
-            let runShares = 0;
-            let runCostBasis = 0;
-            investmentRunningTotals = new Map();
+            if (costBasisCarryOver && accountCommodityGuid) {
+                // Enhanced path: use Prisma queries with account info for transfer detection
+                const dateWhere: Prisma.transactionsWhereInput = {};
+                if (startDate) dateWhere.post_date = { ...dateWhere.post_date as object, gte: new Date(startDate) };
+                if (endDate) dateWhere.post_date = { ...dateWhere.post_date as object, lte: new Date(endDate) };
 
-            for (const split of allSplitsWithTx) {
-                const shares = Number(split.quantity_num) / Number(split.quantity_denom);
-                const value = Math.abs(Number(split.value_num) / Number(split.value_denom));
-
-                if (shares > 0) {
-                    runShares += shares;
-                    runCostBasis += value;
-                } else if (shares < 0) {
-                    const soldShares = Math.abs(shares);
-                    if (runShares > 0) {
-                        const avgCost = runCostBasis / runShares;
-                        runCostBasis -= avgCost * soldShares;
-                    }
-                    runShares += shares;
-                }
-                investmentRunningTotals.set(split.tx_guid, {
-                    shareBalance: runShares,
-                    costBasis: runCostBasis,
+                const allSplitsForAccount = await prisma.splits.findMany({
+                    where: {
+                        account_guid: accountGuid,
+                        transaction: Object.keys(dateWhere).length > 0 ? dateWhere : undefined,
+                    },
+                    include: {
+                        transaction: {
+                            include: {
+                                splits: {
+                                    include: {
+                                        account: { select: { guid: true, commodity_guid: true } },
+                                    },
+                                },
+                            },
+                        },
+                    },
                 });
+
+                // Sort in JS for reliability
+                allSplitsForAccount.sort((a, b) => {
+                    const dateA = a.transaction?.post_date?.getTime() || 0;
+                    const dateB = b.transaction?.post_date?.getTime() || 0;
+                    if (dateA !== dateB) return dateA - dateB;
+                    const enterA = a.transaction?.enter_date?.getTime() || 0;
+                    const enterB = b.transaction?.enter_date?.getTime() || 0;
+                    return enterA - enterB;
+                });
+
+                let runShares = 0;
+                let runCostBasis = 0;
+                investmentRunningTotals = new Map();
+                const costBasisCache = createCostBasisCache();
+
+                for (const split of allSplitsForAccount) {
+                    const shares = Number(split.quantity_num) / Number(split.quantity_denom);
+                    const value = Math.abs(Number(split.value_num) / Number(split.value_denom));
+
+                    if (shares > 0) {
+                        runShares += shares;
+
+                        // Check if this is a transfer-in
+                        const txSplits = split.transaction?.splits || [];
+                        if (isTransferIn(split, txSplits, accountCommodityGuid)) {
+                            const traced = await traceCostBasis(split.guid, costBasisMethod, accountCommodityGuid, shares, costBasisCache);
+                            runCostBasis += traced.totalCost;
+                        } else {
+                            runCostBasis += value;
+                        }
+                    } else if (shares < 0) {
+                        const soldShares = Math.abs(shares);
+                        if (runShares > 0) {
+                            const avgCost = runCostBasis / runShares;
+                            runCostBasis -= avgCost * soldShares;
+                        }
+                        runShares += shares;
+                    }
+                    investmentRunningTotals.set(split.tx_guid, {
+                        shareBalance: runShares,
+                        costBasis: runCostBasis,
+                    });
+                }
+            } else {
+                // Original path: simple raw SQL without transfer tracing
+                const allSplitsWithTx = await prisma.$queryRaw<{
+                    tx_guid: string;
+                    quantity_num: bigint;
+                    quantity_denom: bigint;
+                    value_num: bigint;
+                    value_denom: bigint;
+                }[]>`
+                    SELECT s.tx_guid, s.quantity_num, s.quantity_denom, s.value_num, s.value_denom
+                    FROM splits s
+                    JOIN transactions t ON t.guid = s.tx_guid
+                    WHERE s.account_guid = ${accountGuid}
+                    ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
+                    ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
+                    ORDER BY t.post_date ASC, t.enter_date ASC
+                `;
+
+                let runShares = 0;
+                let runCostBasis = 0;
+                investmentRunningTotals = new Map();
+
+                for (const split of allSplitsWithTx) {
+                    const shares = Number(split.quantity_num) / Number(split.quantity_denom);
+                    const value = Math.abs(Number(split.value_num) / Number(split.value_denom));
+
+                    if (shares > 0) {
+                        runShares += shares;
+                        runCostBasis += value;
+                    } else if (shares < 0) {
+                        const soldShares = Math.abs(shares);
+                        if (runShares > 0) {
+                            const avgCost = runCostBasis / runShares;
+                            runCostBasis -= avgCost * soldShares;
+                        }
+                        runShares += shares;
+                    }
+                    investmentRunningTotals.set(split.tx_guid, {
+                        shareBalance: runShares,
+                        costBasis: runCostBasis,
+                    });
+                }
             }
         }
 
