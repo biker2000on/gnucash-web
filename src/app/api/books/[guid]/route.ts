@@ -140,15 +140,6 @@ export async function DELETE(
             return NextResponse.json({ error: 'Book not found' }, { status: 404 });
         }
 
-        // Check we're not deleting the last book
-        const bookCount = await prisma.books.count();
-        if (bookCount <= 1) {
-            return NextResponse.json(
-                { error: 'Cannot delete the last book' },
-                { status: 400 }
-            );
-        }
-
         // Get all account GUIDs under this book's root
         const accountTree = await prisma.$queryRaw<{ guid: string }[]>`
             WITH RECURSIVE account_tree AS (
@@ -175,7 +166,7 @@ export async function DELETE(
         const templateGuids = templateTree.map(a => a.guid);
         const allAccountGuids = [...accountGuids, ...templateGuids];
 
-        await prisma.$transaction(async (tx) => {
+        const remainingBooks = await prisma.$transaction(async (tx) => {
             // Delete budget_amounts referencing these accounts
             await tx.budget_amounts.deleteMany({
                 where: { account_guid: { in: allAccountGuids } },
@@ -207,9 +198,12 @@ export async function DELETE(
             await tx.books.delete({
                 where: { guid },
             });
+
+            // Return remaining book count
+            return await tx.books.count();
         });
 
-        return NextResponse.json({ success: true, deleted: guid });
+        return NextResponse.json({ success: true, remainingBooks });
     } catch (error) {
         console.error('Error deleting book:', error);
         return NextResponse.json({ error: 'Failed to delete book' }, { status: 500 });
