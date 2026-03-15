@@ -788,13 +788,16 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         },
     ], [dateFormat, filterText, handleDeleteConfirm, handleEdit, handleNewChild, handleRowToggle, isMobile]);
 
+    const normalizedVisibility = useMemo(() => normalizeVisibility(columnVisibility), [columnVisibility]);
+    const normalizedOrder = useMemo(() => normalizeColumnOrder(columnOrder), [columnOrder]);
+
     const table = useReactTable({
         data: filteredAccounts,
         columns,
         state: {
             expanded,
-            columnVisibility: normalizeVisibility(columnVisibility),
-            columnOrder: normalizeColumnOrder(columnOrder),
+            columnVisibility: normalizedVisibility,
+            columnOrder: normalizedOrder,
         },
         getRowId: (row) => row.guid,
         getSubRows: (row) => row.children,
