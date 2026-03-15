@@ -7,7 +7,7 @@
 
 import prisma from './prisma';
 import { toDecimal as toDecimalString } from './gnucash';
-import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod } from './cost-basis';
+import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod, type CostBasisCache  } from './cost-basis';
 
 /**
  * Convert GnuCash fraction to a number
@@ -163,7 +163,7 @@ export function calculateGainLossPercent(gainLoss: number, costBasis: number): n
 export interface CostBasisOptions {
     enabled: boolean;
     method: CostBasisMethod;
-    cache?: Map<string, import('./cost-basis').CostBasisResult>;
+    cache?: CostBasisCache;
 }
 
 /**

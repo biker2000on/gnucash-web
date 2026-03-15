@@ -39,7 +39,9 @@ function toDecimal(num: bigint | number | string | null, denom: bigint | number 
  * Request-scoped cache -- pass through the call chain to avoid cross-request contamination.
  * Do NOT use a module-level singleton (persists across requests in Next.js Node runtime).
  */
-export function createCostBasisCache(): Map<string, CostBasisResult> {
+export type CostBasisCache = Map<string, CostBasisResult>;
+
+export function createCostBasisCache(): CostBasisCache {
   return new Map();
 }
 
@@ -81,12 +83,19 @@ export async function traceCostBasis(
   method: CostBasisMethod,
   commodityGuid: string,
   transferredShares: number,
-  cache: Map<string, CostBasisResult>,
+  cache: CostBasisCache,
 ): Promise<CostBasisResult> {
   const cacheKey = `${transferInSplitGuid}-${method}`;
-  if (cache.has(cacheKey)) {
-    return cache.get(cacheKey)!;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
   }
+
+  // Pre-populate cache with a sentinel to break circular transfer chains.
+  // If we re-enter this split during recursion, the sentinel returns $0 cost
+  // instead of recursing infinitely.
+  const sentinel: CostBasisResult = { totalCost: 0, perShareCost: 0, method };
+  cache.set(cacheKey, sentinel);
 
   // Get the transfer-in split
   // IMPORTANT: Prisma relation names are SINGULAR: `transaction`, `account` (not plural)
@@ -163,7 +172,7 @@ export async function traceCostBasis(
   );
 
   if (!sourceSplit) {
-    return { totalCost: 0, perShareCost: 0, method };
+    return sentinel;
   }
 
   const sourceAccountGuid = sourceSplit.account_guid;
@@ -193,7 +202,7 @@ async function getAccountCostBasis(
   method: CostBasisMethod,
   sharesNeeded: number,
   asOfDate: Date,
-  cache: Map<string, CostBasisResult>,
+  cache: CostBasisCache,
 ): Promise<CostBasisResult> {
   // Get all splits for this account + commodity, ordered by date
   // Use singular relation names: `account`, `transaction`
