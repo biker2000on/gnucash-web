@@ -6,6 +6,7 @@ import { DateFormat } from '@/lib/date-format';
 
 export type DefaultLedgerMode = 'readonly' | 'edit';
 export type DashboardPeriod = 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'thisYear' | 'lastYear' | 'allTime';
+export type LedgerViewStyle = 'basic' | 'journal' | 'autosplit';
 
 interface UserPreferencesContextType {
     balanceReversal: BalanceReversal;
@@ -18,6 +19,8 @@ interface UserPreferencesContextType {
     setDateFormat: (format: DateFormat) => Promise<void>;
     dashboardDefaultPeriod: DashboardPeriod;
     setDashboardDefaultPeriod: (period: DashboardPeriod) => Promise<void>;
+    ledgerViewStyle: LedgerViewStyle;
+    setLedgerViewStyle: (style: LedgerViewStyle) => Promise<void>;
     loading: boolean;
 }
 
@@ -35,6 +38,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
     const [defaultLedgerMode, setDefaultLedgerModeState] = useState<DefaultLedgerMode>('readonly');
     const [dateFormat, setDateFormatState] = useState<DateFormat>('MM/DD/YYYY');
     const [dashboardDefaultPeriod, setDashboardDefaultPeriodState] = useState<DashboardPeriod>('thisYear');
+    const [ledgerViewStyle, setLedgerViewStyleState] = useState<LedgerViewStyle>('basic');
     const [loading, setLoading] = useState(true);
 
     // Load preferences from API on mount
@@ -61,6 +65,9 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         if (parsed.dashboardDefaultPeriod) {
                             setDashboardDefaultPeriodState(parsed.dashboardDefaultPeriod);
                         }
+                        if (parsed.ledgerViewStyle) {
+                            setLedgerViewStyleState(parsed.ledgerViewStyle);
+                        }
                     } catch {
                         // Invalid cache, ignore
                     }
@@ -75,6 +82,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                     setDefaultLedgerModeState(data.defaultLedgerMode || 'readonly');
                     setDateFormatState(data.dateFormat || 'MM/DD/YYYY');
                     setDashboardDefaultPeriodState(data.dashboardDefaultPeriod || 'thisYear');
+                    setLedgerViewStyleState(data.ledgerViewStyle || 'basic');
                     // Update cache
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 }
@@ -200,6 +208,26 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         }
     }, []);
 
+    const setLedgerViewStyle = useCallback(async (value: LedgerViewStyle) => {
+        setLedgerViewStyleState(value);
+
+        const cached = localStorage.getItem(STORAGE_KEY);
+        const existing = cached ? JSON.parse(cached) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, ledgerViewStyle: value }));
+
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ledgerViewStyle: value }),
+            });
+            if (!res.ok) throw new Error('Failed to save preference');
+        } catch (error) {
+            console.error('Failed to save ledgerViewStyle preference:', error);
+            throw error;
+        }
+    }, []);
+
     const value = useMemo<UserPreferencesContextType>(() => ({
         balanceReversal,
         setBalanceReversal,
@@ -211,8 +239,10 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
         setDateFormat,
         dashboardDefaultPeriod,
         setDashboardDefaultPeriod,
+        ledgerViewStyle,
+        setLedgerViewStyle,
         loading,
-    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, dashboardDefaultPeriod, setDashboardDefaultPeriod, loading]);
+    }), [balanceReversal, setBalanceReversal, defaultTaxRate, setDefaultTaxRate, defaultLedgerMode, setDefaultLedgerMode, dateFormat, setDateFormat, dashboardDefaultPeriod, setDashboardDefaultPeriod, ledgerViewStyle, setLedgerViewStyle, loading]);
 
     return (
         <UserPreferencesContext.Provider value={value}>
