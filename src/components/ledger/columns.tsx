@@ -7,6 +7,7 @@ export function getColumns(meta: {
     accountGuid: string;
     isReconciling: boolean;
     isEditMode: boolean;
+    viewStyle?: string;
 }): ColumnDef<AccountTransaction>[] {
     return [
         // Checkbox column (reconciliation or edit mode)
@@ -15,6 +16,15 @@ export function getColumns(meta: {
                 id: 'select',
                 header: 'select',
                 size: 40,
+            }),
+        ] : []),
+
+        // Expand/collapse arrow for basic ledger view
+        ...(meta.viewStyle === 'basic' ? [
+            columnHelper.display({
+                id: 'expand',
+                header: '',
+                size: 28,
             }),
         ] : []),
 
