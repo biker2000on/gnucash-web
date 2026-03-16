@@ -314,8 +314,8 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onChange={(guid, name) => updateSplitAccount(index, guid, name)}
                                     autoFocus={focusedColumnIndex === 1}
                                     onFocus={() => onColumnFocus?.(1)}
-                                    onEnter={() => onColumnFocus?.(2)}
-                                    onTab={() => onColumnFocus?.(2)}
+                                    onEnter={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(2)}
+                                    onTab={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(2)}
                                     onArrowUp={() => {
                                         if (index === 0) {
                                             onArrowUp?.();
