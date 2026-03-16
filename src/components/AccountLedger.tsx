@@ -1236,6 +1236,58 @@ export default function AccountLedger({
         }
     }, [focusedRowIndex]);
 
+    // Auto-save on focus change in auto-split edit mode
+    const prevFocusedTxIndexRef = useRef(focusedRowIndex);
+    useEffect(() => {
+        if (!isSlimEditMode || ledgerViewStyle !== 'autosplit') return;
+        const prevIndex = prevFocusedTxIndexRef.current;
+        prevFocusedTxIndexRef.current = focusedRowIndex;
+
+        if (prevIndex === focusedRowIndex || prevIndex < 0) return;
+
+        const prevTx = displayTransactions[prevIndex];
+        if (!prevTx) return;
+
+        const splitHandle = editableSplitRowRefs.current.get(prevTx.guid);
+        const rowHandle = editableRowRefs.current.get(prevTx.guid);
+        if (splitHandle?.isDirty() || rowHandle?.isDirty()) {
+            handleJournalSave(prevTx.guid);
+        }
+    }, [focusedRowIndex, isSlimEditMode, ledgerViewStyle, displayTransactions, handleJournalSave]);
+
+    // Reset focusedSplitIndex when focusedRowIndex changes
+    useEffect(() => {
+        setFocusedSplitIndex(-1);
+    }, [focusedRowIndex]);
+
+    // Scroll focused split row into view
+    useEffect(() => {
+        if (!isSlimEditMode || focusedSplitIndex < 0 || focusedRowIndex < 0) return;
+
+        requestAnimationFrame(() => {
+            const tbody = document.querySelector('tbody');
+            if (!tbody) return;
+
+            const allRows = Array.from(tbody.children) as HTMLElement[];
+            let txCount = -1;
+            let splitCountInCurrentTx = 0;
+
+            for (const row of allRows) {
+                if (row.hasAttribute('data-split-row')) {
+                    if (txCount === focusedRowIndex && splitCountInCurrentTx === focusedSplitIndex) {
+                        row.scrollIntoView({ block: 'nearest' });
+                        return;
+                    }
+                    splitCountInCurrentTx++;
+                } else {
+                    // This is a transaction row
+                    txCount++;
+                    splitCountInCurrentTx = 0;
+                }
+            }
+        });
+    }, [focusedSplitIndex, focusedRowIndex, isSlimEditMode]);
+
     // Auto-focus first row when entering edit mode
     useEffect(() => {
         if (isEditMode && displayTransactions.length > 0 && focusedRowIndex < 0) {
