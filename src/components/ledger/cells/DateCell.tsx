@@ -12,9 +12,10 @@ interface DateCellProps {
     onArrowUp?: () => void;
     onArrowDown?: () => void;
     onFocus?: () => void;
+    onShiftTab?: () => void;
 }
 
-export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus }: DateCellProps) {
+export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus, onShiftTab }: DateCellProps) {
     const { dateFormat: format } = useUserPreferences();
     const [displayValue, setDisplayValue] = useState(() => formatDateForDisplay(value, format));
     const [isEditing, setIsEditing] = useState(false);
@@ -43,6 +44,9 @@ export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArr
         } else if (e.key === 'ArrowDown') {
             e.preventDefault();
             onArrowDown?.();
+        } else if (e.key === 'Tab' && e.shiftKey && onShiftTab) {
+            e.preventDefault();
+            onShiftTab();
         } else {
             handleDateKeyDown(e);
         }

@@ -10,9 +10,10 @@ interface AccountCellProps {
     autoFocus?: boolean;
     onFocus?: () => void;
     onTab?: () => void;
+    onShiftTab?: () => void;
 }
 
-export function AccountCell({ value, onChange, onEnter, onArrowUp, onArrowDown, autoFocus, onFocus, onTab }: AccountCellProps) {
+export function AccountCell({ value, onChange, onEnter, onArrowUp, onArrowDown, autoFocus, onFocus, onTab, onShiftTab }: AccountCellProps) {
     return (
         <AccountSelector
             value={value}
@@ -25,6 +26,7 @@ export function AccountCell({ value, onChange, onEnter, onArrowUp, onArrowDown, 
             autoFocus={autoFocus}
             onFocus={onFocus}
             onTab={onTab}
+            onShiftTab={onShiftTab}
         />
     );
 }

@@ -1763,6 +1763,22 @@ export default function AccountLedger({
                                             onColumnFocus={(col) => setFocusedColumnIndex(col)}
                                             ledgerViewStyle={ledgerViewStyle}
                                             onTabToSplits={() => { setFocusedSplitIndex(0); setFocusedColumnIndex(0); }}
+                                            onShiftTabFromDate={async () => {
+                                                if (index > 0) {
+                                                    const saved = await handleJournalSave(tx.guid);
+                                                    if (saved) {
+                                                        const prevTx = displayTransactions[index - 1];
+                                                        const prevNonTrading = (prevTx?.splits || []).filter(s =>
+                                                            !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:'));
+                                                        // Go to previous tx's last real split's credit column
+                                                        // +1 for placeholder row, then -1 to land on last real split
+                                                        const lastRealSplitIndex = prevNonTrading.length - 1;
+                                                        setFocusedRowIndex(index - 1);
+                                                        setFocusedSplitIndex(Math.max(0, lastRealSplitIndex));
+                                                        setFocusedColumnIndex(3); // credit
+                                                    }
+                                                }
+                                            }}
                                         />
                                         {(
                                             ledgerViewStyle === 'journal' ||
@@ -1796,6 +1812,10 @@ export default function AccountLedger({
                                                         setFocusedColumnIndex(0);
                                                         setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                                                     }
+                                                }}
+                                                onShiftTabToTransaction={() => {
+                                                    setFocusedSplitIndex(-1);
+                                                    setFocusedColumnIndex(1); // Focus description
                                                 }}
                                             />
                                         )}

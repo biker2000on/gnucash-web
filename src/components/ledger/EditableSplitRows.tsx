@@ -44,6 +44,7 @@ interface EditableSplitRowsProps {
     onArrowUp?: () => void;
     onArrowDownPastEnd?: () => void;
     onTabToNextTransaction?: () => void;
+    onShiftTabToTransaction?: () => void; // Shift-tab from first split → transaction description
 }
 
 function initSplitsFromTransaction(transaction: AccountTransaction): SplitState[] {
@@ -88,6 +89,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         onArrowUp,
         onArrowDownPastEnd,
         onTabToNextTransaction,
+        onShiftTabToTransaction,
     },
     ref
 ) {
@@ -298,6 +300,14 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                         } else if (e.key === 'Tab' && !e.shiftKey) {
                                             e.preventDefault();
                                             onColumnFocus?.(1);
+                                        } else if (e.key === 'Tab' && e.shiftKey) {
+                                            e.preventDefault();
+                                            if (index === 0) {
+                                                onShiftTabToTransaction?.();
+                                            } else {
+                                                onFocusedSplitChange?.(index - 1);
+                                                onColumnFocus?.(3);
+                                            }
                                         }
                                     }}
                                 />
@@ -316,6 +326,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onFocus={() => onColumnFocus?.(1)}
                                     onEnter={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(2)}
                                     onTab={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(2)}
+                                    onShiftTab={() => onColumnFocus?.(0)}
                                     onArrowUp={() => {
                                         if (index === 0) {
                                             onArrowUp?.();
@@ -348,6 +359,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onFocus={() => onColumnFocus?.(2)}
                                     onEnter={() => onColumnFocus?.(3)}
                                     onTab={() => onColumnFocus?.(3)}
+                                    onShiftTab={() => onColumnFocus?.(1)}
                                     onArrowUp={() => {
                                         if (index === 0) {
                                             onArrowUp?.();
@@ -378,6 +390,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onChange={v => updateSplit(index, 'credit', v)}
                                     autoFocus={focusedColumnIndex === 3}
                                     onFocus={() => onColumnFocus?.(3)}
+                                    onShiftTab={() => onColumnFocus?.(2)}
                                     onEnter={() => {
                                         // Enter from credit: move to next split's memo, or next transaction
                                         if (index === lastSplitIndex) {

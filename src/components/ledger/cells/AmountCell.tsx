@@ -14,9 +14,10 @@ interface AmountCellProps {
     onArrowDown?: () => void;
     onFocus?: () => void;
     onTab?: () => void;
+    onShiftTab?: () => void;
 }
 
-export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus, onTab }: AmountCellProps) {
+export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArrowDown, onFocus, onTab, onShiftTab }: AmountCellProps) {
     const ref = useRef<HTMLInputElement>(null);
     const { defaultTaxRate } = useUserPreferences();
     const { success } = useToast();
@@ -46,6 +47,11 @@ export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onA
             const result = evaluateMathExpression(value);
             if (result !== null) onChange(result.toFixed(2));
             onTab();
+        } else if (e.key === 'Tab' && e.shiftKey && onShiftTab) {
+            e.preventDefault();
+            const result = evaluateMathExpression(value);
+            if (result !== null) onChange(result.toFixed(2));
+            onShiftTab();
         }
     };
 

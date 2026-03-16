@@ -20,6 +20,7 @@ interface AccountSelectorProps {
     autoFocus?: boolean;
     onFocus?: () => void;
     onTab?: () => void;
+    onShiftTab?: () => void;
     accountTypes?: string[];
     compact?: boolean;
 }
@@ -37,6 +38,7 @@ export function AccountSelector({
     autoFocus,
     onFocus,
     onTab,
+    onShiftTab,
     accountTypes,
     compact = false,
 }: AccountSelectorProps) {
@@ -222,6 +224,9 @@ export function AccountSelector({
             } else if (e.key === 'Tab' && !e.shiftKey && onTab) {
                 e.preventDefault();
                 onTab();
+            } else if (e.key === 'Tab' && e.shiftKey && onShiftTab) {
+                e.preventDefault();
+                onShiftTab();
             }
             return;
         }

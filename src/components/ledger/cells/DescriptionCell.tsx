@@ -8,13 +8,14 @@ interface DescriptionCellProps {
     onSelectSuggestion?: (suggestion: TransactionSuggestion) => void;
     onEnter?: () => void;
     onTab?: () => void;
+    onShiftTab?: () => void;
     onArrowUp?: () => void;
     onArrowDown?: () => void;
     autoFocus?: boolean;
     onFocus?: () => void;
 }
 
-export function DescriptionCell({ value, onChange, onSelectSuggestion, onEnter, onTab, onArrowUp, onArrowDown, autoFocus, onFocus }: DescriptionCellProps) {
+export function DescriptionCell({ value, onChange, onSelectSuggestion, onEnter, onTab, onShiftTab, onArrowUp, onArrowDown, autoFocus, onFocus }: DescriptionCellProps) {
     return (
         <DescriptionAutocomplete
             value={value}
@@ -25,6 +26,7 @@ export function DescriptionCell({ value, onChange, onSelectSuggestion, onEnter, 
             compact
             onEnter={onEnter}
             onTab={onTab}
+            onShiftTab={onShiftTab}
             onArrowUp={onArrowUp}
             onArrowDown={onArrowDown}
             autoFocus={autoFocus}

@@ -45,6 +45,7 @@ interface EditableRowProps {
     onTabFromActions?: (direction: 'next' | 'previous') => void;
     ledgerViewStyle?: 'basic' | 'journal' | 'autosplit';
     onTabToSplits?: () => void;
+    onShiftTabFromDate?: () => void;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -68,6 +69,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onTabFromActions,
         ledgerViewStyle,
         onTabToSplits,
+        onShiftTabFromDate,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -286,6 +288,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                             onArrowUp={onArrowUp}
                             onArrowDown={onArrowDown}
                             onFocus={() => onColumnFocus?.(0)}
+                            onShiftTab={onShiftTabFromDate}
                         />
                     </td>
                     <td className="px-2 py-1 align-middle">
@@ -295,6 +298,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                             autoFocus={focusedColumn === 1}
                             onEnter={onEnter}
                             onTab={() => onTabToSplits?.()}
+                            onShiftTab={() => onColumnFocus?.(0)}
                             onArrowUp={onArrowUp}
                             onArrowDown={onArrowDown}
                             onFocus={() => onColumnFocus?.(1)}
