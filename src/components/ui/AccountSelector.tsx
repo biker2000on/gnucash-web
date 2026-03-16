@@ -19,6 +19,7 @@ interface AccountSelectorProps {
     onArrowDown?: () => void;
     autoFocus?: boolean;
     onFocus?: () => void;
+    onTab?: () => void;
     accountTypes?: string[];
     compact?: boolean;
 }
@@ -35,6 +36,7 @@ export function AccountSelector({
     onArrowDown,
     autoFocus,
     onFocus,
+    onTab,
     accountTypes,
     compact = false,
 }: AccountSelectorProps) {
@@ -217,6 +219,9 @@ export function AccountSelector({
             } else if (e.key === 'ArrowUp') {
                 onArrowUp?.();
                 e.preventDefault();
+            } else if (e.key === 'Tab' && !e.shiftKey && onTab) {
+                e.preventDefault();
+                onTab();
             }
             return;
         }

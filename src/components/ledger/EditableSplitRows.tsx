@@ -315,6 +315,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     autoFocus={focusedColumnIndex === 1}
                                     onFocus={() => onColumnFocus?.(1)}
                                     onEnter={() => onColumnFocus?.(2)}
+                                    onTab={() => onColumnFocus?.(2)}
                                     onArrowUp={() => {
                                         if (index === 0) {
                                             onArrowUp?.();
@@ -346,6 +347,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     autoFocus={focusedColumnIndex === 2}
                                     onFocus={() => onColumnFocus?.(2)}
                                     onEnter={() => onColumnFocus?.(3)}
+                                    onTab={() => onColumnFocus?.(3)}
                                     onArrowUp={() => {
                                         if (index === 0) {
                                             onArrowUp?.();
@@ -378,6 +380,15 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onFocus={() => onColumnFocus?.(3)}
                                     onEnter={() => {
                                         // Enter from credit: move to next split's memo, or next transaction
+                                        if (index === lastSplitIndex) {
+                                            onTabToNextTransaction?.();
+                                        } else {
+                                            onFocusedSplitChange?.(index + 1);
+                                            onColumnFocus?.(0);
+                                        }
+                                    }}
+                                    onTab={() => {
+                                        // Tab from credit: move to next split's memo, or next transaction
                                         if (index === lastSplitIndex) {
                                             onTabToNextTransaction?.();
                                         } else {
