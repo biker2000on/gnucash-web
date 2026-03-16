@@ -30,6 +30,8 @@ import SplitRows from './ledger/SplitRows';
 import BalancingRow from './ledger/BalancingRow';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import AccountPickerDialog from './AccountPickerDialog';
+import EditableSplitRows, { EditableSplitRowsHandle } from '@/components/ledger/EditableSplitRows';
+import { Modal } from '@/components/ui/Modal';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -127,6 +129,12 @@ export default function AccountLedger({
     const [editSelectedGuids, setEditSelectedGuids] = useState<Set<string>>(new Set());
     const [lastCheckedIndex, setLastCheckedIndex] = useState<number | null>(null);
     const editableRowRefs = useRef<Map<string, EditableRowHandle | InvestmentEditRowHandle>>(new Map());
+    const editableSplitRowRefs = useRef<Map<string, EditableSplitRowsHandle>>(new Map());
+    const [focusedSplitIndex, setFocusedSplitIndex] = useState<number>(-1); // -1 = transaction line
+    const [imbalanceDialogTx, setImbalanceDialogTx] = useState<string | null>(null);
+    const [imbalanceAmount, setImbalanceAmount] = useState<number>(0);
+
+    const isSlimEditMode = isEditMode && (ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit');
 
     // View mode keyboard shortcuts
     useKeyboardShortcut('view-basic', 'v b', 'Basic Ledger view', () => setLedgerViewStyle('basic'), 'global');
@@ -420,6 +428,59 @@ export default function AccountLedger({
             error('Failed to update transaction');
         }
     }, [transactions, accountGuid, fetchTransactions, success, error, isEditMode]);
+
+    // Journal/autosplit save orchestration (combines EditableRow + EditableSplitRows)
+    const handleJournalSave = useCallback(async (txGuid: string): Promise<boolean> => {
+        const tx = transactions.find(t => t.guid === txGuid);
+        if (!tx) return false;
+
+        const rowHandle = editableRowRefs.current.get(txGuid);
+        const splitHandle = editableSplitRowRefs.current.get(txGuid);
+        if (!rowHandle || !splitHandle) return false;
+
+        if (!rowHandle.isDirty() && !splitHandle.isDirty()) return true;
+
+        const splitPayload = splitHandle.getSplitPayload();
+
+        // Check balance
+        const sum = splitPayload.reduce((acc, s) => acc + s.value_num / s.value_denom, 0);
+        if (Math.abs(sum) > 0.001) {
+            setImbalanceAmount(Math.abs(sum));
+            setImbalanceDialogTx(txGuid);
+            return false;
+        }
+
+        const txData = (rowHandle as EditableRowHandle).getTransactionData();
+        const body = {
+            currency_guid: txData.currency_guid,
+            post_date: txData.post_date,
+            description: txData.description,
+            original_enter_date: tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : undefined,
+            splits: splitPayload,
+        };
+
+        try {
+            const res = await fetch(`/api/transactions/${txGuid}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+            if (res.status === 409) {
+                error('Transaction was modified by another user. Refreshing...');
+                await fetchTransactions();
+                return false;
+            }
+            if (!res.ok) throw new Error('Failed to update');
+
+            success('Transaction updated');
+            await fetchTransactions();
+            return true;
+        } catch {
+            error('Failed to save transaction');
+            return false;
+        }
+    }, [transactions, fetchTransactions, success, error]);
 
     // Investment inline edit save handler
     const handleInvestmentInlineSave = useCallback(async (guid: string, data: InvestmentSaveData) => {
@@ -780,10 +841,64 @@ export default function AccountLedger({
         getCoreRowModel: getCoreRowModel(),
     });
 
+    // Helper to create a blank new transaction at the top of the list
+    const createNewTransaction = useCallback(() => {
+        const today = toLocalDateString(new Date());
+        const txGuid = crypto.randomUUID().replace(/-/g, '');
+        const splitGuid1 = crypto.randomUUID().replace(/-/g, '');
+        const splitGuid2 = crypto.randomUUID().replace(/-/g, '');
+
+        const blankTx: AccountTransaction = {
+            guid: txGuid,
+            currency_guid: '',
+            num: '',
+            post_date: new Date(today + 'T00:00:00') as unknown as Date,
+            enter_date: new Date() as unknown as Date,
+            description: '',
+            splits: [{
+                guid: splitGuid1,
+                tx_guid: txGuid,
+                account_guid: accountGuid,
+                account_name: '',
+                value_num: BigInt(0),
+                value_denom: BigInt(100),
+                quantity_num: BigInt(0),
+                quantity_denom: BigInt(100),
+                memo: '',
+                action: '',
+                reconcile_state: 'n',
+                reconcile_date: null,
+                lot_guid: null,
+            }, {
+                guid: splitGuid2,
+                tx_guid: txGuid,
+                account_guid: '',
+                account_name: '',
+                value_num: BigInt(0),
+                value_denom: BigInt(100),
+                quantity_num: BigInt(0),
+                quantity_denom: BigInt(100),
+                memo: '',
+                action: '',
+                reconcile_state: 'n',
+                reconcile_date: null,
+                lot_guid: null,
+            }],
+            running_balance: '0',
+            account_split_value: '0',
+            commodity_mnemonic: '',
+            account_split_guid: splitGuid1,
+            account_split_reconcile_state: 'n',
+        };
+        setTransactions(prev => [blankTx, ...prev]);
+        setFocusedRowIndex(0);
+        setFocusedColumnIndex(0);
+    }, [accountGuid]);
+
     // Keyboard navigation handler
     const handleTableKeyDown = useCallback(async (e: KeyboardEvent) => {
         if (editingGuid) return; // Let InlineEditRow handle keys during edit
-        if (isEditModalOpen || isViewModalOpen || deleteConfirmOpen) return; // Don't navigate when modals are open
+        if (isEditModalOpen || isViewModalOpen || deleteConfirmOpen || showMoveDialog || imbalanceDialogTx) return; // Don't navigate when modals are open
 
         const target = e.target as HTMLElement;
         const isInInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
@@ -811,7 +926,9 @@ export default function AccountLedger({
             if (isEditMode) {
                 if (e.key === 'r' && e.ctrlKey) {
                     e.preventDefault();
-                    if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                    if (editSelectedGuids.size > 0) {
+                        await handleBulkReview();
+                    } else if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
                         const tx = displayTransactions[focusedRowIndex];
                         const handle = editableRowRefs.current.get(tx.guid);
                         if (handle?.isDirty()) await handle.save();
@@ -848,6 +965,83 @@ export default function AccountLedger({
                 }
             }
             return; // Let input fields handle other keys normally
+        }
+
+        if (isSlimEditMode && !isInInput) {
+            switch (e.key) {
+                case 'ArrowDown':
+                case 'j': {
+                    e.preventDefault();
+                    if (focusedSplitIndex === -1) {
+                        // On transaction line -> move to first split
+                        setFocusedSplitIndex(0);
+                        setFocusedColumnIndex(0);
+                    } else {
+                        // On a split row -> move to next split or next transaction
+                        const tx = displayTransactions[focusedRowIndex];
+                        const nonTradingSplits = (tx?.splits || []).filter(s =>
+                            !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:'));
+                        const totalSplitRows = nonTradingSplits.length + 1; // +1 for placeholder
+                        if (focusedSplitIndex < totalSplitRows - 1) {
+                            setFocusedSplitIndex(i => i + 1);
+                        } else {
+                            // Past last split -> save and move to next transaction
+                            if (tx) await handleJournalSave(tx.guid);
+                            if (!imbalanceDialogTx) {
+                                setFocusedSplitIndex(-1);
+                                setFocusedColumnIndex(0);
+                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                            }
+                        }
+                    }
+                    break;
+                }
+                case 'ArrowUp':
+                case 'k': {
+                    e.preventDefault();
+                    if (focusedSplitIndex > 0) {
+                        setFocusedSplitIndex(i => i - 1);
+                    } else if (focusedSplitIndex === 0) {
+                        setFocusedSplitIndex(-1);
+                        setFocusedColumnIndex(1); // Focus description on tx line
+                    } else {
+                        // On transaction line -> move to previous transaction
+                        if (focusedRowIndex > 0) {
+                            const currentTx = displayTransactions[focusedRowIndex];
+                            if (currentTx) await handleJournalSave(currentTx.guid);
+                            if (!imbalanceDialogTx) {
+                                setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                setFocusedSplitIndex(-1);
+                                setFocusedColumnIndex(0);
+                            }
+                        }
+                    }
+                    break;
+                }
+                case 'n': {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    if (focusedRowIndex >= 0) {
+                        const currentTx = displayTransactions[focusedRowIndex];
+                        if (currentTx) await handleJournalSave(currentTx.guid);
+                    }
+                    createNewTransaction();
+                    setFocusedSplitIndex(-1);
+                    break;
+                }
+                case 'm': {
+                    if (editSelectedGuids.size > 0) {
+                        e.preventDefault();
+                        setShowMoveDialog(true);
+                    }
+                    break;
+                }
+                case 'Escape':
+                    setFocusedSplitIndex(-1);
+                    setFocusedRowIndex(-1);
+                    break;
+            }
+            return;
         }
 
         if (isEditMode) {
@@ -890,15 +1084,19 @@ export default function AccountLedger({
                     break;
                 }
                 case 'r': {
-                    if (e.ctrlKey && focusedRowIndex >= 0) {
+                    if (e.ctrlKey) {
                         e.preventDefault();
-                        const tx = displayTransactions[focusedRowIndex];
-                        const handle = editableRowRefs.current.get(tx.guid);
-                        if (handle?.isDirty()) await handle.save();
-                        await toggleReviewed(tx.guid);
-                        setEditReviewedCount(prev => prev + 1);
-                        if (focusedRowIndex < displayTransactions.length - 1) {
-                            setFocusedRowIndex(prev => prev + 1);
+                        if (editSelectedGuids.size > 0) {
+                            await handleBulkReview();
+                        } else if (focusedRowIndex >= 0) {
+                            const tx = displayTransactions[focusedRowIndex];
+                            const handle = editableRowRefs.current.get(tx.guid);
+                            if (handle?.isDirty()) await handle.save();
+                            await toggleReviewed(tx.guid);
+                            setEditReviewedCount(prev => prev + 1);
+                            if (focusedRowIndex < displayTransactions.length - 1) {
+                                setFocusedRowIndex(prev => prev + 1);
+                            }
                         }
                     }
                     break;
@@ -921,6 +1119,13 @@ export default function AccountLedger({
                     }
                     break;
                 }
+                case 'm': {
+                    if (editSelectedGuids.size > 0) {
+                        e.preventDefault();
+                        setShowMoveDialog(true);
+                    }
+                    break;
+                }
                 case 'n': {
                     e.preventDefault();
                     e.stopImmediatePropagation();
@@ -930,57 +1135,7 @@ export default function AccountLedger({
                         const handle = editableRowRefs.current.get(currentTx.guid);
                         if (handle?.isDirty()) await handle.save();
                     }
-                    // Create a blank transaction at the top
-                    const today = toLocalDateString(new Date());
-                    const txGuid = crypto.randomUUID().replace(/-/g, '');
-                    const splitGuid1 = crypto.randomUUID().replace(/-/g, '');
-                    const splitGuid2 = crypto.randomUUID().replace(/-/g, '');
-
-                    const blankTx: AccountTransaction = {
-                        guid: txGuid,
-                        currency_guid: '',
-                        num: '',
-                        post_date: new Date(today + 'T00:00:00') as unknown as Date,
-                        enter_date: new Date() as unknown as Date,
-                        description: '',
-                        splits: [{
-                            guid: splitGuid1,
-                            tx_guid: txGuid,
-                            account_guid: accountGuid,
-                            account_name: '',
-                            value_num: BigInt(0),
-                            value_denom: BigInt(100),
-                            quantity_num: BigInt(0),
-                            quantity_denom: BigInt(100),
-                            memo: '',
-                            action: '',
-                            reconcile_state: 'n',
-                            reconcile_date: null,
-                            lot_guid: null,
-                        }, {
-                            guid: splitGuid2,
-                            tx_guid: txGuid,
-                            account_guid: '',
-                            account_name: '',
-                            value_num: BigInt(0),
-                            value_denom: BigInt(100),
-                            quantity_num: BigInt(0),
-                            quantity_denom: BigInt(100),
-                            memo: '',
-                            action: '',
-                            reconcile_state: 'n',
-                            reconcile_date: null,
-                            lot_guid: null,
-                        }],
-                        running_balance: '0',
-                        account_split_value: '0',
-                        commodity_mnemonic: '',
-                        account_split_guid: splitGuid1,
-                        account_split_reconcile_state: 'n',
-                    };
-                    setTransactions(prev => [blankTx, ...prev]);
-                    setFocusedRowIndex(0);
-                    setFocusedColumnIndex(0);
+                    createNewTransaction();
                     break;
                 }
                 case 'Escape':
@@ -1065,7 +1220,7 @@ export default function AccountLedger({
                 }
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, focusedRowIndex, displayTransactions, isEditMode, handleRowClick, handleEditDirect, toggleReviewed, onEscape, searchText, hasChildren, ledgerViewStyle, expandedTransactions]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, showMoveDialog, imbalanceDialogTx, focusedRowIndex, focusedSplitIndex, displayTransactions, isEditMode, isSlimEditMode, handleRowClick, handleEditDirect, handleJournalSave, handleDuplicate, handleDeleteClick, createNewTransaction, toggleReviewed, handleBulkReview, onEscape, searchText, hasChildren, ledgerViewStyle, expandedTransactions, editSelectedGuids]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -1229,6 +1384,7 @@ export default function AccountLedger({
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
+                        title={isEditMode ? 'New Transaction (n)' : 'New Transaction'}
                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2"
                     >
                         New Transaction
@@ -1268,6 +1424,7 @@ export default function AccountLedger({
                             <button
                                 onClick={handleBulkReview}
                                 disabled={editSelectedGuids.size === 0}
+                                title="Mark Reviewed (Ctrl+R)"
                                 className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center"
                             >
                                 Mark Reviewed ({editSelectedGuids.size})
@@ -1276,12 +1433,14 @@ export default function AccountLedger({
                                 <>
                                     <button
                                         onClick={() => setShowMoveDialog(true)}
+                                        title="Move to Account (m)"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-blue-400 hover:border-blue-500/30 hover:bg-blue-500/10 transition-colors flex items-center"
                                     >
                                         Move to Account ({editSelectedGuids.size})
                                     </button>
                                     <button
                                         onClick={() => setBulkDeleteConfirmOpen(true)}
+                                        title="Delete Selected (x)"
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-colors flex items-center"
                                     >
                                         Delete Selected ({editSelectedGuids.size})
@@ -1516,6 +1675,78 @@ export default function AccountLedger({
                                             setFocusedColumnIndex(4);
                                         }}
                                     />
+                                ) : isSlimEditMode ? (
+                                    <React.Fragment key={tx.guid}>
+                                        <EditableRow
+                                            ref={(handle) => {
+                                                if (handle) editableRowRefs.current.set(tx.guid, handle);
+                                                else editableRowRefs.current.delete(tx.guid);
+                                            }}
+                                            transaction={tx}
+                                            accountGuid={accountGuid}
+                                            accountType={accountType}
+                                            isActive={index === focusedRowIndex && focusedSplitIndex === -1}
+                                            showCheckbox={true}
+                                            isChecked={editSelectedGuids.has(tx.guid)}
+                                            onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
+                                            onSave={handleInlineSave}
+                                            onEditModal={handleEditDirect}
+                                            onDuplicate={handleDuplicate}
+                                            columnCount={table.getVisibleFlatColumns().length}
+                                            onClick={() => { setFocusedRowIndex(index); setFocusedSplitIndex(-1); }}
+                                            focusedColumn={index === focusedRowIndex && focusedSplitIndex === -1 ? focusedColumnIndex : undefined}
+                                            onEnter={async () => {
+                                                const handle = editableRowRefs.current.get(tx.guid);
+                                                if (handle?.isDirty()) await handle.save();
+                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                            }}
+                                            onArrowUp={async () => {
+                                                const handle = editableRowRefs.current.get(tx.guid);
+                                                if (handle?.isDirty()) await handle.save();
+                                                setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                            }}
+                                            onArrowDown={() => { setFocusedSplitIndex(0); setFocusedColumnIndex(0); }}
+                                            onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                            ledgerViewStyle={ledgerViewStyle}
+                                            onTabToSplits={() => { setFocusedSplitIndex(0); setFocusedColumnIndex(0); }}
+                                        />
+                                        {(
+                                            ledgerViewStyle === 'journal' ||
+                                            (ledgerViewStyle === 'autosplit' && index === focusedRowIndex)
+                                        ) && (
+                                            <EditableSplitRows
+                                                ref={(handle) => {
+                                                    if (handle) editableSplitRowRefs.current.set(tx.guid, handle);
+                                                    else editableSplitRowRefs.current.delete(tx.guid);
+                                                }}
+                                                transaction={tx}
+                                                accountGuid={accountGuid}
+                                                columns={table.getVisibleFlatColumns().length}
+                                                isActive={index === focusedRowIndex}
+                                                focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
+                                                focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
+                                                onFocusedSplitChange={(si) => { setFocusedRowIndex(index); setFocusedSplitIndex(si); }}
+                                                onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                                onArrowUp={() => { setFocusedSplitIndex(-1); setFocusedColumnIndex(1); }}
+                                                onArrowDownPastEnd={async () => {
+                                                    await handleJournalSave(tx.guid);
+                                                    if (!imbalanceDialogTx) {
+                                                        setFocusedSplitIndex(-1);
+                                                        setFocusedColumnIndex(0);
+                                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                    }
+                                                }}
+                                                onTabToNextTransaction={async () => {
+                                                    await handleJournalSave(tx.guid);
+                                                    if (!imbalanceDialogTx) {
+                                                        setFocusedSplitIndex(-1);
+                                                        setFocusedColumnIndex(0);
+                                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                    }
+                                                }}
+                                            />
+                                        )}
+                                    </React.Fragment>
                                 ) : (
                                     <EditableRow
                                         key={tx.guid}
@@ -1986,6 +2217,46 @@ export default function AccountLedger({
             commodityGuid={accountCommodityGuid}
             title={`Move ${editSelectedGuids.size} transaction${editSelectedGuids.size !== 1 ? 's' : ''} to...`}
         />
+
+        <Modal
+            isOpen={!!imbalanceDialogTx}
+            onClose={() => setImbalanceDialogTx(null)}
+            title="Unbalanced Transaction"
+            size="sm"
+        >
+            <div className="p-4 space-y-4">
+                <p className="text-sm text-foreground-secondary">
+                    Transaction is unbalanced by {imbalanceAmount.toFixed(2)}. What would you like to do?
+                </p>
+                <div className="flex gap-3 justify-end">
+                    <button
+                        onClick={() => {
+                            if (imbalanceDialogTx) {
+                                const splitHandle = editableSplitRowRefs.current.get(imbalanceDialogTx);
+                                splitHandle?.revert();
+                            }
+                            setImbalanceDialogTx(null);
+                        }}
+                        className="px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors"
+                    >
+                        Revert Changes
+                    </button>
+                    <button
+                        onClick={() => {
+                            const txIndex = displayTransactions.findIndex(t => t.guid === imbalanceDialogTx);
+                            if (txIndex >= 0) {
+                                setFocusedRowIndex(txIndex);
+                                setFocusedSplitIndex(0);
+                            }
+                            setImbalanceDialogTx(null);
+                        }}
+                        className="px-3 py-2 text-sm rounded-lg bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors"
+                    >
+                        Continue Editing
+                    </button>
+                </div>
+            </div>
+        </Modal>
 
         {/* Floating reconciliation panel - outside overflow-clip container */}
         {isReconciling && (
