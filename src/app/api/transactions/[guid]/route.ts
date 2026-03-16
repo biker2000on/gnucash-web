@@ -156,6 +156,15 @@ export async function PUT(
             }, { status: 400 });
         }
 
+        // Validate client-provided split GUIDs
+        for (const split of body.splits) {
+            if (split.guid !== undefined && !/^[0-9a-f]{32}$/.test(split.guid)) {
+                return NextResponse.json({
+                    errors: [{ field: 'splits', message: `Invalid split GUID format: ${split.guid}. Must be 32-char hex string.` }]
+                }, { status: 400 });
+            }
+        }
+
         // Track multi-currency status for audit log
         let isMultiCurrency = false;
         let totalSplitsCount = body.splits.length;
@@ -190,7 +199,7 @@ export async function PUT(
 
             // Insert all splits (including auto-generated trading splits)
             for (const split of allSplits) {
-                const splitGuid = generateGuid();
+                const splitGuid = split.guid && /^[0-9a-f]{32}$/.test(split.guid) ? split.guid : generateGuid();
                 await tx.splits.create({
                     data: {
                         guid: splitGuid,
