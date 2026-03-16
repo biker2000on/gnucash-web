@@ -233,7 +233,7 @@ export async function getAccountHoldings(
                     include: {
                         splits: {
                             include: {
-                                account: { select: { guid: true, commodity_guid: true } },
+                                account: { select: { guid: true, commodity_guid: true, account_type: true } },
                             },
                         },
                     },

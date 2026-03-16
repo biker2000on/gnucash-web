@@ -41,6 +41,16 @@ function toDecimal(num: bigint | number | string | null, denom: bigint | number 
  */
 export type CostBasisCache = Map<string, CostBasisResult>;
 
+// Sentinel symbol to mark in-progress traces (circular detection)
+const IN_PROGRESS = Symbol('in-progress');
+type CacheEntry = CostBasisResult | typeof IN_PROGRESS;
+
+// Internal cache that supports both real results and in-progress markers
+type InternalCache = Map<string, CacheEntry>;
+
+// Cache for getAccountCostBasis query results (keyed by accountGuid-commodityGuid-date)
+type AccountSplitsCache = Map<string, Awaited<ReturnType<typeof fetchAccountSplits>>>;
+
 export function createCostBasisCache(): CostBasisCache {
   return new Map();
 }
@@ -54,21 +64,56 @@ export function createCostBasisCache(): CostBasisCache {
  */
 export function isTransferIn(
   split: { quantity_num: bigint; quantity_denom: bigint; value_num: bigint; value_denom: bigint; account_guid: string },
-  allSplits: Array<{ quantity_num: bigint; quantity_denom: bigint; account_guid: string; account?: { commodity_guid?: string | null } | null }>,
+  allSplits: Array<{ quantity_num: bigint; quantity_denom: bigint; account_guid: string; account?: { commodity_guid?: string | null; account_type?: string | null; name?: string | null } | null }>,
   accountCommodityGuid: string
 ): boolean {
   const qty = toDecimal(split.quantity_num, split.quantity_denom);
   if (qty <= 0) return false; // Only care about receiving shares
 
   // Check if there's a matching split sending shares from another account
-  // with the same commodity (prevents false positives on cash splits)
+  // with the same commodity (prevents false positives on cash splits).
+  // IMPORTANT: Exclude Trading account splits — GnuCash trading accounts
+  // create same-commodity splits for purchases that would falsely match.
   const matchingSend = allSplits.find(s =>
     s.account_guid !== split.account_guid &&
     s.account?.commodity_guid === accountCommodityGuid &&
+    s.account?.account_type !== 'TRADING' &&
     toDecimal(s.quantity_num, s.quantity_denom) < 0
   );
 
   return !!matchingSend;
+}
+
+/**
+ * Fetch all splits for an account+commodity with transaction data.
+ * Extracted for caching — avoids re-querying the same account in recursive traces.
+ */
+async function fetchAccountSplits(
+  accountGuid: string,
+  commodityGuid: string,
+  asOfDate: Date,
+) {
+  const splits = await prisma.splits.findMany({
+    where: {
+      account_guid: accountGuid,
+      account: { commodity_guid: commodityGuid },
+      transaction: { post_date: { lte: asOfDate } },
+    },
+    include: {
+      transaction: {
+        select: {
+          post_date: true,
+          description: true,
+          splits: {
+            include: {
+              account: { select: { guid: true, commodity_guid: true, account_type: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  return splits;
 }
 
 /**
@@ -85,17 +130,23 @@ export async function traceCostBasis(
   transferredShares: number,
   cache: CostBasisCache,
 ): Promise<CostBasisResult> {
+  const internalCache = cache as unknown as InternalCache;
   const cacheKey = `${transferInSplitGuid}-${method}`;
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    return cached;
+  const cached = internalCache.get(cacheKey);
+
+  // If we have a real result, return it
+  if (cached && cached !== IN_PROGRESS) {
+    return cached as CostBasisResult;
   }
 
-  // Pre-populate cache with a sentinel to break circular transfer chains.
-  // If we re-enter this split during recursion, the sentinel returns $0 cost
-  // instead of recursing infinitely.
-  const sentinel: CostBasisResult = { totalCost: 0, perShareCost: 0, method };
-  cache.set(cacheKey, sentinel);
+  // If this split is already being traced (circular transfer chain), return $0
+  // This is the ONLY case where we return zero for circular detection
+  if (cached === IN_PROGRESS) {
+    return { totalCost: 0, perShareCost: 0, method };
+  }
+
+  // Mark as in-progress for circular detection
+  internalCache.set(cacheKey, IN_PROGRESS);
 
   // Get the transfer-in split
   // IMPORTANT: Prisma relation names are SINGULAR: `transaction`, `account` (not plural)
@@ -106,7 +157,7 @@ export async function traceCostBasis(
         include: {
           splits: {
             include: {
-              account: { select: { guid: true, name: true, commodity_guid: true } },
+              account: { select: { guid: true, name: true, commodity_guid: true, account_type: true } },
             },
           },
         },
@@ -115,7 +166,9 @@ export async function traceCostBasis(
   });
 
   if (!transferSplit) {
-    return { totalCost: 0, perShareCost: 0, method };
+    const result: CostBasisResult = { totalCost: 0, perShareCost: 0, method };
+    internalCache.set(cacheKey, result);
+    return result;
   }
 
   // Step 1: Check for lot-based tracing
@@ -158,7 +211,7 @@ export async function traceCostBasis(
       perShareCost: totalShares > 0 ? totalCost / totalShares : 0,
       method,
     };
-    cache.set(cacheKey, result);
+    internalCache.set(cacheKey, result);
     return result;
   }
 
@@ -168,11 +221,16 @@ export async function traceCostBasis(
   const sourceSplit = transferSplit.transaction?.splits.find(
     s => s.account_guid !== transferSplit.account_guid &&
          s.account?.commodity_guid === commodityGuid &&
+         s.account?.account_type !== 'TRADING' &&
          toDecimal(s.quantity_num, s.quantity_denom) < 0
   );
 
   if (!sourceSplit) {
-    return sentinel;
+    // No traceable source — this is a legitimate zero cost (e.g., a gift, airdrop, etc.)
+    // NOT a circular detection case — store a real result
+    const result: CostBasisResult = { totalCost: 0, perShareCost: 0, method };
+    internalCache.set(cacheKey, result);
+    return result;
   }
 
   const sourceAccountGuid = sourceSplit.account_guid;
@@ -184,11 +242,11 @@ export async function traceCostBasis(
     method,
     transferredShares,
     transferSplit.transaction?.post_date || new Date(),
-    cache,
+    internalCache as unknown as CostBasisCache,
   );
 
   result.tracedFromAccount = sourceSplit.account?.name ?? undefined;
-  cache.set(cacheKey, result);
+  internalCache.set(cacheKey, result);
   return result;
 }
 
@@ -204,43 +262,37 @@ async function getAccountCostBasis(
   asOfDate: Date,
   cache: CostBasisCache,
 ): Promise<CostBasisResult> {
-  // Get all splits for this account + commodity, ordered by date
-  // Use singular relation names: `account`, `transaction`
-  const splits = await prisma.splits.findMany({
-    where: {
-      account_guid: accountGuid,
-      account: { commodity_guid: commodityGuid },
-      transaction: { post_date: { lte: asOfDate } },
-    },
-    include: {
-      transaction: {
-        select: {
-          post_date: true,
-          description: true,
-          splits: {
-            include: {
-              account: { select: { guid: true, commodity_guid: true } },
-            },
-          },
-        },
-      },
-    },
-  });
+  // Cache query results per account+commodity+date to avoid re-fetching
+  // Use a separate namespace to avoid collision with split-level cache
+  const queryCacheKey = `__acct__${accountGuid}-${commodityGuid}-${asOfDate.getTime()}`;
+  const internalCache = cache as unknown as InternalCache;
+
+  let splits: Awaited<ReturnType<typeof fetchAccountSplits>>;
+
+  const cachedQuery = internalCache.get(queryCacheKey);
+  if (cachedQuery && cachedQuery !== IN_PROGRESS && Array.isArray((cachedQuery as unknown as { _splits: unknown[] })._splits)) {
+    splits = (cachedQuery as unknown as { _splits: Awaited<ReturnType<typeof fetchAccountSplits>> })._splits;
+  } else {
+    splits = await fetchAccountSplits(accountGuid, commodityGuid, asOfDate);
+    // Store in cache with a special wrapper to distinguish from CostBasisResult
+    internalCache.set(queryCacheKey, { _splits: splits } as unknown as CostBasisResult);
+  }
+
   // Sort in JS for reliability across Prisma versions
-  splits.sort((a, b) => {
+  const sortedSplits = [...splits].sort((a, b) => {
     const dateA = a.transaction?.post_date?.getTime() || 0;
     const dateB = b.transaction?.post_date?.getTime() || 0;
     return method === 'lifo' ? dateB - dateA : dateA - dateB;
   });
 
   if (method === 'average') {
-    return calculateAverageCostBasis(splits, sharesNeeded);
+    return calculateAverageCostBasis(sortedSplits, sharesNeeded);
   }
 
   // FIFO or LIFO: build purchase lots
   const lots: PurchaseLot[] = [];
 
-  for (const split of splits) {
+  for (const split of sortedSplits) {
     const qty = toDecimal(split.quantity_num, split.quantity_denom);
     const val = Math.abs(toDecimal(split.value_num, split.value_denom));
 
@@ -339,7 +391,7 @@ function isTransferInSplit(
         account_guid: string;
         quantity_num: bigint;
         quantity_denom: bigint;
-        account?: { commodity_guid?: string | null } | null;
+        account?: { guid?: string; commodity_guid?: string | null; account_type?: string | null } | null;
       }>;
     } | null;
   },
@@ -350,6 +402,7 @@ function isTransferInSplit(
   return txSplits.some(
     s => s.account_guid !== currentAccountGuid &&
          s.account?.commodity_guid === commodityGuid &&
+         s.account?.account_type !== 'TRADING' &&
          toDecimal(s.quantity_num, s.quantity_denom) < 0
   );
 }
