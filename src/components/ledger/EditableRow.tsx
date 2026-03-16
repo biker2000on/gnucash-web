@@ -43,6 +43,8 @@ interface EditableRowProps {
     onArrowDown?: () => void;
     onColumnFocus?: (columnIndex: number) => void;
     onTabFromActions?: (direction: 'next' | 'previous') => void;
+    ledgerViewStyle?: 'basic' | 'journal' | 'autosplit';
+    onTabToSplits?: () => void;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -64,6 +66,8 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onArrowDown,
         onColumnFocus,
         onTabFromActions,
+        ledgerViewStyle,
+        onTabToSplits,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -71,6 +75,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             onClick?.();
         };
         const { balanceReversal } = useUserPreferences();
+        const isSlimMode = ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit';
         const isMultiSplit = isMultiSplitTransaction(transaction.splits);
         const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
 
@@ -101,6 +106,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         }, [postDate, description, otherAccountGuid, debit, credit, splitValue, transaction, otherSplit]);
 
         const save = useCallback(async (): Promise<boolean> => {
+            if (isSlimMode) return true; // Parent handles save in journal/autosplit
             if (!isDirty()) return true;
             const hasAmount = (debit && parseFloat(debit) > 0) || (credit && parseFloat(credit) > 0);
             if (!description.trim() || !otherAccountGuid || !hasAmount) return false;
@@ -182,8 +188,8 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             </td>
         );
 
-        // Multi-split: read-only with edit button
-        if (isMultiSplit) {
+        // Multi-split: read-only with edit button (skip in slim mode where all splits are rendered below)
+        if (isMultiSplit && !isSlimMode) {
             const otherSplits = transaction.splits?.filter(s => s.account_guid !== accountGuid) || [];
             return (
                 <tr className={rowClass} onClick={handleRowClick}>
@@ -205,6 +211,27 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
                         {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                     </td>
+                    <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
+                    </td>
+                    {actionsCell}
+                </tr>
+            );
+        }
+
+        // Slim inactive row (journal/autosplit): show date + description, empty account/amount cells
+        if (!isActive && isSlimMode) {
+            return (
+                <tr className={rowClass} onClick={handleRowClick}>
+                    {checkboxCell}
+                    {reconcileCell}
+                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
+                        {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
+                    <td className="px-4 py-2"></td>
+                    <td className="px-4 py-2"></td>
+                    <td className="px-4 py-2"></td>
                     <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                     </td>
@@ -236,6 +263,75 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                     </td>
                     {actionsCell}
+                </tr>
+            );
+        }
+
+        // Slim active row (journal/autosplit): editable date + description, empty account/amount cells
+        if (isActive && isSlimMode) {
+            return (
+                <tr className="bg-cyan-500/5 ring-2 ring-cyan-500/30 ring-inset">
+                    {checkboxCell}
+                    <td className="px-3 py-1 align-middle">
+                        <span className="inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold text-foreground-muted bg-surface/10">
+                            {reconcileIcon}
+                        </span>
+                    </td>
+                    <td className="px-2 py-1 align-middle">
+                        <DateCell
+                            value={postDate}
+                            onChange={setPostDate}
+                            autoFocus={focusedColumn === 0}
+                            onEnter={onEnter}
+                            onArrowUp={onArrowUp}
+                            onArrowDown={onArrowDown}
+                            onFocus={() => onColumnFocus?.(0)}
+                        />
+                    </td>
+                    <td className="px-2 py-1 align-middle">
+                        <DescriptionCell
+                            value={description}
+                            onChange={setDescription}
+                            autoFocus={focusedColumn === 1}
+                            onEnter={onEnter}
+                            onTab={() => onTabToSplits?.()}
+                            onArrowUp={onArrowUp}
+                            onArrowDown={onArrowDown}
+                            onFocus={() => onColumnFocus?.(1)}
+                        />
+                    </td>
+                    <td className="px-2 py-1 align-middle"></td>
+                    <td className="px-2 py-1 align-middle"></td>
+                    <td className="px-2 py-1 align-middle"></td>
+                    <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40">
+                        {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
+                    </td>
+                    <td className="px-2 py-1 align-middle">
+                        <div className="flex items-center gap-1">
+                            {onDuplicate && (
+                                <button
+                                    onClick={() => onDuplicate(transaction.guid)}
+                                    className="text-foreground-muted hover:text-emerald-400 transition-colors"
+                                    title="Duplicate (d)"
+                                    tabIndex={-1}
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                </button>
+                            )}
+                            <button
+                                onClick={() => onEditModal(transaction.guid)}
+                                className="text-foreground-muted hover:text-cyan-400 transition-colors"
+                                title="Edit in modal"
+                                tabIndex={-1}
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                            </button>
+                        </div>
+                    </td>
                 </tr>
             );
         }

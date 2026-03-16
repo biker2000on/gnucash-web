@@ -13,6 +13,7 @@ interface DescriptionAutocompleteProps {
   hasError?: boolean;
   accountGuid?: string;
   onEnter?: () => void;
+  onTab?: () => void;
   onArrowUp?: () => void;
   onArrowDown?: () => void;
   autoFocus?: boolean;
@@ -29,6 +30,7 @@ export function DescriptionAutocomplete({
   hasError = false,
   accountGuid,
   onEnter,
+  onTab,
   onArrowUp,
   onArrowDown,
   autoFocus,
@@ -164,6 +166,9 @@ export function DescriptionAutocomplete({
         e.preventDefault();
       } else if (e.key === 'Enter') {
         onEnter?.();
+        e.preventDefault();
+      } else if (e.key === 'Tab' && !e.shiftKey && onTab) {
+        onTab();
         e.preventDefault();
       } else if (e.key === 'ArrowUp') {
         onArrowUp?.();
