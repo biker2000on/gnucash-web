@@ -985,11 +985,10 @@ export default function AccountLedger({
                         if (focusedSplitIndex < totalSplitRows - 1) {
                             setFocusedSplitIndex(i => i + 1);
                         } else {
-                            // Past last split -> save and move to next transaction
+                            // Past last split -> save and move to first split of next transaction (keep column)
                             const saved = tx ? await handleJournalSave(tx.guid) : true;
                             if (saved) {
-                                setFocusedSplitIndex(-1);
-                                setFocusedColumnIndex(0);
+                                setFocusedSplitIndex(0);
                                 setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                             }
                         }
@@ -1786,8 +1785,7 @@ export default function AccountLedger({
                                                 onArrowDownPastEnd={async () => {
                                                     const saved = await handleJournalSave(tx.guid);
                                                     if (saved) {
-                                                        setFocusedSplitIndex(-1);
-                                                        setFocusedColumnIndex(0);
+                                                        setFocusedSplitIndex(0);
                                                         setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                                                     }
                                                 }}
