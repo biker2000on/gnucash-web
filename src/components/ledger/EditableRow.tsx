@@ -14,6 +14,7 @@ import { isMultiSplitTransaction } from './investment-utils';
 export interface EditableRowHandle {
     save: () => Promise<boolean>;
     isDirty: () => boolean;
+    getTransactionData: () => { post_date: string; description: string; currency_guid: string };
 }
 
 interface EditableRowProps {
@@ -124,7 +125,15 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             }
         }, [isDirty, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
 
-        useImperativeHandle(ref, () => ({ save, isDirty }), [save, isDirty]);
+        useImperativeHandle(ref, () => ({
+            save,
+            isDirty,
+            getTransactionData: () => ({
+                post_date: postDate,
+                description,
+                currency_guid: transaction.currency_guid,
+            }),
+        }), [save, isDirty, postDate, description, transaction.currency_guid]);
 
         const reconcileState = transaction.account_split_reconcile_state;
         const reconcileIcon = reconcileState === 'y' ? 'Y' : reconcileState === 'c' ? 'C' : 'N';
