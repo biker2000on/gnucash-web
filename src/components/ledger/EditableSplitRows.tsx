@@ -234,9 +234,13 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         },
     }), [splits, transaction]);
 
-    // Column alignment (same as SplitRows.tsx)
+    // Column alignment: content is memo(description), account(transfer), debit, credit = 4
+    // Leading empty = columns before description: select(if present), reconcile, date
+    // Trailing empty = columns after credit: balance, actions(if present)
+    // We know leading should be: select + reconcile + date = 3 (edit mode always has select, never has expand in journal/autosplit)
+    // But to be safe, compute from known positions: description is the 4th content col from the right before trailing
     const contentCols = 4; // memo, account, debit, credit
-    const trailingEmpty = 1;
+    const trailingEmpty = 2; // balance + actions (edit mode always has actions column)
     const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
     const actualTrailing = columns - leadingEmpty - contentCols;
 
