@@ -986,8 +986,8 @@ export default function AccountLedger({
                             setFocusedSplitIndex(i => i + 1);
                         } else {
                             // Past last split -> save and move to next transaction
-                            if (tx) await handleJournalSave(tx.guid);
-                            if (!imbalanceDialogTx) {
+                            const saved = tx ? await handleJournalSave(tx.guid) : true;
+                            if (saved) {
                                 setFocusedSplitIndex(-1);
                                 setFocusedColumnIndex(0);
                                 setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
@@ -1008,8 +1008,8 @@ export default function AccountLedger({
                         // On transaction line -> move to previous transaction
                         if (focusedRowIndex > 0) {
                             const currentTx = displayTransactions[focusedRowIndex];
-                            if (currentTx) await handleJournalSave(currentTx.guid);
-                            if (!imbalanceDialogTx) {
+                            const saved = currentTx ? await handleJournalSave(currentTx.guid) : true;
+                            if (saved) {
                                 setFocusedRowIndex(i => Math.max(i - 1, 0));
                                 setFocusedSplitIndex(-1);
                                 setFocusedColumnIndex(0);
@@ -1023,7 +1023,10 @@ export default function AccountLedger({
                     e.stopImmediatePropagation();
                     if (focusedRowIndex >= 0) {
                         const currentTx = displayTransactions[focusedRowIndex];
-                        if (currentTx) await handleJournalSave(currentTx.guid);
+                        if (currentTx) {
+                            const saved = await handleJournalSave(currentTx.guid);
+                            if (!saved) break;
+                        }
                     }
                     createNewTransaction();
                     setFocusedSplitIndex(-1);
@@ -1781,16 +1784,16 @@ export default function AccountLedger({
                                                 onColumnFocus={(col) => setFocusedColumnIndex(col)}
                                                 onArrowUp={() => { setFocusedSplitIndex(-1); setFocusedColumnIndex(1); }}
                                                 onArrowDownPastEnd={async () => {
-                                                    await handleJournalSave(tx.guid);
-                                                    if (!imbalanceDialogTx) {
+                                                    const saved = await handleJournalSave(tx.guid);
+                                                    if (saved) {
                                                         setFocusedSplitIndex(-1);
                                                         setFocusedColumnIndex(0);
                                                         setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
                                                     }
                                                 }}
                                                 onTabToNextTransaction={async () => {
-                                                    await handleJournalSave(tx.guid);
-                                                    if (!imbalanceDialogTx) {
+                                                    const saved = await handleJournalSave(tx.guid);
+                                                    if (saved) {
                                                         setFocusedSplitIndex(-1);
                                                         setFocusedColumnIndex(0);
                                                         setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));

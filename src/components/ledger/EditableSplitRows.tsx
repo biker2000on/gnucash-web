@@ -140,6 +140,17 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         });
     }, [splits]);
 
+    const createBlankSplit = useCallback((): SplitState => ({
+        guid: crypto.randomUUID().replace(/-/g, ''),
+        account_guid: '',
+        account_name: '',
+        memo: '',
+        debit: '',
+        credit: '',
+        reconcile_state: 'n',
+        isPlaceholder: true,
+    }), []);
+
     const updateSplit = useCallback((index: number, field: keyof SplitState, value: string) => {
         setSplits(prev => {
             const next = [...prev];
@@ -160,29 +171,28 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
 
     const updateSplitAccount = useCallback((index: number, guid: string, name: string) => {
         setSplits(prev => {
-            const next = [...prev];
-            const updated = { ...next[index], account_guid: guid, account_name: name };
-            if (updated.isPlaceholder) {
-                delete updated.isPlaceholder;
-                // Check if we still have a placeholder
-                const hasPlaceholder = next.some((s, i) => i !== index && s.isPlaceholder);
-                if (!hasPlaceholder) {
-                    next.push({
-                        guid: crypto.randomUUID().replace(/-/g, ''),
-                        account_guid: '',
-                        account_name: '',
-                        memo: '',
-                        debit: '',
-                        credit: '',
-                        reconcile_state: 'n',
-                        isPlaceholder: true,
-                    });
+            const updated = prev.map((s, i) => {
+                if (i !== index) return s;
+                const newSplit = { ...s, account_guid: guid, account_name: name };
+                if (s.isPlaceholder && guid) {
+                    // Calculate imbalance to carry over to promoted split
+                    const imbalance = prev
+                        .filter(sp => !sp.isPlaceholder)
+                        .reduce((sum, sp) => sum + (parseFloat(sp.debit) || 0) - (parseFloat(sp.credit) || 0), 0);
+                    const balancingAmount = -imbalance;
+                    delete newSplit.isPlaceholder;
+                    newSplit.debit = balancingAmount > 0 ? balancingAmount.toFixed(2) : '';
+                    newSplit.credit = balancingAmount < 0 ? Math.abs(balancingAmount).toFixed(2) : '';
                 }
+                return newSplit;
+            });
+            const hasPlaceholder = updated.some(s => s.isPlaceholder);
+            if (!hasPlaceholder) {
+                updated.push(createBlankSplit());
             }
-            next[index] = updated;
-            return next;
+            return updated;
         });
-    }, []);
+    }, [createBlankSplit]);
 
     const deleteSplit = useCallback((index: number) => {
         setSplits(prev => {
@@ -296,7 +306,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                         <td className="px-3 py-1.5">
                             {isFocused ? (
                                 <AccountCell
-                                    value={split.account_name}
+                                    value={split.account_guid}
                                     onChange={(guid, name) => updateSplitAccount(index, guid, name)}
                                     autoFocus={focusedColumnIndex === 1}
                                     onFocus={() => onColumnFocus?.(1)}
