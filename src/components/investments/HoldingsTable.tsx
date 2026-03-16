@@ -6,6 +6,11 @@ import { formatCurrency } from '@/lib/format';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
 
+function stripRoot(path: string): string {
+  const idx = path.indexOf(':');
+  return idx >= 0 ? path.slice(idx + 1) : path;
+}
+
 interface Holding {
   accountGuid: string;
   accountName: string;
@@ -195,7 +200,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                       onClick={() => router.push(`/accounts/${account.accountGuid}`)}
                       className="pl-8 bg-background-tertiary/20"
                       fields={[
-                        { label: 'Account', value: account.accountPath },
+                        { label: 'Account', value: stripRoot(account.accountPath) },
                         { label: 'Shares', value: account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                         { label: 'Market Value', value: formatCurrency(account.marketValue) },
                         { label: 'Cost Basis', value: formatCurrency(account.costBasis) },
@@ -313,7 +318,7 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                   className={`transition-colors ${holding.disableNavigation ? '' : 'hover:bg-surface-hover/50 cursor-pointer'}`}
                 >
                   <td className="px-4 py-3">
-                    <div className="font-medium text-foreground" title={holding.accountPath}>{holding.symbol}</div>
+                    <div className="font-medium text-foreground" title={holding.accountPath ? stripRoot(holding.accountPath) : undefined}>{holding.symbol}</div>
                     <div className="text-sm text-foreground-muted">{holding.accountName}</div>
                   </td>
                   <td className="px-4 py-3 text-foreground-secondary">
@@ -398,7 +403,7 @@ function ConsolidatedRow({
         >
           <td className="px-2 py-2"></td>
           <td className="px-4 py-2 pl-8">
-            <div className="text-sm text-foreground-secondary">{account.accountPath}</div>
+            <div className="text-sm text-foreground-secondary">{stripRoot(account.accountPath)}</div>
           </td>
           <td className="px-4 py-2 text-sm text-foreground-muted">
             {account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 })}
