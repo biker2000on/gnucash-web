@@ -24,7 +24,7 @@ export async function GET() {
 
     // Generate a filename with current date
     const dateStr = new Date().toISOString().slice(0, 10);
-    const filename = `gnucash-export-${dateStr}.gnucash`;
+    const filename = `gnucash-export-${dateStr}.gnucash.gz`;
 
     return new NextResponse(Buffer.from(compressed), {
       headers: {

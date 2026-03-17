@@ -157,7 +157,7 @@ export default function ImportExportPage() {
       a.href = url;
       const disposition = res.headers.get('Content-Disposition');
       const filenameMatch = disposition?.match(/filename="(.+)"/);
-      a.download = filenameMatch?.[1] || 'export.gnucash';
+      a.download = filenameMatch?.[1] || 'export.gnucash.gz';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
