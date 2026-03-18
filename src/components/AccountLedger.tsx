@@ -1786,56 +1786,77 @@ export default function AccountLedger({
                         {isEditMode ? (
                             displayTransactions.map((tx, index) => (
                                 isInvestmentAccount ? (
-                                    <InvestmentEditRow
-                                        key={tx.guid}
-                                        ref={(handle) => {
-                                            if (handle) editableRowRefs.current.set(tx.guid, handle);
-                                            else editableRowRefs.current.delete(tx.guid);
-                                        }}
-                                        transaction={tx}
-                                        accountGuid={accountGuid}
-                                        isActive={index === focusedRowIndex}
-                                        showCheckbox={true}
-                                        isChecked={editSelectedGuids.has(tx.guid)}
-                                        onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
-                                        onSave={handleInvestmentInlineSave}
-                                        onEditModal={handleEditDirect}
-                                        onDuplicate={handleDuplicate}
-                                        columnCount={table.getVisibleFlatColumns().length}
-                                        onClick={() => setFocusedRowIndex(index)}
-                                        focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
-                                        onEnter={async () => {
-                                            const handle = editableRowRefs.current.get(tx.guid);
-                                            if (handle?.isDirty()) await handle.save();
-                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                        }}
-                                        onArrowUp={async () => {
-                                            const handle = editableRowRefs.current.get(tx.guid);
-                                            if (handle?.isDirty()) await handle.save();
-                                            setFocusedRowIndex(i => Math.max(i - 1, 0));
-                                        }}
-                                        onArrowDown={async () => {
-                                            const handle = editableRowRefs.current.get(tx.guid);
-                                            if (handle?.isDirty()) await handle.save();
-                                            setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                        }}
-                                        onColumnFocus={(col) => setFocusedColumnIndex(col)}
-                                        onTabFromActions={async (direction) => {
-                                            const handle = editableRowRefs.current.get(tx.guid);
-                                            if (handle?.isDirty()) {
-                                                await handle.save();
-                                            }
-
-                                            if (direction === 'next') {
+                                    <React.Fragment key={tx.guid}>
+                                        <InvestmentEditRow
+                                            ref={(handle) => {
+                                                if (handle) editableRowRefs.current.set(tx.guid, handle);
+                                                else editableRowRefs.current.delete(tx.guid);
+                                            }}
+                                            transaction={tx}
+                                            accountGuid={accountGuid}
+                                            isActive={index === focusedRowIndex}
+                                            showCheckbox={true}
+                                            isChecked={editSelectedGuids.has(tx.guid)}
+                                            onToggleCheck={(e) => handleEditCheckToggle(index, tx.guid, (e as unknown as MouseEvent)?.shiftKey || false)}
+                                            onSave={handleInvestmentInlineSave}
+                                            onEditModal={handleEditDirect}
+                                            onDuplicate={handleDuplicate}
+                                            columnCount={table.getVisibleFlatColumns().length}
+                                            onClick={() => setFocusedRowIndex(index)}
+                                            focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
+                                            onEnter={async () => {
+                                                const handle = editableRowRefs.current.get(tx.guid);
+                                                if (handle?.isDirty()) await handle.save();
                                                 setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                                setFocusedColumnIndex(0);
-                                                return;
-                                            }
+                                            }}
+                                            onArrowUp={async () => {
+                                                const handle = editableRowRefs.current.get(tx.guid);
+                                                if (handle?.isDirty()) await handle.save();
+                                                setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                            }}
+                                            onArrowDown={async () => {
+                                                const handle = editableRowRefs.current.get(tx.guid);
+                                                if (handle?.isDirty()) await handle.save();
+                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                            }}
+                                            onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                            onTabFromActions={async (direction) => {
+                                                const handle = editableRowRefs.current.get(tx.guid);
+                                                if (handle?.isDirty()) {
+                                                    await handle.save();
+                                                }
 
-                                            setFocusedRowIndex(i => Math.max(i - 1, 0));
-                                            setFocusedColumnIndex(4);
-                                        }}
-                                    />
+                                                if (direction === 'next') {
+                                                    setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                    setFocusedColumnIndex(0);
+                                                    return;
+                                                }
+
+                                                setFocusedRowIndex(i => Math.max(i - 1, 0));
+                                                setFocusedColumnIndex(4);
+                                            }}
+                                        />
+                                        {(
+                                            ledgerViewStyle === 'journal' ||
+                                            (ledgerViewStyle === 'autosplit' && index === focusedRowIndex)
+                                        ) && tx.splits && tx.splits.length > 0 && (
+                                            <SplitRows
+                                                splits={tx.splits.map(s => ({
+                                                    guid: s.guid,
+                                                    account_name: s.account_name || '',
+                                                    account_fullname: s.account_fullname || '',
+                                                    memo: s.memo || '',
+                                                    value_decimal: s.value_decimal ? parseFloat(s.value_decimal) : (parseFloat(s.value_num?.toString() || '0') / parseFloat(s.value_denom?.toString() || '1')),
+                                                    quantity_decimal: parseFloat(s.quantity_decimal || '0'),
+                                                    account_guid: s.account_guid,
+                                                    commodity_mnemonic: s.commodity_mnemonic || tx.commodity_mnemonic || 'USD',
+                                                }))}
+                                                currencyMnemonic={tx.commodity_mnemonic || 'USD'}
+                                                columns={table.getVisibleFlatColumns().length}
+                                                trailingColumns={4}
+                                            />
+                                        )}
+                                    </React.Fragment>
                                 ) : isSlimEditMode ? (
                                     <React.Fragment key={tx.guid}>
                                         <EditableRow
