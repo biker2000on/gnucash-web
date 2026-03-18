@@ -45,6 +45,8 @@ interface EditableSplitRowsProps {
     onArrowDownPastEnd?: () => void;
     onTabToNextTransaction?: () => void;
     onShiftTabToTransaction?: () => void; // Shift-tab from first split → transaction description
+    /** Override trailing column count for investment accounts (default: 2 for balance + actions) */
+    trailingColumns?: number;
 }
 
 function initSplitsFromTransaction(transaction: AccountTransaction): SplitState[] {
@@ -90,6 +92,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         onArrowDownPastEnd,
         onTabToNextTransaction,
         onShiftTabToTransaction,
+        trailingColumns: trailingColumnsProp,
     },
     ref
 ) {
@@ -242,7 +245,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
     // We know leading should be: select + reconcile + date = 3 (edit mode always has select, never has expand in journal/autosplit)
     // But to be safe, compute from known positions: description is the 4th content col from the right before trailing
     const contentCols = 4; // memo, account, debit, credit
-    const trailingEmpty = 2; // balance + actions (edit mode always has actions column)
+    const trailingEmpty = trailingColumnsProp ?? 2; // default: balance + actions (edit mode always has actions column)
     const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
     const actualTrailing = columns - leadingEmpty - contentCols;
 

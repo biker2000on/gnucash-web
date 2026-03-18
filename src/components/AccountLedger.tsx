@@ -1815,9 +1815,14 @@ export default function AccountLedger({
                                                 setFocusedRowIndex(i => Math.max(i - 1, 0));
                                             }}
                                             onArrowDown={async () => {
-                                                const handle = editableRowRefs.current.get(tx.guid);
-                                                if (handle?.isDirty()) await handle.save();
-                                                setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                if (ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit') {
+                                                    setFocusedSplitIndex(0);
+                                                    setFocusedColumnIndex(0);
+                                                } else {
+                                                    const handle = editableRowRefs.current.get(tx.guid);
+                                                    if (handle?.isDirty()) await handle.save();
+                                                    setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                }
                                             }}
                                             onColumnFocus={(col) => setFocusedColumnIndex(col)}
                                             onTabFromActions={async (direction) => {
@@ -1827,8 +1832,13 @@ export default function AccountLedger({
                                                 }
 
                                                 if (direction === 'next') {
-                                                    setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                                                    setFocusedColumnIndex(0);
+                                                    if (ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit') {
+                                                        setFocusedSplitIndex(0);
+                                                        setFocusedColumnIndex(0);
+                                                    } else {
+                                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                        setFocusedColumnIndex(0);
+                                                    }
                                                     return;
                                                 }
 
@@ -1839,21 +1849,41 @@ export default function AccountLedger({
                                         {(
                                             ledgerViewStyle === 'journal' ||
                                             (ledgerViewStyle === 'autosplit' && index === focusedRowIndex)
-                                        ) && tx.splits && tx.splits.length > 0 && (
-                                            <SplitRows
-                                                splits={tx.splits.map(s => ({
-                                                    guid: s.guid,
-                                                    account_name: s.account_name || '',
-                                                    account_fullname: s.account_fullname || '',
-                                                    memo: s.memo || '',
-                                                    value_decimal: s.value_decimal ? parseFloat(s.value_decimal) : (parseFloat(s.value_num?.toString() || '0') / parseFloat(s.value_denom?.toString() || '1')),
-                                                    quantity_decimal: parseFloat(s.quantity_decimal || '0'),
-                                                    account_guid: s.account_guid,
-                                                    commodity_mnemonic: s.commodity_mnemonic || tx.commodity_mnemonic || 'USD',
-                                                }))}
-                                                currencyMnemonic={tx.commodity_mnemonic || 'USD'}
+                                        ) && (
+                                            <EditableSplitRows
+                                                ref={(handle) => {
+                                                    if (handle) editableSplitRowRefs.current.set(tx.guid, handle);
+                                                    else editableSplitRowRefs.current.delete(tx.guid);
+                                                }}
+                                                transaction={tx}
+                                                accountGuid={accountGuid}
                                                 columns={table.getVisibleFlatColumns().length}
-                                                trailingColumns={4}
+                                                trailingColumns={5}
+                                                isActive={index === focusedRowIndex}
+                                                focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
+                                                focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
+                                                onFocusedSplitChange={(si) => { setFocusedRowIndex(index); setFocusedSplitIndex(si); }}
+                                                onColumnFocus={(col) => setFocusedColumnIndex(col)}
+                                                onArrowUp={() => { setFocusedSplitIndex(-1); setFocusedColumnIndex(1); }}
+                                                onArrowDownPastEnd={async () => {
+                                                    const saved = await handleJournalSave(tx.guid);
+                                                    if (saved) {
+                                                        setFocusedSplitIndex(0);
+                                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                    }
+                                                }}
+                                                onTabToNextTransaction={async () => {
+                                                    const saved = await handleJournalSave(tx.guid);
+                                                    if (saved) {
+                                                        setFocusedSplitIndex(-1);
+                                                        setFocusedColumnIndex(0);
+                                                        setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
+                                                    }
+                                                }}
+                                                onShiftTabToTransaction={() => {
+                                                    setFocusedSplitIndex(-1);
+                                                    setFocusedColumnIndex(1);
+                                                }}
                                             />
                                         )}
                                     </React.Fragment>
