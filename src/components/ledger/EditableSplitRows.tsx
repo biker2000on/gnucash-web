@@ -15,9 +15,9 @@ interface SplitState {
     credit: string;
     reconcile_state: string;
     isPlaceholder?: boolean;
-    // Investment fields (read-only computed)
-    quantity_decimal?: number;
-    value_decimal?: number;
+    // Investment fields
+    shares: string;
+    price: string;
     commodity_mnemonic?: string;
 }
 
@@ -61,6 +61,7 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
         .map(s => {
             const val = parseFloat(String(s.value_decimal ?? 0));
             const qty = parseFloat(String(s.quantity_decimal ?? 0));
+            const hasQty = Math.abs(qty) > 0.0001 && qty !== val;
             return {
                 guid: s.guid,
                 account_guid: s.account_guid,
@@ -69,8 +70,8 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
                 debit: val > 0 ? Math.abs(val).toFixed(2) : '',
                 credit: val < 0 ? Math.abs(val).toFixed(2) : '',
                 reconcile_state: s.reconcile_state || 'n',
-                quantity_decimal: qty,
-                value_decimal: val,
+                shares: hasQty ? Math.abs(qty).toFixed(4) : '',
+                price: hasQty && Math.abs(qty) > 0.0001 ? Math.abs(val / qty).toFixed(2) : '',
                 commodity_mnemonic: s.commodity_mnemonic || transaction.commodity_mnemonic || '',
             };
         });
@@ -82,6 +83,8 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
         memo: '',
         debit: '',
         credit: '',
+        shares: '',
+        price: '',
         reconcile_state: 'n',
         isPlaceholder: true,
     });
@@ -163,6 +166,8 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         memo: '',
         debit: '',
         credit: '',
+        shares: '',
+        price: '',
         reconcile_state: 'n',
         isPlaceholder: true,
     }), []);
@@ -260,6 +265,11 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
 
     const realSplitCount = splits.filter(s => !s.isPlaceholder).length;
     const lastSplitIndex = splitsWithImbalance.length - 1;
+    // Column indices: standard = 0:memo,1:account,2:debit,3:credit
+    // Investment = 0:memo,1:account,2:shares,3:price,4:buy,5:sell
+    const lastColIndex = isInvestmentAccount ? 5 : 3;
+    const debitColIndex = isInvestmentAccount ? 4 : 2;
+    const creditColIndex = isInvestmentAccount ? 5 : 3;
 
     return (
         <>
@@ -318,7 +328,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 onShiftTabToTransaction?.();
                                             } else {
                                                 onFocusedSplitChange?.(index - 1);
-                                                onColumnFocus?.(3);
+                                                onColumnFocus?.(lastColIndex);
                                             }
                                         }
                                     }}
@@ -336,8 +346,8 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onChange={(guid, name) => updateSplitAccount(index, guid, name)}
                                     autoFocus={focusedColumnIndex === 1}
                                     onFocus={() => onColumnFocus?.(1)}
-                                    onEnter={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(2)}
-                                    onTab={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(2)}
+                                    onEnter={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(isInvestmentAccount ? 2 : debitColIndex)}
+                                    onTab={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(isInvestmentAccount ? 2 : debitColIndex)}
                                     onShiftTab={() => onColumnFocus?.(0)}
                                     onArrowUp={() => {
                                         if (index === 0) {
@@ -361,24 +371,48 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                             )}
                         </td>
 
-                        {/* Investment: Shares column (read-only computed) */}
+                        {/* Investment: Shares column */}
                         {isInvestmentAccount && (
                             <td className="px-3 py-1.5 text-right">
-                                {!isPlaceholder && split.quantity_decimal !== undefined && split.value_decimal !== undefined && Math.abs(split.quantity_decimal) > 0.0001 && split.quantity_decimal !== split.value_decimal ? (
-                                    <span className={`text-xs font-mono ${split.quantity_decimal < 0 ? 'text-rose-400' : 'text-foreground-secondary'}`}>
-                                        {split.quantity_decimal < 0 ? `(${Math.abs(split.quantity_decimal).toFixed(4)})` : Math.abs(split.quantity_decimal).toFixed(4)}
+                                {isFocused && !isPlaceholder ? (
+                                    <AmountCell
+                                        value={split.shares}
+                                        onChange={v => updateSplit(index, 'shares' as keyof SplitState, v)}
+                                        autoFocus={focusedColumnIndex === 2}
+                                        onFocus={() => onColumnFocus?.(2)}
+                                        onEnter={() => onColumnFocus?.(3)}
+                                        onTab={() => onColumnFocus?.(3)}
+                                        onShiftTab={() => onColumnFocus?.(1)}
+                                        onArrowUp={() => { if (index === 0) onArrowUp?.(); else onFocusedSplitChange?.(index - 1); }}
+                                        onArrowDown={() => { if (index === lastSplitIndex) onArrowDownPastEnd?.(); else onFocusedSplitChange?.(index + 1); }}
+                                    />
+                                ) : (
+                                    <span className={`text-xs font-mono ${split.shares ? 'text-foreground-secondary' : ''}`}>
+                                        {split.shares || ''}
                                     </span>
-                                ) : null}
+                                )}
                             </td>
                         )}
-                        {/* Investment: Price column (read-only computed) */}
+                        {/* Investment: Price column */}
                         {isInvestmentAccount && (
                             <td className="px-3 py-1.5 text-right">
-                                {!isPlaceholder && split.quantity_decimal !== undefined && split.value_decimal !== undefined && Math.abs(split.quantity_decimal) > 0.0001 && split.quantity_decimal !== split.value_decimal ? (
+                                {isFocused && !isPlaceholder ? (
+                                    <AmountCell
+                                        value={split.price}
+                                        onChange={v => updateSplit(index, 'price' as keyof SplitState, v)}
+                                        autoFocus={focusedColumnIndex === 3}
+                                        onFocus={() => onColumnFocus?.(3)}
+                                        onEnter={() => onColumnFocus?.(4)}
+                                        onTab={() => onColumnFocus?.(4)}
+                                        onShiftTab={() => onColumnFocus?.(2)}
+                                        onArrowUp={() => { if (index === 0) onArrowUp?.(); else onFocusedSplitChange?.(index - 1); }}
+                                        onArrowDown={() => { if (index === lastSplitIndex) onArrowDownPastEnd?.(); else onFocusedSplitChange?.(index + 1); }}
+                                    />
+                                ) : (
                                     <span className="text-xs font-mono text-foreground-secondary">
-                                        {Math.abs(split.value_decimal / split.quantity_decimal).toFixed(2)}
+                                        {split.price || ''}
                                     </span>
-                                ) : null}
+                                )}
                             </td>
                         )}
                         {/* Debit/Buy column */}
@@ -387,11 +421,11 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                 <AmountCell
                                     value={split.debit}
                                     onChange={v => updateSplit(index, 'debit', v)}
-                                    autoFocus={focusedColumnIndex === 2}
-                                    onFocus={() => onColumnFocus?.(2)}
-                                    onEnter={() => onColumnFocus?.(3)}
-                                    onTab={() => onColumnFocus?.(3)}
-                                    onShiftTab={() => onColumnFocus?.(1)}
+                                    autoFocus={focusedColumnIndex === debitColIndex}
+                                    onFocus={() => onColumnFocus?.(debitColIndex)}
+                                    onEnter={() => onColumnFocus?.(creditColIndex)}
+                                    onTab={() => onColumnFocus?.(creditColIndex)}
+                                    onShiftTab={() => onColumnFocus?.(debitColIndex - 1)}
                                     onArrowUp={() => {
                                         if (index === 0) {
                                             onArrowUp?.();
@@ -414,15 +448,15 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                             )}
                         </td>
 
-                        {/* Credit column */}
+                        {/* Credit/Sell column */}
                         <td className="px-3 py-1.5 text-right">
                             {isFocused && !isPlaceholder ? (
                                 <AmountCell
                                     value={split.credit}
                                     onChange={v => updateSplit(index, 'credit', v)}
-                                    autoFocus={focusedColumnIndex === 3}
-                                    onFocus={() => onColumnFocus?.(3)}
-                                    onShiftTab={() => onColumnFocus?.(2)}
+                                    autoFocus={focusedColumnIndex === creditColIndex}
+                                    onFocus={() => onColumnFocus?.(creditColIndex)}
+                                    onShiftTab={() => onColumnFocus?.(debitColIndex)}
                                     onEnter={() => {
                                         // Enter from credit: move to next split's memo, or next transaction
                                         if (index === lastSplitIndex) {
