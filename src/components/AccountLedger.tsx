@@ -1087,7 +1087,9 @@ export default function AccountLedger({
             return;
         }
 
-        if (isEditMode) {
+        // In slim edit mode (journal/autosplit), arrow keys are handled by
+        // the isSlimEditMode block above or by component-level handlers (InvestmentEditRow)
+        if (isEditMode && !isSlimEditMode) {
             switch (e.key) {
                 case 'ArrowDown':
                 case 'j': {
@@ -1098,7 +1100,7 @@ export default function AccountLedger({
                         if (handle?.isDirty()) await handle.save();
                     }
                     setFocusedRowIndex(i => Math.min(i + 1, displayTransactions.length - 1));
-                    break;
+                    return;
                 }
                 case 'ArrowUp':
                 case 'k': {
@@ -1109,8 +1111,13 @@ export default function AccountLedger({
                         if (handle?.isDirty()) await handle.save();
                     }
                     setFocusedRowIndex(i => Math.max(i - 1, 0));
-                    break;
+                    return;
                 }
+            }
+        }
+
+        if (isEditMode) {
+            switch (e.key) {
                 case 'Enter': {
                     e.preventDefault();
                     if (focusedRowIndex >= 0) {
