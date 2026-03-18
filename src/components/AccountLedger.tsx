@@ -2374,7 +2374,9 @@ export default function AccountLedger({
                                             }))}
                                             currencyMnemonic={tx.commodity_mnemonic || 'USD'}
                                             columns={row.getVisibleCells().length}
-                                            trailingColumns={isInvestmentAccount ? (isEditMode ? 4 : 3) : undefined}
+                                            trailingColumns={isInvestmentAccount ? 2 : undefined}
+                                            isInvestmentAccount={isInvestmentAccount}
+                                            accountCurrency={accountCurrency}
                                         />
                                     )}
                                     </React.Fragment>
