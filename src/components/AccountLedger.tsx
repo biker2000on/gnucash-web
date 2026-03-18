@@ -1865,7 +1865,8 @@ export default function AccountLedger({
                                                 transaction={tx}
                                                 accountGuid={accountGuid}
                                                 columns={table.getVisibleFlatColumns().length}
-                                                trailingColumns={5}
+                                                trailingColumns={3}
+                                                isInvestmentAccount={true}
                                                 isActive={index === focusedRowIndex}
                                                 focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
                                                 focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}

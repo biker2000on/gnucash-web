@@ -15,6 +15,10 @@ interface SplitState {
     credit: string;
     reconcile_state: string;
     isPlaceholder?: boolean;
+    // Investment fields (read-only computed)
+    quantity_decimal?: number;
+    value_decimal?: number;
+    commodity_mnemonic?: string;
 }
 
 export interface EditableSplitRowsHandle {
@@ -47,13 +51,16 @@ interface EditableSplitRowsProps {
     onShiftTabToTransaction?: () => void; // Shift-tab from first split → transaction description
     /** Override trailing column count for investment accounts (default: 2 for balance + actions) */
     trailingColumns?: number;
+    /** If true, render investment-style columns: memo, account, shares, price, buy, sell */
+    isInvestmentAccount?: boolean;
 }
 
-function initSplitsFromTransaction(transaction: AccountTransaction): SplitState[] {
+function initSplitsFromTransaction(transaction: AccountTransaction, includeTrading = false): SplitState[] {
     const splits: SplitState[] = (transaction.splits || [])
-        .filter(s => !(s.account_fullname || s.account_name || '').startsWith('Trading:'))
+        .filter(s => includeTrading || !(s.account_fullname || s.account_name || '').startsWith('Trading:'))
         .map(s => {
             const val = parseFloat(String(s.value_decimal ?? 0));
+            const qty = parseFloat(String(s.quantity_decimal ?? 0));
             return {
                 guid: s.guid,
                 account_guid: s.account_guid,
@@ -62,6 +69,9 @@ function initSplitsFromTransaction(transaction: AccountTransaction): SplitState[
                 debit: val > 0 ? Math.abs(val).toFixed(2) : '',
                 credit: val < 0 ? Math.abs(val).toFixed(2) : '',
                 reconcile_state: s.reconcile_state || 'n',
+                quantity_decimal: qty,
+                value_decimal: val,
+                commodity_mnemonic: s.commodity_mnemonic || transaction.commodity_mnemonic || '',
             };
         });
     // Always append a placeholder
@@ -93,10 +103,11 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         onTabToNextTransaction,
         onShiftTabToTransaction,
         trailingColumns: trailingColumnsProp,
+        isInvestmentAccount,
     },
     ref
 ) {
-    const [splits, setSplits] = useState<SplitState[]>(() => initSplitsFromTransaction(transaction));
+    const [splits, setSplits] = useState<SplitState[]>(() => initSplitsFromTransaction(transaction, isInvestmentAccount));
     const originalRef = useRef<string>(JSON.stringify(splits.filter(s => !s.isPlaceholder)));
 
     // Re-init when transaction changes externally (after save)
@@ -104,7 +115,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
     useEffect(() => {
         if (transaction.guid !== txGuidRef.current) {
             txGuidRef.current = transaction.guid;
-            const newSplits = initSplitsFromTransaction(transaction);
+            const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount);
             setSplits(newSplits);
             originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
         }
@@ -118,7 +129,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         const newKey = (transaction.splits || []).map(s => `${s.guid}:${s.value_num}/${s.value_denom}`).join(',');
         if (newKey !== txSplitsKeyRef.current) {
             txSplitsKeyRef.current = newKey;
-            const newSplits = initSplitsFromTransaction(transaction);
+            const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount);
             setSplits(newSplits);
             originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
         }
@@ -234,18 +245,16 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                 });
         },
         revert() {
-            const reverted = initSplitsFromTransaction(transaction);
+            const reverted = initSplitsFromTransaction(transaction, isInvestmentAccount);
             setSplits(reverted);
         },
     }), [splits, transaction]);
 
-    // Column alignment: content is memo(description), account(transfer), debit, credit = 4
-    // Leading empty = columns before description: select(if present), reconcile, date
-    // Trailing empty = columns after credit: balance, actions(if present)
-    // We know leading should be: select + reconcile + date = 3 (edit mode always has select, never has expand in journal/autosplit)
-    // But to be safe, compute from known positions: description is the 4th content col from the right before trailing
-    const contentCols = 4; // memo, account, debit, credit
-    const trailingEmpty = trailingColumnsProp ?? 2; // default: balance + actions (edit mode always has actions column)
+    // Column alignment:
+    // Standard: memo(description), account(transfer), debit, credit = 4 content cols
+    // Investment: memo(description), account(transfer), shares, price, buy, sell = 6 content cols
+    const contentCols = isInvestmentAccount ? 6 : 4;
+    const trailingEmpty = trailingColumnsProp ?? 2;
     const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
     const actualTrailing = columns - leadingEmpty - contentCols;
 
@@ -352,7 +361,27 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                             )}
                         </td>
 
-                        {/* Debit column */}
+                        {/* Investment: Shares column (read-only computed) */}
+                        {isInvestmentAccount && (
+                            <td className="px-3 py-1.5 text-right">
+                                {!isPlaceholder && split.quantity_decimal !== undefined && split.value_decimal !== undefined && Math.abs(split.quantity_decimal) > 0.0001 && split.quantity_decimal !== split.value_decimal ? (
+                                    <span className={`text-xs font-mono ${split.quantity_decimal < 0 ? 'text-rose-400' : 'text-foreground-secondary'}`}>
+                                        {split.quantity_decimal < 0 ? `(${Math.abs(split.quantity_decimal).toFixed(4)})` : Math.abs(split.quantity_decimal).toFixed(4)}
+                                    </span>
+                                ) : null}
+                            </td>
+                        )}
+                        {/* Investment: Price column (read-only computed) */}
+                        {isInvestmentAccount && (
+                            <td className="px-3 py-1.5 text-right">
+                                {!isPlaceholder && split.quantity_decimal !== undefined && split.value_decimal !== undefined && Math.abs(split.quantity_decimal) > 0.0001 && split.quantity_decimal !== split.value_decimal ? (
+                                    <span className="text-xs font-mono text-foreground-secondary">
+                                        {Math.abs(split.value_decimal / split.quantity_decimal).toFixed(2)}
+                                    </span>
+                                ) : null}
+                            </td>
+                        )}
+                        {/* Debit/Buy column */}
                         <td className="px-3 py-1.5 text-right">
                             {isFocused && !isPlaceholder ? (
                                 <AmountCell
