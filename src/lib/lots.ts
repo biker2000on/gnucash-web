@@ -140,9 +140,13 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
     const oneYearMs = 365 * 24 * 60 * 60 * 1000;
 
     const summaries: LotSummary[] = lots.map((lot, index) => {
-        const isClosed = lot.is_closed === 1;
         const title = titleMap.get(lot.guid) || `Lot ${index + 1}`;
         const lotSplits = buildLotSplits(lot.splits);
+
+        // Total shares = sum of all split quantities
+        const computedShares = lotSplits.reduce((sum, s) => sum + s.shares, 0);
+        // Treat lots with ~0 remaining shares as effectively closed
+        const isClosed = lot.is_closed === 1 || (lotSplits.length > 0 && Math.abs(computedShares) < 0.0001);
 
         // Dates from sorted splits
         const openDate = lotSplits.length > 0 ? lotSplits[0].postDate : null;
@@ -150,8 +154,7 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             ? lotSplits[lotSplits.length - 1].postDate
             : null;
 
-        // Total shares = sum of all split quantities
-        const totalShares = lotSplits.reduce((sum, s) => sum + s.shares, 0);
+        const totalShares = computedShares;
 
         // Total cost = sum of values where quantity > 0 (buys)
         const totalCost = lotSplits

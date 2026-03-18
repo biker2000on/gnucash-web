@@ -106,8 +106,6 @@ export async function GET(request: NextRequest) {
             const lotTitleMap = new Map(lotTitleSlots.map(s => [s.obj_guid, s.string_val || '']));
 
             for (const lot of account.lots) {
-                if (!showClosed && lot.is_closed === 1) continue;
-
                 const splits = lot.splits;
                 if (splits.length === 0) continue;
 
@@ -126,24 +124,28 @@ export async function GET(request: NextRequest) {
                     }
                 }
 
+                // Treat lots with ~0 remaining shares as effectively closed
+                const isClosed = lot.is_closed === 1 || Math.abs(totalShares) < 0.0001;
+                if (!showClosed && isClosed) continue;
+
                 // Dates
                 const openDate = splits[0]?.transaction?.post_date
                     ? new Date(splits[0].transaction.post_date).toISOString().split('T')[0]
                     : null;
                 const lastSplitDate = splits[splits.length - 1]?.transaction?.post_date;
-                const closeDate = lot.is_closed === 1 && lastSplitDate
+                const closeDate = isClosed && lastSplitDate
                     ? new Date(lastSplitDate).toISOString().split('T')[0]
                     : null;
 
                 // Realized gain for closed lots: sum of all split values
-                const realizedGain = lot.is_closed === 1 ? totalValue : 0;
+                const realizedGain = isClosed ? totalValue : 0;
 
                 // Unrealized gain for open lots
-                const unrealizedGain = lot.is_closed !== 1 && currentPrice !== null && totalShares !== 0
+                const unrealizedGain = !isClosed && currentPrice !== null && totalShares !== 0
                     ? (currentPrice * totalShares) - buyCost
                     : null;
 
-                const marketValue = lot.is_closed !== 1 && currentPrice !== null
+                const marketValue = !isClosed && currentPrice !== null
                     ? currentPrice * totalShares
                     : null;
 
@@ -162,7 +164,7 @@ export async function GET(request: NextRequest) {
                 // Date filtering: skip lots opened after the end date,
                 // or closed lots that closed before the start date
                 if (endDate && openDate && openDate > endDate) continue;
-                if (startDate && lot.is_closed === 1 && closeDate && closeDate < startDate) continue;
+                if (startDate && isClosed && closeDate && closeDate < startDate) continue;
 
                 rows.push({
                     accountName,
@@ -170,7 +172,7 @@ export async function GET(request: NextRequest) {
                     commodityMnemonic,
                     lotTitle,
                     lotGuid: lot.guid,
-                    isClosed: lot.is_closed === 1,
+                    isClosed,
                     openDate,
                     closeDate,
                     shares: totalShares,
@@ -178,7 +180,7 @@ export async function GET(request: NextRequest) {
                     marketValue,
                     realizedGain,
                     unrealizedGain,
-                    totalGain: unrealizedGain !== null ? unrealizedGain : (lot.is_closed === 1 ? realizedGain : null),
+                    totalGain: unrealizedGain !== null ? unrealizedGain : (isClosed ? realizedGain : null),
                     holdingPeriod,
                     daysHeld,
                 });
