@@ -46,6 +46,8 @@ export async function GET(request: NextRequest) {
 
         const { searchParams } = new URL(request.url);
         const showClosed = searchParams.get('showClosed') === 'true';
+        const startDate = searchParams.get('startDate');
+        const endDate = searchParams.get('endDate');
         const bookAccountGuids = await getBookAccountGuids();
 
         // Find all investment accounts (STOCK, MUTUAL) in the active book
@@ -156,6 +158,11 @@ export async function GET(request: NextRequest) {
                 }
 
                 const lotTitle = lotTitleMap.get(lot.guid) || `Lot ${account.lots.indexOf(lot) + 1}`;
+
+                // Date filtering: skip lots opened after the end date,
+                // or closed lots that closed before the start date
+                if (endDate && openDate && openDate > endDate) continue;
+                if (startDate && lot.is_closed === 1 && closeDate && closeDate < startDate) continue;
 
                 rows.push({
                     accountName,

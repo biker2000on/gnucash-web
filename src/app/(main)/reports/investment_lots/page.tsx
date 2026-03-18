@@ -88,6 +88,8 @@ function InvestmentLotsContent() {
         try {
             const params = new URLSearchParams();
             if (showClosed) params.set('showClosed', 'true');
+            if (filters.startDate) params.set('startDate', filters.startDate);
+            if (filters.endDate) params.set('endDate', filters.endDate);
             const res = await fetch(`/api/reports/investment-lots?${params}`);
             if (!res.ok) throw new Error('Failed to fetch report');
             const data: InvestmentLotsReportData = await res.json();
@@ -97,7 +99,7 @@ function InvestmentLotsContent() {
         } finally {
             setIsLoading(false);
         }
-    }, [showClosed]);
+    }, [showClosed, filters.startDate, filters.endDate]);
 
     useEffect(() => { fetchReport(); }, [fetchReport]);
 
