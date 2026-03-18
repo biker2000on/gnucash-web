@@ -10,38 +10,31 @@ interface SplitDisplay {
   value_decimal: number;
   quantity_decimal: number;
   account_guid: string;
+  commodity_mnemonic?: string;
 }
 
 interface SplitRowsProps {
   splits: SplitDisplay[];
   currencyMnemonic: string;
   columns: number;
+  /** Number of trailing columns after the debit/credit content (balance, shareBalance, costBasis, actions, etc.) */
+  trailingColumns?: number;
 }
 
 // IMPORTANT: Pass ALL splits including the account's own split.
 // Do NOT filter out splits where account_guid === current account.
 
-export default function SplitRows({ splits, currencyMnemonic, columns }: SplitRowsProps) {
-  // Table layout: [select?] [expand?] [reconcile] [date] [description] [transfer] [debit] [credit] [balance] [actions?]
-  // Split rows need: empty cells up to and including date, then memo, account, debit, credit, empty balance, [empty actions?]
-  // Fixed columns from the right: balance(1) + credit(1) + debit(1) + transfer(1) + description(1) = 5
-  // Plus optional actions column. Leading empty cols = columns - 5 (description, transfer, debit, credit, balance) - trailing
-  // Simpler: we know the last 5 standard cols are description, transfer, debit, credit, balance.
-  // Leading columns (before description) = columns - 5 - (actions cols)
-  // But we don't know about actions here. Instead, calculate:
-  // leadingEmpty = all columns before "description" (reconcile, date, and optionally select/expand)
-  // trailingEmpty = balance column + optional actions
-  // middle = description(memo) + transfer(account) + debit + credit = 4
-  // leadingEmpty + 4 + trailingEmpty = columns
-  // trailingEmpty >= 1 (at least balance)
-  // leadingEmpty = columns - 4 - trailingEmpty
-  // We know trailing is either 1 (balance) or 2 (balance + actions)
-  // Safest: leadingEmpty = columns - 5, trailingEmpty = 1 ... but if actions present, leadingEmpty = columns - 6, trailingEmpty = 2
-  // Actually simplest approach: render leading empties = columns - 5, then 4 content cells, then 1 trailing empty
-  // If actions column exists, that's columns - 6 leading, 4 content, 2 trailing
-  // But we can just do: leadingEmpty cells + content + fill remaining with empty
+export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns }: SplitRowsProps) {
+  // Split rows render 4 content cells: memo (description col), account (transfer col), debit, credit.
+  // Leading empty cells fill columns before description (select, expand, reconcile, date, etc.).
+  // Trailing empty cells fill columns after credit (balance, shareBalance, costBasis, actions, etc.).
+  //
+  // For standard accounts: trailing = 1 (balance) or 2 (balance + actions)
+  // For investment accounts: trailing = 3+ (shareBalance, costBasis, [actions])
+  //
+  // The caller can override with trailingColumns prop for correct alignment.
   const contentCols = 4; // memo, account, debit, credit
-  const trailingEmpty = 1; // at least balance
+  const trailingEmpty = trailingColumns ?? 1;
   const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
   const actualTrailing = columns - leadingEmpty - contentCols;
 
@@ -67,11 +60,11 @@ export default function SplitRows({ splits, currencyMnemonic, columns }: SplitRo
             </td>
             {/* Debit */}
             <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
-              {isDebit ? formatCurrency(absValue, currencyMnemonic) : ''}
+              {isDebit ? formatCurrency(absValue, split.commodity_mnemonic || currencyMnemonic) : ''}
             </td>
             {/* Credit */}
             <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
-              {!isDebit && absValue > 0 ? formatCurrency(absValue, currencyMnemonic) : ''}
+              {!isDebit && absValue > 0 ? formatCurrency(absValue, split.commodity_mnemonic || currencyMnemonic) : ''}
             </td>
             {/* Empty trailing columns (balance, actions, etc.) */}
             {Array.from({ length: actualTrailing }, (_, i) => (

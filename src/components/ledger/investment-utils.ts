@@ -29,7 +29,7 @@ export interface InvestmentRowData {
     sellAmount: number | null;   // positive number or null
     shareBalance: number;        // from server-side computation
     costBasis: number;           // from server-side computation
-    transactionType: 'buy' | 'sell' | 'dividend' | 'other';
+    transactionType: 'buy' | 'sell' | 'dividend' | 'stock_split' | 'return_of_capital' | 'reinvested_dividend' | 'other';
 }
 
 export interface InvestmentApiResponse {
@@ -78,7 +78,7 @@ function findTransferSplit(splits: Split[], accountGuid: string): Split | undefi
 }
 
 /**
- * Determine the transaction type from the share quantity.
+ * Determine the transaction type from the share quantity (simple fallback).
  *
  * GnuCash sign convention for the stock account split:
  *  - Buy:  positive quantity (shares in), negative value (money out)
@@ -89,6 +89,114 @@ function classifyTransaction(shares: number): 'buy' | 'sell' | 'dividend' | 'oth
     if (shares > 0) return 'buy';
     if (shares < 0) return 'sell';
     return 'dividend';
+}
+
+// ── Account name pattern helpers ─────────────────────────────────────
+
+function isIncomeAccount(name: string): boolean {
+    return name.startsWith('Income:') || name === 'Income';
+}
+
+function isTradingAccount(name: string): boolean {
+    return name.startsWith('Trading:') || name === 'Trading';
+}
+
+function isExpenseAccount(name: string): boolean {
+    return name.startsWith('Expenses:') || name.startsWith('Expense:') || name === 'Expenses' || name === 'Expense';
+}
+
+function isCashLikeAccount(name: string): boolean {
+    // Not Trading, not Income, not Expense → likely a bank/cash/asset counterparty
+    return !isTradingAccount(name) && !isIncomeAccount(name) && !isExpenseAccount(name);
+}
+
+/**
+ * Enhanced investment transaction classifier that examines the full split
+ * array to distinguish between buys, sells, dividends, stock splits,
+ * reinvested dividends (DRIPs), and return of capital.
+ *
+ * Detection order (most specific first):
+ *  1. Stock split — shares changed, no cash movement
+ *  2. Reinvested dividend — shares added, income source, no cash outflow
+ *  3. Buy — shares added, cash outflow
+ *  4. Sell — shares removed, cash inflow
+ *  5. Return of capital — 0 shares, value present, income source
+ *  6. Dividend — 0 shares, income source, cash to bank
+ *  7. Other
+ */
+function classifyInvestmentTransaction(
+    shares: number,
+    value: number,
+    splits: Split[],
+    accountGuid: string,
+): InvestmentRowData['transactionType'] {
+    // Categorise the other splits (everything except the investment account itself)
+    const otherSplits = splits.filter(s => s.account_guid !== accountGuid);
+
+    const hasIncomeSplit = otherSplits.some(s => {
+        const name = s.account_fullname ?? s.account_name ?? '';
+        return isIncomeAccount(name);
+    });
+
+    const hasCashSplit = otherSplits.some(s => {
+        const name = s.account_fullname ?? s.account_name ?? '';
+        const val = Math.abs(parseFloat(s.value_decimal ?? '0'));
+        return isCashLikeAccount(name) && val > 0;
+    });
+
+    // Check if all other splits are either Trading accounts or have zero value
+    const allOtherAreTradingOrZero = otherSplits.every(s => {
+        const name = s.account_fullname ?? s.account_name ?? '';
+        const val = Math.abs(parseFloat(s.value_decimal ?? '0'));
+        return isTradingAccount(name) || val === 0;
+    });
+
+    const hasShares = shares !== 0;
+    const absValue = Math.abs(value);
+
+    // 1. Stock split: shares changed but no monetary movement
+    if (hasShares && allOtherAreTradingOrZero && otherSplits.length >= 0) {
+        // For a true stock split, there should be no real cash flow.
+        // Trading splits may exist for multi-currency but carry no economic value.
+        // Also check the investment split's own value is zero (pure quantity change).
+        if (absValue === 0 || (allOtherAreTradingOrZero && !hasCashSplit && !hasIncomeSplit)) {
+            return 'stock_split';
+        }
+    }
+
+    // 2. Reinvested dividend (DRIP): shares added, income source, no cash movement
+    if (shares > 0 && hasIncomeSplit && !hasCashSplit) {
+        return 'reinvested_dividend';
+    }
+
+    // 3. Buy: shares added, cash outflow
+    if (shares > 0 && hasCashSplit) {
+        return 'buy';
+    }
+
+    // 4. Sell: shares removed, cash inflow
+    if (shares < 0 && hasCashSplit) {
+        return 'sell';
+    }
+
+    // 5. Return of capital: zero shares, sell value present, income source
+    if (!hasShares && absValue > 0 && hasIncomeSplit) {
+        return 'return_of_capital';
+    }
+
+    // 6. Dividend: zero shares, income source, cash to bank
+    if (!hasShares && hasIncomeSplit && hasCashSplit) {
+        return 'dividend';
+    }
+
+    // 7. Fallback: use simple classifier for anything else
+    if (!hasShares) {
+        // Zero shares with cash but no income → could be fees, etc.
+        return hasCashSplit ? 'dividend' : 'other';
+    }
+
+    // Shares changed but doesn't match any known pattern
+    return shares > 0 ? 'buy' : 'sell';
 }
 
 /**
@@ -126,7 +234,7 @@ export function transformToInvestmentRow(
     const buyAmount = shares > 0 ? absValue : null;
     const sellAmount = shares < 0 ? absValue : null;
 
-    const transactionType = classifyTransaction(shares);
+    const transactionType = classifyInvestmentTransaction(shares, value, splits, accountGuid);
 
     // Transfer account info
     const transferSplit = findTransferSplit(splits, accountGuid);

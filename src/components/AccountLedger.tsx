@@ -32,6 +32,9 @@ import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import AccountPickerDialog from './AccountPickerDialog';
 import EditableSplitRows, { EditableSplitRowsHandle } from '@/components/ledger/EditableSplitRows';
 import { Modal } from '@/components/ui/Modal';
+import LotViewer from './ledger/LotViewer';
+import TransactionTypeIcon from './ledger/TransactionTypeIcon';
+import LotBadge from './ledger/LotBadge';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -134,6 +137,11 @@ export default function AccountLedger({
     const [imbalanceDialogTx, setImbalanceDialogTx] = useState<string | null>(null);
     const [imbalanceAmount, setImbalanceAmount] = useState<number>(0);
 
+    // Lots view state
+    const [showLotsView, setShowLotsView] = useState(false);
+    const [lotMap, setLotMap] = useState<Map<string, { index: number; isClosed: boolean; title: string; totalShares: number; totalCost: number; unrealizedGain: number | null; holdingPeriod: string | null }>>(new Map());
+    const [accountCostBasisMethod, setAccountCostBasisMethod] = useState<string | null>(null);
+
     const isSlimEditMode = isEditMode && (ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit');
 
     // View mode keyboard shortcuts
@@ -148,6 +156,39 @@ export default function AccountLedger({
             setEditModeInitialized(true);
         }
     }, [defaultLedgerMode, editModeInitialized]);
+
+    // Fetch lot data for investment accounts (for lot badges)
+    useEffect(() => {
+        if (!isInvestmentAccount) return;
+        fetch(`/api/accounts/${accountGuid}/lots`)
+            .then(res => res.json())
+            .then(data => {
+                const lots = Array.isArray(data) ? data : data.lots || [];
+                const map = new Map<string, { index: number; isClosed: boolean; title: string; totalShares: number; totalCost: number; unrealizedGain: number | null; holdingPeriod: string | null }>();
+                lots.forEach((lot: any, i: number) => {
+                    map.set(lot.guid, {
+                        index: i + 1,
+                        isClosed: lot.isClosed,
+                        title: lot.title,
+                        totalShares: lot.totalShares,
+                        totalCost: lot.totalCost,
+                        unrealizedGain: lot.unrealizedGain,
+                        holdingPeriod: lot.holdingPeriod,
+                    });
+                });
+                setLotMap(map);
+            })
+            .catch(() => {}); // Silently fail — lot badges are optional
+    }, [isInvestmentAccount, accountGuid]);
+
+    // Fetch per-account cost basis method preference
+    useEffect(() => {
+        if (!isInvestmentAccount) return;
+        fetch(`/api/accounts/${accountGuid}/preferences`)
+            .then(res => res.json())
+            .then(data => setAccountCostBasisMethod(data.cost_basis_method))
+            .catch(() => {});
+    }, [isInvestmentAccount, accountGuid]);
 
     // Debounce search text
     useEffect(() => {
@@ -1450,6 +1491,40 @@ export default function AccountLedger({
                         onToggleUnreviewed={() => setShowUnreviewedOnly(prev => !prev)}
                         hasSubaccounts={hasChildren}
                     />
+                    {isInvestmentAccount && (
+                        <button
+                            onClick={() => setShowLotsView(!showLotsView)}
+                            className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-colors ${
+                                showLotsView
+                                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                                    : 'border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover'
+                            }`}
+                        >
+                            Lots
+                        </button>
+                    )}
+                    {isInvestmentAccount && (
+                        <select
+                            value={accountCostBasisMethod || costBasisMethod}
+                            onChange={async (e) => {
+                                const method = e.target.value;
+                                setAccountCostBasisMethod(method);
+                                try {
+                                    await fetch(`/api/accounts/${accountGuid}/preferences`, {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ cost_basis_method: method }),
+                                    });
+                                } catch {}
+                            }}
+                            className="px-2 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-transparent text-foreground-muted hover:text-foreground transition-colors"
+                            title="Cost basis method for this account"
+                        >
+                            <option value="fifo">FIFO</option>
+                            <option value="lifo">LIFO</option>
+                            <option value="average">Average</option>
+                        </select>
+                    )}
                     <button
                         onClick={handleToggleEditMode}
                         className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors ${
@@ -1527,7 +1602,9 @@ export default function AccountLedger({
                 </div>
             </div>
 
-            {isMobile && isEditMode ? (
+            {showLotsView && isInvestmentAccount ? (
+                <LotViewer accountGuid={accountGuid} currencyMnemonic={accountCurrency} />
+            ) : isMobile && isEditMode ? (
                 <div className="p-8 text-center">
                     <p className="text-foreground-muted mb-4">Edit mode is not available on mobile. Use the + button to add transactions.</p>
                     <button onClick={handleToggleEditMode} className="px-4 py-2 text-sm border border-border text-foreground-secondary hover:text-foreground rounded-lg transition-colors">
@@ -1562,10 +1639,31 @@ export default function AccountLedger({
                                             {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                         </div>
                                         <div className="text-sm font-medium flex items-center gap-2">
+                                            <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
                                             {tx.description}
                                             {tx.source && tx.source !== 'manual' && (
                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
                                             )}
+                                            {(() => {
+                                                const mLotSplit = tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid);
+                                                const mLotInfo = mLotSplit?.lot_guid ? lotMap.get(mLotSplit.lot_guid) : null;
+                                                if (!mLotInfo || !mLotSplit?.lot_guid) return null;
+                                                return (
+                                                    <LotBadge
+                                                        lotGuid={mLotSplit.lot_guid}
+                                                        lotIndex={mLotInfo.index}
+                                                        isClosed={mLotInfo.isClosed}
+                                                        tooltip={{
+                                                            title: mLotInfo.title,
+                                                            shares: mLotInfo.totalShares,
+                                                            costBasis: mLotInfo.totalCost,
+                                                            unrealizedGain: mLotInfo.unrealizedGain,
+                                                            holdingPeriod: mLotInfo.holdingPeriod as any,
+                                                            currencyMnemonic: accountCurrency,
+                                                        }}
+                                                    />
+                                                );
+                                            })()}
                                         </div>
                                         <div className="text-xs text-foreground-muted">{invRow.transferAccount}</div>
                                     </div>
@@ -1591,6 +1689,15 @@ export default function AccountLedger({
                                     )}
                                     {invRow.transactionType === 'dividend' && (
                                         <span className="text-foreground-muted">Dividend</span>
+                                    )}
+                                    {invRow.transactionType === 'stock_split' && (
+                                        <span className="text-blue-400">Stock Split</span>
+                                    )}
+                                    {invRow.transactionType === 'reinvested_dividend' && (
+                                        <span className="text-cyan-400">DRIP</span>
+                                    )}
+                                    {invRow.transactionType === 'return_of_capital' && (
+                                        <span className="text-amber-400">Return of Capital</span>
                                     )}
                                     <span>Bal: {invRow.shareBalance.toFixed(4)}</span>
                                     <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
@@ -1985,14 +2092,35 @@ export default function AccountLedger({
                                             }
 
                                             if (colId === 'description') {
+                                                const descInvRow = isInvestmentAccount ? investmentRowMap?.get(tx.guid) : null;
+                                                const lotSplit = isInvestmentAccount ? tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid) : null;
+                                                const lotInfo = lotSplit?.lot_guid ? lotMap.get(lotSplit.lot_guid) : null;
                                                 return (
                                                     <td key={cell.id} className="px-4 py-2 text-sm text-foreground align-middle leading-tight">
                                                         <div className="flex items-center gap-2">
+                                                            {descInvRow && (
+                                                                <TransactionTypeIcon type={descInvRow.transactionType} className="mr-0.5" />
+                                                            )}
                                                             <span className="font-medium">{tx.description}</span>
                                                             {tx.source && tx.source !== 'manual' && (
                                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
                                                                     Imported
                                                                 </span>
+                                                            )}
+                                                            {lotInfo && lotSplit?.lot_guid && (
+                                                                <LotBadge
+                                                                    lotGuid={lotSplit.lot_guid}
+                                                                    lotIndex={lotInfo.index}
+                                                                    isClosed={lotInfo.isClosed}
+                                                                    tooltip={{
+                                                                        title: lotInfo.title,
+                                                                        shares: lotInfo.totalShares,
+                                                                        costBasis: lotInfo.totalCost,
+                                                                        unrealizedGain: lotInfo.unrealizedGain,
+                                                                        holdingPeriod: lotInfo.holdingPeriod as any,
+                                                                        currencyMnemonic: accountCurrency,
+                                                                    }}
+                                                                />
                                                             )}
                                                         </div>
                                                         {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
@@ -2022,8 +2150,8 @@ export default function AccountLedger({
                                                                         <span className="text-foreground-secondary whitespace-normal break-words">
                                                                             {formatDisplayAccountPath(split.account_fullname, split.account_name)}
                                                                         </span>
-                                                                        <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
-                                                                            {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                                                        <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                            {formatCurrency(split.value_decimal || split.quantity_decimal || '0', split.commodity_mnemonic || tx.commodity_mnemonic)}
                                                                         </span>
                                                                     </div>
                                                                 ))}
@@ -2050,8 +2178,8 @@ export default function AccountLedger({
                                                                             {formatDisplayAccountPath(split.account_fullname, split.account_name)}
                                                                         </span>
                                                                         {isExpanded && (
-                                                                            <span className={`font-mono ml-2 ${parseFloat(split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
-                                                                                {formatCurrency(split.quantity_decimal || '0', split.commodity_mnemonic)}
+                                                                            <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                                {formatCurrency(split.value_decimal || split.quantity_decimal || '0', split.commodity_mnemonic || tx.commodity_mnemonic)}
                                                                             </span>
                                                                         )}
                                                                     </div>
@@ -2184,9 +2312,11 @@ export default function AccountLedger({
                                                 value_decimal: s.value_decimal ? parseFloat(s.value_decimal) : (parseFloat(s.value_num?.toString() || '0') / parseFloat(s.value_denom?.toString() || '1')),
                                                 quantity_decimal: parseFloat(s.quantity_decimal || '0'),
                                                 account_guid: s.account_guid,
+                                                commodity_mnemonic: s.commodity_mnemonic || tx.commodity_mnemonic || 'USD',
                                             }))}
                                             currencyMnemonic={tx.commodity_mnemonic || 'USD'}
                                             columns={row.getVisibleCells().length}
+                                            trailingColumns={isInvestmentAccount ? (isEditMode ? 4 : 3) : undefined}
                                         />
                                     )}
                                     </React.Fragment>

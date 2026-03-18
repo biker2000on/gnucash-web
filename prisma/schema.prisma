@@ -515,3 +515,17 @@ model gnucash_web_tool_config {
 
   @@index([user_id, book_guid, tool_type])
 }
+
+model gnucash_web_account_preferences {
+  account_guid       String @id @db.VarChar(32)
+  cost_basis_method  String? @db.VarChar(20) // 'fifo', 'lifo', 'average'
+
+  @@map("gnucash_web_account_preferences")
+}
+
+model gnucash_web_transaction_types {
+  split_guid        String @id @db.VarChar(32)  // keyed by the account's split in the transaction
+  transaction_type  String @db.VarChar(30)       // 'buy', 'sell', 'dividend', 'stock_split', 'return_of_capital', 'reinvested_dividend', 'other'
+
+  @@map("gnucash_web_transaction_types")
+}

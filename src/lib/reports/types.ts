@@ -14,6 +14,7 @@ export enum ReportType {
   GENERAL_JOURNAL = 'general_journal',
   GENERAL_LEDGER = 'general_ledger',
   INVESTMENT_PORTFOLIO = 'investment_portfolio',
+  INVESTMENT_LOTS = 'investment_lots',
   RECONCILIATION = 'reconciliation',
   NET_WORTH_CHART = 'net_worth_chart',
   INCOME_EXPENSE_CHART = 'income_expense_chart',
@@ -244,6 +245,13 @@ export const REPORTS: ReportConfig[] = [
     name: 'Investment Portfolio',
     description: 'Holdings with market value, cost basis, and gain/loss',
     icon: 'trending',
+    category: 'investment',
+  },
+  {
+    type: ReportType.INVESTMENT_LOTS,
+    name: 'Investment Lots',
+    description: 'Lot-level detail with realized/unrealized gains and holding period classification',
+    icon: 'list',
     category: 'investment',
   },
   {

@@ -418,6 +418,20 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_tool_config_user_book ON gnucash_web_tool_config(user_id, book_guid, tool_type);
     `;
 
+    const accountPreferencesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_account_preferences (
+            account_guid VARCHAR(32) PRIMARY KEY,
+            cost_basis_method VARCHAR(20)
+        );
+    `;
+
+    const transactionTypesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_transaction_types (
+            split_guid VARCHAR(32) PRIMARY KEY,
+            transaction_type VARCHAR(30) NOT NULL
+        );
+    `;
+
     const toolConfigTriggerDDL = `
         DO $$
         BEGIN
@@ -455,6 +469,8 @@ async function createExtensionTables() {
         await query(simpleFinAccountMapAddBalanceDDL);
         await query(toolConfigTableDDL);
         await query(toolConfigTriggerDDL);
+        await query(accountPreferencesTableDDL);
+        await query(transactionTypesTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`
