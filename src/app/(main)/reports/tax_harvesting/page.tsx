@@ -55,11 +55,7 @@ export default function TaxHarvestingPage() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({
-        shortTermRate: (shortTermRate / 100).toString(),
-        longTermRate: (longTermRate / 100).toString(),
-      });
-      const res = await fetch(`/api/reports/tax-harvesting?${params}`);
+      const res = await fetch('/api/reports/tax-harvesting');
       if (!res.ok) throw new Error('Failed to fetch report');
       setData(await res.json());
     } catch (err) {
@@ -67,7 +63,7 @@ export default function TaxHarvestingPage() {
     } finally {
       setLoading(false);
     }
-  }, [shortTermRate, longTermRate]);
+  }, []); // No rate dependencies — rates applied client-side
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -139,7 +135,7 @@ export default function TaxHarvestingPage() {
             <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
               <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Projected Savings (ST)</div>
               <div className="text-lg font-bold font-mono text-emerald-400">
-                {formatCurrency(data.summary.totalProjectedSavingsShortTerm, 'USD')}
+                {formatCurrency(Math.abs(data.summary.totalHarvestableLoss) * (shortTermRate / 100), 'USD')}
               </div>
             </div>
             <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
@@ -210,9 +206,11 @@ export default function TaxHarvestingPage() {
                         </td>
                         <td className="px-4 py-3 text-right font-mono text-emerald-400">
                           {formatCurrency(
-                            c.holdingPeriod === 'long_term'
-                              ? c.projectedSavings.longTerm
-                              : c.projectedSavings.shortTerm,
+                            Math.abs(c.unrealizedLoss) * (
+                              c.holdingPeriod === 'long_term'
+                                ? longTermRate / 100
+                                : shortTermRate / 100
+                            ),
                             'USD'
                           )}
                         </td>
