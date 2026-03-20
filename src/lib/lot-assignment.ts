@@ -84,12 +84,13 @@ async function createLot(
   return guid;
 }
 
-async function assignFIFO(
+async function assignWithStrategy(
   accountGuid: string,
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  strategy: 'fifo' | 'lifo'
 ): Promise<AutoAssignResult> {
   const splits = await getUnassignedSplits(accountGuid, tx);
-  if (splits.length === 0) return { lotsCreated: 0, splitsAssigned: 0, method: 'fifo' };
+  if (splits.length === 0) return { lotsCreated: 0, splitsAssigned: 0, method: strategy };
 
   const buys = splits.filter(s => toDecimal(s.quantity_num, s.quantity_denom) > 0);
   const sells = splits.filter(s => toDecimal(s.quantity_num, s.quantity_denom) < 0);
@@ -134,8 +135,11 @@ async function assignFIFO(
     lotOrder.push(lotGuid);
   }
 
+  // FIFO searches forward (oldest first); LIFO searches backward (most recent first)
+  const searchOrder = strategy === 'lifo' ? [...lotOrder].reverse() : lotOrder;
+
   for (const sell of sells) {
-    const targetLotGuid = lotOrder.find(g => (lotShareMap.get(g) || 0) > 0.0001);
+    const targetLotGuid = searchOrder.find(g => (lotShareMap.get(g) || 0) > 0.0001);
     if (targetLotGuid) {
       await tx.splits.update({
         where: { guid: sell.guid },
@@ -157,87 +161,22 @@ async function assignFIFO(
   return {
     lotsCreated,
     splitsAssigned: splits.length,
-    method: 'fifo',
+    method: strategy,
   };
+}
+
+async function assignFIFO(
+  accountGuid: string,
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+): Promise<AutoAssignResult> {
+  return assignWithStrategy(accountGuid, tx, 'fifo');
 }
 
 async function assignLIFO(
   accountGuid: string,
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
 ): Promise<AutoAssignResult> {
-  const splits = await getUnassignedSplits(accountGuid, tx);
-  if (splits.length === 0) return { lotsCreated: 0, splitsAssigned: 0, method: 'lifo' };
-
-  const buys = splits.filter(s => toDecimal(s.quantity_num, s.quantity_denom) > 0);
-  const sells = splits.filter(s => toDecimal(s.quantity_num, s.quantity_denom) < 0);
-
-  buys.sort((a, b) => (a.post_date?.getTime() || 0) - (b.post_date?.getTime() || 0));
-
-  let lotsCreated = 0;
-
-  const existingLots = await tx.lots.findMany({
-    where: { account_guid: accountGuid, is_closed: 0 },
-    include: { splits: { select: { quantity_num: true, quantity_denom: true } } },
-  });
-
-  const lotShareMap = new Map<string, number>();
-  const lotOrder: string[] = [];
-
-  for (const lot of existingLots) {
-    const shares = lot.splits.reduce(
-      (sum, s) => sum + toDecimal(s.quantity_num, s.quantity_denom), 0
-    );
-    if (Math.abs(shares) > 0.0001) {
-      lotShareMap.set(lot.guid, shares);
-      lotOrder.push(lot.guid);
-    }
-  }
-
-  for (const buy of buys) {
-    const dateStr = buy.post_date
-      ? buy.post_date.toISOString().split('T')[0]
-      : 'Unknown';
-    const title = `Buy ${dateStr}`;
-    const lotGuid = await createLot(accountGuid, title, tx);
-    lotsCreated++;
-
-    await tx.splits.update({
-      where: { guid: buy.guid },
-      data: { lot_guid: lotGuid },
-    });
-
-    const qty = toDecimal(buy.quantity_num, buy.quantity_denom);
-    lotShareMap.set(lotGuid, qty);
-    lotOrder.push(lotGuid);
-  }
-
-  // LIFO: assign sells to MOST RECENT lot with remaining shares (reverse order)
-  for (const sell of sells) {
-    const reversedOrder = [...lotOrder].reverse();
-    const targetLotGuid = reversedOrder.find(g => (lotShareMap.get(g) || 0) > 0.0001);
-    if (targetLotGuid) {
-      await tx.splits.update({
-        where: { guid: sell.guid },
-        data: { lot_guid: targetLotGuid },
-      });
-      const sellQty = toDecimal(sell.quantity_num, sell.quantity_denom);
-      lotShareMap.set(targetLotGuid, (lotShareMap.get(targetLotGuid) || 0) + sellQty);
-    } else {
-      const lastLot = lotOrder[lotOrder.length - 1];
-      if (lastLot) {
-        await tx.splits.update({
-          where: { guid: sell.guid },
-          data: { lot_guid: lastLot },
-        });
-      }
-    }
-  }
-
-  return {
-    lotsCreated,
-    splitsAssigned: splits.length,
-    method: 'lifo',
-  };
+  return assignWithStrategy(accountGuid, tx, 'lifo');
 }
 
 async function assignAverage(
