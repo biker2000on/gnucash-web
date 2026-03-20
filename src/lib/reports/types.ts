@@ -18,6 +18,7 @@ export enum ReportType {
   RECONCILIATION = 'reconciliation',
   NET_WORTH_CHART = 'net_worth_chart',
   INCOME_EXPENSE_CHART = 'income_expense_chart',
+  TAX_HARVESTING = 'tax_harvesting',
 }
 
 export interface ReportConfig {
