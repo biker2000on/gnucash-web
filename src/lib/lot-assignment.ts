@@ -300,3 +300,159 @@ export async function clearLotAssignments(
     };
   });
 }
+
+export interface WashSaleResult {
+  splitGuid: string;
+  sellDate: string;
+  sellAccountGuid: string;
+  sellAccountName: string;
+  ticker: string;
+  shares: number;
+  loss: number;
+  washBuyDate: string;
+  washBuyAccountGuid: string;
+  washBuyAccountName: string;
+  daysApart: number;
+}
+
+/**
+ * Detect wash sales across all STOCK/MUTUAL accounts in the book.
+ *
+ * IRS wash sale rule: A loss is disallowed if you buy substantially identical
+ * securities within 30 days before or after the sale.
+ *
+ * This checks CROSS-ACCOUNT: if you sell AAPL at a loss in one account
+ * and buy AAPL in another account within the window, it's a wash sale.
+ */
+export async function detectWashSales(
+  bookAccountGuids: string[]
+): Promise<WashSaleResult[]> {
+  const investmentAccounts = await prisma.accounts.findMany({
+    where: {
+      guid: { in: bookAccountGuids },
+      account_type: { in: ['STOCK', 'MUTUAL'] },
+    },
+    select: {
+      guid: true,
+      name: true,
+      commodity_guid: true,
+      commodity: { select: { mnemonic: true } },
+    },
+  });
+
+  if (investmentAccounts.length === 0) return [];
+
+  const accountsByCommodity = new Map<string, typeof investmentAccounts>();
+  for (const acct of investmentAccounts) {
+    if (!acct.commodity_guid) continue;
+    const existing = accountsByCommodity.get(acct.commodity_guid) || [];
+    existing.push(acct);
+    accountsByCommodity.set(acct.commodity_guid, existing);
+  }
+
+  const washSales: WashSaleResult[] = [];
+  const WASH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+  for (const [commodityGuid, accounts] of accountsByCommodity) {
+    const accountGuids = accounts.map(a => a.guid);
+    const ticker = accounts[0].commodity?.mnemonic || 'Unknown';
+
+    const allSplits = await prisma.splits.findMany({
+      where: { account_guid: { in: accountGuids } },
+      include: {
+        transaction: { select: { post_date: true } },
+      },
+      orderBy: { transaction: { post_date: 'asc' } },
+    });
+
+    // Identify sells and buys
+    const buys = allSplits.filter(s =>
+      toDecimal(s.quantity_num, s.quantity_denom) > 0
+    );
+
+    // For sells, determine if they were at a loss using lot data or heuristic
+    const sells: Array<typeof allSplits[0] & { realizedLoss: number }> = [];
+
+    for (const s of allSplits) {
+      const qty = toDecimal(s.quantity_num, s.quantity_denom);
+      if (qty >= 0) continue; // Not a sell
+
+      const val = toDecimal(s.value_num, s.value_denom);
+
+      // If sell is assigned to a lot, check lot-level realized gain
+      if (s.lot_guid) {
+        const lot = await prisma.lots.findUnique({
+          where: { guid: s.lot_guid },
+          include: { splits: true },
+        });
+        if (lot) {
+          const totalValue = lot.splits.reduce(
+            (sum, ls) => sum + toDecimal(ls.value_num, ls.value_denom), 0
+          );
+          const totalQty = lot.splits.reduce(
+            (sum, ls) => sum + toDecimal(ls.quantity_num, ls.quantity_denom), 0
+          );
+          // Closed lot with negative total value = realized loss
+          if (Math.abs(totalQty) < 0.0001 && totalValue < 0) {
+            sells.push({ ...s, realizedLoss: totalValue });
+            continue;
+          }
+        }
+      }
+
+      // Fallback: compare sell proceeds per share against average buy cost per share
+      const accountBuys = buys.filter(b => b.account_guid === s.account_guid);
+      if (accountBuys.length > 0) {
+        const totalBuyQty = accountBuys.reduce(
+          (sum, b) => sum + toDecimal(b.quantity_num, b.quantity_denom), 0
+        );
+        const totalBuyCost = accountBuys.reduce(
+          (sum, b) => sum + Math.abs(toDecimal(b.value_num, b.value_denom)), 0
+        );
+        const avgCostPerShare = totalBuyQty > 0 ? totalBuyCost / totalBuyQty : 0;
+        const sellProceedsPerShare = Math.abs(val / qty);
+        if (sellProceedsPerShare < avgCostPerShare) {
+          const loss = (sellProceedsPerShare - avgCostPerShare) * Math.abs(qty);
+          sells.push({ ...s, realizedLoss: loss });
+        }
+      }
+    }
+
+    // Check each loss-sell for wash sale: any buy of same commodity within 30 days
+    for (const sell of sells) {
+      const sellDate = sell.transaction?.post_date;
+      if (!sellDate) continue;
+      const sellMs = sellDate.getTime();
+
+      for (const buy of buys) {
+        const buyDate = buy.transaction?.post_date;
+        if (!buyDate) continue;
+        const buyMs = buyDate.getTime();
+        const diff = Math.abs(buyMs - sellMs);
+
+        if (diff <= WASH_WINDOW_MS && buy.guid !== sell.guid) {
+          const sellAccount = accounts.find(a => a.guid === sell.account_guid);
+          const buyAccount = accounts.find(a => a.guid === buy.account_guid);
+          const daysApart = Math.round(diff / (24 * 60 * 60 * 1000));
+
+          washSales.push({
+            splitGuid: sell.guid,
+            sellDate: sellDate.toISOString(),
+            sellAccountGuid: sell.account_guid,
+            sellAccountName: sellAccount?.name || '',
+            ticker,
+            shares: Math.abs(toDecimal(sell.quantity_num, sell.quantity_denom)),
+            loss: sell.realizedLoss,
+            washBuyDate: buyDate.toISOString(),
+            washBuyAccountGuid: buy.account_guid,
+            washBuyAccountName: buyAccount?.name || '',
+            daysApart,
+          });
+          break; // One wash match per sell is enough
+        }
+      }
+    }
+  }
+
+  return washSales;
+}
