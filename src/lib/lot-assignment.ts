@@ -373,6 +373,16 @@ export async function detectWashSales(
     // For sells, determine if they were at a loss using lot data or heuristic
     const sells: Array<typeof allSplits[0] & { realizedLoss: number }> = [];
 
+    // Batch-fetch all lots referenced by splits to avoid N+1 queries
+    const lotGuids = [...new Set(allSplits.filter(s => s.lot_guid).map(s => s.lot_guid!))];
+    const lotsWithSplits = lotGuids.length > 0
+      ? await prisma.lots.findMany({
+          where: { guid: { in: lotGuids } },
+          include: { splits: true },
+        })
+      : [];
+    const lotMap = new Map(lotsWithSplits.map(l => [l.guid, l]));
+
     for (const s of allSplits) {
       const qty = toDecimal(s.quantity_num, s.quantity_denom);
       if (qty >= 0) continue; // Not a sell
@@ -381,10 +391,7 @@ export async function detectWashSales(
 
       // If sell is assigned to a lot, check lot-level realized gain
       if (s.lot_guid) {
-        const lot = await prisma.lots.findUnique({
-          where: { guid: s.lot_guid },
-          include: { splits: true },
-        });
+        const lot = lotMap.get(s.lot_guid);
         if (lot) {
           const totalValue = lot.splits.reduce(
             (sum, ls) => sum + toDecimal(ls.value_num, ls.value_denom), 0
