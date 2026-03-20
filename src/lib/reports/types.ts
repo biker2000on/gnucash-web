@@ -256,6 +256,13 @@ export const REPORTS: ReportConfig[] = [
     category: 'investment',
   },
   {
+    type: ReportType.TAX_HARVESTING,
+    name: 'Tax-Loss Harvesting',
+    description: 'Identify tax-loss harvesting opportunities and wash sale risks',
+    icon: 'scissors',
+    category: 'investment',
+  },
+  {
     type: ReportType.RECONCILIATION,
     name: 'Reconciliation Report',
     description: 'Reconciled, cleared, and uncleared transactions by account',
