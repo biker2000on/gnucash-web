@@ -179,7 +179,7 @@ export default function AccountLedger({
                 });
                 setLotMap(map);
             })
-            .catch(() => {}); // Silently fail — lot badges are optional
+            .catch((err) => { console.error('Failed to fetch lot data:', err); }); // Lot badges are optional, but log errors for debugging
     }, [isInvestmentAccount, accountGuid]);
 
     const refreshLotMap = () => {
@@ -201,7 +201,7 @@ export default function AccountLedger({
                 });
                 setLotMap(map);
             })
-            .catch(() => {});
+            .catch((err) => { console.error('Failed to refresh lot data:', err); });
     };
 
     const handleSplitLotAssign = async (splitGuid: string, lotGuid: string | null) => {
