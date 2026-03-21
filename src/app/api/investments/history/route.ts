@@ -86,18 +86,23 @@ export async function GET(request: NextRequest) {
     const allSplits: SplitWithDate[] = [];
     const cashFlowByDate = new Map<string, number>();
 
-    for (const account of filteredAccounts) {
-      const splits = await prisma.splits.findMany({
-        where: { account_guid: account.guid },
-        select: {
-          quantity_num: true,
-          quantity_denom: true,
-          value_num: true,
-          value_denom: true,
-          transaction: { select: { post_date: true } },
-        },
-      });
+    const splitsPerAccount = await Promise.all(
+      filteredAccounts.map(async (account) => {
+        const splits = await prisma.splits.findMany({
+          where: { account_guid: account.guid },
+          select: {
+            quantity_num: true,
+            quantity_denom: true,
+            value_num: true,
+            value_denom: true,
+            transaction: { select: { post_date: true } },
+          },
+        });
+        return { account, splits };
+      })
+    );
 
+    for (const { account, splits } of splitsPerAccount) {
       for (const split of splits) {
         if (!split.transaction.post_date) continue;
         allSplits.push({
@@ -137,23 +142,25 @@ export async function GET(request: NextRequest) {
     // Initialize forward-fill with latest prices BEFORE startDate for each commodity
     const latestPricesByCommodity = new Map<string, number>();
 
-    for (const commodityGuid of commodityGuids) {
-      const latestBefore = await prisma.prices.findFirst({
-        where: {
-          commodity_guid: commodityGuid as string,
-          date: { lt: startDate },
-        },
-        orderBy: { date: 'desc' },
-        select: { value_num: true, value_denom: true },
-      });
+    await Promise.all(
+      commodityGuids.map(async (commodityGuid) => {
+        const latestBefore = await prisma.prices.findFirst({
+          where: {
+            commodity_guid: commodityGuid as string,
+            date: { lt: startDate },
+          },
+          orderBy: { date: 'desc' },
+          select: { value_num: true, value_denom: true },
+        });
 
-      if (latestBefore) {
-        latestPricesByCommodity.set(
-          commodityGuid as string,
-          parseFloat(toDecimal(latestBefore.value_num, latestBefore.value_denom))
-        );
-      }
-    }
+        if (latestBefore) {
+          latestPricesByCommodity.set(
+            commodityGuid as string,
+            parseFloat(toDecimal(latestBefore.value_num, latestBefore.value_denom))
+          );
+        }
+      })
+    );
 
     // Build a map of commodity -> latest price by date
     const pricesByDateByCommodity = new Map<string, Map<string, number>>();

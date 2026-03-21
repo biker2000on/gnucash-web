@@ -174,10 +174,17 @@ export async function requireRole(minimumRole: Role): Promise<
     if (authResult instanceof NextResponse) return authResult;
 
     const { user, session } = authResult;
-    const bookGuid = session.activeBookGuid;
+    let bookGuid = session.activeBookGuid;
 
+    // If no active book in session, fall back to the first available book
     if (!bookGuid) {
-        return NextResponse.json({ error: 'No active book selected' }, { status: 400 });
+        const firstBook = await prisma.books.findFirst({ select: { guid: true } });
+        if (!firstBook) {
+            return NextResponse.json({ error: 'No active book selected' }, { status: 400 });
+        }
+        bookGuid = firstBook.guid;
+        session.activeBookGuid = bookGuid;
+        await session.save();
     }
 
     const userRole = await getUserRoleForBook(user.id, bookGuid);

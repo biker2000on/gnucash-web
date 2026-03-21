@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
+import AutoAssignDialog from './AutoAssignDialog';
 
 interface LotSplit {
     guid: string;
@@ -40,16 +41,19 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
     const [error, setError] = useState<string | null>(null);
     const [selectedLotGuid, setSelectedLotGuid] = useState<string | null>(null);
     const [showClosed, setShowClosed] = useState(false);
+    const [freeSplits, setFreeSplits] = useState<LotSplit[]>([]);
+    const [showAutoAssign, setShowAutoAssign] = useState(false);
 
     const fetchLots = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`/api/accounts/${accountGuid}/lots`);
+            const res = await fetch(`/api/accounts/${accountGuid}/lots?includeFreeSplits=true`);
             if (!res.ok) throw new Error('Failed to fetch lots');
             const data = await res.json();
             const lotList = Array.isArray(data) ? data : data.lots || [];
             setLots(lotList);
+            setFreeSplits(data.freeSplits || []);
             // Auto-select first open lot
             const firstOpen = lotList.find((l: LotSummary) => !l.isClosed);
             if (firstOpen) setSelectedLotGuid(firstOpen.guid);
@@ -111,6 +115,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
     }
 
     return (
+        <>
         <div className="flex flex-col lg:flex-row gap-4">
             {/* Left: Lot List */}
             <div className="lg:w-1/3 space-y-3">
@@ -142,6 +147,23 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                     >
                         {showClosed ? 'Hide' : 'Show'} {closedCount} closed lot{closedCount !== 1 ? 's' : ''}
                     </button>
+                )}
+
+                {/* Unlinked splits */}
+                {freeSplits.length > 0 && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-medium text-amber-400">
+                        {freeSplits.length} unlinked split{freeSplits.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowAutoAssign(true)}
+                      className="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded hover:bg-amber-500/30 transition-colors"
+                    >
+                      Auto-Assign
+                    </button>
+                  </div>
                 )}
 
                 {/* Lot Cards */}
@@ -332,5 +354,30 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                 )}
             </div>
         </div>
+
+        {showAutoAssign && (
+          <AutoAssignDialog
+            accountGuid={accountGuid}
+            freeSplitsCount={freeSplits.length}
+            currentMethod={null}
+            isOpen={showAutoAssign}
+            onClose={() => setShowAutoAssign(false)}
+            onAssign={async (method) => {
+              await fetch(`/api/accounts/${accountGuid}/lots/auto-assign`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ method }),
+              });
+              fetchLots();
+            }}
+            onClearAll={async () => {
+              await fetch(`/api/accounts/${accountGuid}/lots/clear-assign`, {
+                method: 'POST',
+              });
+              fetchLots();
+            }}
+          />
+        )}
+        </>
     );
 }

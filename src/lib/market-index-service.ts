@@ -325,39 +325,41 @@ export async function getIndexCoverage(): Promise<{
     '^RUT': 'Russell 2000',
   };
 
-  for (const [symbol, commodityGuid] of indexGuids) {
-    const count = await prisma.prices.count({
-      where: { commodity_guid: commodityGuid },
-    });
+  const indexResults = await Promise.all(
+    Array.from(indexGuids).map(async ([symbol, commodityGuid]) => {
+      const [count, earliestPrice, latestPrice] = await Promise.all([
+        prisma.prices.count({
+          where: { commodity_guid: commodityGuid },
+        }),
+        prisma.prices.findFirst({
+          where: { commodity_guid: commodityGuid },
+          orderBy: { date: 'asc' },
+          select: { date: true },
+        }),
+        prisma.prices.findFirst({
+          where: { commodity_guid: commodityGuid },
+          orderBy: { date: 'desc' },
+          select: { date: true },
+        }),
+      ]);
 
-    const earliestPrice = await prisma.prices.findFirst({
-      where: { commodity_guid: commodityGuid },
-      orderBy: { date: 'asc' },
-      select: { date: true },
-    });
+      const earliest = earliestPrice ? formatDateYMD(new Date(earliestPrice.date)) : null;
+      const latest = latestPrice ? formatDateYMD(new Date(latestPrice.date)) : null;
 
-    const latestPrice = await prisma.prices.findFirst({
-      where: { commodity_guid: commodityGuid },
-      orderBy: { date: 'desc' },
-      select: { date: true },
-    });
+      if (earliestTransaction && (!earliest || earliestTransaction < earliest)) {
+        isUpToDate = false;
+      }
 
-    const earliest = earliestPrice ? formatDateYMD(new Date(earliestPrice.date)) : null;
-    const latest = latestPrice ? formatDateYMD(new Date(latestPrice.date)) : null;
-
-    // Check if there's a gap to backfill
-    if (earliestTransaction && (!earliest || earliestTransaction < earliest)) {
-      isUpToDate = false;
-    }
-
-    indices.push({
-      symbol,
-      name: nameMap[symbol] || symbol,
-      count,
-      earliest,
-      latest,
-    });
-  }
+      return {
+        symbol,
+        name: nameMap[symbol] || symbol,
+        count,
+        earliest,
+        latest,
+      };
+    })
+  );
+  indices.push(...indexResults);
 
   return { earliestTransaction, indices, isUpToDate };
 }

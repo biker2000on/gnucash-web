@@ -18,6 +18,7 @@ export enum ReportType {
   RECONCILIATION = 'reconciliation',
   NET_WORTH_CHART = 'net_worth_chart',
   INCOME_EXPENSE_CHART = 'income_expense_chart',
+  TAX_HARVESTING = 'tax_harvesting',
 }
 
 export interface ReportConfig {
@@ -252,6 +253,13 @@ export const REPORTS: ReportConfig[] = [
     name: 'Investment Lots',
     description: 'Lot-level detail with realized/unrealized gains and holding period classification',
     icon: 'list',
+    category: 'investment',
+  },
+  {
+    type: ReportType.TAX_HARVESTING,
+    name: 'Tax-Loss Harvesting',
+    description: 'Identify tax-loss harvesting opportunities and wash sale risks',
+    icon: 'scissors',
     category: 'investment',
   },
   {

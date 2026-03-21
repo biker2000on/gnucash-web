@@ -517,8 +517,9 @@ model gnucash_web_tool_config {
 }
 
 model gnucash_web_account_preferences {
-  account_guid       String @id @db.VarChar(32)
-  cost_basis_method  String? @db.VarChar(20) // 'fifo', 'lifo', 'average'
+  account_guid          String  @id @db.VarChar(32)
+  cost_basis_method     String? @db.VarChar(20) // 'fifo', 'lifo', 'average'
+  lot_assignment_method String? @db.VarChar(20) // 'fifo', 'lifo', 'average'
 
   @@map("gnucash_web_account_preferences")
 }

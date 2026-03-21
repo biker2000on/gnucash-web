@@ -35,6 +35,7 @@ import { Modal } from '@/components/ui/Modal';
 import LotViewer from './ledger/LotViewer';
 import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
+import LotAssignmentPopover from './ledger/LotAssignmentPopover';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -178,8 +179,48 @@ export default function AccountLedger({
                 });
                 setLotMap(map);
             })
-            .catch(() => {}); // Silently fail — lot badges are optional
+            .catch((err) => { console.error('Failed to fetch lot data:', err); }); // Lot badges are optional, but log errors for debugging
     }, [isInvestmentAccount, accountGuid]);
+
+    const refreshLotMap = () => {
+        fetch(`/api/accounts/${accountGuid}/lots`)
+            .then(r => r.json())
+            .then(data => {
+                const lots = Array.isArray(data) ? data : data.lots || [];
+                const map = new Map<string, { index: number; isClosed: boolean; title: string; totalShares: number; totalCost: number; unrealizedGain: number | null; holdingPeriod: string | null }>();
+                lots.forEach((lot: any, i: number) => {
+                    map.set(lot.guid, {
+                        index: i + 1,
+                        isClosed: lot.isClosed,
+                        title: lot.title,
+                        totalShares: lot.totalShares,
+                        totalCost: lot.totalCost,
+                        unrealizedGain: lot.unrealizedGain,
+                        holdingPeriod: lot.holdingPeriod,
+                    });
+                });
+                setLotMap(map);
+            })
+            .catch((err) => { console.error('Failed to refresh lot data:', err); });
+    };
+
+    const handleSplitLotAssign = async (splitGuid: string, lotGuid: string | null) => {
+        await fetch(`/api/splits/${splitGuid}/lot`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lot_guid: lotGuid }),
+        });
+        refreshLotMap();
+    };
+
+    const handleSplitCreateAndAssign = async (splitGuid: string, title: string) => {
+        await fetch(`/api/splits/${splitGuid}/lot`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lot_guid: 'new', title }),
+        });
+        refreshLotMap();
+    };
 
     // Fetch per-account cost basis method preference
     useEffect(() => {
@@ -1653,22 +1694,40 @@ export default function AccountLedger({
                                             )}
                                             {(() => {
                                                 const mLotSplit = tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid);
+                                                const mAccountSplit = tx.splits?.find(s => s.account_guid === accountGuid);
                                                 const mLotInfo = mLotSplit?.lot_guid ? lotMap.get(mLotSplit.lot_guid) : null;
-                                                if (!mLotInfo || !mLotSplit?.lot_guid) return null;
                                                 return (
-                                                    <LotBadge
-                                                        lotGuid={mLotSplit.lot_guid}
-                                                        lotIndex={mLotInfo.index}
-                                                        isClosed={mLotInfo.isClosed}
-                                                        tooltip={{
-                                                            title: mLotInfo.title,
-                                                            shares: mLotInfo.totalShares,
-                                                            costBasis: mLotInfo.totalCost,
-                                                            unrealizedGain: mLotInfo.unrealizedGain,
-                                                            holdingPeriod: mLotInfo.holdingPeriod as any,
-                                                            currencyMnemonic: accountCurrency,
-                                                        }}
-                                                    />
+                                                    <>
+                                                        {mLotInfo && mLotSplit?.lot_guid && (
+                                                            <LotBadge
+                                                                lotGuid={mLotSplit.lot_guid}
+                                                                lotIndex={mLotInfo.index}
+                                                                isClosed={mLotInfo.isClosed}
+                                                                tooltip={{
+                                                                    title: mLotInfo.title,
+                                                                    shares: mLotInfo.totalShares,
+                                                                    costBasis: mLotInfo.totalCost,
+                                                                    unrealizedGain: mLotInfo.unrealizedGain,
+                                                                    holdingPeriod: mLotInfo.holdingPeriod as any,
+                                                                    currencyMnemonic: accountCurrency,
+                                                                }}
+                                                            />
+                                                        )}
+                                                        <LotAssignmentPopover
+                                                            splitGuid={mLotSplit?.guid || mAccountSplit?.guid || ''}
+                                                            currentLotGuid={mLotSplit?.lot_guid || null}
+                                                            accountGuid={accountGuid}
+                                                            lots={Array.from(lotMap.entries()).map(([guid, info]) => ({
+                                                                guid,
+                                                                title: info.title,
+                                                                totalShares: info.totalShares,
+                                                                isClosed: info.isClosed,
+                                                            }))}
+                                                            currencyMnemonic={accountCurrency}
+                                                            onAssign={handleSplitLotAssign}
+                                                            onCreateAndAssign={handleSplitCreateAndAssign}
+                                                        />
+                                                    </>
                                                 );
                                             })()}
                                         </div>
@@ -2153,6 +2212,7 @@ export default function AccountLedger({
                                             if (colId === 'description') {
                                                 const descInvRow = isInvestmentAccount ? investmentRowMap?.get(tx.guid) : null;
                                                 const lotSplit = isInvestmentAccount ? tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid) : null;
+                                                const accountSplit = isInvestmentAccount ? tx.splits?.find(s => s.account_guid === accountGuid) : null;
                                                 const lotInfo = lotSplit?.lot_guid ? lotMap.get(lotSplit.lot_guid) : null;
                                                 return (
                                                     <td key={cell.id} className="px-4 py-2 text-sm text-foreground align-middle leading-tight">
@@ -2179,6 +2239,22 @@ export default function AccountLedger({
                                                                         holdingPeriod: lotInfo.holdingPeriod as any,
                                                                         currencyMnemonic: accountCurrency,
                                                                     }}
+                                                                />
+                                                            )}
+                                                            {isInvestmentAccount && (
+                                                                <LotAssignmentPopover
+                                                                    splitGuid={lotSplit?.guid || accountSplit?.guid || ''}
+                                                                    currentLotGuid={lotSplit?.lot_guid || null}
+                                                                    accountGuid={accountGuid}
+                                                                    lots={Array.from(lotMap.entries()).map(([guid, info]) => ({
+                                                                        guid,
+                                                                        title: info.title,
+                                                                        totalShares: info.totalShares,
+                                                                        isClosed: info.isClosed,
+                                                                    }))}
+                                                                    currencyMnemonic={accountCurrency}
+                                                                    onAssign={handleSplitLotAssign}
+                                                                    onCreateAndAssign={handleSplitCreateAndAssign}
                                                                 />
                                                             )}
                                                         </div>
