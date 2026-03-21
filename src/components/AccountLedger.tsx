@@ -1600,7 +1600,7 @@ export default function AccountLedger({
                                     });
                                 } catch {}
                             }}
-                            className="px-2 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-transparent text-foreground-muted hover:text-foreground transition-colors"
+                            className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-background-secondary text-foreground hover:text-foreground transition-colors"
                             title="Cost basis method for this account"
                         >
                             <option value="fifo">FIFO</option>
