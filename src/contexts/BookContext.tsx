@@ -1,7 +1,6 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
 
 interface Book {
     guid: string;
@@ -22,7 +21,6 @@ interface BookContextType {
 const BookContext = createContext<BookContextType | null>(null);
 
 export function BookProvider({ children }: { children: ReactNode }) {
-    const router = useRouter();
     const [activeBookGuid, setActiveBookGuid] = useState<string | null>(null);
     const [books, setBooks] = useState<Book[]>([]);
     const [loading, setLoading] = useState(true);
@@ -60,13 +58,20 @@ export function BookProvider({ children }: { children: ReactNode }) {
                 body: JSON.stringify({ bookGuid: guid }),
             });
             if (res.ok) {
-                setActiveBookGuid(guid);
-                router.refresh();
+                // If on an account-specific ledger, redirect to account hierarchy
+                // since the account GUID belongs to the old book
+                const path = window.location.pathname;
+                if (/^\/accounts\/[^/]+/.test(path)) {
+                    window.location.href = '/accounts';
+                } else {
+                    // Full reload ensures all pages re-fetch data for the new book
+                    window.location.reload();
+                }
             }
         } catch (err) {
             console.error('Error switching book:', err);
         }
-    }, [router]);
+    }, []);
 
     const hasNoBooks = !loading && books.length === 0;
 

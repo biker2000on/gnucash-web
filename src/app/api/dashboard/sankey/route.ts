@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { getActiveBookRootGuid, getActiveBookGuid } from '@/lib/book-scope';
+import { getActiveBookRootGuid, getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import { cacheGet, cacheSet } from '@/lib/cache';
@@ -36,7 +36,8 @@ export async function GET(request: NextRequest) {
 
         const now = new Date();
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
-        const startDate = await getEffectiveStartDate(startDateParam);
+        const bookAccountGuids = await getBookAccountGuids();
+        const startDate = await getEffectiveStartDate(startDateParam, bookAccountGuids);
 
         const emptyResponse = {
             income: [],

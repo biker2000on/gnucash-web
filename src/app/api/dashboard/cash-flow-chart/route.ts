@@ -17,15 +17,15 @@ export async function GET(request: NextRequest) {
 
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : new Date();
 
+        // Get book account GUIDs for scoping
+        const bookAccountGuids = await getBookAccountGuids();
+
         let startDate: Date;
         if (startDateParam) {
             startDate = new Date(startDateParam + 'T00:00:00Z');
         } else {
-            startDate = await getEffectiveStartDate(null);
+            startDate = await getEffectiveStartDate(null, bookAccountGuids);
         }
-
-        // Get book account GUIDs for scoping
-        const bookAccountGuids = await getBookAccountGuids();
 
         // Fetch all accounts in active book
         const allAccounts = await prisma.accounts.findMany({

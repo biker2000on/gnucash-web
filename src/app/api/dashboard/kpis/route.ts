@@ -22,7 +22,10 @@ export async function GET(request: NextRequest) {
 
         const now = new Date();
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : now;
-        const startDate = await getEffectiveStartDate(startDateParam);
+
+        // Get book account GUIDs for scoping (needed for effective start date)
+        const bookAccountGuids = await getBookAccountGuids();
+        const startDate = await getEffectiveStartDate(startDateParam, bookAccountGuids);
 
         // Build cache key from book guid + metric + date params
         const bookGuid = await getActiveBookGuid();
@@ -35,9 +38,6 @@ export async function GET(request: NextRequest) {
         }
 
         // ========== NET WORTH CALCULATION ==========
-
-        // Get book account GUIDs for scoping
-        const bookAccountGuids = await getBookAccountGuids();
 
         // Fetch base currency once for all conversions
         const baseCurrency = await getBaseCurrency();

@@ -9,6 +9,7 @@ import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { useDateFilter } from '@/hooks/useDateFilter';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { useBooks } from '@/contexts/BookContext';
 import Link from 'next/link';
 
 interface AccountData {
@@ -39,6 +40,7 @@ function AccountPageContent() {
     const router = useRouter();
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
     const { balanceReversal } = useUserPreferences();
+    const { activeBookGuid } = useBooks();
     const handleEscapeBack = useCallback(() => {
         router.push(`/accounts?focus=${guid}`);
     }, [router, guid]);
@@ -57,10 +59,13 @@ function AccountPageContent() {
             try {
                 // Fetch account metadata
                 const accountRes = await fetch(`/api/accounts/${guid}/info`);
-                if (accountRes.ok) {
-                    const accountData = await accountRes.json();
-                    setAccount(accountData);
+                if (!accountRes.ok) {
+                    // Account doesn't belong to active book - redirect
+                    router.push('/accounts');
+                    return;
                 }
+                const accountData = await accountRes.json();
+                setAccount(accountData);
 
                 // Fetch transactions with date filter
                 const txParams = new URLSearchParams();
@@ -81,7 +86,7 @@ function AccountPageContent() {
         }
 
         fetchData();
-    }, [guid, startDate, endDate, isInitialized]);
+    }, [guid, startDate, endDate, isInitialized, activeBookGuid, router]);
 
     // Build breadcrumb path from the account hierarchy data
     const breadcrumbSegments: { name: string; guid: string }[] = [];

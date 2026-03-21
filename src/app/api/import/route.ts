@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { parseGnuCashXml } from '@/lib/gnucash-xml/parser';
 import { importGnuCashData } from '@/lib/gnucash-xml/importer';
 import { requireRole } from '@/lib/auth';
+import { grantRole } from '@/lib/services/permission.service';
 
 /**
  * POST /api/import
@@ -53,8 +54,20 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Derive a book name from the filename (strip extension)
+    const bookName = file.name
+      .replace(/\.(gnucash|xml|gz)$/gi, '')
+      .replace(/\.(gnucash|xml)$/gi, '') // handle .gnucash.gz double extension
+      .replace(/[_-]+/g, ' ')
+      .trim() || 'Imported Book';
+
     // Import the data
-    const summary = await importGnuCashData(data);
+    const summary = await importGnuCashData(data, bookName);
+
+    // Grant the importing user admin access to the new book
+    if (summary.bookGuid) {
+      await grantRole(roleResult.user.id, summary.bookGuid, 'admin', roleResult.user.id);
+    }
 
     return NextResponse.json({ success: true, summary });
   } catch (error) {

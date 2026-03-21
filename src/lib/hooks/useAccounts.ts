@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { Account, AccountWithChildren, AccountBalance } from '@/lib/types';
+import { useBooks } from '@/contexts/BookContext';
 
 interface UseAccountsOptions {
     flat?: boolean;
@@ -36,10 +37,11 @@ export function useAccounts(options?: UseAccountsOptions) {
     const flat = options?.flat ?? true;
     const startDate = options?.startDate;
     const endDate = options?.endDate;
+    const { activeBookGuid } = useBooks();
 
-    // Query 1: Static hierarchy (cached indefinitely)
+    // Query 1: Static hierarchy (cached per book)
     const hierarchyQuery = useQuery({
-        queryKey: ['accounts', 'hierarchy', { flat }],
+        queryKey: ['accounts', 'hierarchy', { flat, bookGuid: activeBookGuid }],
         queryFn: async () => {
             const params = new URLSearchParams();
             params.set('flat', String(flat));
@@ -54,7 +56,7 @@ export function useAccounts(options?: UseAccountsOptions) {
 
     // Query 2: Dynamic balances (refetch on date change)
     const balancesQuery = useQuery({
-        queryKey: ['accounts', 'balances', { startDate, endDate }],
+        queryKey: ['accounts', 'balances', { startDate, endDate, bookGuid: activeBookGuid }],
         queryFn: async () => {
             const params = new URLSearchParams();
             if (startDate) params.set('startDate', startDate);

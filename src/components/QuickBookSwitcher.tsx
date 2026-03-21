@@ -36,7 +36,18 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
     }
   }, [onClose, activeBookGuid, switchBook])
 
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Focus the container when opened
+  useEffect(() => {
+    if (isOpen) {
+      requestAnimationFrame(() => containerRef.current?.focus())
+    }
+  }, [isOpen])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Stop propagation so window-level listeners (e.g. AccountHierarchy) don't fire
+    e.stopPropagation()
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
@@ -62,7 +73,7 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
   if (!isOpen || books.length === 0) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-[15vh]" onKeyDown={handleKeyDown} tabIndex={-1} ref={el => el?.focus()}>
+    <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-[15vh]" onKeyDown={handleKeyDown} tabIndex={-1} ref={containerRef}>
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
@@ -88,7 +99,7 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
               onClick={() => handleSelect(book.guid)}
               className={`flex items-center gap-3 w-full px-4 py-3 text-left transition-colors ${
                 index === selectedIndex
-                  ? 'bg-accent-primary/15 text-foreground'
+                  ? 'bg-emerald-500/20 text-foreground ring-1 ring-inset ring-emerald-500/30'
                   : 'text-foreground-secondary hover:bg-surface-hover'
               }`}
             >

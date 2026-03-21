@@ -430,10 +430,12 @@ export default function AccountLedger({
         original_enter_date?: string;
     }) => {
         try {
-            // Build a PUT request to update the transaction
-            // We need to find the current transaction to get the currency_guid
             const tx = transactions.find(t => t.guid === guid);
             if (!tx) return;
+
+            // Detect new (unsaved) transaction: no currency_guid means it was created inline
+            const isNewTransaction = !tx.currency_guid;
+            const currencyGuid = tx.currency_guid || accountCommodityGuid || '';
 
             const signedAmount = parseFloat(data.amount);
             const absAmount = Math.abs(signedAmount);
@@ -442,7 +444,7 @@ export default function AccountLedger({
             const { num: negValueNum, denom: negValueDenom } = toNumDenom(-absAmount);
 
             const body: Record<string, unknown> = {
-                currency_guid: tx.currency_guid,
+                currency_guid: currencyGuid,
                 post_date: data.post_date,
                 description: data.description,
                 splits: [
@@ -465,51 +467,70 @@ export default function AccountLedger({
                 ],
             };
 
-            if (data.original_enter_date) {
-                body.original_enter_date = data.original_enter_date;
+            let res: Response;
+            if (isNewTransaction) {
+                // POST to create new transaction
+                res = await fetch('/api/transactions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } else {
+                // PUT to update existing transaction
+                if (data.original_enter_date) {
+                    body.original_enter_date = data.original_enter_date;
+                }
+
+                res = await fetch(`/api/transactions/${guid}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                if (res.status === 409) {
+                    error('Transaction was modified by another user. Refreshing...');
+                    await fetchTransactions();
+                    setEditingGuid(null);
+                    return;
+                }
             }
 
-            const res = await fetch(`/api/transactions/${guid}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-
-            if (res.status === 409) {
-                error('Transaction was modified by another user. Refreshing...');
-                await fetchTransactions();
-                setEditingGuid(null);
-                return;
+            if (!res.ok) {
+                const errData = await res.json().catch(() => null);
+                throw new Error(errData?.error || errData?.errors?.map((e: { message: string }) => e.message).join(', ') || 'Failed to save');
             }
 
-            if (!res.ok) throw new Error('Failed to update');
-
-            success('Transaction updated');
+            success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             if (isEditMode) {
-                // Update local state without refetching to preserve row order
-                setTransactions(prev => prev.map(t => {
-                    if (t.guid !== guid) return t;
-                    const updatedSplits = t.splits?.map(s => {
-                        if (s.account_guid === accountGuid) return s;
-                        return { ...s, account_guid: data.accountGuid, account_name: data.accountName };
-                    });
-                    return {
-                        ...t,
-                        post_date: new Date(data.post_date + 'T12:00:00Z') as unknown as Date,
-                        description: data.description,
-                        account_split_value: data.amount,
-                        splits: updatedSplits,
-                    };
-                }));
+                if (isNewTransaction) {
+                    // Refetch to get the server-assigned guid and proper data
+                    await fetchTransactions();
+                } else {
+                    // Update local state without refetching to preserve row order
+                    setTransactions(prev => prev.map(t => {
+                        if (t.guid !== guid) return t;
+                        const updatedSplits = t.splits?.map(s => {
+                            if (s.account_guid === accountGuid) return s;
+                            return { ...s, account_guid: data.accountGuid, account_name: data.accountName };
+                        });
+                        return {
+                            ...t,
+                            post_date: new Date(data.post_date + 'T12:00:00Z') as unknown as Date,
+                            description: data.description,
+                            account_split_value: data.amount,
+                            splits: updatedSplits,
+                        };
+                    }));
+                }
             } else {
                 setEditingGuid(null);
                 await fetchTransactions();
             }
         } catch (err) {
             console.error('Inline save failed:', err);
-            error('Failed to update transaction');
+            error(err instanceof Error && err.message !== 'Failed to save' ? err.message : 'Failed to save transaction');
         }
-    }, [transactions, accountGuid, fetchTransactions, success, error, isEditMode]);
+    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode]);
 
     // Journal/autosplit save orchestration (combines EditableRow + EditableSplitRows)
     const handleJournalSave = useCallback(async (txGuid: string): Promise<boolean> => {
@@ -626,13 +647,16 @@ export default function AccountLedger({
                 return;
             }
 
-            if (!res.ok) throw new Error('Failed to update');
+            if (!res.ok) {
+                const errData = await res.json().catch(() => null);
+                throw new Error(errData?.error || errData?.errors?.map((e: { message: string }) => e.message).join(', ') || 'Failed to update');
+            }
 
             success('Transaction updated');
             await fetchTransactions();
         } catch (err) {
             console.error('Investment inline save failed:', err);
-            error('Failed to update transaction');
+            error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
     }, [transactions, accountGuid, fetchTransactions, success, error]);
@@ -1386,11 +1410,18 @@ export default function AccountLedger({
         }
     }, [isEditMode, displayTransactions.length, focusedRowIndex]);
 
-    // Reset when initialTransactions change (e.g., date filter changed)
+    // Reset when initialTransactions change (e.g., date filter changed or book switched)
     useEffect(() => {
-        setTransactions(initialTransactions);
-        setOffset(initialTransactions.length);
-        setHasMore(initialTransactions.length >= 100);
+        // Deduplicate by guid to prevent double-render artifacts
+        const seen = new Set<string>();
+        const deduped = initialTransactions.filter(tx => {
+            if (seen.has(tx.guid)) return false;
+            seen.add(tx.guid);
+            return true;
+        });
+        setTransactions(deduped);
+        setOffset(deduped.length);
+        setHasMore(deduped.length >= 100);
     }, [initialTransactions]);
 
     // Reset and re-fetch when unreviewed filter or sub-accounts toggle changes
@@ -1439,7 +1470,11 @@ export default function AccountLedger({
             if (data.length === 0) {
                 setHasMore(false);
             } else {
-                setTransactions(prev => [...prev, ...data]);
+                setTransactions(prev => {
+                    const existingGuids = new Set(prev.map(tx => tx.guid));
+                    const newTxs = data.filter((tx: AccountTransaction) => !existingGuids.has(tx.guid));
+                    return newTxs.length > 0 ? [...prev, ...newTxs] : prev;
+                });
                 setOffset(prev => prev + data.length);
                 if (data.length < 100) setHasMore(false);
             }

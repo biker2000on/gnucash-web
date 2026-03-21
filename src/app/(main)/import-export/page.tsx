@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { ImportPreview } from '@/components/ImportPreview';
+import { useBooks } from '@/contexts/BookContext';
 
 interface PreviewData {
   commodities: number;
@@ -25,6 +26,8 @@ interface ImportResult {
 }
 
 export default function ImportExportPage() {
+  const { refreshBooks } = useBooks();
+
   // Import state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -128,12 +131,14 @@ export default function ImportExportPage() {
       const data = await res.json();
       setImportResult(data.summary);
       setPreviewData(null);
+      // Refresh book switcher so the newly imported book appears
+      await refreshBooks();
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Import failed');
     } finally {
       setImporting(false);
     }
-  }, [selectedFile]);
+  }, [selectedFile, refreshBooks]);
 
   const handleCancelPreview = useCallback(() => {
     setPreviewData(null);
@@ -157,7 +162,7 @@ export default function ImportExportPage() {
       a.href = url;
       const disposition = res.headers.get('Content-Disposition');
       const filenameMatch = disposition?.match(/filename="(.+)"/);
-      a.download = filenameMatch?.[1] || 'export.gnucash.gz';
+      a.download = filenameMatch?.[1] || 'export.gnucash';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

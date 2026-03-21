@@ -820,8 +820,12 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     // Keyboard navigation handler
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            const tag = (e.target as HTMLElement)?.tagName;
+            const target = e.target as HTMLElement;
+            const tag = target?.tagName;
             const isInInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+            // Don't handle keys when focus is inside a popover/dropdown (e.g. BookSwitcher)
+            if (target?.closest?.('[data-popover]')) return;
 
             // Handle Esc in filter input: clear text first, then blur
             if (isInInput && e.key === 'Escape' && e.target === filterInputRef.current) {
