@@ -326,7 +326,7 @@ export async function getIndexCoverage(): Promise<{
   };
 
   const indexResults = await Promise.all(
-    indexGuids.map(async ([symbol, commodityGuid]) => {
+    Array.from(indexGuids).map(async ([symbol, commodityGuid]) => {
       const [count, earliestPrice, latestPrice] = await Promise.all([
         prisma.prices.count({
           where: { commodity_guid: commodityGuid },
