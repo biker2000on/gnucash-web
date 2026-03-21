@@ -48,9 +48,9 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
             sessionStorage.setItem(LOGIN_INSTALL_PENDING_KEY, 'true');
             window.dispatchEvent(new Event(INSTALL_STATE_CHANGE_EVENT));
 
-            // Redirect to original page (or default) on success
-            router.push(redirectTo);
-            router.refresh();
+            // Hard redirect to ensure the session cookie is fully committed
+            // before any useEffect hooks fire API calls on the destination page
+            window.location.href = redirectTo;
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
         } finally {
