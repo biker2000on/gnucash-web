@@ -59,11 +59,23 @@ interface Book {
 export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
     const { activeBookGuid, books, switchBook, refreshBooks, loading } = useBooks();
     const [open, setOpen] = useState(false);
+    const [highlightedIndex, setHighlightedIndex] = useState(0);
     const [wizardOpen, setWizardOpen] = useState(false);
     const [editingBook, setEditingBook] = useState<Book | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
 
     const activeBook = books.find(b => b.guid === activeBookGuid);
+
+    // Reset highlighted index to active book when opening
+    useEffect(() => {
+        if (open) {
+            const activeIndex = books.findIndex(b => b.guid === activeBookGuid);
+            setHighlightedIndex(activeIndex >= 0 ? activeIndex : 0);
+            // Focus the list container for keyboard events
+            requestAnimationFrame(() => listRef.current?.focus());
+        }
+    }, [open, books, activeBookGuid]);
 
     // Close dropdown on click outside
     useEffect(() => {
@@ -75,6 +87,40 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    // Keyboard navigation for the dropdown
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (!open) return;
+        switch (e.key) {
+            case 'ArrowDown':
+                e.preventDefault();
+                e.stopPropagation();
+                setHighlightedIndex(i => Math.min(i + 1, books.length - 1));
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                e.stopPropagation();
+                setHighlightedIndex(i => Math.max(i - 1, 0));
+                break;
+            case 'Enter': {
+                e.preventDefault();
+                e.stopPropagation();
+                const book = books[highlightedIndex];
+                if (book) {
+                    if (book.guid !== activeBookGuid) {
+                        switchBook(book.guid);
+                    }
+                    setOpen(false);
+                }
+                break;
+            }
+            case 'Escape':
+                e.preventDefault();
+                e.stopPropagation();
+                setOpen(false);
+                break;
+        }
+    };
 
     if (loading) {
         return null;
@@ -105,17 +151,24 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
             </button>
 
             {open && (
-                <div className={`absolute z-50 mt-1 bg-surface-elevated border border-border rounded-xl shadow-lg overflow-hidden
+                <div
+                    ref={listRef}
+                    tabIndex={-1}
+                    onKeyDown={handleKeyDown}
+                    data-popover
+                    className={`absolute z-50 mt-1 bg-surface-elevated border border-border rounded-xl shadow-lg overflow-hidden outline-none
                     ${collapsed ? 'left-full ml-2 top-0 w-max min-w-56 max-w-80' : 'left-0 w-max min-w-full max-w-80'}`}
                 >
                     <div className="py-1 max-h-64 overflow-y-auto">
-                        {books.map(book => (
+                        {books.map((book, index) => (
                             <div
                                 key={book.guid}
                                 className={`flex items-center w-full transition-colors
-                                    ${book.guid === activeBookGuid
-                                        ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
-                                        : 'text-foreground-secondary hover:bg-surface-hover'
+                                    ${index === highlightedIndex
+                                        ? 'bg-emerald-500/20 text-foreground'
+                                        : book.guid === activeBookGuid
+                                            ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
+                                            : 'text-foreground-secondary hover:bg-surface-hover'
                                     }`}
                             >
                                 <button
@@ -125,6 +178,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                         }
                                         setOpen(false);
                                     }}
+                                    onMouseEnter={() => setHighlightedIndex(index)}
                                     className="flex-1 flex items-start gap-2 px-3 py-2 text-sm text-left"
                                 >
                                     <div className="flex-1 min-w-0">

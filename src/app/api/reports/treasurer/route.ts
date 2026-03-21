@@ -242,7 +242,7 @@ export async function GET(request: NextRequest) {
         const baseCurrency = await getBaseCurrency();
         const baseCurrencyGuid = baseCurrency?.guid || '';
 
-        const startDate = await getEffectiveStartDate(searchParams.get('startDate'));
+        const startDate = await getEffectiveStartDate(searchParams.get('startDate'), bookAccountGuids);
         const endDate = searchParams.get('endDate')
             ? new Date(searchParams.get('endDate')! + 'T23:59:59Z')
             : new Date();

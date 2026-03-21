@@ -94,4 +94,5 @@ export interface ImportSummary {
   budgetAmounts: number;
   skipped: string[];
   warnings: string[];
+  bookGuid?: string;
 }

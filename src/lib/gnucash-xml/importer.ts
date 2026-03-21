@@ -80,7 +80,7 @@ function topologicalSortAccounts(
 /**
  * Import parsed GnuCash XML data into the database.
  */
-export async function importGnuCashData(data: GnuCashXmlData): Promise<ImportSummary> {
+export async function importGnuCashData(data: GnuCashXmlData, bookName?: string): Promise<ImportSummary> {
   const summary: ImportSummary = {
     commodities: 0,
     accounts: 0,
@@ -92,6 +92,8 @@ export async function importGnuCashData(data: GnuCashXmlData): Promise<ImportSum
     skipped: [],
     warnings: [],
   };
+
+  let createdBookGuid = '';
 
   await prisma.$transaction(async (tx) => {
     // 1. Create/find commodities
@@ -162,6 +164,7 @@ export async function importGnuCashData(data: GnuCashXmlData): Promise<ImportSum
     }
 
     const bookGuid = data.book?.id || generateGuid();
+    createdBookGuid = bookGuid;
     const rootAccountGuid = generateGuid();
 
     // Create the root account
@@ -185,6 +188,7 @@ export async function importGnuCashData(data: GnuCashXmlData): Promise<ImportSum
         guid: bookGuid,
         root_account_guid: rootAccountGuid,
         root_template_guid: rootAccountGuid,
+        name: bookName || 'Imported Book',
       },
     });
 
@@ -389,5 +393,6 @@ export async function importGnuCashData(data: GnuCashXmlData): Promise<ImportSum
     }
   });
 
+  summary.bookGuid = createdBookGuid;
   return summary;
 }
