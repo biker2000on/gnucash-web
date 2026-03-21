@@ -8,9 +8,11 @@ export async function GET() {
     const roleResult = await requireRole('admin');
     if (roleResult instanceof NextResponse) return roleResult;
 
-    const enabled = await getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false);
-    const intervalHours = await getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24);
-    const refreshTime = await getPreference<string>(roleResult.user.id, 'refresh_time', '21:00');
+    const [enabled, intervalHours, refreshTime] = await Promise.all([
+      getPreference<boolean | string>(roleResult.user.id, 'refresh_enabled', false),
+      getPreference<number | string>(roleResult.user.id, 'refresh_interval_hours', 24),
+      getPreference<string>(roleResult.user.id, 'refresh_time', '21:00'),
+    ]);
 
     return NextResponse.json({
       enabled: enabled === true || enabled === 'true',
