@@ -9,7 +9,7 @@
  */
 
 import prisma from './prisma';
-import { toDecimal as toDecimalString } from './gnucash';
+import { toDecimalNumber } from './gnucash';
 
 export type CostBasisMethod = 'fifo' | 'lifo' | 'average';
 
@@ -25,14 +25,6 @@ export interface CostBasisResult {
   perShareCost: number;
   method: CostBasisMethod;
   tracedFromAccount?: string; // Source account name if traced
-}
-
-/**
- * Convert GnuCash fraction to a number (local helper)
- */
-function toDecimal(num: bigint | number | string | null, denom: bigint | number | string | null): number {
-  if (num === null || denom === null) return 0;
-  return parseFloat(toDecimalString(num, denom));
 }
 
 /**
@@ -67,7 +59,7 @@ export function isTransferIn(
   allSplits: Array<{ quantity_num: bigint; quantity_denom: bigint; account_guid: string; account?: { commodity_guid?: string | null; account_type?: string | null; name?: string | null } | null }>,
   accountCommodityGuid: string
 ): boolean {
-  const qty = toDecimal(split.quantity_num, split.quantity_denom);
+  const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
   if (qty <= 0) return false; // Only care about receiving shares
 
   // Check if there's a matching split sending shares from another account
@@ -78,7 +70,7 @@ export function isTransferIn(
     s.account_guid !== split.account_guid &&
     s.account?.commodity_guid === accountCommodityGuid &&
     s.account?.account_type !== 'TRADING' &&
-    toDecimal(s.quantity_num, s.quantity_denom) < 0
+    toDecimalNumber(s.quantity_num, s.quantity_denom) < 0
   );
 
   return !!matchingSend;
@@ -193,17 +185,17 @@ export async function traceCostBasis(
     // Sum only purchase splits (positive quantity, not transfers) from lot
     // Filter out transfer splits and sale splits to avoid double-counting
     const purchaseSplits = lotSplits.filter(s => {
-      const qty = toDecimal(s.quantity_num, s.quantity_denom);
+      const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
       return qty > 0; // Only count shares coming in
     });
 
     const totalCost = purchaseSplits.reduce((sum, s) => {
-      const val = Math.abs(toDecimal(s.value_num, s.value_denom));
+      const val = Math.abs(toDecimalNumber(s.value_num, s.value_denom));
       return sum + val;
     }, 0);
 
     const totalShares = purchaseSplits.reduce((sum, s) => {
-      return sum + toDecimal(s.quantity_num, s.quantity_denom);
+      return sum + toDecimalNumber(s.quantity_num, s.quantity_denom);
     }, 0);
 
     const result: CostBasisResult = {
@@ -222,7 +214,7 @@ export async function traceCostBasis(
     s => s.account_guid !== transferSplit.account_guid &&
          s.account?.commodity_guid === commodityGuid &&
          s.account?.account_type !== 'TRADING' &&
-         toDecimal(s.quantity_num, s.quantity_denom) < 0
+         toDecimalNumber(s.quantity_num, s.quantity_denom) < 0
   );
 
   if (!sourceSplit) {
@@ -293,8 +285,8 @@ async function getAccountCostBasis(
   const lots: PurchaseLot[] = [];
 
   for (const split of sortedSplits) {
-    const qty = toDecimal(split.quantity_num, split.quantity_denom);
-    const val = Math.abs(toDecimal(split.value_num, split.value_denom));
+    const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
+    const val = Math.abs(toDecimalNumber(split.value_num, split.value_denom));
 
     if (qty > 0) {
       // Purchase or transfer-in
@@ -355,8 +347,8 @@ function calculateAverageCostBasis(
   let totalCost = 0;
 
   for (const split of splits) {
-    const qty = toDecimal(split.quantity_num, split.quantity_denom);
-    const val = Math.abs(toDecimal(split.value_num, split.value_denom));
+    const qty = toDecimalNumber(split.quantity_num, split.quantity_denom);
+    const val = Math.abs(toDecimalNumber(split.value_num, split.value_denom));
 
     if (qty > 0) {
       totalShares += qty;
@@ -403,6 +395,6 @@ function isTransferInSplit(
     s => s.account_guid !== currentAccountGuid &&
          s.account?.commodity_guid === commodityGuid &&
          s.account?.account_type !== 'TRADING' &&
-         toDecimal(s.quantity_num, s.quantity_denom) < 0
+         toDecimalNumber(s.quantity_num, s.quantity_denom) < 0
   );
 }

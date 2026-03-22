@@ -45,6 +45,26 @@ export function toDecimal(num: bigint | number | string, denom: bigint | number 
 }
 
 /**
+ * Converts GnuCash fraction values to a number (not a string).
+ * Returns 0 for null inputs.
+ *
+ * @param num - The numerator (BigInt, number, string, or null)
+ * @param denom - The denominator (BigInt, number, string, or null)
+ * @returns A numeric representation of the decimal value
+ *
+ * @example
+ * toDecimalNumber(150n, 100n) // Returns 1.5
+ * toDecimalNumber(null, 100n) // Returns 0
+ */
+export function toDecimalNumber(
+  num: bigint | number | string | null,
+  denom: bigint | number | string | null
+): number {
+  if (num === null || denom === null) return 0;
+  return parseFloat(toDecimal(num, denom));
+}
+
+/**
  * Converts a decimal number to GnuCash fraction format.
  *
  * @param value - The decimal value to convert
@@ -117,4 +137,56 @@ export function serializeBigInts<T>(obj: T): T {
   }
 
   return obj;
+}
+
+import prisma from './prisma';
+
+/**
+ * Find or create a GnuCash account by colon-delimited path.
+ * Creates missing intermediate accounts as placeholders.
+ */
+export async function findOrCreateAccount(
+  path: string,
+  bookRootGuid: string,
+  currencyGuid: string,
+  tx?: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
+): Promise<string> {
+  const db = tx || prisma;
+  const segments = path.split(':');
+  let parentGuid = bookRootGuid;
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    const isLast = i === segments.length - 1;
+
+    const existing = await db.accounts.findFirst({
+      where: { name: segment, parent_guid: parentGuid },
+      select: { guid: true },
+    });
+
+    if (existing) {
+      parentGuid = existing.guid;
+      continue;
+    }
+
+    const newGuid = generateGuid();
+    await db.accounts.create({
+      data: {
+        guid: newGuid,
+        name: segment,
+        account_type: 'INCOME',
+        commodity_guid: currencyGuid,
+        commodity_scu: 100,
+        parent_guid: parentGuid,
+        non_std_scu: 0,
+        hidden: 0,
+        placeholder: isLast ? 0 : 1,
+        code: '',
+        description: '',
+      },
+    });
+    parentGuid = newGuid;
+  }
+
+  return parentGuid;
 }

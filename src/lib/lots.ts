@@ -7,16 +7,8 @@
  */
 
 import prisma from './prisma';
-import { toDecimal as toDecimalString } from './gnucash';
+import { toDecimalNumber } from './gnucash';
 import { getLatestPrice } from './commodities';
-
-/**
- * Convert GnuCash fraction to a number
- */
-function toDecimal(num: bigint | number | string | null, denom: bigint | number | string | null): number {
-    if (num === null || denom === null) return 0;
-    return parseFloat(toDecimalString(num, denom));
-}
 
 export interface LotSplit {
     guid: string;
@@ -41,6 +33,8 @@ export interface LotSummary {
     unrealizedGain: number | null; // (currentPrice * shares) - costBasis (null if no price)
     holdingPeriod: 'short_term' | 'long_term' | null; // based on open date vs today (1 year threshold)
     currentPrice: number | null;
+    sourceLotGuid: string | null;      // from source_lot_guid slot (transfer linking)
+    acquisitionDate: string | null;     // from acquisition_date slot (original purchase date)
     splits: LotSplit[];
 }
 
@@ -70,7 +64,7 @@ function buildLotSplits(
 
     let shareBalance = 0;
     return sorted.map(split => {
-        const shares = toDecimal(split.quantity_num, split.quantity_denom);
+        const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
         shareBalance += shares;
         return {
             guid: split.guid,
@@ -78,7 +72,7 @@ function buildLotSplits(
             postDate: split.transaction?.post_date?.toISOString() || '',
             description: split.transaction?.description || '',
             shares,
-            value: toDecimal(split.value_num, split.value_denom),
+            value: toDecimalNumber(split.value_num, split.value_denom),
             shareBalance,
         };
     });
@@ -121,6 +115,18 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
         },
     });
     const titleMap = new Map(titleSlots.map(s => [s.obj_guid, s.string_val || '']));
+
+    const sourceSlots = await prisma.slots.findMany({
+        where: { obj_guid: { in: lotGuids }, name: 'source_lot_guid' },
+        select: { obj_guid: true, string_val: true },
+    });
+    const sourceMap = new Map(sourceSlots.map(s => [s.obj_guid, s.string_val || null]));
+
+    const acqDateSlots = await prisma.slots.findMany({
+        where: { obj_guid: { in: lotGuids }, name: 'acquisition_date' },
+        select: { obj_guid: true, string_val: true },
+    });
+    const acqDateMap = new Map(acqDateSlots.map(s => [s.obj_guid, s.string_val || null]));
 
     // Get account commodity for price lookup
     const account = await prisma.accounts.findUnique({
@@ -173,10 +179,11 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             unrealizedGain = marketValue - totalCost;
         }
 
-        // Holding period based on open date
+        // Holding period based on acquisition date (from transfer) or open date
         let holdingPeriod: 'short_term' | 'long_term' | null = null;
-        if (openDate) {
-            const openMs = new Date(openDate).getTime();
+        const effectiveOpenDate = acqDateMap.get(lot.guid) || openDate;
+        if (effectiveOpenDate) {
+            const openMs = new Date(effectiveOpenDate).getTime();
             const elapsed = now.getTime() - openMs;
             holdingPeriod = elapsed > oneYearMs ? 'long_term' : 'short_term';
         }
@@ -194,6 +201,8 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             unrealizedGain,
             holdingPeriod,
             currentPrice: latestPrice,
+            sourceLotGuid: sourceMap.get(lot.guid) ?? null,
+            acquisitionDate: acqDateMap.get(lot.guid) ?? null,
             splits: lotSplits,
         };
     });
