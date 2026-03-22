@@ -432,6 +432,27 @@ async function createExtensionTables() {
         );
     `;
 
+    const receiptsTableDDL = `
+    CREATE TABLE IF NOT EXISTS gnucash_web_receipts (
+        id SERIAL PRIMARY KEY,
+        book_guid VARCHAR(32) NOT NULL,
+        transaction_guid VARCHAR(32),
+        filename VARCHAR(255) NOT NULL,
+        storage_key VARCHAR(500) NOT NULL,
+        thumbnail_key VARCHAR(500),
+        mime_type VARCHAR(100) NOT NULL,
+        file_size INTEGER NOT NULL,
+        ocr_text TEXT,
+        ocr_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_receipts_transaction ON gnucash_web_receipts(transaction_guid);
+    CREATE INDEX IF NOT EXISTS idx_receipts_book ON gnucash_web_receipts(book_guid);
+    CREATE INDEX IF NOT EXISTS idx_receipts_created_by ON gnucash_web_receipts(created_by);
+`;
+
     const toolConfigTriggerDDL = `
         DO $$
         BEGIN
@@ -471,6 +492,7 @@ async function createExtensionTables() {
         await query(toolConfigTriggerDDL);
         await query(accountPreferencesTableDDL);
         await query(transactionTypesTableDDL);
+        await query(receiptsTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

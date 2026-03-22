@@ -530,3 +530,24 @@ model gnucash_web_transaction_types {
 
   @@map("gnucash_web_transaction_types")
 }
+
+model gnucash_web_receipts {
+  id               Int       @id @default(autoincrement())
+  book_guid        String    @db.VarChar(32)
+  transaction_guid String?   @db.VarChar(32)
+  filename         String    @db.VarChar(255)
+  storage_key      String    @db.VarChar(500)
+  thumbnail_key    String?   @db.VarChar(500)
+  mime_type        String    @db.VarChar(100)
+  file_size        Int
+  ocr_text         String?   @db.Text
+  ocr_status       String    @default("pending") @db.VarChar(20)
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @default(now())
+  created_by       Int?
+
+  @@index([transaction_guid])
+  @@index([book_guid])
+  @@index([created_by])
+  @@map("gnucash_web_receipts")
+}
