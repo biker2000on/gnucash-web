@@ -39,6 +39,11 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 
 - `db.ts` - PostgreSQL connection pool; `toDecimal()` converts GnuCash fraction-based numerics
 - `db-init.ts` - Creates `account_hierarchy` view on app startup (recursive CTE)
+- `gnucash.ts` - GnuCash utilities: fraction conversion (`toDecimal`, `toDecimalNumber`, `fromDecimal`), GUID generation, `findOrCreateAccount` for account hierarchy creation
+- `lot-scrub.ts` - GnuCash-compatible lot scrub engine (sell splitting across lots, transfer lot linking, auto capital gains generation)
+- `lot-assignment.ts` - Auto-assign algorithms (FIFO/LIFO/average) with scrub engine integration, scrub-all with topological ordering, revert support
+- `lots.ts` - Lot querying and summary computation (realized/unrealized gains, holding periods, transfer metadata)
+- `cost-basis.ts` - Cost basis tracing across account transfers with FIFO/LIFO/average allocation
 - `types.ts` - Core TypeScript interfaces: Account, Transaction, Split
 - `format.ts` - Currency formatting utility
 
@@ -65,4 +70,22 @@ DATABASE_URL=postgresql://user:password@host:port/database
 
 ## Testing
 
-No testing framework is currently configured.
+Vitest is configured with jsdom environment and v8 coverage.
+
+```bash
+npx vitest              # Run tests in watch mode
+npx vitest run          # Run tests once
+npx vitest --coverage   # Run with coverage report
+```
+
+**Config:** `vitest.config.ts` — uses `@vitejs/plugin-react`, `vite-tsconfig-paths`, jsdom environment.
+
+**Test locations:**
+- `src/__tests__/` — smoke tests, setup files
+- `src/lib/__tests__/` — unit tests for library modules (e.g., `numeric.test.ts`, `lot-scrub.test.ts`)
+- `src/lib/services/__tests__/` — service layer tests
+
+**Conventions:**
+- Test files use `*.test.ts` or `*.spec.ts` suffix
+- Setup file at `src/__tests__/setup.ts` (mocks localStorage, IntersectionObserver, BigInt serialization)
+- Path aliases (`@/*`) work in tests via `vite-tsconfig-paths`
