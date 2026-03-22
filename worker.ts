@@ -236,6 +236,11 @@ async function main() {
           }
           break;
         }
+        case 'ocr-receipt': {
+          const { handleOcrReceipt } = await import('./src/lib/queue/jobs/ocr-receipt');
+          await handleOcrReceipt(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
