@@ -9,6 +9,7 @@ import { PerformanceChart } from '@/components/investments/PerformanceChart';
 import { HoldingsTable } from '@/components/investments/HoldingsTable';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
+import { ScrubAllButton } from '@/components/investments/ScrubAllButton';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'cashAcct' | 'sector';
 
@@ -106,21 +107,24 @@ export default function HoldingsPage() {
           <h1 className="text-3xl font-bold text-foreground">Investments</h1>
           <p className="text-foreground-muted mt-1">Portfolio overview and performance</p>
         </div>
-        <button
-          onClick={handleFetchAllPrices}
-          disabled={fetchingPrices}
-          className="flex items-center gap-2 px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50 font-medium"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-          {fetchingPrices ? 'Fetching...' : 'Refresh All Prices'}
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <ScrubAllButton />
+          <button
+            onClick={handleFetchAllPrices}
+            disabled={fetchingPrices}
+            className="flex items-center gap-2 px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50 font-medium"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+            {fetchingPrices ? 'Fetching...' : 'Refresh All Prices'}
+          </button>
+        </div>
       </header>
 
       {/* API Not Configured Warning */}
