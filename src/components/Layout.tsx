@@ -202,6 +202,7 @@ const navItems: NavItem[] = [
         children: [
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
+            { name: 'Scheduled Transactions', href: '/scheduled-transactions' },
             { name: 'Asset Analysis', href: '/assets' },
         ],
     },
