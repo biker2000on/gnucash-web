@@ -298,14 +298,14 @@ export class MortgageService {
         },
       },
       include: {
-        transactions: {
+        transaction: {
           select: {
             post_date: true,
           },
         },
       },
       orderBy: {
-        transactions: {
+        transaction: {
           post_date: 'asc',
         },
       },
@@ -317,7 +317,7 @@ export class MortgageService {
       account_guid: s.account_guid,
       value_num: s.value_num,
       value_denom: s.value_denom,
-      post_date: s.transactions!.post_date!,
+      post_date: s.transaction!.post_date!,
     }));
 
     // Separate into principal and interest

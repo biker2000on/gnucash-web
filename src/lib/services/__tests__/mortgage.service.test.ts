@@ -110,7 +110,7 @@ describe('MortgageService - Variable Rate Detection', () => {
       value_num: bigint;
       value_denom: bigint;
       post_date: Date;
-      transactions: { post_date: Date };
+      transaction: { post_date: Date };
     }> = [];
 
     const baseDate = new Date('2020-01-15');
@@ -123,7 +123,7 @@ describe('MortgageService - Variable Rate Detection', () => {
       value_num: BigInt(-20000000),
       value_denom: BigInt(100),
       post_date: new Date('2019-12-01'),
-      transactions: { post_date: new Date('2019-12-01') },
+      transaction: { post_date: new Date('2019-12-01') },
     });
 
     // Create 12 payments with varying rates (3.5% to 5.5%)
@@ -146,7 +146,7 @@ describe('MortgageService - Variable Rate Detection', () => {
         value_num: BigInt(principal),
         value_denom: BigInt(100),
         post_date: date,
-        transactions: { post_date: date },
+        transaction: { post_date: date },
       });
 
       // Interest split
@@ -156,7 +156,7 @@ describe('MortgageService - Variable Rate Detection', () => {
         value_num: BigInt(interest),
         value_denom: BigInt(100),
         post_date: date,
-        transactions: { post_date: date },
+        transaction: { post_date: date },
       });
     }
 
@@ -244,7 +244,7 @@ describe('MortgageService.detectMortgageDetails', () => {
       value_num: bigint;
       value_denom: bigint;
       post_date: Date;
-      transactions: { post_date: Date };
+      transaction: { post_date: Date };
     }> = [];
 
     // Opening balance: $200,000
@@ -254,7 +254,7 @@ describe('MortgageService.detectMortgageDetails', () => {
       value_num: BigInt(-20000000),
       value_denom: BigInt(100),
       post_date: openingDate,
-      transactions: { post_date: openingDate },
+      transaction: { post_date: openingDate },
     });
 
     // Generate 12 months of payments at 4.5% rate
@@ -276,7 +276,7 @@ describe('MortgageService.detectMortgageDetails', () => {
         value_num: BigInt(principal),
         value_denom: BigInt(100),
         post_date: date,
-        transactions: { post_date: date },
+        transaction: { post_date: date },
       });
 
       splits.push({
@@ -285,7 +285,7 @@ describe('MortgageService.detectMortgageDetails', () => {
         value_num: BigInt(interest),
         value_denom: BigInt(100),
         post_date: date,
-        transactions: { post_date: date },
+        transaction: { post_date: date },
       });
     }
 

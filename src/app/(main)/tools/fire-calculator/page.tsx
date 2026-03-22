@@ -680,7 +680,7 @@ export default function FireCalculatorPage() {
                   }}
                 />
                 <Tooltip
-                  formatter={(value: number | undefined, name: string) => {
+                  formatter={(value: number | undefined, name?: string) => {
                     if (value === undefined || value === null) return ['', ''];
                     const label = name === 'projected' ? 'Projected' : 'Portfolio Value';
                     return [fmtFull.format(value), label];
