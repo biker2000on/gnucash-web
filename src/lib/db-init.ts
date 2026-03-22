@@ -453,6 +453,43 @@ async function createExtensionTables() {
     CREATE INDEX IF NOT EXISTS idx_receipts_created_by ON gnucash_web_receipts(created_by);
 `;
 
+    const receiptsExtractedDataDDL = `
+    ALTER TABLE gnucash_web_receipts
+    ADD COLUMN IF NOT EXISTS extracted_data JSONB;
+`;
+
+    const receiptsFtsDDL = `
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'gnucash_web_receipts'
+            AND column_name = 'ocr_tsvector'
+        ) THEN
+            ALTER TABLE gnucash_web_receipts
+            ADD COLUMN ocr_tsvector tsvector
+              GENERATED ALWAYS AS (to_tsvector('english', COALESCE(ocr_text, ''))) STORED;
+        END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_receipts_ocr_fts
+      ON gnucash_web_receipts USING GIN (ocr_tsvector);
+`;
+
+    const aiConfigTableDDL = `
+    CREATE TABLE IF NOT EXISTS gnucash_web_ai_config (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+        provider VARCHAR(50) NOT NULL DEFAULT 'none',
+        base_url VARCHAR(500),
+        api_key_encrypted TEXT,
+        model VARCHAR(100),
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id)
+    );
+`;
+
     const toolConfigTriggerDDL = `
         DO $$
         BEGIN
@@ -493,6 +530,9 @@ async function createExtensionTables() {
         await query(accountPreferencesTableDDL);
         await query(transactionTypesTableDDL);
         await query(receiptsTableDDL);
+        await query(receiptsExtractedDataDDL);
+        await query(receiptsFtsDDL);
+        await query(aiConfigTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`
