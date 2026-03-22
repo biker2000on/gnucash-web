@@ -45,7 +45,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const storage = getStorageBackend();
+    const storage = await getStorageBackend();
     const results: { id: number; filename: string; status: string }[] = [];
 
     for (const file of files) {

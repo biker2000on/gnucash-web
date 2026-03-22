@@ -22,10 +22,10 @@ export async function GET(request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
     }
 
-    const storage = getStorageBackend();
+    const storage = await getStorageBackend();
     const buffer = await storage.get(receipt.storage_key);
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         'Content-Type': receipt.mime_type,
         'Content-Disposition': `inline; filename="${receipt.filename}"`,
@@ -63,7 +63,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       }
     }
 
-    const storage = getStorageBackend();
+    const storage = await getStorageBackend();
     try {
       await storage.delete(receipt.storage_key);
       if (receipt.thumbnail_key) {

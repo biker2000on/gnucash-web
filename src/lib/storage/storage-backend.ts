@@ -7,17 +7,17 @@ export interface StorageBackend {
 
 let _backend: StorageBackend | null = null;
 
-export function getStorageBackend(): StorageBackend {
+export async function getStorageBackend(): Promise<StorageBackend> {
   if (_backend) return _backend;
   const type = process.env.RECEIPT_STORAGE || 'filesystem';
   if (type === 's3') {
-    const { S3Storage } = require('./s3-storage');
+    const { S3Storage } = await import('./s3-storage');
     _backend = new S3Storage();
   } else {
-    const { FilesystemStorage } = require('./filesystem-storage');
+    const { FilesystemStorage } = await import('./filesystem-storage');
     _backend = new FilesystemStorage();
   }
-  return _backend;
+  return _backend!;
 }
 
 export function generateStorageKey(originalFilename: string): string {

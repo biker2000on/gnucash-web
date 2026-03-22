@@ -25,7 +25,7 @@ async function extractTextFromPdf(buffer: Buffer): Promise<string> {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const pageText = content.items
-      .map((item: { str?: string }) => item.str || '')
+      .map((item: unknown) => (item as { str?: string }).str || '')
       .join(' ');
     textParts.push(pageText);
   }
@@ -58,7 +58,7 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
       return;
     }
 
-    const storage = getStorageBackend();
+    const storage = await getStorageBackend();
     const buffer = await storage.get(receipt.storage_key);
 
     let text: string;

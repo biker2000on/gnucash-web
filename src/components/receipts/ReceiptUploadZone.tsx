@@ -17,7 +17,6 @@ interface UploadProgress {
 export function ReceiptUploadZone({ transactionGuid, onUploadComplete }: ReceiptUploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadProgress[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const isMobile = useIsMobile();
@@ -26,7 +25,6 @@ export function ReceiptUploadZone({ transactionGuid, onUploadComplete }: Receipt
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
-    setIsUploading(true);
     setUploads(fileArray.map(f => ({ filename: f.name, status: 'uploading' })));
 
     const formData = new FormData();
@@ -58,8 +56,6 @@ export function ReceiptUploadZone({ transactionGuid, onUploadComplete }: Receipt
       onUploadComplete(data.results);
     } catch {
       setUploads(fileArray.map(f => ({ filename: f.name, status: 'error', message: 'Network error' })));
-    } finally {
-      setIsUploading(false);
     }
   }, [transactionGuid, onUploadComplete]);
 

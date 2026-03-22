@@ -54,7 +54,7 @@ export async function deleteReceipt(id: number, bookGuid: string): Promise<boole
     `DELETE FROM gnucash_web_receipts WHERE id = $1 AND book_guid = $2 RETURNING id`,
     [id, bookGuid]
   );
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function linkReceipt(id: number, bookGuid: string, transactionGuid: string | null): Promise<Receipt | null> {

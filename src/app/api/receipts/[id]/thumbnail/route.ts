@@ -22,10 +22,10 @@ export async function GET(request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: 'Thumbnail not found' }, { status: 404 });
     }
 
-    const storage = getStorageBackend();
+    const storage = await getStorageBackend();
     const buffer = await storage.get(receipt.thumbnail_key);
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         'Content-Type': 'image/jpeg',
         'Cache-Control': 'public, max-age=604800',
