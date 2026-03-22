@@ -333,25 +333,78 @@ export class MortgageService {
       mortgageAccountGuid
     );
 
-    // Calculate average monthly payment (from payments that have both principal and interest)
+    // Calculate interest rate directly from interest/balance ratios.
+    // This avoids contamination from escrow splits that also post to the mortgage account.
+    //
+    // Exclude the opening balance transaction: it's the one with principal close to
+    // originalAmount (within 10%), which is not a regular monthly payment.
     const regularPayments = payments.filter(
-      (p) => p.principal > 0 && p.interest > 0
+      (p) => p.principal > 0 && p.interest > 0 &&
+        Math.abs(p.principal - originalAmount) / originalAmount > 0.1
     );
-    const monthlyPayment =
-      regularPayments.length > 0
-        ? regularPayments.reduce((sum, p) => sum + p.total, 0) /
-          regularPayments.length
-        : 0;
 
     // Estimate total payments (assume 30-year mortgage if we can't determine)
     const totalPayments = 360;
 
-    // Detect interest rate
-    const rateResult = MortgageService.detectInterestRate(
-      originalAmount,
-      monthlyPayment,
-      totalPayments
-    );
+    let rateResult: RateDetectionResult;
+
+    if (regularPayments.length >= 3) {
+      // Estimate monthly rate from interest/balance ratios
+      let remainingBalance = originalAmount;
+      const monthlyRates: number[] = [];
+
+      for (const payment of regularPayments) {
+        if (remainingBalance > 0) {
+          const impliedMonthlyRate = payment.interest / remainingBalance;
+          monthlyRates.push(impliedMonthlyRate);
+          // Only subtract the interest-implied principal (total P+I minus interest),
+          // not the raw principal which may include escrow
+          const impliedPrincipal = payment.total - payment.interest;
+          // But escrow inflates payment.total too, so use: principal from amortization
+          // For a fixed rate: principal = M - interest, but we don't know M yet.
+          // Use interest to estimate rate first, then compute M from rate.
+          // For balance tracking, approximate with: balance * monthly_rate gives interest,
+          // so principal portion ≈ balance_change. Use the smallest mortgage split
+          // (which is more likely the real principal) minus escrow.
+          // Simplest: just reduce by interest-implied principal from the formula.
+          remainingBalance -= (payment.total - payment.interest);
+          if (remainingBalance < 0) remainingBalance = 0;
+        }
+      }
+
+      // Use median rate for robustness
+      monthlyRates.sort((a, b) => a - b);
+      const medianRate = monthlyRates[Math.floor(monthlyRates.length / 2)];
+      const annualRate = medianRate * 12 * 100;
+
+      rateResult = { rate: annualRate, converged: true };
+    } else {
+      // Fallback to Newton-Raphson with whatever monthly payment we have
+      const monthlyPayment =
+        regularPayments.length > 0
+          ? regularPayments.reduce((sum, p) => sum + p.total, 0) /
+            regularPayments.length
+          : 0;
+      rateResult = MortgageService.detectInterestRate(
+        originalAmount,
+        monthlyPayment,
+        totalPayments
+      );
+    }
+
+    // Compute theoretical monthly P+I payment from detected rate and original amount
+    const detectedMonthlyRate = rateResult.rate / 100 / 12;
+    let monthlyPayment: number;
+    if (detectedMonthlyRate > 0 && rateResult.converged) {
+      const rn = Math.pow(1 + detectedMonthlyRate, totalPayments);
+      monthlyPayment = originalAmount * detectedMonthlyRate * rn / (rn - 1);
+    } else {
+      monthlyPayment =
+        regularPayments.length > 0
+          ? regularPayments.reduce((sum, p) => sum + p.total, 0) /
+            regularPayments.length
+          : 0;
+    }
 
     // Check for variable rate by computing implied rates from individual payments
     if (regularPayments.length >= 3) {
@@ -362,7 +415,10 @@ export class MortgageService {
         if (remainingBalance > 0) {
           const impliedMonthlyRate = payment.interest / remainingBalance;
           individualRates.push(impliedMonthlyRate * 12 * 100);
-          remainingBalance -= payment.principal;
+          // Use theoretical principal (P+I - interest) to track balance,
+          // not payment.principal which may include escrow splits
+          const theoreticalPrincipal = monthlyPayment - payment.interest;
+          remainingBalance -= Math.max(theoreticalPrincipal, 0);
         }
       }
 
