@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface AutoAssignDialogProps {
   accountGuid: string;
@@ -45,7 +46,7 @@ export default function AutoAssignDialog({
   const [loading, setLoading] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
   const handleAssign = async () => {
     setLoading(true);
@@ -68,7 +69,7 @@ export default function AutoAssignDialog({
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
@@ -161,6 +162,7 @@ export default function AutoAssignDialog({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -177,6 +177,18 @@ export async function GET(request: Request) {
 
         const accountPathMap = await buildAccountPathMap(bookAccountGuids);
 
+        // Fetch receipt counts for the fetched transactions
+        const txGuids = transactions.map(tx => tx.guid);
+        const receiptCounts = txGuids.length > 0
+            ? await prisma.$queryRaw<{ transaction_guid: string; receipt_count: bigint }[]>`
+                SELECT gr.transaction_guid, COUNT(*) as receipt_count
+                FROM gnucash_web_receipts gr
+                WHERE gr.transaction_guid = ANY(${txGuids}::text[])
+                GROUP BY gr.transaction_guid
+            `
+            : [];
+        const receiptCountMap = new Map(receiptCounts.map(r => [r.transaction_guid, Number(r.receipt_count)]));
+
         // Post-filter for amount range and reconcile states if needed
         let filteredTransactions = transactions;
 
@@ -215,6 +227,7 @@ export async function GET(request: Request) {
             post_date: tx.post_date,
             enter_date: tx.enter_date,
             description: tx.description,
+            receipt_count: receiptCountMap.get(tx.guid) ?? 0,
             splits: tx.splits.map(split => ({
                 guid: split.guid,
                 tx_guid: split.tx_guid,

@@ -36,6 +36,7 @@ import LotViewer from './ledger/LotViewer';
 import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
 import LotAssignmentPopover from './ledger/LotAssignmentPopover';
+import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -1600,7 +1601,7 @@ export default function AccountLedger({
                                     });
                                 } catch {}
                             }}
-                            className="px-2 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-transparent text-foreground-muted hover:text-foreground transition-colors"
+                            className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-background-secondary text-foreground hover:text-foreground transition-colors"
                             title="Cost basis method for this account"
                         >
                             <option value="fifo">FIFO</option>
@@ -1877,6 +1878,7 @@ export default function AccountLedger({
                                     if (colId === 'sell') return <th key={header.id} className="px-4 py-2 text-right">Sell</th>;
                                     if (colId === 'shareBalance') return <th key={header.id} className="px-4 py-2 text-right">Share Bal</th>;
                                     if (colId === 'costBasis') return <th key={header.id} className="px-4 py-2 text-right">Cost Basis</th>;
+                                    if (colId === 'receipt') return <th key={header.id} className="px-2 py-2 w-10"></th>;
                                     if (colId === 'actions') return <th key={header.id} className="px-2 py-2 w-10"></th>;
                                     return <th key={header.id}>{flexRender(header.column.columnDef.header, header.getContext())}</th>;
                                 })}
@@ -2467,6 +2469,18 @@ export default function AccountLedger({
                                                         </td>
                                                     );
                                                 }
+                                            }
+
+                                            if (colId === 'receipt') {
+                                                return (
+                                                    <td key={cell.id} className="px-1 py-1 align-middle" onClick={(e) => e.stopPropagation()}>
+                                                        <ReceiptIndicator
+                                                            transactionGuid={tx.guid}
+                                                            transactionDescription={tx.description}
+                                                            receiptCount={(tx as any).receipt_count || 0}
+                                                        />
+                                                    </td>
+                                                );
                                             }
 
                                             return <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>;

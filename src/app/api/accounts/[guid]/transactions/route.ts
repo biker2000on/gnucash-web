@@ -339,6 +339,15 @@ export async function GET(
         `;
         const metaMap = new Map(transactionMeta.map(m => [m.transaction_guid, m]));
 
+        // 3c. Fetch receipt counts for these transactions
+        const receiptCounts = await prisma.$queryRaw<{ transaction_guid: string; receipt_count: bigint }[]>`
+            SELECT gr.transaction_guid, COUNT(*) as receipt_count
+            FROM gnucash_web_receipts gr
+            WHERE gr.transaction_guid = ANY(${txGuids}::text[])
+            GROUP BY gr.transaction_guid
+        `;
+        const receiptCountMap = new Map(receiptCounts.map(r => [r.transaction_guid, Number(r.receipt_count)]));
+
         // 4. Build account path map
         const accountPathMap = await buildAccountPathMap();
 
@@ -380,6 +389,7 @@ export async function GET(
                 post_date: tx.post_date,
                 enter_date: tx.enter_date,
                 description: tx.description,
+                receipt_count: receiptCountMap.get(tx.guid) ?? 0,
                 splits: enrichedSplits,
                 running_balance: unreviewedOnly ? '' : currentRunningBalance.toFixed(2),
                 account_split_value: splitValue.toFixed(2),

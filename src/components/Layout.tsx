@@ -125,6 +125,14 @@ function IconX({ className = "w-6 h-6" }: { className?: string }) {
     );
 }
 
+function IconPaperclip({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+        </svg>
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Icon registry map
 // ---------------------------------------------------------------------------
@@ -140,6 +148,7 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
     Building: IconBuilding,
     Wrench: IconWrench,
     Settings: IconSettings,
+    Paperclip: IconPaperclip,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,6 +181,7 @@ const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
+    { name: 'Receipts', href: '/receipts', icon: 'Paperclip' },
     {
         name: 'Investments',
         href: '/investments',

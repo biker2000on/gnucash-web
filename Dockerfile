@@ -31,6 +31,9 @@ ENV NODE_ENV production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 ENV NEXT_TELEMETRY_DISABLED 1
 
+# Install tesseract-ocr for receipt OCR processing
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
@@ -39,6 +42,9 @@ COPY --from=builder /app/public ./public
 # Set the correct permission for prerender cache
 RUN mkdir .next
 RUN chown nextjs:nodejs .next
+
+RUN mkdir -p data/receipts
+RUN chown nextjs:nodejs data/receipts
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing

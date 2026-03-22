@@ -14,6 +14,8 @@
     "prices:audit": "tsx utilities/run-price-audit.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1014.0",
+    "@aws-sdk/s3-request-presigner": "^3.1014.0",
     "@prisma/adapter-pg": "^7.3.0",
     "@prisma/client": "^7.3.0",
     "@tanstack/react-query": "^5.90.20",
@@ -31,13 +33,17 @@
     "iron-session": "^8.0.4",
     "lightningcss-linux-x64-gnu": "^1.32.0",
     "next": "16.1.1",
+    "node-tesseract-ocr": "^2.2.1",
+    "pdfjs-dist": "^5.5.207",
     "pg": "^8.16.3",
     "prisma": "^7.3.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
+    "sharp": "^0.34.5",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-react": "^5.31.0",
+    "tesseract.js": "^7.0.0",
     "yahoo-finance2": "^3.13.0",
     "zod": "^4.3.6"
   },
