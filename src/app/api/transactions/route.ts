@@ -184,6 +184,7 @@ export async function GET(request: Request) {
                 SELECT gr.transaction_guid, COUNT(*) as receipt_count
                 FROM gnucash_web_receipts gr
                 WHERE gr.transaction_guid = ANY(${txGuids}::text[])
+                  AND gr.book_guid = ${roleResult.bookGuid}
                 GROUP BY gr.transaction_guid
             `
             : [];

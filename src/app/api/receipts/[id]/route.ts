@@ -28,7 +28,7 @@ export async function GET(request: Request, { params }: RouteParams) {
     return new Response(new Uint8Array(buffer), {
       headers: {
         'Content-Type': receipt.mime_type,
-        'Content-Disposition': `inline; filename="${receipt.filename}"`,
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(receipt.filename)}`,
         'Cache-Control': 'private, max-age=86400',
       },
     });

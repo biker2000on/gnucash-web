@@ -49,12 +49,13 @@ export async function POST(request: Request) {
     const results: { id: number; filename: string; status: string }[] = [];
 
     for (const file of files) {
-      if (file.size > MAX_FILE_SIZE) {
+      const buffer = Buffer.from(await file.arrayBuffer());
+
+      // Validate actual buffer size, not client-reported file.size
+      if (buffer.byteLength > MAX_FILE_SIZE) {
         results.push({ id: 0, filename: file.name, status: `error: exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit` });
         continue;
       }
-
-      const buffer = Buffer.from(await file.arrayBuffer());
 
       const detectedMime = detectMimeType(buffer);
       if (!detectedMime || !ALLOWED_MIME_TYPES.includes(detectedMime)) {
@@ -77,16 +78,29 @@ export async function POST(request: Request) {
         console.warn(`Thumbnail generation failed for ${sanitizedName}:`, err);
       }
 
-      const receipt = await createReceipt({
-        book_guid: bookGuid,
-        transaction_guid: transactionGuid || null,
-        filename: sanitizedName,
-        storage_key: storageKey,
-        thumbnail_key: savedThumbKey,
-        mime_type: detectedMime,
-        file_size: file.size,
-        created_by: user.id,
-      });
+      // Create DB record — clean up stored files on failure to prevent orphans
+      let receipt;
+      try {
+        receipt = await createReceipt({
+          book_guid: bookGuid,
+          transaction_guid: transactionGuid || null,
+          filename: sanitizedName,
+          storage_key: storageKey,
+          thumbnail_key: savedThumbKey,
+          mime_type: detectedMime,
+          file_size: buffer.byteLength,
+          created_by: user.id,
+        });
+      } catch (dbErr) {
+        // Clean up orphaned files
+        try { await storage.delete(storageKey); } catch { /* best effort */ }
+        if (savedThumbKey) {
+          try { await storage.delete(savedThumbKey); } catch { /* best effort */ }
+        }
+        console.error(`DB insert failed for ${sanitizedName}, cleaned up files:`, dbErr);
+        results.push({ id: 0, filename: sanitizedName, status: 'error: failed to save receipt record' });
+        continue;
+      }
 
       const jobId = await enqueueJob('ocr-receipt', {
         receiptId: receipt.id,

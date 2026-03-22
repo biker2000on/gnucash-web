@@ -28,7 +28,7 @@ export async function GET(request: Request, { params }: RouteParams) {
     return new Response(new Uint8Array(buffer), {
       headers: {
         'Content-Type': 'image/jpeg',
-        'Cache-Control': 'public, max-age=604800',
+        'Cache-Control': 'private, max-age=604800',
       },
     });
   } catch (error) {

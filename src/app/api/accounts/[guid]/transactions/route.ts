@@ -339,11 +339,13 @@ export async function GET(
         `;
         const metaMap = new Map(transactionMeta.map(m => [m.transaction_guid, m]));
 
-        // 3c. Fetch receipt counts for these transactions
+        // 3c. Fetch receipt counts for these transactions (scoped by book)
+        const activeBookGuid = roleResult.bookGuid;
         const receiptCounts = await prisma.$queryRaw<{ transaction_guid: string; receipt_count: bigint }[]>`
             SELECT gr.transaction_guid, COUNT(*) as receipt_count
             FROM gnucash_web_receipts gr
             WHERE gr.transaction_guid = ANY(${txGuids}::text[])
+              AND gr.book_guid = ${activeBookGuid}
             GROUP BY gr.transaction_guid
         `;
         const receiptCountMap = new Map(receiptCounts.map(r => [r.transaction_guid, Number(r.receipt_count)]));
