@@ -417,6 +417,7 @@ model gnucash_web_users {
   saved_reports    gnucash_web_saved_reports[]
   preferences      gnucash_web_user_preferences[]
   tool_configs     gnucash_web_tool_config[]
+  ai_config        gnucash_web_ai_config?
 }
 
 model gnucash_web_audit {
@@ -542,6 +543,7 @@ model gnucash_web_receipts {
   file_size        Int
   ocr_text         String?   @db.Text
   ocr_status       String    @default("pending") @db.VarChar(20)
+  extracted_data   Json?     @db.JsonB
   created_at       DateTime  @default(now())
   updated_at       DateTime  @default(now())
   created_by       Int?
@@ -550,4 +552,21 @@ model gnucash_web_receipts {
   @@index([book_guid])
   @@index([created_by])
   @@map("gnucash_web_receipts")
+}
+
+model gnucash_web_ai_config {
+  id                Int       @id @default(autoincrement())
+  user_id           Int?      @unique
+  provider          String    @default("none") @db.VarChar(50)
+  base_url          String?   @db.VarChar(500)
+  api_key_encrypted String?   @db.Text
+  model             String?   @db.VarChar(100)
+  enabled           Boolean   @default(false)
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @default(now())
+
+  // Relations
+  user              gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("gnucash_web_ai_config")
 }

@@ -93,9 +93,11 @@ export async function listReceipts(params: {
   const values: unknown[] = [params.bookGuid];
   let paramIdx = 2;
 
+  let searchParamIdx: number | null = null;
   if (params.search) {
-    conditions.push(`r.ocr_text ILIKE $${paramIdx}`);
-    values.push(`%${params.search}%`);
+    conditions.push(`r.ocr_tsvector @@ plainto_tsquery('english', $${paramIdx})`);
+    values.push(params.search);
+    searchParamIdx = paramIdx;
     paramIdx++;
   }
 
@@ -124,12 +126,16 @@ export async function listReceipts(params: {
     values
   );
 
+  const orderBy = searchParamIdx !== null
+    ? `ts_rank(r.ocr_tsvector, plainto_tsquery('english', $${searchParamIdx})) DESC`
+    : `r.created_at DESC`;
+
   const result = await query(
     `SELECT r.*, t.description as transaction_description, t.post_date as transaction_post_date
      FROM gnucash_web_receipts r
      LEFT JOIN transactions t ON t.guid = r.transaction_guid
      WHERE ${where}
-     ORDER BY r.created_at DESC
+     ORDER BY ${orderBy}
      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
     [...values, params.limit, params.offset]
   );
@@ -138,6 +144,29 @@ export async function listReceipts(params: {
     receipts: result.rows,
     total: parseInt(countResult.rows[0].total, 10),
   };
+}
+
+export async function updateExtractedData(id: number, data: Record<string, unknown>): Promise<void> {
+  await query(
+    `UPDATE gnucash_web_receipts SET extracted_data = $1, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(data), id]
+  );
+}
+
+export async function dismissMatch(id: number, bookGuid: string, transactionGuid: string): Promise<boolean> {
+  const result = await query(
+    `UPDATE gnucash_web_receipts
+     SET extracted_data = jsonb_set(
+       COALESCE(extracted_data, '{}'),
+       '{dismissed_guids}',
+       COALESCE(extracted_data->'dismissed_guids', '[]'::jsonb) || $1::jsonb
+     ),
+     updated_at = NOW()
+     WHERE id = $2 AND book_guid = $3
+     RETURNING id`,
+    [JSON.stringify(transactionGuid), id, bookGuid]
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function getReceiptCountsForTransactions(

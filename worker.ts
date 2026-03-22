@@ -253,7 +253,7 @@ async function main() {
     }
   }, {
     connection,
-    concurrency: 1,
+    concurrency: 3,
     lockDuration: 300000, // 5 minute lock (acts as job timeout)
   });
 

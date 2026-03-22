@@ -28,6 +28,7 @@
     "bullmq": "^5.69.3",
     "d3-sankey": "^0.12.3",
     "fast-xml-parser": "^5.3.5",
+    "fastest-levenshtein": "^1.0.16",
     "fflate": "^0.8.2",
     "ioredis": "^5.9.3",
     "iron-session": "^8.0.4",
