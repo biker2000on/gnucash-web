@@ -824,10 +824,21 @@ export function TransactionForm({
                                 placeholder="Select source account..."
                             />
                         </div>
-                        <div className="hidden md:flex items-center justify-center pt-5">
-                            <svg className="w-6 h-6 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                            </svg>
+                        <div className="flex items-center justify-center md:pt-5">
+                            <button
+                                type="button"
+                                onClick={() => setSimpleData(prev => ({
+                                    ...prev,
+                                    fromAccountGuid: prev.toAccountGuid,
+                                    toAccountGuid: prev.fromAccountGuid,
+                                }))}
+                                className="p-1.5 rounded-lg text-foreground-muted hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                                title="Swap accounts (reverse transfer direction)"
+                            >
+                                <svg className="w-5 h-5 md:w-6 md:h-6 rotate-90 md:rotate-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+                                </svg>
+                            </button>
                         </div>
                         <div className="w-full md:flex-1">
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
