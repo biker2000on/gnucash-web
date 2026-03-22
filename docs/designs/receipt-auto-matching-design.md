@@ -401,9 +401,19 @@ const orderBy = params.search
 
 ## Open Questions (Resolved)
 
-1. **Encrypted API keys:** Yes — follow the existing SimpleFin encryption pattern for `api_key_encrypted`.
+1. **API keys:** Primary source is `AI_API_KEY` env var (like `DATABASE_URL`). DB storage via settings page is optional override, encrypted with AES-256 using `SESSION_SECRET` as key material. Decryption failures (SESSION_SECRET changed) return null with clear "re-enter key" error.
 2. **Match suggestion caching:** No caching — always compute on-demand. The batched SQL + TypeScript scoring is fast enough (< 100ms), and caching introduces staleness when new transactions arrive.
-3. **Re-extraction trigger:** Yes — when a user enables AI for the first time, enqueue a BullMQ batch job to re-extract all receipts with `extraction_method: "regex"`. Low priority background task.
+3. **Re-extraction trigger:** Deferred to TODOS.md. Users get AI on new uploads immediately.
+
+## Engineering Review Decisions (2026-03-22)
+
+Decisions made during `/plan-eng-review`:
+
+1. **BullMQ concurrency:** Increase OCR job concurrency from 1 to 3-5 for faster batch processing. Parallel extraction when AI provider is slow (Ollama).
+2. **API key storage:** `.env` (`AI_API_KEY`) as primary source. DB table `gnucash_web_ai_config` with AES-256 encrypted key as optional per-user override. Decryption failure returns null with clear error.
+3. **Dismiss persistence:** Atomic JSONB append via PostgreSQL `jsonb_set + ||` operator. No read-modify-write race condition.
+4. **Test strategy:** Unit tests only (~30 cases). No integration tests requiring test DB. Extraction and scoring are pure functions — highly testable.
+5. **Scope:** All three features (FTS + matching + AI settings) ship together. No deferral.
 
 ## Success Criteria
 
@@ -439,9 +449,9 @@ const orderBy = params.search
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 3 issues, 0 critical gaps |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | — |
 | Adversarial | `/codex review` | Independent 2nd opinion | 0 | — | — |
 
 - **UNRESOLVED:** 0 across all reviews
-- **VERDICT:** Not yet reviewed — run `/plan-eng-review` before implementation
+- **VERDICT:** ENG CLEARED — ready to implement

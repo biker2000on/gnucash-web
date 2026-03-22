@@ -55,3 +55,17 @@ Items deferred from plan reviews for future implementation.
 **Depends on:** Receipts feature + OCR pipeline + gallery page (Phase 2).
 
 **Context:** Explicitly rejected as Approach C in the office-hours design doc (2026-03-21). The nullable `transaction_guid` and PATCH link endpoint lay the groundwork. Requires: fuzzy date/amount matching algorithm, vendor name normalization, confidence scoring, and UI for reviewing/confirming matches. Risk of false matches — needs a confirmation step, not auto-link.
+
+---
+
+## P4 - Receipt AI Re-Extraction Batch Job
+
+**What:** A "Re-extract all" button in AI settings that enqueues BullMQ jobs to re-run extraction on all existing receipts that used regex, using the newly configured AI provider.
+
+**Why:** When a user configures AI for the first time, their existing receipts have `extraction_method: "regex"`. Re-extraction with AI would improve match quality for the backlog without requiring re-upload.
+
+**Effort:** S (human: ~2 days) / with CC: S (~10 min)
+
+**Depends on:** Receipt auto-matching feature with AI provider configuration.
+
+**Context:** Deferred from eng review 2026-03-22. Users get AI extraction on new uploads immediately. The batch re-extraction is a nice-to-have that adds batch job management complexity. Users can also manually trigger re-extraction per receipt.
