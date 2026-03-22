@@ -3,10 +3,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { ReceiptModal } from './ReceiptModal';
+import { ReceiptUploadZone } from './ReceiptUploadZone';
+import { ReceiptInbox } from './ReceiptInbox';
 import { useToast } from '@/contexts/ToastContext';
 import type { ReceiptWithTransaction } from '@/lib/receipts';
 
 const PAGE_SIZE = 30;
+
+type GalleryTab = 'all' | 'linked' | 'inbox';
 
 export function ReceiptGallery() {
   const [receipts, setReceipts] = useState<ReceiptWithTransaction[]>([]);
@@ -14,12 +18,16 @@ export function ReceiptGallery() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [linkedFilter, setLinkedFilter] = useState<'' | 'linked' | 'unlinked'>('');
+  const [activeTab, setActiveTab] = useState<GalleryTab>('all');
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptWithTransaction | null>(null);
+  const [batchUploadOpen, setBatchUploadOpen] = useState(false);
   const observerTarget = useRef<HTMLDivElement>(null);
   const toast = useToast();
+
+  // Map tab to linkedFilter param
+  const linkedFilter = activeTab === 'linked' ? 'linked' : '';
 
   // Use ref to avoid stale closure in IntersectionObserver callback
   const fetchRef = useRef<() => void>(() => {});
@@ -30,6 +38,7 @@ export function ReceiptGallery() {
   }, [search]);
 
   const fetchReceipts = useCallback(async (reset: boolean = false) => {
+    if (activeTab === 'inbox') return; // Inbox has its own fetch logic
     const currentOffset = reset ? 0 : offset;
     setLoading(true);
 
@@ -59,17 +68,19 @@ export function ReceiptGallery() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, linkedFilter, offset, toast]);
+  }, [activeTab, debouncedSearch, linkedFilter, offset, toast]);
 
   // Keep fetchRef current so IntersectionObserver always calls the latest version
   useEffect(() => {
     fetchRef.current = () => fetchReceipts(false);
   }, [fetchReceipts]);
 
-  // Reset on filter change
+  // Reset on filter/tab change
   useEffect(() => {
-    fetchReceipts(true);
-  }, [debouncedSearch, linkedFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeTab !== 'inbox') {
+      fetchReceipts(true);
+    }
+  }, [debouncedSearch, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Infinite scroll — uses ref to avoid stale closure
   useEffect(() => {
@@ -88,32 +99,60 @@ export function ReceiptGallery() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-3">
+      {/* Tab bar + Batch Upload */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+          {(['all', 'linked', 'inbox'] as GalleryTab[]).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 capitalize transition-colors min-h-[44px] ${
+                activeTab === tab
+                  ? 'bg-emerald-600 text-white font-medium'
+                  : 'bg-background text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
+              }`}
+            >
+              {tab === 'inbox' ? 'Inbox' : tab === 'linked' ? 'Linked' : 'All'}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setBatchUploadOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px]"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+          </svg>
+          Batch Upload
+        </button>
+      </div>
+
+      {/* Search bar (visible on All and Linked tabs) */}
+      {activeTab !== 'inbox' && (
         <input
           type="search"
           placeholder="Search receipt text..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-foreground-secondary focus:outline-none focus:border-emerald-500"
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-foreground-secondary focus:outline-none focus:border-emerald-500"
         />
-        <select
-          value={linkedFilter}
-          onChange={(e) => setLinkedFilter(e.target.value as '' | 'linked' | 'unlinked')}
-          className="px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:border-emerald-500"
-        >
-          <option value="">All receipts</option>
-          <option value="linked">Linked to transaction</option>
-          <option value="unlinked">Unlinked</option>
-        </select>
-      </div>
+      )}
 
-      <p className="text-sm text-foreground-secondary">{total} receipt{total !== 1 ? 's' : ''}</p>
+      {/* Inbox tab */}
+      {activeTab === 'inbox' && <ReceiptInbox />}
 
-      {receipts.length === 0 && !loading ? (
+      {/* Gallery count (All / Linked tabs) */}
+      {activeTab !== 'inbox' && (
+        <p className="text-sm text-foreground-secondary">{total} receipt{total !== 1 ? 's' : ''}</p>
+      )}
+
+      {activeTab !== 'inbox' && receipts.length === 0 && !loading && (
         <div className="text-center py-16 text-foreground-secondary">
           <p>No receipts yet. Attach one from any transaction.</p>
         </div>
-      ) : (
+      )}
+
+      {activeTab !== 'inbox' && receipts.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {receipts.map((receipt) => (
             <button
@@ -146,9 +185,9 @@ export function ReceiptGallery() {
         </div>
       )}
 
-      {hasMore && <div ref={observerTarget} className="h-8" />}
+      {activeTab !== 'inbox' && hasMore && <div ref={observerTarget} className="h-8" />}
 
-      {loading && (
+      {activeTab !== 'inbox' && loading && (
         <div className="flex justify-center py-4">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-500" />
         </div>
@@ -201,6 +240,23 @@ export function ReceiptGallery() {
           </div>
         </Modal>
       )}
+
+      {/* Batch Upload modal */}
+      <Modal
+        isOpen={batchUploadOpen}
+        onClose={() => setBatchUploadOpen(false)}
+        title="Batch Upload Receipts"
+        size="md"
+      >
+        <div className="p-4">
+          <ReceiptUploadZone
+            onUploadComplete={() => {
+              setBatchUploadOpen(false);
+              if (activeTab !== 'inbox') fetchReceipts(true);
+            }}
+          />
+        </div>
+      </Modal>
     </div>
   );
 }
