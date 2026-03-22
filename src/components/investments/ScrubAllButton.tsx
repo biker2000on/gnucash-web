@@ -49,7 +49,20 @@ export function ScrubAllButton() {
       if (!res.ok) {
         setError(data.error ?? 'Unknown error occurred');
       } else {
-        setResult(data as ScrubResult);
+        // API returns { results: AutoAssignResult[], order: string[] }
+        // Aggregate into a single summary
+        const results = data.results || [];
+        const aggregated: ScrubResult = {
+          lotsCreated: results.reduce((sum: number, r: ScrubResult) => sum + (r.lotsCreated || 0), 0),
+          splitsAssigned: results.reduce((sum: number, r: ScrubResult) => sum + (r.splitsAssigned || 0), 0),
+          splitsCreated: results.reduce((sum: number, r: ScrubResult) => sum + (r.splitsCreated || 0), 0),
+          gainsTransactions: results.reduce((sum: number, r: ScrubResult) => sum + (r.gainsTransactions || 0), 0),
+          totalRealizedGain: results.reduce((sum: number, r: ScrubResult) => sum + (r.totalRealizedGain || 0), 0),
+          method,
+          runId: results[0]?.runId || '',
+          warnings: results.flatMap((r: ScrubResult) => r.warnings || []),
+        };
+        setResult(aggregated);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to scrub accounts');
