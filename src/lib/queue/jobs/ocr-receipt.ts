@@ -116,7 +116,7 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
 
       const aiConfig = await getAiConfig(receipt.created_by);
       const extractedData = await extractReceiptData(extractedText || '', aiConfig);
-      await updateExtractedData(receiptId, extractedData);
+      await updateExtractedData(receiptId, extractedData as unknown as Record<string, unknown>);
       console.log(`[Job ${job.id}] Extraction complete: ${JSON.stringify({ amount: extractedData.amount, vendor: extractedData.vendor, method: extractedData.extraction_method })}`);
     } catch (extractErr) {
       console.error(`[Job ${job.id}] Extraction failed (OCR succeeded):`, extractErr);
