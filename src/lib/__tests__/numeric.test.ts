@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { toDecimal, fromDecimal, generateGuid } from '../gnucash';
+import { toDecimal, toDecimalNumber, fromDecimal, generateGuid } from '../gnucash';
 
 describe('toDecimal', () => {
   it('should convert 100/100 to "1"', () => {
@@ -54,6 +54,20 @@ describe('toDecimal', () => {
 
   it('should handle investment fractions (10000 denominator)', () => {
     expect(toDecimal(123456n, 10000n)).toBe('12.3456');
+  });
+});
+
+describe('toDecimalNumber', () => {
+  it('should convert fractions to numbers', () => {
+    expect(toDecimalNumber(150n, 100n)).toBe(1.5);
+  });
+  it('should return 0 for null inputs', () => {
+    expect(toDecimalNumber(null, 100n)).toBe(0);
+    expect(toDecimalNumber(150n, null)).toBe(0);
+    expect(toDecimalNumber(null, null)).toBe(0);
+  });
+  it('should handle negative values', () => {
+    expect(toDecimalNumber(-50n, 100n)).toBe(-0.5);
   });
 });
 

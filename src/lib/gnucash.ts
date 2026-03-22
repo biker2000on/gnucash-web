@@ -45,6 +45,26 @@ export function toDecimal(num: bigint | number | string, denom: bigint | number 
 }
 
 /**
+ * Converts GnuCash fraction values to a number (not a string).
+ * Returns 0 for null inputs.
+ *
+ * @param num - The numerator (BigInt, number, string, or null)
+ * @param denom - The denominator (BigInt, number, string, or null)
+ * @returns A numeric representation of the decimal value
+ *
+ * @example
+ * toDecimalNumber(150n, 100n) // Returns 1.5
+ * toDecimalNumber(null, 100n) // Returns 0
+ */
+export function toDecimalNumber(
+  num: bigint | number | string | null,
+  denom: bigint | number | string | null
+): number {
+  if (num === null || denom === null) return 0;
+  return parseFloat(toDecimal(num, denom));
+}
+
+/**
  * Converts a decimal number to GnuCash fraction format.
  *
  * @param value - The decimal value to convert

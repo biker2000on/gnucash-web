@@ -7,16 +7,8 @@
  */
 
 import prisma from './prisma';
-import { toDecimal as toDecimalString } from './gnucash';
+import { toDecimalNumber } from './gnucash';
 import { getLatestPrice } from './commodities';
-
-/**
- * Convert GnuCash fraction to a number
- */
-function toDecimal(num: bigint | number | string | null, denom: bigint | number | string | null): number {
-    if (num === null || denom === null) return 0;
-    return parseFloat(toDecimalString(num, denom));
-}
 
 export interface LotSplit {
     guid: string;
@@ -70,7 +62,7 @@ function buildLotSplits(
 
     let shareBalance = 0;
     return sorted.map(split => {
-        const shares = toDecimal(split.quantity_num, split.quantity_denom);
+        const shares = toDecimalNumber(split.quantity_num, split.quantity_denom);
         shareBalance += shares;
         return {
             guid: split.guid,
@@ -78,7 +70,7 @@ function buildLotSplits(
             postDate: split.transaction?.post_date?.toISOString() || '',
             description: split.transaction?.description || '',
             shares,
-            value: toDecimal(split.value_num, split.value_denom),
+            value: toDecimalNumber(split.value_num, split.value_denom),
             shareBalance,
         };
     });

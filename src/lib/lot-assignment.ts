@@ -6,11 +6,7 @@
  */
 
 import prisma from './prisma';
-import { generateGuid, toDecimal as toDecimalString } from './gnucash';
-
-function toDecimal(num: bigint, denom: bigint): number {
-  return parseFloat(toDecimalString(num, denom));
-}
+import { generateGuid, toDecimalNumber } from './gnucash';
 
 interface SplitForAssignment {
   guid: string;
@@ -92,8 +88,8 @@ async function assignWithStrategy(
   const splits = await getUnassignedSplits(accountGuid, tx);
   if (splits.length === 0) return { lotsCreated: 0, splitsAssigned: 0, method: strategy };
 
-  const buys = splits.filter(s => toDecimal(s.quantity_num, s.quantity_denom) > 0);
-  const sells = splits.filter(s => toDecimal(s.quantity_num, s.quantity_denom) < 0);
+  const buys = splits.filter(s => toDecimalNumber(s.quantity_num, s.quantity_denom) > 0);
+  const sells = splits.filter(s => toDecimalNumber(s.quantity_num, s.quantity_denom) < 0);
 
   buys.sort((a, b) => (a.post_date?.getTime() || 0) - (b.post_date?.getTime() || 0));
 
@@ -109,7 +105,7 @@ async function assignWithStrategy(
 
   for (const lot of existingLots) {
     const shares = lot.splits.reduce(
-      (sum, s) => sum + toDecimal(s.quantity_num, s.quantity_denom), 0
+      (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0
     );
     if (Math.abs(shares) > 0.0001) {
       lotShareMap.set(lot.guid, shares);
@@ -130,7 +126,7 @@ async function assignWithStrategy(
       data: { lot_guid: lotGuid },
     });
 
-    const qty = toDecimal(buy.quantity_num, buy.quantity_denom);
+    const qty = toDecimalNumber(buy.quantity_num, buy.quantity_denom);
     lotShareMap.set(lotGuid, qty);
     lotOrder.push(lotGuid);
   }
@@ -145,7 +141,7 @@ async function assignWithStrategy(
         where: { guid: sell.guid },
         data: { lot_guid: targetLotGuid },
       });
-      const sellQty = toDecimal(sell.quantity_num, sell.quantity_denom);
+      const sellQty = toDecimalNumber(sell.quantity_num, sell.quantity_denom);
       lotShareMap.set(targetLotGuid, (lotShareMap.get(targetLotGuid) || 0) + sellQty);
     } else {
       const lastLot = lotOrder[lotOrder.length - 1];
@@ -306,7 +302,7 @@ export async function detectWashSales(
 
     // Identify sells and buys
     const buys = allSplits.filter(s =>
-      toDecimal(s.quantity_num, s.quantity_denom) > 0
+      toDecimalNumber(s.quantity_num, s.quantity_denom) > 0
     );
 
     // For sells, determine if they were at a loss using lot data or heuristic
@@ -323,20 +319,20 @@ export async function detectWashSales(
     const lotMap = new Map(lotsWithSplits.map(l => [l.guid, l]));
 
     for (const s of allSplits) {
-      const qty = toDecimal(s.quantity_num, s.quantity_denom);
+      const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
       if (qty >= 0) continue; // Not a sell
 
-      const val = toDecimal(s.value_num, s.value_denom);
+      const val = toDecimalNumber(s.value_num, s.value_denom);
 
       // If sell is assigned to a lot, check lot-level realized gain
       if (s.lot_guid) {
         const lot = lotMap.get(s.lot_guid);
         if (lot) {
           const totalValue = lot.splits.reduce(
-            (sum, ls) => sum + toDecimal(ls.value_num, ls.value_denom), 0
+            (sum, ls) => sum + toDecimalNumber(ls.value_num, ls.value_denom), 0
           );
           const totalQty = lot.splits.reduce(
-            (sum, ls) => sum + toDecimal(ls.quantity_num, ls.quantity_denom), 0
+            (sum, ls) => sum + toDecimalNumber(ls.quantity_num, ls.quantity_denom), 0
           );
           // Closed lot with negative total value = realized loss
           if (Math.abs(totalQty) < 0.0001 && totalValue < 0) {
@@ -350,10 +346,10 @@ export async function detectWashSales(
       const accountBuys = buys.filter(b => b.account_guid === s.account_guid);
       if (accountBuys.length > 0) {
         const totalBuyQty = accountBuys.reduce(
-          (sum, b) => sum + toDecimal(b.quantity_num, b.quantity_denom), 0
+          (sum, b) => sum + toDecimalNumber(b.quantity_num, b.quantity_denom), 0
         );
         const totalBuyCost = accountBuys.reduce(
-          (sum, b) => sum + Math.abs(toDecimal(b.value_num, b.value_denom)), 0
+          (sum, b) => sum + Math.abs(toDecimalNumber(b.value_num, b.value_denom)), 0
         );
         const avgCostPerShare = totalBuyQty > 0 ? totalBuyCost / totalBuyQty : 0;
         const sellProceedsPerShare = Math.abs(val / qty);
@@ -387,7 +383,7 @@ export async function detectWashSales(
             sellAccountGuid: sell.account_guid,
             sellAccountName: sellAccount?.name || '',
             ticker,
-            shares: Math.abs(toDecimal(sell.quantity_num, sell.quantity_denom)),
+            shares: Math.abs(toDecimalNumber(sell.quantity_num, sell.quantity_denom)),
             loss: sell.realizedLoss,
             washBuyDate: buyDate.toISOString(),
             washBuyAccountGuid: buy.account_guid,
