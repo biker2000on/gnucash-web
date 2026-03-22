@@ -146,13 +146,14 @@ export async function getReceiptCountsForTransactions(
 ): Promise<Record<string, number>> {
   if (transactionGuids.length === 0) return {};
 
-  const placeholders = transactionGuids.map((_, i) => `$${i + 2}`).join(',');
+  // Use ANY(array) instead of IN with individual placeholders to avoid
+  // excessive bind parameters with large transaction lists
   const result = await query(
     `SELECT transaction_guid, COUNT(*) as count
      FROM gnucash_web_receipts
-     WHERE book_guid = $1 AND transaction_guid IN (${placeholders})
+     WHERE book_guid = $1 AND transaction_guid = ANY($2::text[])
      GROUP BY transaction_guid`,
-    [bookGuid, ...transactionGuids]
+    [bookGuid, transactionGuids]
   );
 
   const counts: Record<string, number> = {};

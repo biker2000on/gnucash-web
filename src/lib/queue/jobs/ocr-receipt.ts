@@ -1,19 +1,47 @@
 import { Job } from 'bullmq';
-import { updateOcrResults, getReceiptById } from '@/lib/receipts';
+import { updateOcrResults } from '@/lib/receipts';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
+import { query } from '@/lib/db';
+
+// Cache tesseract availability check at module level (checked once per worker process)
+let _systemTesseractAvailable: boolean | null = null;
+
+function isSystemTesseractAvailable(): boolean {
+  if (_systemTesseractAvailable !== null) return _systemTesseractAvailable;
+  try {
+    const { execSync } = require('child_process');
+    execSync('which tesseract', { stdio: 'ignore' });
+    _systemTesseractAvailable = true;
+  } catch {
+    _systemTesseractAvailable = false;
+  }
+  return _systemTesseractAvailable;
+}
 
 async function extractTextFromImage(buffer: Buffer): Promise<string> {
-  try {
-    const { execSync } = await import('child_process');
-    execSync('which tesseract', { stdio: 'ignore' });
-    const { recognize } = await import('node-tesseract-ocr');
-    const text = await recognize(buffer, { lang: 'eng' });
-    return text.trim();
-  } catch {
-    const Tesseract = await import('tesseract.js');
-    const result = await Tesseract.recognize(buffer, 'eng');
-    return result.data.text.trim();
+  if (isSystemTesseractAvailable()) {
+    try {
+      // node-tesseract-ocr expects a file path, not a buffer — write to temp file
+      const fs = await import('fs');
+      const path = await import('path');
+      const os = await import('os');
+      const tmpPath = path.join(os.tmpdir(), `receipt-ocr-${Date.now()}.png`);
+      fs.writeFileSync(tmpPath, buffer);
+      try {
+        const { recognize } = await import('node-tesseract-ocr');
+        const text = await recognize(tmpPath, { lang: 'eng' });
+        return text.trim();
+      } finally {
+        try { fs.unlinkSync(tmpPath); } catch { /* best effort cleanup */ }
+      }
+    } catch {
+      // Fall through to WASM fallback
+    }
   }
+
+  const Tesseract = await import('tesseract.js');
+  const result = await Tesseract.recognize(buffer, 'eng');
+  return result.data.text.trim();
 }
 
 async function extractTextFromPdf(buffer: Buffer): Promise<string> {
@@ -32,11 +60,14 @@ async function extractTextFromPdf(buffer: Buffer): Promise<string> {
 
   const directText = textParts.join('\n').trim();
 
+  // If PDF has no text layer (scanned document), fall back to OCR via WASM tesseract
+  // Note: We OCR the raw buffer, not the placeholder thumbnail
   if (!directText) {
     try {
-      const { generateThumbnail } = await import('@/lib/storage/thumbnail');
-      const imageBuffer = await generateThumbnail(buffer, 'application/pdf');
-      return extractTextFromImage(imageBuffer);
+      // Use tesseract.js directly on the PDF buffer — it can handle PDFs
+      const Tesseract = await import('tesseract.js');
+      const result = await Tesseract.recognize(buffer, 'eng');
+      return result.data.text.trim();
     } catch {
       return '';
     }
@@ -46,13 +77,18 @@ async function extractTextFromPdf(buffer: Buffer): Promise<string> {
 }
 
 export async function handleOcrReceipt(job: Job): Promise<void> {
-  const { receiptId, bookGuid } = job.data as { receiptId: number; bookGuid: string };
+  const { receiptId } = job.data as { receiptId: number; bookGuid?: string };
   console.log(`[Job ${job.id}] Starting OCR for receipt ${receiptId}`);
 
   try {
     await updateOcrResults(receiptId, null, 'processing');
 
-    const receipt = await getReceiptById(receiptId, bookGuid);
+    // Look up receipt by ID directly — don't trust bookGuid from job payload
+    const result = await query(
+      'SELECT * FROM gnucash_web_receipts WHERE id = $1',
+      [receiptId]
+    );
+    const receipt = result.rows[0];
     if (!receipt) {
       console.warn(`[Job ${job.id}] Receipt ${receiptId} not found, skipping OCR`);
       return;
@@ -68,8 +104,9 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
       text = await extractTextFromImage(buffer);
     }
 
-    await updateOcrResults(receiptId, text || null, 'complete');
-    console.log(`[Job ${job.id}] OCR complete for receipt ${receiptId}: ${text.length} chars extracted`);
+    const extractedText = text || null;
+    await updateOcrResults(receiptId, extractedText, 'complete');
+    console.log(`[Job ${job.id}] OCR complete for receipt ${receiptId}: ${extractedText?.length ?? 0} chars extracted`);
   } catch (err) {
     console.error(`[Job ${job.id}] OCR failed for receipt ${receiptId}:`, err);
     await updateOcrResults(receiptId, null, 'failed');

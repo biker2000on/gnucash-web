@@ -33,13 +33,15 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
         setReceipts(data);
         setActiveTab(data.length > 0 ? 'view' : 'upload');
         setActiveIndex(0);
+      } else if (res.status === 401 || res.status === 403) {
+        toast.error('Not authorized to view receipts');
       }
     } catch {
-      // Silently fail — show upload tab
+      toast.error('Failed to load receipts');
     } finally {
       setLoading(false);
     }
-  }, [transactionGuid]);
+  }, [transactionGuid, toast]);
 
   useEffect(() => {
     if (isOpen) fetchReceipts();

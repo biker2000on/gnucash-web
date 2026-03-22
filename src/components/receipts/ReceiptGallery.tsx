@@ -21,6 +21,9 @@ export function ReceiptGallery() {
   const observerTarget = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
+  // Use ref to avoid stale closure in IntersectionObserver callback
+  const fetchRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
@@ -58,23 +61,30 @@ export function ReceiptGallery() {
     }
   }, [debouncedSearch, linkedFilter, offset, toast]);
 
+  // Keep fetchRef current so IntersectionObserver always calls the latest version
+  useEffect(() => {
+    fetchRef.current = () => fetchReceipts(false);
+  }, [fetchReceipts]);
+
+  // Reset on filter change
   useEffect(() => {
     fetchReceipts(true);
   }, [debouncedSearch, linkedFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Infinite scroll — uses ref to avoid stale closure
   useEffect(() => {
     if (!observerTarget.current || !hasMore) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting && !loading && hasMore) {
-          fetchReceipts(false);
+          fetchRef.current();
         }
       },
       { threshold: 0.1 }
     );
     observer.observe(observerTarget.current);
     return () => observer.disconnect();
-  }, [hasMore, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasMore, loading]);
 
   return (
     <div className="space-y-4">

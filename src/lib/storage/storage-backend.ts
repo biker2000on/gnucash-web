@@ -6,18 +6,27 @@ export interface StorageBackend {
 }
 
 let _backend: StorageBackend | null = null;
+let _initPromise: Promise<StorageBackend> | null = null;
 
+/** Get or initialize the storage backend singleton (serialized to prevent double-init). */
 export async function getStorageBackend(): Promise<StorageBackend> {
   if (_backend) return _backend;
-  const type = process.env.RECEIPT_STORAGE || 'filesystem';
-  if (type === 's3') {
-    const { S3Storage } = await import('./s3-storage');
-    _backend = new S3Storage();
-  } else {
-    const { FilesystemStorage } = await import('./filesystem-storage');
-    _backend = new FilesystemStorage();
-  }
-  return _backend!;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = (async () => {
+    const type = process.env.RECEIPT_STORAGE || 'filesystem';
+    if (type === 's3') {
+      const { S3Storage } = await import('./s3-storage');
+      _backend = new S3Storage();
+    } else {
+      const { FilesystemStorage } = await import('./filesystem-storage');
+      _backend = new FilesystemStorage();
+    }
+    _initPromise = null;
+    return _backend!;
+  })();
+
+  return _initPromise;
 }
 
 export function generateStorageKey(originalFilename: string): string {
