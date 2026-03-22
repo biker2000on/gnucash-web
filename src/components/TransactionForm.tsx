@@ -15,6 +15,7 @@ import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval'
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -68,6 +69,7 @@ export function TransactionForm({
     const saveAndAnotherRef = useRef<(() => Promise<void>) | null>(null);
     const { success } = useToast();
     const { defaultTaxRate, dateFormat } = useUserPreferences();
+    const isMobile = useIsMobile();
     const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(toLocalDateString(new Date()), dateFormat));
 
     // Fetch accounts for commodity info (used for multi-currency detection)
@@ -515,21 +517,21 @@ export function TransactionForm({
         setFieldErrors({});
     };
 
+    const adjustDate = (days: number) => {
+        const current = new Date(formData.post_date + 'T12:00:00');
+        current.setDate(current.getDate() + days);
+        const newDate = toLocalDateString(current);
+        setFormData(f => ({ ...f, post_date: newDate }));
+        setDateDisplay(formatDateForDisplay(newDate, dateFormat));
+    };
+
     const handleDateKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === '+' || e.key === '=') {
             e.preventDefault();
-            const current = new Date(formData.post_date + 'T12:00:00');
-            current.setDate(current.getDate() + 1);
-            const newDate = toLocalDateString(current);
-            setFormData(f => ({ ...f, post_date: newDate }));
-            setDateDisplay(formatDateForDisplay(newDate, dateFormat));
+            adjustDate(1);
         } else if (e.key === '-') {
             e.preventDefault();
-            const current = new Date(formData.post_date + 'T12:00:00');
-            current.setDate(current.getDate() - 1);
-            const newDate = toLocalDateString(current);
-            setFormData(f => ({ ...f, post_date: newDate }));
-            setDateDisplay(formatDateForDisplay(newDate, dateFormat));
+            adjustDate(-1);
         } else if (e.key === 't' || e.key === 'T') {
             e.preventDefault();
             const newDate = toLocalDateString(new Date());
@@ -676,26 +678,59 @@ export function TransactionForm({
                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                         Date
                     </label>
-                    <input
-                        ref={dateInputRef}
-                        type="text"
-                        value={dateDisplay}
-                        onChange={(e) => setDateDisplay(e.target.value)}
-                        onFocus={() => dateInputRef.current?.select()}
-                        onBlur={() => {
-                            const parsed = parseDateInput(dateDisplay);
-                            if (parsed) {
-                                setFormData(f => ({ ...f, post_date: parsed }));
-                                setDateDisplay(formatDateForDisplay(parsed, dateFormat));
-                            } else {
-                                setDateDisplay(formatDateForDisplay(formData.post_date, dateFormat));
-                            }
-                        }}
-                        onKeyDown={handleDateKeyDown}
-                        data-field="post_date"
-                        placeholder="MM/DD/YYYY"
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
-                    />
+                    {isMobile ? (
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => adjustDate(-1)}
+                                className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-input-bg border border-border rounded-lg text-foreground-muted hover:text-foreground hover:border-cyan-500/50 transition-colors text-lg font-bold"
+                            >
+                                −
+                            </button>
+                            <input
+                                ref={dateInputRef}
+                                type="date"
+                                value={formData.post_date}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val) {
+                                        setFormData(f => ({ ...f, post_date: val }));
+                                        setDateDisplay(formatDateForDisplay(val, dateFormat));
+                                    }
+                                }}
+                                data-field="post_date"
+                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => adjustDate(1)}
+                                className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-input-bg border border-border rounded-lg text-foreground-muted hover:text-foreground hover:border-cyan-500/50 transition-colors text-lg font-bold"
+                            >
+                                +
+                            </button>
+                        </div>
+                    ) : (
+                        <input
+                            ref={dateInputRef}
+                            type="text"
+                            value={dateDisplay}
+                            onChange={(e) => setDateDisplay(e.target.value)}
+                            onFocus={() => dateInputRef.current?.select()}
+                            onBlur={() => {
+                                const parsed = parseDateInput(dateDisplay);
+                                if (parsed) {
+                                    setFormData(f => ({ ...f, post_date: parsed }));
+                                    setDateDisplay(formatDateForDisplay(parsed, dateFormat));
+                                } else {
+                                    setDateDisplay(formatDateForDisplay(formData.post_date, dateFormat));
+                                }
+                            }}
+                            onKeyDown={handleDateKeyDown}
+                            data-field="post_date"
+                            placeholder="MM/DD/YYYY"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                        />
+                    )}
                 </div>
                 <div className="md:flex-1">
                     <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
