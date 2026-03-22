@@ -27,6 +27,8 @@ interface LotSummary {
     unrealizedGain: number | null;
     holdingPeriod: 'short_term' | 'long_term' | null;
     currentPrice: number | null;
+    sourceLotGuid: string | null;
+    acquisitionDate: string | null;
     splits: LotSplit[];
 }
 
@@ -231,6 +233,28 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                         )}
                                     </div>
                                 )}
+                                {lot.sourceLotGuid && (
+                                    <div className="mt-0.5">
+                                        <span className="text-xs text-blue-400">
+                                            &#8599; Transferred
+                                            {lot.acquisitionDate && (
+                                                <span className="text-foreground-muted"> (acquired {new Date(lot.acquisitionDate).toLocaleDateString()})</span>
+                                            )}
+                                        </span>
+                                    </div>
+                                )}
+                                {lot.isClosed && lot.realizedGain !== 0 && (
+                                    <div className="text-[10px] mt-0.5">
+                                        <span className={lot.realizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                            {lot.realizedGain >= 0 ? 'Gain' : 'Loss'}: {formatCurrency(Math.abs(lot.realizedGain), currencyMnemonic)}
+                                        </span>
+                                        {lot.holdingPeriod && (
+                                            <span className="text-foreground-muted ml-1">
+                                                &middot; {lot.holdingPeriod === 'long_term' ? 'Long term' : 'Short term'}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
                             </button>
                         );
                     })}
@@ -250,6 +274,26 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                         Opened {new Date(selectedLot.openDate).toLocaleDateString()}
                                         {selectedLot.isClosed && selectedLot.closeDate && (
                                             <span> &middot; Closed {new Date(selectedLot.closeDate).toLocaleDateString()}</span>
+                                        )}
+                                    </p>
+                                )}
+                                {selectedLot.sourceLotGuid && (
+                                    <p className="text-xs text-blue-400 mt-0.5">
+                                        &#8599; Transferred
+                                        {selectedLot.acquisitionDate && (
+                                            <span className="text-foreground-muted"> &middot; acquired {new Date(selectedLot.acquisitionDate).toLocaleDateString()}</span>
+                                        )}
+                                    </p>
+                                )}
+                                {selectedLot.isClosed && selectedLot.realizedGain !== 0 && (
+                                    <p className="text-xs mt-0.5">
+                                        <span className={selectedLot.realizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                            Realized {selectedLot.realizedGain >= 0 ? 'gain' : 'loss'}: {formatCurrency(Math.abs(selectedLot.realizedGain), currencyMnemonic)}
+                                        </span>
+                                        {selectedLot.holdingPeriod && (
+                                            <span className="text-foreground-muted ml-1">
+                                                &middot; {selectedLot.holdingPeriod === 'long_term' ? 'Long term' : 'Short term'}
+                                            </span>
                                         )}
                                     </p>
                                 )}
@@ -363,12 +407,15 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
             isOpen={showAutoAssign}
             onClose={() => setShowAutoAssign(false)}
             onAssign={async (method) => {
-              await fetch(`/api/accounts/${accountGuid}/lots/auto-assign`, {
+              const res = await fetch(`/api/accounts/${accountGuid}/lots/auto-assign`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ method }),
               });
               fetchLots();
+              if (res.ok) {
+                return await res.json();
+              }
             }}
             onClearAll={async () => {
               await fetch(`/api/accounts/${accountGuid}/lots/clear-assign`, {
