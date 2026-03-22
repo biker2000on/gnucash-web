@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { AmortizationTable } from '@/components/mortgage/AmortizationTable';
+import type { AmortizationRow } from '@/components/mortgage/AmortizationTable';
+import { PayoffComparison } from '@/components/mortgage/PayoffComparison';
+import { MortgageAutoDetect } from '@/components/mortgage/MortgageAutoDetect';
+import type { AutoDetectResult } from '@/components/mortgage/MortgageAutoDetect';
 
 /* ------------------------------------------------------------------ */
 /* Formatters                                                          */
@@ -25,18 +30,10 @@ interface MortgageConfig {
     loanTermMonths?: number;
     startDate?: string;
     extraPayment?: number;
+    interestAccountGuid?: string;
   };
   created_at: string;
   updated_at: string;
-}
-
-interface AmortizationRow {
-  month: number;
-  payment: number;
-  principal: number;
-  interest: number;
-  extra: number;
-  balance: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -109,9 +106,10 @@ interface InputFieldProps {
   step?: number;
   min?: number;
   max?: number;
+  ariaLabel?: string;
 }
 
-function InputField({ label, value, onChange, type = 'number', suffix, placeholder, step, min, max }: InputFieldProps) {
+function InputField({ label, value, onChange, type = 'number', suffix, placeholder, step, min, max, ariaLabel }: InputFieldProps) {
   const prefix = type === 'currency' ? '$' : undefined;
   const sfx = type === 'percent' ? '%' : suffix;
   const inputType = type === 'date' ? 'date' : type === 'text' ? 'text' : 'number';
@@ -133,6 +131,7 @@ function InputField({ label, value, onChange, type = 'number', suffix, placehold
           min={min}
           max={max}
           placeholder={placeholder}
+          aria-label={ariaLabel || label}
           className={`w-full bg-input-bg border border-border rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
             prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
           }${prefix && sfx ? ' pr-10' : ''}`}
@@ -227,10 +226,19 @@ function SavedMortgageCard({ config, onLoad, onDelete, isDeleting }: SavedCardPr
 }
 
 /* ------------------------------------------------------------------ */
+/* Mode type                                                           */
+/* ------------------------------------------------------------------ */
+
+type EntryMode = 'linked' | 'new';
+
+/* ------------------------------------------------------------------ */
 /* Main Page Component                                                 */
 /* ------------------------------------------------------------------ */
 
 export default function MortgageCalculatorPage() {
+  // ---- Entry mode ----
+  const [entryMode, setEntryMode] = useState<EntryMode>('new');
+
   // ---- Saved configs state ----
   const [savedConfigs, setSavedConfigs] = useState<MortgageConfig[]>([]);
   const [loadingConfigs, setLoadingConfigs] = useState(true);
@@ -242,6 +250,7 @@ export default function MortgageCalculatorPage() {
   const [name, setName] = useState('My Mortgage');
   const [accountGuid, setAccountGuid] = useState('');
   const [accountName, setAccountName] = useState('');
+  const [interestAccountGuid, setInterestAccountGuid] = useState('');
   const [originalAmount, setOriginalAmount] = useState('300000');
   const [interestRate, setInterestRate] = useState('6.5');
   const [loanTermPreset, setLoanTermPreset] = useState('30');
@@ -337,6 +346,7 @@ export default function MortgageCalculatorPage() {
         loanTermMonths,
         startDate,
         extraPayment: extra,
+        interestAccountGuid: interestAccountGuid || undefined,
       };
 
       let res: Response;
@@ -393,6 +403,7 @@ export default function MortgageCalculatorPage() {
     if (c.originalAmount !== undefined) setOriginalAmount(String(c.originalAmount));
     if (c.startDate) setStartDate(c.startDate);
     if (c.extraPayment !== undefined) setExtraPayment(String(c.extraPayment));
+    if (c.interestAccountGuid) setInterestAccountGuid(c.interestAccountGuid);
 
     if (c.loanTermMonths !== undefined) {
       const years = c.loanTermMonths / 12;
@@ -403,6 +414,9 @@ export default function MortgageCalculatorPage() {
         setCustomMonths(String(c.loanTermMonths));
       }
     }
+
+    // Switch to new mode (manual editing) when loading saved config
+    setEntryMode('new');
   };
 
   /* ---------------------------------------------------------------- */
@@ -425,6 +439,26 @@ export default function MortgageCalculatorPage() {
       setDeletingId(null);
     }
   };
+
+  /* ---------------------------------------------------------------- */
+  /* Handle auto-detect completion                                     */
+  /* ---------------------------------------------------------------- */
+
+  const handleDetectionComplete = useCallback((result: AutoDetectResult) => {
+    setOriginalAmount(String(result.originalAmount));
+    setInterestRate(String(result.interestRate));
+    setAccountGuid(result.accountGuid);
+    setInterestAccountGuid(result.interestAccountGuid);
+
+    const termMonths = result.loanTermMonths;
+    const years = termMonths / 12;
+    if ([10, 15, 20, 25, 30].includes(years)) {
+      setLoanTermPreset(String(years));
+    } else {
+      setLoanTermPreset('custom');
+      setCustomMonths(String(termMonths));
+    }
+  }, []);
 
   /* ---------------------------------------------------------------- */
   /* Calculator results (memoized)                                     */
@@ -468,6 +502,7 @@ export default function MortgageCalculatorPage() {
     newPayoffDate.setMonth(newPayoffDate.getMonth() + newMonths);
 
     return {
+      scheduleOriginal,
       scheduleAccelerated,
       originalMonths,
       newMonths,
@@ -512,6 +547,10 @@ export default function MortgageCalculatorPage() {
     const acceleratedInterest = acceleratedTotalPaid - principal;
     const interestSaved = originalInterest - acceleratedInterest;
 
+    // Build schedules for PayoffComparison
+    const originalSchedule = buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, 0);
+    const acceleratedSchedule = buildAmortizationSchedule(principal, monthlyRate, targetMonths, 0);
+
     return {
       error: null,
       noExtraNeeded: false,
@@ -524,6 +563,8 @@ export default function MortgageCalculatorPage() {
       originalInterest,
       acceleratedInterest,
       acceleratedTotalPaid,
+      originalSchedule,
+      acceleratedSchedule,
     };
   }, [principal, monthlyRate, loanTermMonths, startDate, targetYear, calculations]);
 
@@ -543,6 +584,14 @@ export default function MortgageCalculatorPage() {
     return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
   }
 
+  // Compute payoff date for summary cards
+  const payoffDate = useMemo(() => {
+    const start = startDate ? new Date(startDate + 'T00:00:00') : new Date();
+    const d = new Date(start);
+    d.setMonth(d.getMonth() + loanTermMonths);
+    return d;
+  }, [startDate, loanTermMonths]);
+
   /* ---------------------------------------------------------------- */
   /* Render                                                            */
   /* ---------------------------------------------------------------- */
@@ -555,6 +604,49 @@ export default function MortgageCalculatorPage() {
           Calculate mortgage payments, track your loan, and estimate payoff with extra payments.
         </p>
       </header>
+
+      {/* ============================================================ */}
+      {/* Summary Cards (KPI-style)                                     */}
+      {/* ============================================================ */}
+
+      {principal > 0 && (
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <ResultCard
+            label="Current Balance"
+            value={
+              accountGuid
+                ? loadingBalance
+                  ? '...'
+                  : accountBalance !== null
+                    ? fmtFull.format(accountBalance)
+                    : 'N/A'
+                : fmt.format(principal)
+            }
+            sublabel={
+              accountGuid
+                ? loadingBalance
+                  ? 'Loading from account...'
+                  : accountBalance !== null
+                    ? `${((accountBalance / principal) * 100).toFixed(1)}% of original remaining`
+                    : accountName || 'Linked account'
+                : 'Original loan amount (no linked account)'
+            }
+            color="amber"
+          />
+          <ResultCard
+            label="Interest Rate"
+            value={`${annualRate.toFixed(2)}%`}
+            sublabel={`${(annualRate / 12).toFixed(4)}% monthly`}
+            color="cyan"
+          />
+          <ResultCard
+            label="Payoff Date"
+            value={formatDate(payoffDate)}
+            sublabel={formatMonthsToYearsMonths(loanTermMonths)}
+            color="purple"
+          />
+        </section>
+      )}
 
       {/* ============================================================ */}
       {/* Section 1: Saved Mortgages                                    */}
@@ -584,135 +676,183 @@ export default function MortgageCalculatorPage() {
       </section>
 
       {/* ============================================================ */}
-      {/* Section 2: Calculator Form                                    */}
+      {/* Section 2: Mode Toggle & Calculator Form                      */}
       {/* ============================================================ */}
 
       <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-foreground">
-            {editingId ? 'Edit Mortgage' : 'New Mortgage'}
-          </h2>
-          {editingId && (
-            <button
-              type="button"
-              onClick={() => {
-                setEditingId(null);
-                setName('My Mortgage');
-                setAccountGuid('');
-                setAccountName('');
-                setOriginalAmount('300000');
-                setInterestRate('6.5');
-                setLoanTermPreset('30');
-                setStartDate(() => {
-                  const now = new Date();
-                  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-                });
-                setExtraPayment('0');
-              }}
-              className="text-xs text-foreground-muted hover:text-cyan-400 transition-colors"
-            >
-              + New Mortgage
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-          <InputField
-            label="Name"
-            value={name}
-            onChange={setName}
-            type="text"
-            placeholder="My Mortgage"
-          />
-
-          <div>
-            <label className="block text-sm font-medium text-foreground-muted mb-1">Linked Account (Liability)</label>
-            <AccountSelector
-              accountTypes={['LIABILITY']}
-              value={accountGuid}
-              onChange={(guid, accName) => {
-                setAccountGuid(guid);
-                setAccountName(accName);
-              }}
-              placeholder="Select liability account..."
-            />
-          </div>
-
-          <InputField
-            label="Original Loan Amount"
-            value={originalAmount}
-            onChange={setOriginalAmount}
-            type="currency"
-          />
-
-          <InputField
-            label="Annual Interest Rate"
-            value={interestRate}
-            onChange={setInterestRate}
-            type="percent"
-            step={0.01}
-          />
-
-          <div>
-            <label className="block text-sm font-medium text-foreground-muted mb-1">Loan Term</label>
-            <select
-              value={loanTermPreset}
-              onChange={e => setLoanTermPreset(e.target.value)}
-              className="w-full bg-input-bg border border-border rounded-lg py-2 pl-3 pr-8 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
-            >
-              <option value="10">10 years</option>
-              <option value="15">15 years</option>
-              <option value="20">20 years</option>
-              <option value="25">25 years</option>
-              <option value="30">30 years</option>
-              <option value="custom">Custom (months)</option>
-            </select>
-          </div>
-
-          {loanTermPreset === 'custom' && (
-            <InputField
-              label="Custom Term (months)"
-              value={customMonths}
-              onChange={setCustomMonths}
-              type="number"
-              suffix="mo"
-              min={1}
-              max={600}
-            />
-          )}
-
-          <InputField
-            label="Loan Start Date"
-            value={startDate}
-            onChange={setStartDate}
-            type="date"
-          />
-
-          <InputField
-            label="Monthly Extra Payment"
-            value={extraPayment}
-            onChange={setExtraPayment}
-            type="currency"
-          />
-        </div>
-
-        {/* Save button */}
-        <div className="flex items-center gap-3 mt-6">
+        {/* Mode toggle */}
+        <div className="flex gap-1 bg-input-bg border border-border rounded-lg p-1 mb-6 max-w-md">
           <button
             type="button"
-            onClick={handleSave}
-            disabled={saveStatus === 'saving' || !name.trim()}
-            className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => setEntryMode('linked')}
+            className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
+              entryMode === 'linked'
+                ? 'bg-cyan-600 text-white'
+                : 'text-foreground-muted hover:text-foreground'
+            }`}
           >
-            {saveStatus === 'saving' ? 'Saving...' : editingId ? 'Update' : 'Save'}
+            Linked Account
           </button>
-          {saveStatus === 'saved' && (
-            <span className="text-sm text-emerald-400">Saved successfully</span>
-          )}
-          {saveStatus === 'error' && (
-            <span className="text-sm text-rose-400">Failed to save</span>
-          )}
+          <button
+            type="button"
+            onClick={() => setEntryMode('new')}
+            className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
+              entryMode === 'new'
+                ? 'bg-cyan-600 text-white'
+                : 'text-foreground-muted hover:text-foreground'
+            }`}
+          >
+            New Mortgage
+          </button>
         </div>
+
+        {/* Linked Account mode: auto-detect */}
+        {entryMode === 'linked' && (
+          <div>
+            <h2 className="text-lg font-semibold text-foreground mb-4">Auto-Detect from Account</h2>
+            <p className="text-sm text-foreground-muted mb-4">
+              Select your mortgage liability account and interest expense account to auto-detect loan details from your transaction history.
+            </p>
+            <MortgageAutoDetect onDetectionComplete={handleDetectionComplete} />
+          </div>
+        )}
+
+        {/* New Mortgage mode: manual form */}
+        {entryMode === 'new' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-foreground">
+                {editingId ? 'Edit Mortgage' : 'New Mortgage'}
+              </h2>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingId(null);
+                    setName('My Mortgage');
+                    setAccountGuid('');
+                    setAccountName('');
+                    setInterestAccountGuid('');
+                    setOriginalAmount('300000');
+                    setInterestRate('6.5');
+                    setLoanTermPreset('30');
+                    setStartDate(() => {
+                      const now = new Date();
+                      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+                    });
+                    setExtraPayment('0');
+                  }}
+                  className="text-xs text-foreground-muted hover:text-cyan-400 transition-colors"
+                >
+                  + New Mortgage
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+              <InputField
+                label="Name"
+                value={name}
+                onChange={setName}
+                type="text"
+                placeholder="My Mortgage"
+              />
+
+              <div>
+                <label className="block text-sm font-medium text-foreground-muted mb-1">Linked Account (Liability)</label>
+                <AccountSelector
+                  accountTypes={['LIABILITY']}
+                  value={accountGuid}
+                  onChange={(guid, accName) => {
+                    setAccountGuid(guid);
+                    setAccountName(accName);
+                  }}
+                  placeholder="Select liability account..."
+                />
+              </div>
+
+              <InputField
+                label="Original Loan Amount"
+                value={originalAmount}
+                onChange={setOriginalAmount}
+                type="currency"
+                ariaLabel="Original loan amount in dollars"
+              />
+
+              <InputField
+                label="Annual Interest Rate"
+                value={interestRate}
+                onChange={setInterestRate}
+                type="percent"
+                step={0.01}
+                ariaLabel="Annual interest rate in percent"
+              />
+
+              <div>
+                <label className="block text-sm font-medium text-foreground-muted mb-1">Loan Term</label>
+                <select
+                  value={loanTermPreset}
+                  onChange={e => setLoanTermPreset(e.target.value)}
+                  aria-label="Loan term in years"
+                  className="w-full bg-input-bg border border-border rounded-lg py-2 pl-3 pr-8 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                >
+                  <option value="10">10 years</option>
+                  <option value="15">15 years</option>
+                  <option value="20">20 years</option>
+                  <option value="25">25 years</option>
+                  <option value="30">30 years</option>
+                  <option value="custom">Custom (months)</option>
+                </select>
+              </div>
+
+              {loanTermPreset === 'custom' && (
+                <InputField
+                  label="Custom Term (months)"
+                  value={customMonths}
+                  onChange={setCustomMonths}
+                  type="number"
+                  suffix="mo"
+                  min={1}
+                  max={600}
+                  ariaLabel="Custom loan term in months"
+                />
+              )}
+
+              <InputField
+                label="Loan Start Date"
+                value={startDate}
+                onChange={setStartDate}
+                type="date"
+              />
+
+              <InputField
+                label="Monthly Extra Payment"
+                value={extraPayment}
+                onChange={setExtraPayment}
+                type="currency"
+                ariaLabel="Monthly extra payment in dollars"
+              />
+            </div>
+
+            {/* Save button */}
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saveStatus === 'saving' || !name.trim()}
+                className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saveStatus === 'saving' ? 'Saving...' : editingId ? 'Update' : 'Save'}
+              </button>
+              {saveStatus === 'saved' && (
+                <span className="text-sm text-emerald-400">Saved successfully</span>
+              )}
+              {saveStatus === 'error' && (
+                <span className="text-sm text-rose-400">Failed to save</span>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* ============================================================ */}
@@ -806,6 +946,7 @@ export default function MortgageCalculatorPage() {
                 value={payoffExtraPayment}
                 onChange={setPayoffExtraPayment}
                 type="currency"
+                ariaLabel="Extra monthly payment in dollars"
               />
             </div>
 
@@ -837,48 +978,27 @@ export default function MortgageCalculatorPage() {
               />
             </div>
 
+            {/* Payoff Comparison Table */}
+            {payoffExtraCalc.scheduleOriginal.length > 0 && payoffExtraCalc.scheduleAccelerated.length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-3">Plan Comparison</h3>
+                <PayoffComparison
+                  originalSchedule={payoffExtraCalc.scheduleOriginal}
+                  acceleratedSchedule={payoffExtraCalc.scheduleAccelerated}
+                  originalPayment={calculations.monthlyPayment}
+                  acceleratedPayment={calculations.monthlyPayment + (parseFloat(payoffExtraPayment) || 0)}
+                />
+              </div>
+            )}
+
             {/* Amortization Table */}
             {payoffExtraCalc.scheduleAccelerated.length > 0 && (
               <div>
                 <h3 className="text-sm font-semibold text-foreground mb-3">Amortization Schedule</h3>
-                <div className="border border-border rounded-xl overflow-hidden max-h-96 overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-background-secondary z-10">
-                      <tr className="text-foreground-muted text-xs uppercase tracking-wider">
-                        <th className="text-left py-3 px-4 font-medium">Month</th>
-                        <th className="text-right py-3 px-4 font-medium">Payment</th>
-                        <th className="text-right py-3 px-4 font-medium">Principal</th>
-                        <th className="text-right py-3 px-4 font-medium">Interest</th>
-                        <th className="text-right py-3 px-4 font-medium">Extra</th>
-                        <th className="text-right py-3 px-4 font-medium">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {payoffExtraCalc.scheduleAccelerated.map((row, idx) => {
-                        const isPayoffMonth = row.balance <= 0 || idx === payoffExtraCalc.scheduleAccelerated.length - 1;
-                        return (
-                          <tr
-                            key={row.month}
-                            className={`border-t border-border/50 ${
-                              isPayoffMonth
-                                ? 'bg-emerald-500/10 font-semibold'
-                                : idx % 2 === 0
-                                  ? 'bg-transparent'
-                                  : 'bg-surface/20'
-                            }`}
-                          >
-                            <td className="py-2 px-4 text-foreground">{row.month}</td>
-                            <td className="py-2 px-4 text-right text-foreground">{fmtFull.format(row.payment)}</td>
-                            <td className="py-2 px-4 text-right text-emerald-400">{fmtFull.format(row.principal)}</td>
-                            <td className="py-2 px-4 text-right text-rose-400">{fmtFull.format(row.interest)}</td>
-                            <td className="py-2 px-4 text-right text-cyan-400">{fmtFull.format(row.extra)}</td>
-                            <td className="py-2 px-4 text-right text-foreground">{fmtFull.format(row.balance)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <AmortizationTable
+                  schedule={payoffExtraCalc.scheduleAccelerated}
+                  showExtraPayment
+                />
               </div>
             )}
           </div>
@@ -899,6 +1019,7 @@ export default function MortgageCalculatorPage() {
                 placeholder={String(new Date().getFullYear() + 15)}
                 min={new Date().getFullYear()}
                 max={new Date().getFullYear() + 100}
+                ariaLabel="Target payoff year"
               />
             </div>
 
@@ -925,7 +1046,7 @@ export default function MortgageCalculatorPage() {
                   <ResultCard
                     label="Required Monthly Payment"
                     value={fmtFull.format(payoffTargetCalc.requiredPayment)}
-                    sublabel={`Total payment including extra`}
+                    sublabel="Total payment including extra"
                     color="cyan"
                   />
                   <ResultCard
@@ -942,40 +1063,15 @@ export default function MortgageCalculatorPage() {
                   />
                 </div>
 
-                {/* Comparison table */}
-                <div className="border border-border rounded-xl overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-background-secondary">
-                      <tr className="text-foreground-muted text-xs uppercase tracking-wider">
-                        <th className="text-left py-3 px-4 font-medium"></th>
-                        <th className="text-right py-3 px-4 font-medium">Original</th>
-                        <th className="text-right py-3 px-4 font-medium">Accelerated</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-t border-border/50">
-                        <td className="py-3 px-4 text-foreground-muted font-medium">Monthly Payment</td>
-                        <td className="py-3 px-4 text-right text-foreground">{fmtFull.format(calculations.monthlyPayment)}</td>
-                        <td className="py-3 px-4 text-right text-cyan-400 font-semibold">{fmtFull.format(payoffTargetCalc.requiredPayment)}</td>
-                      </tr>
-                      <tr className="border-t border-border/50 bg-surface/20">
-                        <td className="py-3 px-4 text-foreground-muted font-medium">Payoff Term</td>
-                        <td className="py-3 px-4 text-right text-foreground">{formatMonthsToYearsMonths(loanTermMonths)}</td>
-                        <td className="py-3 px-4 text-right text-emerald-400 font-semibold">{formatMonthsToYearsMonths(payoffTargetCalc.targetMonths)}</td>
-                      </tr>
-                      <tr className="border-t border-border/50">
-                        <td className="py-3 px-4 text-foreground-muted font-medium">Total Interest</td>
-                        <td className="py-3 px-4 text-right text-foreground">{fmt.format(payoffTargetCalc.originalInterest ?? 0)}</td>
-                        <td className="py-3 px-4 text-right text-emerald-400 font-semibold">{fmt.format(payoffTargetCalc.acceleratedInterest ?? 0)}</td>
-                      </tr>
-                      <tr className="border-t border-border/50 bg-surface/20">
-                        <td className="py-3 px-4 text-foreground-muted font-medium">Total Paid</td>
-                        <td className="py-3 px-4 text-right text-foreground">{fmt.format(calculations.totalPaid)}</td>
-                        <td className="py-3 px-4 text-right text-emerald-400 font-semibold">{fmt.format(payoffTargetCalc.acceleratedTotalPaid ?? 0)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                {/* Comparison using extracted component */}
+                {'originalSchedule' in payoffTargetCalc && payoffTargetCalc.originalSchedule && payoffTargetCalc.acceleratedSchedule && (
+                  <PayoffComparison
+                    originalSchedule={payoffTargetCalc.originalSchedule}
+                    acceleratedSchedule={payoffTargetCalc.acceleratedSchedule}
+                    originalPayment={calculations.monthlyPayment}
+                    acceleratedPayment={payoffTargetCalc.requiredPayment}
+                  />
+                )}
               </>
             )}
           </div>
