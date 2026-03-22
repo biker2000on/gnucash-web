@@ -11,6 +11,7 @@ import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { useToast } from '@/contexts/ToastContext';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
+import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -493,6 +494,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             <tr className="bg-background-secondary/50 text-foreground-secondary text-xs uppercase tracking-widest">
                                 <th className="px-4 py-2 font-semibold">Date</th>
                                 <th className="px-4 py-2 font-semibold">Description</th>
+                                <th className="px-2 py-2 w-10 font-semibold"></th>
                                 <th className="px-4 py-2 font-semibold">Account</th>
                                 <th className="px-4 py-2 font-semibold text-right">Debit</th>
                                 <th className="px-4 py-2 font-semibold text-right">Credit</th>
@@ -501,7 +503,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         <tbody className="divide-y divide-border">
                             {transactions.length === 0 ? (
                                 <tr>
-                                    <td colSpan={5} className="px-4 py-10 text-center text-foreground-muted">
+                                    <td colSpan={6} className="px-4 py-10 text-center text-foreground-muted">
                                         {loading ? 'Loading...' : 'No transactions found matching your filters.'}
                                     </td>
                                 </tr>
@@ -514,6 +516,13 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-4 py-2 text-sm text-foreground align-middle max-w-xs leading-tight">
                                             <div className="font-medium">{tx.description}</div>
                                             {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
+                                        </td>
+                                        <td className="px-1 py-1 align-middle" onClick={(e) => e.stopPropagation()}>
+                                            <ReceiptIndicator
+                                                transactionGuid={tx.guid}
+                                                transactionDescription={tx.description}
+                                                receiptCount={(tx as any).receipt_count || 0}
+                                            />
                                         </td>
                                         <td className="px-4 py-2 text-sm align-top">
                                             <div className="space-y-1">

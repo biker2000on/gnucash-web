@@ -71,6 +71,13 @@ export function getColumns(meta: {
             header: 'Balance',
         }),
 
+        // Receipt
+        columnHelper.display({
+            id: 'receipt',
+            header: '',
+            size: 40,
+        }),
+
         // Edit button (edit mode)
         ...(meta.isEditMode ? [
             columnHelper.display({
@@ -146,6 +153,13 @@ export function getInvestmentColumns(meta: {
         columnHelper.display({
             id: 'costBasis',
             header: 'Cost Basis',
+        }),
+
+        // Receipt
+        columnHelper.display({
+            id: 'receipt',
+            header: '',
+            size: 40,
         }),
 
         ...(meta.isEditMode ? [
