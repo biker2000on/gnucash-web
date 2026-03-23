@@ -89,6 +89,13 @@ export default function FireCalculatorPage() {
   const [expectedReturnDDV, setExpectedReturnDDV] = useState<DataDrivenValue>({ computed: null, override: null });
   const [computedPortfolioReturn, setComputedPortfolioReturn] = useState<number | null>(null);
 
+  // ---- Birthday-derived age ----
+  const [birthday, setBirthday] = useState<string | null>(null);
+  const [birthdayLoading, setBirthdayLoading] = useState(true);
+  const [birthdayEditing, setBirthdayEditing] = useState(false);
+  const [birthdayInput, setBirthdayInput] = useState('');
+  const [birthdaySaving, setBirthdaySaving] = useState(false);
+
   // ---- Manual-only inputs ----
   const [currentAge, setCurrentAge] = useState(30);
   const [targetRetirementAge, setTargetRetirementAge] = useState(55);
@@ -113,6 +120,63 @@ export default function FireCalculatorPage() {
   const annualSavings = effectiveValue(annualSavingsDDV, 0);
   const annualExpenses = effectiveValue(annualExpensesDDV, 50000);
   const expectedReturn = effectiveValue(expectedReturnDDV, 7);
+
+  /* ---------------------------------------------------------------- */
+  /* Fetch birthday on mount                                           */
+  /* ---------------------------------------------------------------- */
+
+  useEffect(() => {
+    async function fetchBirthday() {
+      try {
+        const res = await fetch('/api/user/preferences?key=birthday');
+        if (res.ok) {
+          const data = await res.json();
+          const prefs = data.preferences || {};
+          if (prefs.birthday) {
+            setBirthday(prefs.birthday);
+            const ageYears = Math.floor(
+              (Date.now() - new Date(prefs.birthday + 'T00:00:00').getTime()) /
+              (365.25 * 24 * 60 * 60 * 1000)
+            );
+            if (ageYears > 0 && ageYears < 120) {
+              setCurrentAge(ageYears);
+            }
+          }
+        }
+      } catch {
+        // ignore — age stays at manual default
+      } finally {
+        setBirthdayLoading(false);
+      }
+    }
+    fetchBirthday();
+  }, []);
+
+  const saveBirthday = async (dateStr: string) => {
+    setBirthdaySaving(true);
+    try {
+      const res = await fetch('/api/user/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferences: { birthday: dateStr } }),
+      });
+      if (res.ok) {
+        setBirthday(dateStr);
+        const ageYears = Math.floor(
+          (Date.now() - new Date(dateStr + 'T00:00:00').getTime()) /
+          (365.25 * 24 * 60 * 60 * 1000)
+        );
+        if (ageYears > 0 && ageYears < 120) {
+          setCurrentAge(ageYears);
+        }
+        setBirthdayEditing(false);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setBirthdaySaving(false);
+    }
+  };
 
   /* ---------------------------------------------------------------- */
   /* Fetch KPI data on mount                                          */
@@ -804,13 +868,53 @@ export default function FireCalculatorPage() {
                 </p>
               )}
             </div>
-            <InputField
-              label="Current Age"
-              value={currentAge}
-              onChange={setCurrentAge}
-              type="number"
-              suffix="years"
-            />
+            <div>
+              <InputField
+                label="Current Age"
+                value={currentAge}
+                onChange={setCurrentAge}
+                type="number"
+                suffix="years"
+              />
+              {birthday && !birthdayLoading ? (
+                <p className="mt-1 text-xs text-foreground-muted">
+                  From your birthday ({birthday})
+                </p>
+              ) : !birthdayLoading && !birthdayEditing ? (
+                <button
+                  type="button"
+                  onClick={() => { setBirthdayEditing(true); setBirthdayInput(''); }}
+                  className="mt-1 text-xs text-emerald-500 hover:text-emerald-400"
+                >
+                  Set your birthday to auto-calculate age
+                </button>
+              ) : null}
+              {birthdayEditing && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={birthdayInput}
+                    onChange={(e) => setBirthdayInput(e.target.value)}
+                    className="bg-background-tertiary border border-border rounded-lg px-2 py-1 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => birthdayInput && saveBirthday(birthdayInput)}
+                    disabled={!birthdayInput || birthdaySaving}
+                    className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white px-3 py-1 rounded-lg"
+                  >
+                    {birthdaySaving ? 'Saving...' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBirthdayEditing(false)}
+                    className="text-xs text-foreground-muted hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
             <InputField
               label="Target Retirement Age"
               value={targetRetirementAge}

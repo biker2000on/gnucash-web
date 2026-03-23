@@ -38,6 +38,10 @@ export default function ProfilePage() {
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [birthday, setBirthday] = useState('');
+    const [birthdayLoading, setBirthdayLoading] = useState(true);
+    const [birthdaySaving, setBirthdaySaving] = useState(false);
+    const [birthdayMessage, setBirthdayMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [changingPassword, setChangingPassword] = useState(false);
     const [installingApp, setInstallingApp] = useState(false);
     const [installMessage, setInstallMessage] = useState<string | null>(null);
@@ -57,8 +61,47 @@ export default function ProfilePage() {
                 setLoading(false);
             }
         }
+        async function fetchBirthday() {
+            try {
+                const res = await fetch('/api/user/preferences?key=birthday');
+                if (res.ok) {
+                    const data = await res.json();
+                    const prefs = data.preferences || {};
+                    if (prefs.birthday) {
+                        setBirthday(prefs.birthday);
+                    }
+                }
+            } catch {
+                // ignore
+            } finally {
+                setBirthdayLoading(false);
+            }
+        }
         fetchUser();
+        fetchBirthday();
     }, []);
+
+    const handleBirthdaySave = async () => {
+        setBirthdaySaving(true);
+        setBirthdayMessage(null);
+        try {
+            const res = await fetch('/api/user/preferences', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ preferences: { birthday } }),
+            });
+            if (!res.ok) {
+                setBirthdayMessage({ type: 'error', text: 'Failed to save birthday' });
+                return;
+            }
+            setBirthdayMessage({ type: 'success', text: 'Birthday saved' });
+            setTimeout(() => setBirthdayMessage(null), 3000);
+        } catch {
+            setBirthdayMessage({ type: 'error', text: 'Failed to save birthday' });
+        } finally {
+            setBirthdaySaving(false);
+        }
+    };
 
     const handlePasswordChange = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -172,6 +215,52 @@ export default function ProfilePage() {
                         <p className="text-sm text-foreground-muted">User ID: {user.id}</p>
                     </div>
                 </div>
+            </div>
+
+            {/* Birthday */}
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-foreground mb-2">Birthday</h3>
+                <p className="text-sm text-foreground-muted mb-4">
+                    Used to calculate your current age in the FIRE calculator.
+                </p>
+
+                {birthdayMessage && (
+                    <div
+                        className={`mb-4 px-4 py-2 rounded-lg text-sm ${
+                            birthdayMessage.type === 'success'
+                                ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                        }`}
+                    >
+                        {birthdayMessage.text}
+                    </div>
+                )}
+
+                <div className="flex items-end gap-3">
+                    <div className="flex-1">
+                        <label className="block text-sm text-foreground-secondary mb-1">Date of Birth</label>
+                        <input
+                            type="date"
+                            value={birthday}
+                            onChange={(e) => setBirthday(e.target.value)}
+                            disabled={birthdayLoading}
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                        />
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleBirthdaySave}
+                        disabled={birthdaySaving || !birthday}
+                        className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed text-sm"
+                    >
+                        {birthdaySaving ? 'Saving...' : 'Save'}
+                    </button>
+                </div>
+                {birthday && !birthdayLoading && (
+                    <p className="mt-2 text-xs text-foreground-muted">
+                        Age: {Math.floor((Date.now() - new Date(birthday + 'T00:00:00').getTime()) / (365.25 * 24 * 60 * 60 * 1000))} years
+                    </p>
+                )}
             </div>
 
             {/* Theme Settings */}
