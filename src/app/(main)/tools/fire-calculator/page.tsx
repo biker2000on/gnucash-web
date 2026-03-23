@@ -87,6 +87,7 @@ export default function FireCalculatorPage() {
   const [annualSavingsDDV, setAnnualSavingsDDV] = useState<DataDrivenValue>({ computed: null, override: null });
   const [annualExpensesDDV, setAnnualExpensesDDV] = useState<DataDrivenValue>({ computed: null, override: null });
   const [expectedReturnDDV, setExpectedReturnDDV] = useState<DataDrivenValue>({ computed: null, override: null });
+  const [computedPortfolioReturn, setComputedPortfolioReturn] = useState<number | null>(null);
 
   // ---- Manual-only inputs ----
   const [currentAge, setCurrentAge] = useState(30);
@@ -196,8 +197,11 @@ export default function FireCalculatorPage() {
           annualReturn = twr;
         }
 
+        // Store the computed TWR as informational, but don't use it as the default.
+        // A single year's return is too volatile for long-term FIRE projections.
+        // Default to 7% (historical real S&P 500 average); user can override.
         if (Number.isFinite(annualReturn)) {
-          setExpectedReturnDDV(prev => ({ ...prev, computed: Math.round(annualReturn * 100) / 100 }));
+          setComputedPortfolioReturn(Math.round(annualReturn * 100) / 100);
         }
 
         setInvestmentState('loaded');
@@ -779,19 +783,27 @@ export default function FireCalculatorPage() {
               onCommit={commitEdit}
               onReset={resetOverride}
             />
-            <DataDrivenInputField
-              label="Expected Annual Return"
-              field="expectedReturn"
-              ddv={expectedReturnDDV}
-              fallback={7}
-              type="percent"
-              editingField={editingField}
-              editingValue={editingValue}
-              onStartEdit={startEditing}
-              onEditChange={setEditingValue}
-              onCommit={commitEdit}
-              onReset={resetOverride}
-            />
+            <div>
+              <DataDrivenInputField
+                label="Expected Annual Return"
+                field="expectedReturn"
+                ddv={expectedReturnDDV}
+                fallback={7}
+                type="percent"
+                editingField={editingField}
+                editingValue={editingValue}
+                onStartEdit={startEditing}
+                onEditChange={setEditingValue}
+                onCommit={commitEdit}
+                onReset={resetOverride}
+              />
+              {computedPortfolioReturn !== null && (
+                <p className="mt-1 text-xs text-foreground-muted">
+                  Your portfolio returned {computedPortfolioReturn.toFixed(1)}% over the last year.
+                  Default is 7% (historical average).
+                </p>
+              )}
+            </div>
             <InputField
               label="Current Age"
               value={currentAge}
