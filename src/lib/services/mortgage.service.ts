@@ -43,6 +43,7 @@ export interface MortgageDetectionResult {
   paymentsAnalyzed: number;
   confidence: DetectionConfidence;
   warnings: string[];
+  paymentHistory: PaymentSplit[];
 }
 
 /**
@@ -456,6 +457,11 @@ export class MortgageService {
       }
     }
 
+    // Build payment history excluding the opening balance transaction
+    const paymentHistory = payments.filter(
+      (p) => Math.abs(p.principal - originalAmount) / originalAmount > 0.1
+    );
+
     return {
       originalAmount,
       interestRate: rateResult.rate,
@@ -463,6 +469,7 @@ export class MortgageService {
       paymentsAnalyzed: payments.length,
       confidence,
       warnings,
+      paymentHistory,
     };
   }
 }
