@@ -2,8 +2,12 @@
 #
 # This composition runs:
 # - app: Next.js web application
-# - worker: Background job processor
+# - worker: Background job processor (OCR, receipt matching)
 # - redis: Job queue and cache
+#
+# Optional services (enable via profiles):
+# - ollama: Local LLM for AI-powered receipt extraction
+# - minio: S3-compatible object storage for receipt files
 #
 # Required environment variables (create .env file):
 # - DATABASE_URL: PostgreSQL connection string
@@ -11,10 +15,12 @@
 # - NEXTAUTH_URL: Public URL (defaults to http://localhost:3000)
 #
 # Usage:
-#   docker compose up -d          # Start all services
-#   docker compose logs -f app    # View app logs
-#   docker compose logs -f worker # View worker logs
-#   docker compose down           # Stop all services
+#   docker compose up -d                              # Core services only
+#   docker compose --profile ai up -d                 # + Ollama
+#   docker compose --profile storage up -d            # + MinIO
+#   docker compose --profile ai --profile storage up -d  # All services
+#   docker compose logs -f app                        # View app logs
+#   docker compose down                               # Stop all services
 
 version: '3.8'
 
@@ -28,6 +34,17 @@ services:
       - REDIS_URL=redis://redis:6379
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      # AI config (optional — set via Settings > AI in the app, or env vars)
+      - AI_BASE_URL=${AI_BASE_URL:-}
+      - AI_MODEL=${AI_MODEL:-}
+      - AI_API_KEY=${AI_API_KEY:-}
+      # S3 receipt storage (optional — defaults to filesystem)
+      - RECEIPT_STORAGE=${RECEIPT_STORAGE:-filesystem}
+      - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-}
+      - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
+      - RECEIPT_S3_REGION=${RECEIPT_S3_REGION:-us-east-1}
+      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-}
+      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-}
     depends_on:
       redis:
         condition: service_started
@@ -40,6 +57,15 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379
       - WORKER_HEALTH_PORT=9090
+      - AI_BASE_URL=${AI_BASE_URL:-}
+      - AI_MODEL=${AI_MODEL:-}
+      - AI_API_KEY=${AI_API_KEY:-}
+      - RECEIPT_STORAGE=${RECEIPT_STORAGE:-filesystem}
+      - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-}
+      - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
+      - RECEIPT_S3_REGION=${RECEIPT_S3_REGION:-us-east-1}
+      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-}
+      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-}
     depends_on:
       redis:
         condition: service_started
@@ -60,5 +86,41 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
 
+  # ---- Optional: Local LLM via Ollama ----
+  # Enable with: docker compose --profile ai up -d
+  # Then set AI_BASE_URL=http://ollama:11434/v1 in .env
+  # Pull a model: docker compose exec ollama ollama pull llama3.2
+  ollama:
+    image: ollama/ollama
+    profiles: ["ai"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  # ---- Optional: S3-compatible storage via MinIO ----
+  # Enable with: docker compose --profile storage up -d
+  # Then set in .env:
+  #   RECEIPT_STORAGE=s3
+  #   RECEIPT_S3_ENDPOINT=http://minio:9000
+  #   RECEIPT_S3_ACCESS_KEY=minioadmin
+  #   RECEIPT_S3_SECRET_KEY=minioadmin
+  minio:
+    image: minio/minio
+    profiles: ["storage"]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
 volumes:
   redis-data:
+  ollama-data:
+  minio-data:
