@@ -145,6 +145,22 @@ The auto-scrub created one destination lot (`f0040f5a`) for all 591 shares, poin
 
 ---
 
+## P2 - Payslip Integration (PDF + QuickBooks Online)
+
+**What:** Import payroll stubs into GnuCash Web. Phase 1: PDF upload + AI extraction into structured line items, mapped to GnuCash accounts via reusable per-employer templates, posted as detailed split transactions. Phase 2: QuickBooks Online API as an optional structured data source (OAuth 2.0 + Intuit Payroll API).
+
+**Why:** Paychecks currently import via SimpleFin as lump-sum deposits with no breakdown. Users who want to track taxes, deductions, and retirement contributions must manually create split transactions. This automates that workflow and stores payslip PDFs alongside receipts.
+
+**Effort:** L (human: ~2-3 weeks) / with CC: M-L (~1-2 hours)
+
+**Depends on:** Receipt storage infrastructure (shipped), AI extraction pipeline (shipped), BullMQ queue (shipped).
+
+**Spec:** [`docs/superpowers/specs/2026-03-24-payslip-integration-design.md`](docs/superpowers/specs/2026-03-24-payslip-integration-design.md)
+
+**Context:** Designed 2026-03-24. Phase 1 (PDF + AI) builds on existing receipt/OCR infrastructure. Phase 2 (QBO API) deferred — requires Intuit developer approval and paid QuickBooks Payroll subscription. Key features: per-employer account mapping templates, SimpleFin deposit enrichment/dedup, balance validation with imbalance account fallback, employer contribution tracking (informational only).
+
+---
+
 ## P4 - Receipt AI Re-Extraction Batch Job
 
 **What:** A "Re-extract all" button in AI settings that enqueues BullMQ jobs to re-run extraction on all existing receipts that used regex, using the newly configured AI provider.
