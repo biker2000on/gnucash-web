@@ -114,7 +114,7 @@ function buildHybridSchedule(
     balance = Math.max(0, balance - p.principal);
     rows.push({
       month: i + 1,
-      date: typeof p.date === 'string' ? p.date.slice(0, 10) : new Date(p.date).toISOString().slice(0, 10),
+      date: new Date(p.date).toISOString().slice(0, 10),
       payment: p.total,
       principal: p.principal,
       interest: p.interest,
@@ -137,7 +137,7 @@ function buildHybridSchedule(
 
   let bal = projectionBalance;
   const lastActualDate = actualPayments.length > 0
-    ? new Date(actualPayments[actualPayments.length - 1].date + 'T00:00:00')
+    ? new Date(actualPayments[actualPayments.length - 1].date)
     : new Date();
 
   for (let m = 1; bal > 0; m++) {
