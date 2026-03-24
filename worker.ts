@@ -97,6 +97,28 @@ function setSchedule(bookGuid: string, refreshTime: string) {
   console.log(`Schedule set: book ${bookGuid}, daily at ${refreshTime} UTC`);
 }
 
+/** Generic daily schedule — runs a callback at a given UTC time, repeats daily. */
+const genericTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function setScheduleGeneric(name: string, timeUtc: string, callback: () => Promise<void>) {
+  const existing = genericTimers.get(name);
+  if (existing) clearTimeout(existing);
+
+  function scheduleNext() {
+    const ms = msUntilNext(timeUtc);
+    const nextRun = new Date(Date.now() + ms);
+    console.log(`[schedule] ${name} next run at ${nextRun.toISOString()} (${timeUtc} UTC)`);
+
+    const timer = setTimeout(async () => {
+      await callback();
+      scheduleNext();
+    }, ms);
+
+    genericTimers.set(name, timer);
+  }
+  scheduleNext();
+}
+
 function clearSchedule(bookGuid: string) {
   const existing = schedules.get(bookGuid);
   if (existing?.timer) {
@@ -241,6 +263,12 @@ async function main() {
           await handleOcrReceipt(job);
           break;
         }
+        case 'regenerate-thumbnails': {
+          const { handleRegenerateThumbnails } = await import('./src/lib/queue/jobs/regenerate-thumbnails');
+          const thumbResult = await handleRegenerateThumbnails(job);
+          console.log(`Thumbnail regeneration: ${thumbResult.regenerated} regenerated, ${thumbResult.skipped} skipped, ${thumbResult.failed} failed`);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -263,6 +291,19 @@ async function main() {
 
   worker.on('failed', (job, err) => {
     console.error(`[${new Date().toISOString()}] Job ${job?.name} (${job?.id}) FAILED:`, err.message);
+  });
+
+  // Schedule nightly thumbnail regeneration at 03:00 UTC
+  setScheduleGeneric('thumbnail-regen', '03:00', async () => {
+    console.log(`[${new Date().toISOString()}] Running nightly thumbnail regeneration`);
+    try {
+      const { handleRegenerateThumbnails } = await import('./src/lib/queue/jobs/regenerate-thumbnails');
+      const fakeJob = { id: `nightly-thumbs-${Date.now()}`, name: 'regenerate-thumbnails', data: {}, updateProgress: async () => {} } as unknown as Job;
+      const result = await handleRegenerateThumbnails(fakeJob);
+      console.log(`[${new Date().toISOString()}] Nightly thumbnails: ${result.regenerated} regenerated, ${result.skipped} skipped`);
+    } catch (err) {
+      console.error('Nightly thumbnail regeneration failed:', err);
+    }
   });
 
   workerReady = true;
