@@ -495,7 +495,21 @@ export default function MortgageCalculatorPage() {
       }
     }
 
-    // Switch to new mode (manual editing) when loading saved config
+    // Re-fetch payment history if this config has linked accounts
+    if (config.account_guid && c.interestAccountGuid) {
+      fetch(`/api/tools/mortgage/detect?accountGuid=${config.account_guid}&interestAccountGuid=${c.interestAccountGuid}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.paymentHistory) {
+            setPaymentHistory(data.paymentHistory);
+          }
+        })
+        .catch(() => { /* ignore */ });
+    } else {
+      setPaymentHistory([]);
+    }
+
+    // Switch to form mode when loading saved config
     setEntryMode('new');
   };
 
@@ -531,6 +545,16 @@ export default function MortgageCalculatorPage() {
     setInterestAccountGuid(result.interestAccountGuid);
     setPaymentHistory(result.paymentHistory || []);
 
+    if (result.monthlyPayment > 0) {
+      setExtraPayment('0');
+    }
+
+    // Set start date from first payment if available
+    if (result.paymentHistory?.length > 0) {
+      const firstDate = new Date(result.paymentHistory[0].date);
+      setStartDate(firstDate.toISOString().slice(0, 10));
+    }
+
     const termMonths = result.loanTermMonths;
     const years = termMonths / 12;
     if ([10, 15, 20, 25, 30].includes(years)) {
@@ -539,6 +563,9 @@ export default function MortgageCalculatorPage() {
       setLoanTermPreset('custom');
       setCustomMonths(String(termMonths));
     }
+
+    // Switch to form view so user can review detected values and save
+    setEntryMode('new');
   }, []);
 
   /* ---------------------------------------------------------------- */
