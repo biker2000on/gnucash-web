@@ -23,6 +23,8 @@ export function ReceiptGallery() {
   const [hasMore, setHasMore] = useState(true);
   const [selectedReceipt, setSelectedReceipt] = useState<ReceiptWithTransaction | null>(null);
   const [batchUploadOpen, setBatchUploadOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [regenRunning, setRegenRunning] = useState(false);
   const observerTarget = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
@@ -36,6 +38,13 @@ export function ReceiptGallery() {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // Check admin role on mount
+  useEffect(() => {
+    fetch('/api/receipts/regenerate-thumbnails')
+      .then(res => { if (res.ok) setIsAdmin(true); })
+      .catch(() => {});
+  }, []);
 
   const fetchReceipts = useCallback(async (reset: boolean = false) => {
     if (activeTab === 'inbox') return; // Inbox has its own fetch logic
@@ -116,15 +125,47 @@ export function ReceiptGallery() {
             </button>
           ))}
         </div>
-        <button
-          onClick={() => setBatchUploadOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px]"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-          </svg>
-          Batch Upload
-        </button>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <button
+              onClick={async () => {
+                setRegenRunning(true);
+                try {
+                  const res = await fetch('/api/receipts/regenerate-thumbnails', { method: 'POST' });
+                  if (res.ok) {
+                    toast.success('Thumbnail regeneration started');
+                  } else {
+                    toast.error('Failed to start thumbnail regeneration');
+                  }
+                } catch {
+                  toast.error('Failed to start thumbnail regeneration');
+                } finally {
+                  setRegenRunning(false);
+                }
+              }}
+              disabled={regenRunning}
+              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:cursor-not-allowed"
+            >
+              {regenRunning ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
+                </svg>
+              )}
+              {regenRunning ? 'Regenerating...' : 'Regenerate Thumbnails'}
+            </button>
+          )}
+          <button
+            onClick={() => setBatchUploadOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px]"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+            </svg>
+            Batch Upload
+          </button>
+        </div>
       </div>
 
       {/* Search bar (visible on All and Linked tabs) */}
