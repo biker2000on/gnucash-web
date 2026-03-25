@@ -37,7 +37,10 @@ export function buildGnuCashXml(data: GnuCashXmlData): string {
       '@_xmlns:sx': 'http://www.gnucash.org/XML/sx',
       '@_xmlns:trn': 'http://www.gnucash.org/XML/trn',
       '@_xmlns:ts': 'http://www.gnucash.org/XML/ts',
+      '@_xmlns:fs': 'http://www.gnucash.org/XML/fs',
       '@_xmlns:bgt': 'http://www.gnucash.org/XML/bgt',
+      '@_xmlns:recurrence': 'http://www.gnucash.org/XML/recurrence',
+      '@_xmlns:lot': 'http://www.gnucash.org/XML/lot',
       'gnc:count-data': buildTopLevelCountData(data),
       'gnc:book': buildBook(data),
     },
@@ -118,6 +121,7 @@ function buildBook(data: GnuCashXmlData): Record<string, unknown> {
 
 function buildCommodity(commodity: GnuCashXmlData['commodities'][0]): Record<string, unknown> {
   const result: Record<string, unknown> = {
+    '@_version': '2.0.0',
     'cmdty:space': commodity.space,
     'cmdty:id': commodity.id,
   };
@@ -235,6 +239,17 @@ function buildBudget(budget: GnuCashXmlData['budgets'][0]): Record<string, unkno
     result['bgt:description'] = budget.description;
   }
   result['bgt:num-periods'] = String(budget.numPeriods);
+
+  // Budget recurrence (required by GnuCash desktop)
+  if (budget.recurrence) {
+    result['bgt:recurrence'] = {
+      'recurrence:mult': String(budget.recurrence.mult),
+      'recurrence:period_type': budget.recurrence.periodType,
+      'recurrence:start': {
+        'gdate': budget.recurrence.periodStart,
+      },
+    };
+  }
 
   // Build budget amounts as slots grouped by account
   if (budget.amounts.length > 0) {

@@ -75,6 +75,11 @@ export interface GnuCashBudget {
   name: string;
   description?: string;
   numPeriods: number;
+  recurrence?: {
+    mult: number;
+    periodType: string;
+    periodStart: string; // YYYY-MM-DD
+  };
   amounts: GnuCashBudgetAmount[];
 }
 

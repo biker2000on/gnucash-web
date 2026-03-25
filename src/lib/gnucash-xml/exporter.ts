@@ -28,7 +28,7 @@ function toFractionString(num: bigint, denom: bigint): string {
  */
 function formatGnuCashDate(date: Date | null): string {
   if (!date) return '';
-  return date.toISOString().replace('T', ' ').replace('Z', ' +0000');
+  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' +0000');
 }
 
 /**
@@ -95,13 +95,13 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     where: { guid: { in: Array.from(commodityGuids) } },
   });
 
-  // Fetch prices for all referenced commodities
+  // Fetch prices only for commodities actually used by this book's accounts
+  // Use AND (both commodity and currency must be in our set) to avoid pulling
+  // prices from other books that happen to share a currency
   const prices = await prisma.prices.findMany({
     where: {
-      OR: [
-        { commodity_guid: { in: Array.from(commodityGuids) } },
-        { currency_guid: { in: Array.from(commodityGuids) } },
-      ],
+      commodity_guid: { in: Array.from(commodityGuids) },
+      currency_guid: { in: Array.from(commodityGuids) },
     },
     include: {
       commodity: true,
@@ -109,10 +109,17 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     },
   });
 
-  // Fetch all budgets (not book-scoped in GnuCash schema)
-  const budgets = await prisma.budgets.findMany({
-    include: { amounts: true },
+  // Fetch budgets with recurrences and filter to only those referencing accounts in this book
+  const allBudgets = await prisma.budgets.findMany({
+    include: { amounts: true, recurrences: true },
   });
+  const guidSet = new Set(guids);
+  const budgets = allBudgets
+    .filter((b) => b.amounts.some((a) => guidSet.has(a.account_guid)))
+    .map((b) => ({
+      ...b,
+      amounts: b.amounts.filter((a) => guidSet.has(a.account_guid)),
+    }));
 
   // Build the commodity namespace:mnemonic -> guid lookup
   const commodityLookup = new Map<string, { namespace: string; mnemonic: string }>();
@@ -132,8 +139,11 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     quoteTz: c.quote_tz || undefined,
   }));
 
+  // Topologically sort accounts: ROOT first, then parents before children
+  const sortedAccounts = topologicalSortAccounts(accounts, rootAccountGuid);
+
   // Map accounts to export format
-  const exportAccounts: GnuCashAccount[] = accounts.map((acc) => {
+  const exportAccounts: GnuCashAccount[] = sortedAccounts.map((acc) => {
     const commodity = acc.commodity_guid ? commodityLookup.get(acc.commodity_guid) : undefined;
     return {
       name: acc.name,
@@ -176,24 +186,22 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     };
   });
 
-  // Map prices to export format
-  const exportPrices: GnuCashPrice[] = prices.map((p) => {
+  // Map prices to export format, skipping any with unresolvable commodities
+  const exportPrices: GnuCashPrice[] = [];
+  for (const p of prices) {
     const commodity = commodityLookup.get(p.commodity_guid);
     const currency = commodityLookup.get(p.currency_guid);
-    return {
+    if (!commodity || !currency) continue;
+    exportPrices.push({
       id: p.guid,
-      commodity: commodity
-        ? { space: commodity.namespace, id: commodity.mnemonic }
-        : { space: '', id: '' },
-      currency: currency
-        ? { space: currency.namespace, id: currency.mnemonic }
-        : { space: '', id: '' },
+      commodity: { space: commodity.namespace, id: commodity.mnemonic },
+      currency: { space: currency.namespace, id: currency.mnemonic },
       date: formatGnuCashDate(p.date),
       source: p.source || '',
       type: p.type || undefined,
       value: toFractionString(p.value_num, p.value_denom),
-    };
-  });
+    });
+  }
 
   // Map budgets to export format
   const exportBudgets: GnuCashBudget[] = budgets.map((b) => {
@@ -203,11 +211,17 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       amount: toFractionString(a.amount_num, a.amount_denom),
     }));
 
+    const recurrence = b.recurrences[0];
     return {
       id: b.guid,
       name: b.name,
       description: b.description || undefined,
       numPeriods: b.num_periods,
+      recurrence: recurrence ? {
+        mult: recurrence.recurrence_mult,
+        periodType: recurrence.recurrence_period_type,
+        periodStart: recurrence.recurrence_period_start.toISOString().slice(0, 10),
+      } : undefined,
       amounts,
     };
   });
@@ -229,4 +243,50 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
       budget: exportBudgets.length,
     },
   };
+}
+
+/**
+ * Topologically sort accounts so ROOT comes first, then parents before children.
+ * GnuCash desktop requires parent accounts to appear before their children.
+ */
+function topologicalSortAccounts<T extends { guid: string; parent_guid: string | null }>(
+  accounts: T[],
+  rootAccountGuid: string,
+): T[] {
+  const byGuid = new Map<string, T>();
+  const childrenOf = new Map<string, T[]>();
+
+  for (const acc of accounts) {
+    byGuid.set(acc.guid, acc);
+    const parentKey = acc.parent_guid || '';
+    const siblings = childrenOf.get(parentKey) || [];
+    siblings.push(acc);
+    childrenOf.set(parentKey, siblings);
+  }
+
+  const sorted: T[] = [];
+  const visited = new Set<string>();
+
+  function visit(guid: string) {
+    if (visited.has(guid)) return;
+    visited.add(guid);
+    const acc = byGuid.get(guid);
+    if (acc) sorted.push(acc);
+    const children = childrenOf.get(guid) || [];
+    for (const child of children) {
+      visit(child.guid);
+    }
+  }
+
+  // Start from root
+  visit(rootAccountGuid);
+
+  // Pick up any orphans (shouldn't happen, but safety)
+  for (const acc of accounts) {
+    if (!visited.has(acc.guid)) {
+      sorted.push(acc);
+    }
+  }
+
+  return sorted;
 }
