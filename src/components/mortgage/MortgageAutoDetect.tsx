@@ -15,6 +15,14 @@ interface DetectionResult {
   paymentsAnalyzed: number;
   confidence: 'high' | 'medium' | 'low';
   warnings: string[];
+  paymentHistory: ActualPayment[];
+}
+
+export interface ActualPayment {
+  date: string;
+  principal: number;
+  interest: number;
+  total: number;
 }
 
 export interface AutoDetectResult {
@@ -24,6 +32,7 @@ export interface AutoDetectResult {
   loanTermMonths: number;
   accountGuid: string;
   interestAccountGuid: string;
+  paymentHistory: ActualPayment[];
 }
 
 interface MortgageAutoDetectProps {
@@ -251,6 +260,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
       loanTermMonths: termMonths,
       accountGuid,
       interestAccountGuid,
+      paymentHistory: result.paymentHistory || [],
     });
   };
 
@@ -323,6 +333,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
                       loanTermMonths: 360,
                       accountGuid,
                       interestAccountGuid,
+                      paymentHistory: [],
                     });
                   }}
                   className="text-xs text-foreground-muted hover:text-foreground font-medium"

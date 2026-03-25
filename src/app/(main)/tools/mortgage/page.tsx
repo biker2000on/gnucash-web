@@ -6,7 +6,7 @@ import { AmortizationTable } from '@/components/mortgage/AmortizationTable';
 import type { AmortizationRow } from '@/components/mortgage/AmortizationTable';
 import { PayoffComparison } from '@/components/mortgage/PayoffComparison';
 import { MortgageAutoDetect } from '@/components/mortgage/MortgageAutoDetect';
-import type { AutoDetectResult } from '@/components/mortgage/MortgageAutoDetect';
+import type { AutoDetectResult, ActualPayment } from '@/components/mortgage/MortgageAutoDetect';
 
 /* ------------------------------------------------------------------ */
 /* Formatters                                                          */
@@ -90,6 +90,83 @@ function buildAmortizationSchedule(
 
 function totalInterestFromSchedule(schedule: AmortizationRow[]): number {
   return schedule.reduce((sum, r) => sum + r.interest, 0);
+}
+
+/**
+ * Build a hybrid amortization schedule:
+ * - Actual payments from GnuCash history (marked actual=true, with dates)
+ * - Projected future payments from current balance forward (marked actual=false)
+ */
+function buildHybridSchedule(
+  actualPayments: ActualPayment[],
+  originalAmount: number,
+  monthlyRate: number,
+  totalMonths: number,
+  extraPayment: number,
+  currentBalance: number | null,
+): AmortizationRow[] {
+  const rows: AmortizationRow[] = [];
+
+  // Phase 1: Actual payments from history
+  let balance = originalAmount;
+  for (let i = 0; i < actualPayments.length; i++) {
+    const p = actualPayments[i];
+    balance = Math.max(0, balance - p.principal);
+    rows.push({
+      month: i + 1,
+      date: new Date(p.date).toISOString().slice(0, 10),
+      payment: p.total,
+      principal: p.principal,
+      interest: p.interest,
+      extra: 0,
+      balance,
+      actual: true,
+    });
+  }
+
+  // Phase 2: Project future payments from current balance
+  // Use the actual current balance if available (more accurate than computed)
+  const projectionBalance = currentBalance != null ? Math.abs(currentBalance) : balance;
+  if (projectionBalance <= 0 || monthlyRate <= 0) return rows;
+
+  const remainingMonths = totalMonths - actualPayments.length;
+  if (remainingMonths <= 0) return rows;
+
+  const basePayment = calcMonthlyPayment(projectionBalance, monthlyRate, remainingMonths);
+  if (basePayment <= 0) return rows;
+
+  let bal = projectionBalance;
+  const lastActualDate = actualPayments.length > 0
+    ? new Date(actualPayments[actualPayments.length - 1].date)
+    : new Date();
+
+  for (let m = 1; bal > 0; m++) {
+    const interest = bal * monthlyRate;
+    let principalPortion = basePayment - interest + extraPayment;
+    if (principalPortion > bal) principalPortion = bal;
+
+    const actualExtra = Math.min(extraPayment, Math.max(0, bal - (basePayment - interest)));
+    const actualPrincipal = principalPortion - actualExtra;
+    bal = Math.max(0, bal - principalPortion);
+
+    const projDate = new Date(lastActualDate);
+    projDate.setMonth(projDate.getMonth() + m);
+
+    rows.push({
+      month: actualPayments.length + m,
+      date: projDate.toISOString().slice(0, 10),
+      payment: actualPrincipal + interest + actualExtra,
+      principal: actualPrincipal,
+      interest,
+      extra: actualExtra,
+      balance: bal,
+      actual: false,
+    });
+
+    if (m > 1200) break;
+  }
+
+  return rows;
 }
 
 /* ------------------------------------------------------------------ */
@@ -261,6 +338,9 @@ export default function MortgageCalculatorPage() {
   });
   const [extraPayment, setExtraPayment] = useState('0');
 
+  // ---- Actual payment history (from linked account) ----
+  const [paymentHistory, setPaymentHistory] = useState<ActualPayment[]>([]);
+
   // ---- Account balance state ----
   const [accountBalance, setAccountBalance] = useState<number | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -415,7 +495,21 @@ export default function MortgageCalculatorPage() {
       }
     }
 
-    // Switch to new mode (manual editing) when loading saved config
+    // Re-fetch payment history if this config has linked accounts
+    if (config.account_guid && c.interestAccountGuid) {
+      fetch(`/api/tools/mortgage/detect?accountGuid=${config.account_guid}&interestAccountGuid=${c.interestAccountGuid}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.paymentHistory) {
+            setPaymentHistory(data.paymentHistory);
+          }
+        })
+        .catch(() => { /* ignore */ });
+    } else {
+      setPaymentHistory([]);
+    }
+
+    // Switch to form mode when loading saved config
     setEntryMode('new');
   };
 
@@ -449,6 +543,17 @@ export default function MortgageCalculatorPage() {
     setInterestRate(String(result.interestRate));
     setAccountGuid(result.accountGuid);
     setInterestAccountGuid(result.interestAccountGuid);
+    setPaymentHistory(result.paymentHistory || []);
+
+    if (result.monthlyPayment > 0) {
+      setExtraPayment('0');
+    }
+
+    // Set start date from first payment if available
+    if (result.paymentHistory?.length > 0) {
+      const firstDate = new Date(result.paymentHistory[0].date);
+      setStartDate(firstDate.toISOString().slice(0, 10));
+    }
 
     const termMonths = result.loanTermMonths;
     const years = termMonths / 12;
@@ -458,6 +563,9 @@ export default function MortgageCalculatorPage() {
       setLoanTermPreset('custom');
       setCustomMonths(String(termMonths));
     }
+
+    // Switch to form view so user can review detected values and save
+    setEntryMode('new');
   }, []);
 
   /* ---------------------------------------------------------------- */
@@ -483,8 +591,14 @@ export default function MortgageCalculatorPage() {
   const payoffExtraCalc = useMemo(() => {
     const payoffExtra = parseFloat(payoffExtraPayment) || 0;
 
-    const scheduleOriginal = buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, 0);
-    const scheduleAccelerated = buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, payoffExtra);
+    // Use hybrid schedule (actual + projected) when payment history is available
+    const hasHistory = paymentHistory.length > 0;
+    const scheduleOriginal = hasHistory
+      ? buildHybridSchedule(paymentHistory, principal, monthlyRate, loanTermMonths, 0, accountBalance)
+      : buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, 0);
+    const scheduleAccelerated = hasHistory
+      ? buildHybridSchedule(paymentHistory, principal, monthlyRate, loanTermMonths, payoffExtra, accountBalance)
+      : buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, payoffExtra);
 
     const originalMonths = scheduleOriginal.length;
     const newMonths = scheduleAccelerated.length;
@@ -513,7 +627,7 @@ export default function MortgageCalculatorPage() {
       originalPayoffDate,
       newPayoffDate,
     };
-  }, [principal, monthlyRate, loanTermMonths, payoffExtraPayment, startDate]);
+  }, [principal, monthlyRate, loanTermMonths, payoffExtraPayment, startDate, paymentHistory, accountBalance]);
 
   /* ---------------------------------------------------------------- */
   /* Payoff: Mode 2 - Target Date -> Required Payment                  */
@@ -998,6 +1112,7 @@ export default function MortgageCalculatorPage() {
                 <AmortizationTable
                   schedule={payoffExtraCalc.scheduleAccelerated}
                   showExtraPayment
+                  showDates={paymentHistory.length > 0}
                 />
               </div>
             )}
