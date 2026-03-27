@@ -399,6 +399,18 @@ async function createExtensionTables() {
         ADD COLUMN IF NOT EXISTS last_balance_date TIMESTAMP;
     `;
 
+    const transactionMetaAddMatchColumnsDDL = `
+        ALTER TABLE gnucash_web_transaction_meta
+        ADD COLUMN IF NOT EXISTS match_type VARCHAR(30),
+        ADD COLUMN IF NOT EXISTS match_confidence VARCHAR(10),
+        ADD COLUMN IF NOT EXISTS matched_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS simplefin_transaction_id_2 VARCHAR(255);
+
+        CREATE INDEX IF NOT EXISTS idx_txn_meta_simplefin_id_2
+        ON gnucash_web_transaction_meta(simplefin_transaction_id_2)
+        WHERE simplefin_transaction_id_2 IS NOT NULL;
+    `;
+
     // Migration: Add tool_config table
     const toolConfigTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_tool_config (
@@ -525,6 +537,7 @@ async function createExtensionTables() {
         await query(transactionMetaAddDeletedAtDDL);
         await query(transactionMetaNullableGuidDDL);
         await query(simpleFinAccountMapAddBalanceDDL);
+        await query(transactionMetaAddMatchColumnsDDL);
         await query(toolConfigTableDDL);
         await query(toolConfigTriggerDDL);
         await query(accountPreferencesTableDDL);
