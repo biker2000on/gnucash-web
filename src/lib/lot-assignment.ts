@@ -13,6 +13,7 @@ import { generateGuid, toDecimalNumber } from './gnucash';
 import {
   splitSellAcrossLots,
   linkTransferToLot,
+  splitTransferAcrossSourceLots,
   generateCapitalGains,
   type OpenLot,
   type PrismaTx,
@@ -200,23 +201,22 @@ async function assignWithStrategy(
     }
   }
 
-  // Process transfer-ins first (they create new lots via linkTransferToLot)
+  // Process transfer-ins first (they create new lots, potentially multiple per transfer)
   for (const transfer of transferIns) {
-    const result = await linkTransferToLot(transfer.guid, runId, tx);
-    if (result.created) {
-      lotsCreated++;
-      // Add the new lot to openLots
-      const qty = toDecimalNumber(transfer.quantity_num, transfer.quantity_denom);
-      openLots.push({ guid: result.lotGuid, shares: qty, openDate: transfer.post_date });
-    } else {
-      // Already assigned — update openLots if the lot exists
-      const existingIdx = openLots.findIndex(l => l.guid === result.lotGuid);
-      if (existingIdx >= 0) {
-        // shares already counted from existing lots
-      } else {
-        const qty = toDecimalNumber(transfer.quantity_num, transfer.quantity_denom);
-        openLots.push({ guid: result.lotGuid, shares: qty, openDate: transfer.post_date });
-      }
+    const result = await splitTransferAcrossSourceLots(transfer.guid, runId, tx);
+    lotsCreated += result.lotsCreated;
+    splitsCreated += result.subSplitsCreated;
+    // Add each created lot to openLots
+    for (const lotGuid of result.lotGuids) {
+      // Look up the lot's splits to determine its share count
+      const lotSplits = await tx.splits.findMany({
+        where: { lot_guid: lotGuid },
+        select: { quantity_num: true, quantity_denom: true },
+      });
+      const shares = lotSplits.reduce(
+        (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
+      );
+      openLots.push({ guid: lotGuid, shares, openDate: transfer.post_date });
     }
   }
 
@@ -593,8 +593,9 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
 
 export async function scrubAllAccounts(
   method: 'fifo' | 'lifo' | 'average',
-  bookAccountGuids: string[]
-): Promise<{ results: AutoAssignResult[]; order: string[] }> {
+  bookAccountGuids: string[],
+  clearFirst: boolean = false
+): Promise<{ results: AutoAssignResult[]; order: string[]; cleared: number }> {
   // 1. Find all STOCK/MUTUAL accounts
   const investmentAccounts = await prisma.accounts.findMany({
     where: { guid: { in: bookAccountGuids }, account_type: { in: ['STOCK', 'MUTUAL'] } },
@@ -663,7 +664,20 @@ export async function scrubAllAccounts(
     if (!order.includes(acct.guid)) order.push(acct.guid);
   }
 
-  // 4. Scrub each account in order
+  // 4. Clear existing assignments if requested
+  let cleared = 0;
+  if (clearFirst) {
+    for (const accountGuid of order) {
+      try {
+        const clearResult = await clearLotAssignments(accountGuid);
+        cleared += clearResult.lotsDeleted;
+      } catch (error) {
+        console.error(`Error clearing account ${accountGuid}:`, error);
+      }
+    }
+  }
+
+  // 5. Scrub each account in order
   const results: AutoAssignResult[] = [];
   for (const accountGuid of order) {
     try {
@@ -679,7 +693,7 @@ export async function scrubAllAccounts(
     }
   }
 
-  return { results, order };
+  return { results, order, cleared };
 }
 
 export interface WashSaleResult {

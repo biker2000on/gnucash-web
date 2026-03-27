@@ -98,6 +98,7 @@ function createMockTx() {
 import {
   splitSellAcrossLots,
   linkTransferToLot,
+  splitTransferAcrossSourceLots,
   generateCapitalGains,
   classifyAccountTax,
   classifyHoldingPeriod,
@@ -479,6 +480,316 @@ describe('linkTransferToLot', () => {
     // No lot creation or slot creation
     expect(mockLotsCreate).not.toHaveBeenCalled();
     expect(mockSlotsCreate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D: splitTransferAcrossSourceLots
+// ---------------------------------------------------------------------------
+
+describe('splitTransferAcrossSourceLots', () => {
+  const tx = createMockTx();
+  const runId = 'run-004';
+
+  function makeTransferInSplit(overrides: Record<string, unknown> = {}) {
+    return {
+      guid: 'xfer-in-split-guid-00000000000',
+      tx_guid: 'xfer-tx-guid-0000000000000000',
+      account_guid: 'dest-acct-guid-00000000000000',
+      memo: '',
+      action: '',
+      reconcile_state: 'n',
+      reconcile_date: null,
+      lot_guid: null,
+      quantity_num: 59100n,
+      quantity_denom: 100n,
+      value_num: 0n,
+      value_denom: 100n,
+      account: { commodity_guid: 'aapl-commodity-guid-0000000000' },
+      transaction: {
+        post_date: new Date('2024-06-15'),
+        splits: [],
+      },
+      ...overrides,
+    };
+  }
+
+  it('D1: Single source lot — creates one dest lot, no sub-splits', async () => {
+    const split = makeTransferInSplit();
+    split.transaction.splits = [
+      {
+        guid: 'xfer-in-split-guid-00000000000',
+        account_guid: 'dest-acct-guid-00000000000000',
+        quantity_num: 59100n,
+        quantity_denom: 100n,
+        lot_guid: null,
+        account: { guid: 'dest-acct-guid-00000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-guid-0000000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -59100n,
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-a-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+    ] as any;
+
+    mockSplitsFindUnique.mockResolvedValue(split);
+    mockLotsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockSplitsUpdate.mockResolvedValue({});
+    // acquisition_date slot from source lot
+    mockSlotsFindFirst.mockResolvedValue({ string_val: '2023-03-01T00:00:00.000Z' });
+
+    const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
+
+    // Single source lot => delegates to linkTransferToLot => 1 lot, 0 sub-splits
+    expect(result.lotsCreated).toBe(1);
+    expect(result.subSplitsCreated).toBe(0);
+    expect(mockLotsCreate).toHaveBeenCalledTimes(1);
+    // source_lot_guid slot created
+    expect(mockSlotsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: 'source_lot_guid',
+          string_val: 'src-lot-a-guid-00000000000000',
+        }),
+      }),
+    );
+  });
+
+  it('D2: Four source lots — sub-splits transfer-in into 4 dest lots', async () => {
+    const split = makeTransferInSplit({
+      quantity_num: 59100n,
+      quantity_denom: 100n,
+      value_num: 0n,
+      value_denom: 100n,
+    });
+    split.transaction.splits = [
+      {
+        guid: 'xfer-in-split-guid-00000000000',
+        account_guid: 'dest-acct-guid-00000000000000',
+        quantity_num: 59100n,
+        quantity_denom: 100n,
+        lot_guid: null,
+        account: { guid: 'dest-acct-guid-00000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-1-guid-000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -53400n,
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-1-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-2-guid-000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -3300n,
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-2-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-3-guid-000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -1389n,
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-3-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-4-guid-000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -1011n,
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-4-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+    ] as any;
+
+    mockSplitsFindUnique.mockResolvedValue(split);
+    mockLotsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    // Return acquisition dates in order for each source lot
+    mockSlotsFindFirst
+      .mockResolvedValueOnce({ string_val: '2022-01-15T00:00:00.000Z' }) // lot 1
+      .mockResolvedValueOnce({ string_val: '2022-03-01T00:00:00.000Z' }) // lot 2
+      .mockResolvedValueOnce({ string_val: '2022-06-01T00:00:00.000Z' }) // lot 3
+      .mockResolvedValueOnce({ string_val: '2023-01-01T00:00:00.000Z' }); // lot 4
+
+    const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
+
+    expect(result.lotsCreated).toBe(4);
+    expect(result.subSplitsCreated).toBe(3);
+
+    // 4 source_lot_guid slots created
+    const sourceLotSlotCalls = mockSlotsCreate.mock.calls.filter(
+      (c: any) => c[0].data.name === 'source_lot_guid',
+    );
+    expect(sourceLotSlotCalls).toHaveLength(4);
+
+    // 4 acquisition_date slots created
+    const acqDateSlotCalls = mockSlotsCreate.mock.calls.filter(
+      (c: any) => c[0].data.name === 'acquisition_date',
+    );
+    expect(acqDateSlotCalls).toHaveLength(4);
+
+    // Original split updated with first allocation's quantity (534 shares)
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: split.guid },
+        data: expect.objectContaining({
+          quantity_num: 53400n,
+        }),
+      }),
+    );
+
+    // 3 sub-splits created
+    expect(mockSplitsCreate).toHaveBeenCalledTimes(3);
+
+    // original_quantity_num slot saved for revert
+    expect(mockSlotsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          obj_guid: split.guid,
+          name: 'original_quantity_num',
+          string_val: '59100',
+        }),
+      }),
+    );
+  });
+
+  it('D3: Transfer-in already has lot — idempotent', async () => {
+    const split = makeTransferInSplit({
+      lot_guid: 'existing-lot-guid-00000000000',
+    });
+
+    mockSplitsFindUnique.mockResolvedValue(split);
+
+    const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
+
+    expect(result.lotsCreated).toBe(0);
+    expect(result.subSplitsCreated).toBe(0);
+    expect(mockLotsCreate).not.toHaveBeenCalled();
+  });
+
+  it('D4: Source splits have no lot assignments — single dest lot fallback', async () => {
+    const split = makeTransferInSplit({
+      quantity_num: 500n,
+      quantity_denom: 100n,
+      value_num: 0n,
+      value_denom: 100n,
+    });
+    split.transaction.splits = [
+      {
+        guid: 'xfer-in-split-guid-00000000000',
+        account_guid: 'dest-acct-guid-00000000000000',
+        quantity_num: 500n,
+        quantity_denom: 100n,
+        lot_guid: null,
+        account: { guid: 'dest-acct-guid-00000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-guid-0000000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -500n,
+        quantity_denom: 100n,
+        lot_guid: null, // No lot assignment
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+    ] as any;
+
+    mockSplitsFindUnique.mockResolvedValue(split);
+    mockLotsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockSplitsUpdate.mockResolvedValue({});
+
+    const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
+
+    // No lotted source splits => delegates to linkTransferToLot => 1 lot, 0 sub-splits
+    expect(result.lotsCreated).toBe(1);
+    expect(result.subSplitsCreated).toBe(0);
+  });
+
+  it('D5: Two source lots with non-zero transfer value — value split proportionally', async () => {
+    const split = makeTransferInSplit({
+      quantity_num: 1000n,  // +10 shares
+      quantity_denom: 100n,
+      value_num: 100000n,   // $1000
+      value_denom: 100n,
+    });
+    split.transaction.splits = [
+      {
+        guid: 'xfer-in-split-guid-00000000000',
+        account_guid: 'dest-acct-guid-00000000000000',
+        quantity_num: 1000n,
+        quantity_denom: 100n,
+        lot_guid: null,
+        account: { guid: 'dest-acct-guid-00000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-1-guid-000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -700n, // -7 shares
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-1-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+      {
+        guid: 'src-split-2-guid-000000000000',
+        account_guid: 'src-acct-guid-000000000000000',
+        quantity_num: -300n, // -3 shares
+        quantity_denom: 100n,
+        lot_guid: 'src-lot-2-guid-00000000000000',
+        account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
+      },
+    ] as any;
+
+    mockSplitsFindUnique.mockResolvedValue(split);
+    mockLotsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    // acquisition dates
+    mockSlotsFindFirst
+      .mockResolvedValueOnce({ string_val: '2023-01-01T00:00:00.000Z' })
+      .mockResolvedValueOnce({ string_val: '2023-06-01T00:00:00.000Z' });
+    // Transaction balance check — return splits that sum to zero
+    mockSplitsFindMany.mockResolvedValue([
+      { value_num: 70000n, value_denom: 100n },   // first alloc: 7 shares @ $100 = $700
+      { value_num: 30000n, value_denom: 100n },    // sub-split: 3 shares @ $100 = $300
+      { value_num: -100000n, value_denom: 100n },  // source out: -$1000
+    ]);
+
+    const result = await splitTransferAcrossSourceLots(split.guid, runId, tx);
+
+    expect(result.lotsCreated).toBe(2);
+    expect(result.subSplitsCreated).toBe(1);
+
+    // First allocation: quantity_num=700n (7 shares), value_num=70000n ($700)
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: split.guid },
+        data: expect.objectContaining({
+          quantity_num: 700n,
+          value_num: 70000n,
+        }),
+      }),
+    );
+
+    // Second allocation (remainder): quantity_num=300n (3 shares), value_num=30000n ($300)
+    expect(mockSplitsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          quantity_num: 300n,
+          value_num: 30000n,
+        }),
+      }),
+    );
   });
 });
 

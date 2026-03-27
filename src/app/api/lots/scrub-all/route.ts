@@ -10,6 +10,7 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const method = body.method || 'fifo';
+    const clearFirst = body.clearFirst === true;
     const validMethods = ['fifo', 'lifo', 'average'];
     if (!validMethods.includes(method)) {
       return NextResponse.json(
@@ -19,7 +20,7 @@ export async function POST(request: Request) {
     }
 
     const accountGuids = await getBookAccountGuids();
-    const result = await scrubAllAccounts(method, accountGuids);
+    const result = await scrubAllAccounts(method, accountGuids, clearFirst);
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error scrubbing all accounts:', error);
