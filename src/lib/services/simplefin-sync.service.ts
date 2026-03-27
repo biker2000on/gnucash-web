@@ -15,6 +15,10 @@ export interface SyncResult {
   transactionsImported: number;
   transactionsSkipped: number;
   investmentTransactionsImported: number;
+  transactionsMatched: {
+    manualReconciliation: number;
+    transferDedup: number;
+  };
   errors: { account: string; error: string }[];
 }
 
@@ -27,6 +31,10 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     transactionsImported: 0,
     transactionsSkipped: 0,
     investmentTransactionsImported: 0,
+    transactionsMatched: {
+      manualReconciliation: 0,
+      transferDedup: 0,
+    },
     errors: [],
   };
 
@@ -733,6 +741,10 @@ export async function syncAllConnections(): Promise<SyncResult[]> {
         transactionsImported: 0,
         transactionsSkipped: 0,
         investmentTransactionsImported: 0,
+        transactionsMatched: {
+          manualReconciliation: 0,
+          transferDedup: 0,
+        },
         errors: [{ account: 'connection', error: `Sync failed: ${error}` }],
       });
     }

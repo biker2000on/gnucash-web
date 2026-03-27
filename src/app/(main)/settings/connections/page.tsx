@@ -24,6 +24,10 @@ interface SyncResult {
   accountsProcessed: number;
   transactionsImported: number;
   transactionsSkipped: number;
+  transactionsMatched?: {
+    manualReconciliation: number;
+    transferDedup: number;
+  };
   errors: { account: string; error: string }[];
 }
 
