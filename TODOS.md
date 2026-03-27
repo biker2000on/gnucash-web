@@ -2,37 +2,6 @@
 
 Items deferred from plan reviews for future implementation.
 
-## P1 - BUG: Multi-Lot Transfers Create Single Destination Lot
-
-**What:** When shares transfer between accounts and the source has multiple lots, the auto-scrub engine creates one destination lot for the entire transfer-in split instead of splitting it across destination lots matching each source lot.
-
-**Repro:** Account `56900f1b19ac4545b0f6d9bbca66feb2` (Ally VOO). On 2023-07-05, 591 shares transferred from Schwab VOO (`ca45b0d68fb442f293dd6e1d98c00e98`). The source had 4 lots:
-- Lot `f8c1a42a`: 534 shares (acquired 2021-04-06)
-- Lot `31c7a186`: 33 shares
-- Lot `926ae7f4`: 13.89 shares
-- Lot `b741b060`: 10.11 shares
-
-The auto-scrub created one destination lot (`f0040f5a`) for all 591 shares, pointing only to the largest source lot. Cost basis is $0 (transfer), and the other 3 source lots' acquisition dates are lost.
-
-**Expected behavior:** The 591-share transfer-in split should be sub-split into 4 destination splits (534, 33, 13.89, 10.11), each assigned to its own destination lot linked to the corresponding source lot via `source_lot_guid`. Each destination lot should carry the correct `acquisition_date` from its source lot. This preserves the full lot chain for long-term/short-term capital gains classification.
-
-**Root cause:** `linkTransferToLot()` in `lot-assignment.ts` creates one lot per transfer-in split. It doesn't examine whether the source account's transfer-out consists of multiple lots and sub-split accordingly. The transfer-out side already has sub-splits per lot (visible in the transaction: -534, -33, -13.89, -10.11), but the transfer-in side is one lumped split (+591).
-
-**Fix approach:**
-1. In the transfer detection phase, after identifying a transfer-in, examine the source transaction's transfer-out splits
-2. If the source has multiple lot-assigned splits, sub-split the transfer-in to match (proportional by quantity)
-3. Create one destination lot per sub-split, each linked to the corresponding source lot
-4. Carry `acquisition_date` from each source lot to its destination lot
-5. This is essentially the same "sell splitting" logic (`splitSellAcrossLots`) but applied to transfers
-
-**Effort:** M (human: ~1 week) / with CC: S (~30 min)
-
-**Depends on:** Lot auto-assignment engine (shipped). The `splitSellAcrossLots()` function in `lot-scrub.ts` provides the pattern for sub-splitting.
-
-**Context:** Discovered during QA of VOO account 2026-03-24. The design doc (`2026-03-22-lot-scrub-engine.md`) already identified "Transfers break lot continuity" as a known gap. This is the concrete manifestation of that gap with a real-world repro case.
-
----
-
 ## P2 - Monte Carlo FIRE Projections
 
 **What:** Replace the single-line FIRE projection with a Monte Carlo simulation that samples from historical market return distributions. Show confidence bands (e.g., 10th/25th/50th/75th/90th percentile outcomes) instead of a single deterministic line.
