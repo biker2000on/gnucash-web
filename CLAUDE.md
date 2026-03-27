@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GnuCash Web is a read-only Progressive Web App for viewing GnuCash financial data. Built with Next.js 16, React 19, and TypeScript. It connects to a PostgreSQL database containing GnuCash data.
+GnuCash Web is a Progressive Web App for managing GnuCash financial data. Built with Next.js 16, React 19, and TypeScript. It connects to a PostgreSQL database containing GnuCash data.
 
 ## Common Commands
 

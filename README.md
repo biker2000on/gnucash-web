@@ -1,6 +1,6 @@
 # GnuCash Web PWA
 
-A modern, read-only Progressive Web App (PWA) for GnuCash, built with Next.js and powered by a PostgreSQL database. It provides a sleek, dark-themed interface to view your financial accounts and transaction history on any device.
+A modern Progressive Web App (PWA) for GnuCash, built with Next.js and powered by a PostgreSQL database. It provides a sleek, dark-themed interface to manage your financial accounts and transactions on any device.
 
 ## ✨ Features
 
