@@ -46,6 +46,7 @@ export interface AccountTransaction extends Transaction {
     account_split_reconcile_state: string;
     reviewed?: boolean;
     source?: string;
+    match_type?: string | null;
 }
 
 interface AccountLedgerProps {
@@ -1725,8 +1726,11 @@ export default function AccountLedger({
                                         <div className="text-sm font-medium flex items-center gap-2">
                                             <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
                                             {tx.description}
-                                            {tx.source && tx.source !== 'manual' && (
+                                            {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                                            )}
+                                            {tx.match_type === 'manual_reconciliation' && (
+                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>
                                             )}
                                             {(() => {
                                                 const mLotSplit = tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid);
@@ -1812,7 +1816,7 @@ export default function AccountLedger({
                                 className={isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}
                                 fields={[
                                     { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
-                                    { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}</span> },
+                                    { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
                                     { label: 'Transfer', value: transferName },
                                     ...(amount >= 0
                                         ? [{ label: 'Debit', value: <span className="text-emerald-400 font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
@@ -2258,9 +2262,14 @@ export default function AccountLedger({
                                                                 <TransactionTypeIcon type={descInvRow.transactionType} className="mr-0.5" />
                                                             )}
                                                             <span className="font-medium">{tx.description}</span>
-                                                            {tx.source && tx.source !== 'manual' && (
+                                                            {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
                                                                     Imported
+                                                                </span>
+                                                            )}
+                                                            {tx.match_type === 'manual_reconciliation' && (
+                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">
+                                                                    Bank-verified
                                                                 </span>
                                                             )}
                                                             {lotInfo && lotSplit?.lot_guid && (
