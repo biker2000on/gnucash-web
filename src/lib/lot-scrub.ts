@@ -45,6 +45,12 @@ export interface LinkTransferResult {
   created: boolean;
 }
 
+export interface SplitTransferResult {
+  lotsCreated: number;
+  subSplitsCreated: number;
+  lotGuids: string[];
+}
+
 export interface CapitalGainsResult {
   /** GUID of the gains transaction created, or null if skipped */
   gainsTransactionGuid: string | null;
@@ -484,6 +490,322 @@ export async function linkTransferToLot(
   });
 
   return { lotGuid, created: true };
+}
+
+// ---------------------------------------------------------------------------
+// splitTransferAcrossSourceLots
+// ---------------------------------------------------------------------------
+
+/**
+ * For a transfer-in split whose source transaction had shares coming from
+ * multiple lots, create one destination lot per source lot and sub-split
+ * the transfer-in accordingly.
+ *
+ * Idempotency: if the split already has a lot_guid, returns immediately.
+ * Falls back to linkTransferToLot when <= 1 lotted source split.
+ *
+ * @param splitGuid - GUID of the transfer-in split
+ * @param runId - Unique run identifier for tagging
+ * @param tx - Prisma transaction client
+ */
+export async function splitTransferAcrossSourceLots(
+  splitGuid: string,
+  runId: string,
+  tx: PrismaTx,
+): Promise<SplitTransferResult> {
+  // Fetch split with transaction + splits + accounts
+  const split = await tx.splits.findUnique({
+    where: { guid: splitGuid },
+    include: {
+      transaction: {
+        include: {
+          splits: {
+            include: {
+              account: {
+                select: { guid: true, commodity_guid: true, account_type: true },
+              },
+            },
+          },
+        },
+      },
+      account: { select: { commodity_guid: true } },
+    },
+  });
+
+  if (!split) {
+    throw new Error(`Split not found: ${splitGuid}`);
+  }
+
+  // Idempotency: if split already assigned to a lot, return
+  if (split.lot_guid) {
+    return { lotsCreated: 0, subSplitsCreated: 0, lotGuids: [] };
+  }
+
+  const accountCommodityGuid = split.account?.commodity_guid;
+
+  // Find source transfer-out splits (negative qty, same commodity, non-TRADING)
+  const sourceSplits = (split.transaction?.splits ?? []).filter(
+    s =>
+      s.account_guid !== split.account_guid &&
+      s.account?.commodity_guid === accountCommodityGuid &&
+      s.account?.account_type !== 'TRADING' &&
+      toDecimalNumber(s.quantity_num, s.quantity_denom) < 0,
+  );
+
+  // Filter to only those with lot_guid
+  const lottedSourceSplits = sourceSplits.filter(s => s.lot_guid !== null);
+
+  // If <= 1 lotted source splits, delegate to linkTransferToLot
+  if (lottedSourceSplits.length <= 1) {
+    const result = await linkTransferToLot(splitGuid, runId, tx);
+    return {
+      lotsCreated: result.created ? 1 : 0,
+      subSplitsCreated: 0,
+      lotGuids: result.created ? [result.lotGuid] : [],
+    };
+  }
+
+  // Multi-lot path: calculate allocations proportional to each source split's quantity
+  const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
+  const transferVal = toDecimalNumber(split.value_num, split.value_denom);
+  const qtyDenom = Number(split.quantity_denom);
+  const valDenom = Number(split.value_denom);
+
+  interface Allocation {
+    sourceLotGuid: string;
+    shares: number;
+  }
+  const totalSourceQty = lottedSourceSplits.reduce(
+    (sum, s) => sum + Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)), 0,
+  );
+
+  const allocations: Allocation[] = lottedSourceSplits.map(s => ({
+    sourceLotGuid: s.lot_guid!,
+    shares: (Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)) / totalSourceQty) * transferQty,
+  }));
+
+  // Helper: create a destination lot for a source lot
+  async function createDestLot(sourceLotGuid: string, postDate: Date | null | undefined): Promise<string> {
+    const lotGuid = generateGuid();
+    await tx.lots.create({
+      data: {
+        guid: lotGuid,
+        account_guid: split!.account_guid,
+        is_closed: 0,
+      },
+    });
+
+    // Tag the lot
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: 'gnucash_web_generated',
+        slot_type: 4,
+        string_val: runId,
+      },
+    });
+
+    // Link source_lot_guid
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: 'source_lot_guid',
+        slot_type: 4,
+        string_val: sourceLotGuid,
+      },
+    });
+
+    // Carry acquisition_date: check slot first, fall back to earliest split date
+    const acqDateSlot = await tx.slots.findFirst({
+      where: { obj_guid: sourceLotGuid, name: 'acquisition_date' },
+      select: { string_val: true },
+    });
+
+    if (acqDateSlot?.string_val) {
+      await tx.slots.create({
+        data: {
+          obj_guid: lotGuid,
+          name: 'acquisition_date',
+          slot_type: 4,
+          string_val: acqDateSlot.string_val,
+        },
+      });
+    } else {
+      const sourceLotSplits = await tx.splits.findMany({
+        where: { lot_guid: sourceLotGuid },
+        include: { transaction: { select: { post_date: true } } },
+      });
+      const dates = sourceLotSplits
+        .map(s => s.transaction?.post_date)
+        .filter((d): d is Date => d !== null && d !== undefined);
+      if (dates.length > 0) {
+        const earliest = new Date(Math.min(...dates.map((d: Date) => d.getTime())));
+        await tx.slots.create({
+          data: {
+            obj_guid: lotGuid,
+            name: 'acquisition_date',
+            slot_type: 4,
+            string_val: earliest.toISOString(),
+          },
+        });
+      }
+    }
+
+    // Set lot title
+    const dateStr = postDate
+      ? new Date(postDate).toISOString().split('T')[0]
+      : 'Unknown';
+    await tx.slots.create({
+      data: {
+        obj_guid: lotGuid,
+        name: 'title',
+        slot_type: 4,
+        string_val: `Transfer ${dateStr}`,
+      },
+    });
+
+    return lotGuid;
+  }
+
+  // Save original values on transfer-in split as slots for revert
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: 'original_quantity_num',
+      slot_type: 4,
+      string_val: split.quantity_num.toString(),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: 'original_quantity_denom',
+      slot_type: 4,
+      string_val: split.quantity_denom.toString(),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: 'original_value_num',
+      slot_type: 4,
+      string_val: split.value_num.toString(),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: 'original_value_denom',
+      slot_type: 4,
+      string_val: split.value_denom.toString(),
+    },
+  });
+  await tx.slots.create({
+    data: {
+      obj_guid: splitGuid,
+      name: 'gnucash_web_generated',
+      slot_type: 4,
+      string_val: runId,
+    },
+  });
+
+  const lotGuids: string[] = [];
+  let usedQtyNum = 0n;
+  let usedValNum = 0n;
+
+  // First allocation reuses the original split
+  const firstAlloc = allocations[0];
+  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date);
+  lotGuids.push(firstLotGuid);
+
+  const firstQty = fromDecimal(firstAlloc.shares, qtyDenom);
+  const firstValProportion = transferQty > 0 ? (firstAlloc.shares / transferQty) * transferVal : 0;
+  const firstVal = fromDecimal(firstValProportion, valDenom);
+
+  await tx.splits.update({
+    where: { guid: splitGuid },
+    data: {
+      lot_guid: firstLotGuid,
+      quantity_num: firstQty.num,
+      quantity_denom: firstQty.denom,
+      value_num: firstVal.num,
+      value_denom: firstVal.denom,
+    },
+  });
+
+  usedQtyNum += firstQty.num;
+  usedValNum += firstVal.num;
+
+  // Remaining allocations create new sub-splits
+  let subSplitsCreated = 0;
+  for (let i = 1; i < allocations.length; i++) {
+    const alloc = allocations[i];
+    const isLast = i === allocations.length - 1;
+    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date);
+    lotGuids.push(lotGuid);
+
+    let subQty: { num: bigint; denom: bigint };
+    let subVal: { num: bigint; denom: bigint };
+
+    if (isLast) {
+      // Last sub-split gets remainder to avoid rounding drift
+      subQty = { num: split.quantity_num - usedQtyNum, denom: BigInt(qtyDenom) };
+      subVal = { num: split.value_num - usedValNum, denom: BigInt(valDenom) };
+    } else {
+      subQty = fromDecimal(alloc.shares, qtyDenom);
+      const valProportion = transferQty > 0 ? (alloc.shares / transferQty) * transferVal : 0;
+      subVal = fromDecimal(valProportion, valDenom);
+      usedQtyNum += subQty.num;
+      usedValNum += subVal.num;
+    }
+
+    const subGuid = generateGuid();
+    await tx.splits.create({
+      data: {
+        guid: subGuid,
+        tx_guid: split.tx_guid,
+        account_guid: split.account_guid,
+        memo: split.memo,
+        action: split.action,
+        reconcile_state: split.reconcile_state,
+        reconcile_date: split.reconcile_date,
+        value_num: subVal.num,
+        value_denom: subVal.denom,
+        quantity_num: subQty.num,
+        quantity_denom: subQty.denom,
+        lot_guid: lotGuid,
+      },
+    });
+
+    // Tag sub-split
+    await tx.slots.create({
+      data: {
+        obj_guid: subGuid,
+        name: 'gnucash_web_generated',
+        slot_type: 4,
+        string_val: runId,
+      },
+    });
+
+    subSplitsCreated++;
+  }
+
+  // Assert transaction balance == 0 (skip for $0 transfers where it's trivially satisfied)
+  if (transferVal !== 0) {
+    const allTxSplits = await tx.splits.findMany({
+      where: { tx_guid: split.tx_guid },
+    });
+    const totalValue = allTxSplits.reduce(
+      (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
+    );
+    if (Math.abs(totalValue) > 0.01) {
+      throw new Error(
+        `Transaction balance invariant violated after transfer split: ${totalValue.toFixed(4)} (tx: ${split.tx_guid})`,
+      );
+    }
+  }
+
+  return { lotsCreated: lotGuids.length, subSplitsCreated, lotGuids };
 }
 
 // ---------------------------------------------------------------------------
