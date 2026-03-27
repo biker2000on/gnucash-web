@@ -19,6 +19,7 @@ interface ScrubResult {
 export function ScrubAllButton() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [method, setMethod] = useState<ScrubMethod>('fifo');
+  const [clearFirst, setClearFirst] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScrubResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export function ScrubAllButton() {
       const res = await fetch('/api/lots/scrub-all', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ method }),
+        body: JSON.stringify({ method, clearFirst }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -146,6 +147,25 @@ export function ScrubAllButton() {
                     ))}
                   </div>
                 </fieldset>
+
+                <label className="flex items-start gap-3 mb-6 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={clearFirst}
+                    onChange={(e) => setClearFirst(e.target.checked)}
+                    disabled={loading}
+                    className="accent-cyan-500 w-4 h-4 mt-0.5"
+                  />
+                  <div>
+                    <span className="text-sm text-foreground-secondary group-hover:text-foreground transition-colors">
+                      Clear existing assignments first
+                    </span>
+                    <p className="text-xs text-foreground-muted mt-0.5">
+                      Removes all existing lot assignments and re-scrubs from scratch.
+                      Use this to reprocess accounts after algorithm changes.
+                    </p>
+                  </div>
+                </label>
 
                 {error && (
                   <div className="mb-4 bg-red-900/30 border border-red-600/50 rounded-lg px-4 py-3 text-sm text-red-300">

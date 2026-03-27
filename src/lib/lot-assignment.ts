@@ -593,8 +593,9 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
 
 export async function scrubAllAccounts(
   method: 'fifo' | 'lifo' | 'average',
-  bookAccountGuids: string[]
-): Promise<{ results: AutoAssignResult[]; order: string[] }> {
+  bookAccountGuids: string[],
+  clearFirst: boolean = false
+): Promise<{ results: AutoAssignResult[]; order: string[]; cleared: number }> {
   // 1. Find all STOCK/MUTUAL accounts
   const investmentAccounts = await prisma.accounts.findMany({
     where: { guid: { in: bookAccountGuids }, account_type: { in: ['STOCK', 'MUTUAL'] } },
@@ -663,7 +664,20 @@ export async function scrubAllAccounts(
     if (!order.includes(acct.guid)) order.push(acct.guid);
   }
 
-  // 4. Scrub each account in order
+  // 4. Clear existing assignments if requested
+  let cleared = 0;
+  if (clearFirst) {
+    for (const accountGuid of order) {
+      try {
+        const clearResult = await clearLotAssignments(accountGuid);
+        cleared += clearResult.lotsDeleted;
+      } catch (error) {
+        console.error(`Error clearing account ${accountGuid}:`, error);
+      }
+    }
+  }
+
+  // 5. Scrub each account in order
   const results: AutoAssignResult[] = [];
   for (const accountGuid of order) {
     try {
@@ -679,7 +693,7 @@ export async function scrubAllAccounts(
     }
   }
 
-  return { results, order };
+  return { results, order, cleared };
 }
 
 export interface WashSaleResult {
