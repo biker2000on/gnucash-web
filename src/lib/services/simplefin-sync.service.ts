@@ -349,6 +349,43 @@ export function selectManualReconciliationMatch(
 }
 
 /**
+ * Candidate for transfer dedup matching.
+ */
+export interface TransferDedupCandidate {
+  transaction_guid: string;
+  post_date: Date;
+  split_account_guid: string;
+  dest_split_guid: string;
+  dest_account_guid: string;
+}
+
+/**
+ * Select the best transfer dedup match from candidates.
+ * Candidates already have opposite amount (filtered by DB query).
+ * Returns null if no candidate is within ±3 days.
+ */
+export function selectTransferDedupMatch(
+  sfTxn: { posted: number; amount: string; description: string },
+  candidates: TransferDedupCandidate[],
+): TransferDedupCandidate | null {
+  const sfDate = new Date(sfTxn.posted * 1000);
+
+  const scored = candidates
+    .map(c => {
+      const dayOffset = Math.abs(sfDate.getTime() - c.post_date.getTime()) / (1000 * 60 * 60 * 24);
+      if (dayOffset > 3) return null;
+      return { ...c, dayOffset };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  if (scored.length === 0) return null;
+
+  scored.sort((a, b) => a.dayOffset - b.dayOffset);
+
+  return scored[0];
+}
+
+/**
  * Import a single SimpleFin transaction into GnuCash.
  */
 async function importTransaction(
