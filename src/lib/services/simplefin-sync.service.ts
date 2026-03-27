@@ -290,6 +290,65 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
 }
 
 /**
+ * Candidate for manual reconciliation matching.
+ */
+export interface ReconciliationCandidate {
+  transaction_guid: string;
+  post_date: Date;
+  description: string;
+  has_meta: boolean;
+}
+
+/**
+ * Select the best manual reconciliation match from candidates.
+ * Candidates already have correct amount (filtered by DB query).
+ * Applies date window filtering and tie-breaking.
+ */
+export function selectManualReconciliationMatch(
+  sfTxn: { posted: number; description: string },
+  candidates: ReconciliationCandidate[],
+): { transaction_guid: string; confidence: 'high' | 'medium'; has_meta: boolean } | null {
+  const sfDate = new Date(sfTxn.posted * 1000);
+  const sfDesc = (sfTxn.description || '').trim().toLowerCase();
+
+  const scored = candidates
+    .map(c => {
+      const dayOffset = Math.abs(sfDate.getTime() - c.post_date.getTime()) / (1000 * 60 * 60 * 24);
+      if (dayOffset > 3) return null;
+
+      const cDesc = (c.description || '').trim().toLowerCase();
+      let commonPrefix = 0;
+      for (let i = 0; i < Math.min(sfDesc.length, cDesc.length); i++) {
+        if (sfDesc[i] === cDesc[i]) commonPrefix++;
+        else break;
+      }
+
+      return {
+        ...c,
+        dayOffset,
+        commonPrefix,
+        confidence: (dayOffset <= 1 ? 'high' : 'medium') as 'high' | 'medium',
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  if (scored.length === 0) return null;
+
+  scored.sort((a, b) => {
+    if (a.dayOffset !== b.dayOffset) return a.dayOffset - b.dayOffset;
+    if (a.commonPrefix !== b.commonPrefix) return b.commonPrefix - a.commonPrefix;
+    return 0;
+  });
+
+  const best = scored[0];
+  return {
+    transaction_guid: best.transaction_guid,
+    confidence: best.confidence,
+    has_meta: best.has_meta,
+  };
+}
+
+/**
  * Import a single SimpleFin transaction into GnuCash.
  */
 async function importTransaction(
