@@ -214,7 +214,8 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
         }
 
         // Manual reconciliation: match to existing manually-entered transaction
-        if (await findAndLinkManualMatch(sfTxn, mappedAccount.gnucash_account_guid)) {
+        const accountScu = gnucashAccount.commodity_scu || 100;
+        if (await findAndLinkManualMatch(sfTxn, mappedAccount.gnucash_account_guid, accountScu)) {
           result.transactionsMatched.manualReconciliation++;
           existingIds.add(sfTxn.id);
           continue;
@@ -222,7 +223,7 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
 
         // Transfer dedup: match to existing import from another SimpleFin-mapped account
         if (allMappedAccountGuids.length > 1 &&
-            await findAndLinkTransferDedupMatch(sfTxn, mappedAccount.gnucash_account_guid, allMappedAccountGuids)) {
+            await findAndLinkTransferDedupMatch(sfTxn, mappedAccount.gnucash_account_guid, allMappedAccountGuids, accountScu)) {
           result.transactionsMatched.transferDedup++;
           existingIds.add(sfTxn.id);
           continue;
@@ -417,12 +418,15 @@ export function selectTransferDedupMatch(
 async function findAndLinkManualMatch(
   sfTxn: SimpleFinTransaction,
   bankAccountGuid: string,
+  accountScu: number = 100,
 ): Promise<boolean> {
   const amount = parseFloat(sfTxn.amount);
   if (isNaN(amount) || amount === 0) return false;
 
   const postDate = new Date(sfTxn.posted * 1000);
-  const { num: absNum, denom } = toNumDenom(Math.abs(amount));
+  // Use the account's commodity_scu for correct precision (e.g., 100 for USD, 1 for JPY, 1000 for KWD)
+  const scuPrecision = Math.round(Math.log10(accountScu));
+  const { num: absNum, denom } = toNumDenom(Math.abs(amount), scuPrecision);
   const valueNum = amount > 0 ? absNum : -absNum;
 
   // Find transactions in the same account with exact amount, within ±3 days,
@@ -448,23 +452,26 @@ async function findAndLinkManualMatch(
   const match = selectManualReconciliationMatch(sfTxn, candidates);
   if (!match) return false;
 
-  if (match.has_meta) {
-    await prisma.$executeRaw`
-      UPDATE gnucash_web_transaction_meta
-      SET simplefin_transaction_id = ${sfTxn.id},
-          match_type = 'manual_reconciliation',
-          match_confidence = ${match.confidence},
-          matched_at = NOW()
-      WHERE transaction_guid = ${match.transaction_guid}
-    `;
-  } else {
-    await prisma.$executeRaw`
-      INSERT INTO gnucash_web_transaction_meta
-        (transaction_guid, source, reviewed, simplefin_transaction_id, match_type, match_confidence, matched_at)
-      VALUES
-        (${match.transaction_guid}, 'manual', TRUE, ${sfTxn.id}, 'manual_reconciliation', ${match.confidence}, NOW())
-    `;
-  }
+  // Wrap in transaction for atomicity
+  await prisma.$transaction(async (tx) => {
+    if (match.has_meta) {
+      await tx.$executeRaw`
+        UPDATE gnucash_web_transaction_meta
+        SET simplefin_transaction_id = ${sfTxn.id},
+            match_type = 'manual_reconciliation',
+            match_confidence = ${match.confidence},
+            matched_at = NOW()
+        WHERE transaction_guid = ${match.transaction_guid}
+      `;
+    } else {
+      await tx.$executeRaw`
+        INSERT INTO gnucash_web_transaction_meta
+          (transaction_guid, source, reviewed, simplefin_transaction_id, match_type, match_confidence, matched_at)
+        VALUES
+          (${match.transaction_guid}, 'manual', TRUE, ${sfTxn.id}, 'manual_reconciliation', ${match.confidence}, NOW())
+      `;
+    }
+  });
 
   return true;
 }
@@ -477,17 +484,21 @@ async function findAndLinkTransferDedupMatch(
   sfTxn: SimpleFinTransaction,
   bankAccountGuid: string,
   allMappedAccountGuids: string[],
+  accountScu: number = 100,
 ): Promise<boolean> {
   const amount = parseFloat(sfTxn.amount);
   if (isNaN(amount) || amount === 0) return false;
 
   const postDate = new Date(sfTxn.posted * 1000);
-  const { num: absNum, denom } = toNumDenom(Math.abs(amount));
+  // Use the account's commodity_scu for correct precision
+  const scuPrecision = Math.round(Math.log10(accountScu));
+  const { num: absNum, denom } = toNumDenom(Math.abs(amount), scuPrecision);
   const oppositeValueNum = amount > 0 ? -absNum : absNum;
 
   const otherMappedGuids = allMappedAccountGuids.filter(g => g !== bankAccountGuid);
   if (otherMappedGuids.length === 0) return false;
 
+  // Only match 2-split transactions to avoid ambiguity with multi-split transactions
   const candidates = await prisma.$queryRaw<TransferDedupCandidate[]>`
     SELECT DISTINCT ON (t.guid)
       t.guid AS transaction_guid,
@@ -507,28 +518,24 @@ async function findAndLinkTransferDedupMatch(
       AND t.post_date BETWEEN ${new Date(postDate.getTime() - 3 * 86400000)}
                           AND ${new Date(postDate.getTime() + 3 * 86400000)}
       AND (m.deleted_at IS NULL)
+      AND (SELECT COUNT(*) FROM splits WHERE tx_guid = t.guid) = 2
     ORDER BY t.guid, t.post_date ASC
   `;
 
   const match = selectTransferDedupMatch(sfTxn, candidates);
   if (!match) return false;
 
-  if (match.dest_account_guid !== bankAccountGuid) {
-    await prisma.$executeRaw`
-      UPDATE splits
-      SET account_guid = ${bankAccountGuid}
-      WHERE guid = ${match.dest_split_guid}
+  // Wrap meta update in a transaction for atomicity
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      UPDATE gnucash_web_transaction_meta
+      SET simplefin_transaction_id_2 = ${sfTxn.id},
+          match_type = 'transfer_dedup',
+          match_confidence = 'high',
+          matched_at = NOW()
+      WHERE transaction_guid = ${match.transaction_guid}
     `;
-  }
-
-  await prisma.$executeRaw`
-    UPDATE gnucash_web_transaction_meta
-    SET simplefin_transaction_id_2 = ${sfTxn.id},
-        match_type = 'transfer_dedup',
-        match_confidence = 'high',
-        matched_at = NOW()
-    WHERE transaction_guid = ${match.transaction_guid}
-  `;
+  });
 
   return true;
 }
