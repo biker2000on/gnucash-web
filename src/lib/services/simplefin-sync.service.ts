@@ -442,7 +442,7 @@ async function findAndLinkManualMatch(
                           AND ${new Date(postDate.getTime() + 3 * 86400000)}
       AND (m.simplefin_transaction_id IS NULL)
       AND (m.deleted_at IS NULL OR m.id IS NULL)
-    ORDER BY t.post_date ASC
+    ORDER BY t.post_date ASC, t.enter_date ASC
   `;
 
   const match = selectManualReconciliationMatch(sfTxn, candidates);
@@ -489,7 +489,7 @@ async function findAndLinkTransferDedupMatch(
   if (otherMappedGuids.length === 0) return false;
 
   const candidates = await prisma.$queryRaw<TransferDedupCandidate[]>`
-    SELECT
+    SELECT DISTINCT ON (t.guid)
       t.guid AS transaction_guid,
       t.post_date,
       s1.account_guid AS split_account_guid,
@@ -507,7 +507,7 @@ async function findAndLinkTransferDedupMatch(
       AND t.post_date BETWEEN ${new Date(postDate.getTime() - 3 * 86400000)}
                           AND ${new Date(postDate.getTime() + 3 * 86400000)}
       AND (m.deleted_at IS NULL)
-    ORDER BY t.post_date ASC
+    ORDER BY t.guid, t.post_date ASC
   `;
 
   const match = selectTransferDedupMatch(sfTxn, candidates);
