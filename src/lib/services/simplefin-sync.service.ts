@@ -81,6 +81,10 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     return result;
   }
 
+  const allMappedAccountGuids = mappedAccounts
+    .filter(a => a.gnucash_account_guid)
+    .map(a => a.gnucash_account_guid);
+
   // Determine the date range for fetching
   // Use earliest last_sync_at across all mapped accounts, or 90 days ago
   const ninetyDaysAgo = new Date();
@@ -153,13 +157,19 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
 
     try {
       // Get existing SimpleFin transaction IDs for this account to dedup
-      const existingMeta = await prisma.$queryRaw<{ simplefin_transaction_id: string }[]>`
-        SELECT meta.simplefin_transaction_id
+      const existingMeta = await prisma.$queryRaw<{
+        simplefin_transaction_id: string | null;
+        simplefin_transaction_id_2: string | null;
+      }[]>`
+        SELECT meta.simplefin_transaction_id, meta.simplefin_transaction_id_2
         FROM gnucash_web_transaction_meta meta
-        WHERE meta.simplefin_transaction_id IS NOT NULL
-          AND meta.source = 'simplefin'
+        WHERE (meta.simplefin_transaction_id IS NOT NULL OR meta.simplefin_transaction_id_2 IS NOT NULL)
       `;
-      const existingIds = new Set(existingMeta.map(m => m.simplefin_transaction_id));
+      const existingIds = new Set<string>();
+      for (const m of existingMeta) {
+        if (m.simplefin_transaction_id) existingIds.add(m.simplefin_transaction_id);
+        if (m.simplefin_transaction_id_2) existingIds.add(m.simplefin_transaction_id_2);
+      }
 
       // Get the GnuCash account's commodity/currency for the splits
       const gnucashAccount = await prisma.accounts.findUnique({
@@ -206,6 +216,14 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
         // Manual reconciliation: match to existing manually-entered transaction
         if (await findAndLinkManualMatch(sfTxn, mappedAccount.gnucash_account_guid)) {
           result.transactionsMatched.manualReconciliation++;
+          existingIds.add(sfTxn.id);
+          continue;
+        }
+
+        // Transfer dedup: match to existing import from another SimpleFin-mapped account
+        if (allMappedAccountGuids.length > 1 &&
+            await findAndLinkTransferDedupMatch(sfTxn, mappedAccount.gnucash_account_guid, allMappedAccountGuids)) {
+          result.transactionsMatched.transferDedup++;
           existingIds.add(sfTxn.id);
           continue;
         }
@@ -447,6 +465,70 @@ async function findAndLinkManualMatch(
         (${match.transaction_guid}, 'manual', TRUE, ${sfTxn.id}, 'manual_reconciliation', ${match.confidence}, NOW())
     `;
   }
+
+  return true;
+}
+
+/**
+ * Search for and link a transfer dedup match.
+ * Returns true if a match was found and linked.
+ */
+async function findAndLinkTransferDedupMatch(
+  sfTxn: SimpleFinTransaction,
+  bankAccountGuid: string,
+  allMappedAccountGuids: string[],
+): Promise<boolean> {
+  const amount = parseFloat(sfTxn.amount);
+  if (isNaN(amount) || amount === 0) return false;
+
+  const postDate = new Date(sfTxn.posted * 1000);
+  const { num: absNum, denom } = toNumDenom(Math.abs(amount));
+  const oppositeValueNum = amount > 0 ? -absNum : absNum;
+
+  const otherMappedGuids = allMappedAccountGuids.filter(g => g !== bankAccountGuid);
+  if (otherMappedGuids.length === 0) return false;
+
+  const candidates = await prisma.$queryRaw<TransferDedupCandidate[]>`
+    SELECT
+      t.guid AS transaction_guid,
+      t.post_date,
+      s1.account_guid AS split_account_guid,
+      s2.guid AS dest_split_guid,
+      s2.account_guid AS dest_account_guid
+    FROM transactions t
+    JOIN splits s1 ON s1.tx_guid = t.guid AND s1.account_guid = ANY(${otherMappedGuids})
+    JOIN splits s2 ON s2.tx_guid = t.guid AND s2.guid != s1.guid
+    JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
+    WHERE s1.value_num = ${BigInt(oppositeValueNum)}
+      AND s1.value_denom = ${BigInt(denom)}
+      AND m.source = 'simplefin'
+      AND m.match_type IS NULL
+      AND m.simplefin_transaction_id_2 IS NULL
+      AND t.post_date BETWEEN ${new Date(postDate.getTime() - 3 * 86400000)}
+                          AND ${new Date(postDate.getTime() + 3 * 86400000)}
+      AND (m.deleted_at IS NULL)
+    ORDER BY t.post_date ASC
+  `;
+
+  const match = selectTransferDedupMatch(sfTxn, candidates);
+  if (!match) return false;
+
+  if (match.dest_account_guid !== bankAccountGuid) {
+    await prisma.$executeRaw`
+      UPDATE splits
+      SET account_guid = ${bankAccountGuid}
+      WHERE guid = ${match.dest_split_guid}
+    `;
+  }
+
+  await prisma.$executeRaw`
+    UPDATE gnucash_web_transaction_meta
+    SET simplefin_transaction_id_2 = ${sfTxn.id},
+        match_type = 'transfer_dedup',
+        match_confidence = 'high',
+        matched_at = NOW()
+    WHERE transaction_guid = ${match.transaction_guid}
+  `;
 
   return true;
 }
