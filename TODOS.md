@@ -102,18 +102,6 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P2 - SimpleFin Import: Manual Transaction Reconciliation & Transfer Dedup
-
-**What:** Two related features for SimpleFin import: (1) Manually created transactions should be reconciled/matched to incoming SimpleFin transactions on import, preventing duplicates when a user has already entered a transaction before the bank feed arrives. (2) Transfers between two accounts that both have SimpleFin feeds should be automatically deduplicated — the transfer appears in both bank feeds but should only create one transaction.
-
-**Why:** Without reconciliation, users who proactively enter transactions get duplicates when SimpleFin imports the same transaction days later. Without transfer dedup, a $500 transfer from checking to savings creates two transactions (one from each bank feed) instead of one. Both issues erode trust in the import pipeline and create manual cleanup work.
-
-**Effort:** L (human: ~2 weeks) / with CC: M (~45 min)
-
-**Depends on:** SimpleFin import (shipped).
-
-**Context:** Added 2026-03-26. Reconciliation approach: on import, before creating a new transaction, search for existing unreconciled transactions in the same account within a date window (±3 days) with matching amount. Present candidates for user confirmation or auto-match with high confidence (exact amount + date match). Transfer dedup approach: detect when two SimpleFin transactions across different accounts have matching amounts (one positive, one negative) within a close date window, and link them as a single transfer transaction. Edge cases: partial matches, split transactions, same-amount recurring transactions (rent vs. one-time transfer).
-
 ---
 
 ## P2 - Fix Asset Analysis Tool: Manual Account Selection
@@ -207,3 +195,12 @@ Items deferred from plan reviews for future implementation.
 **Depends on:** Go-live, real user feedback.
 
 **Context:** Added 2026-03-26. This is intentionally open-ended — the current reconciliation flow needs to be used in practice before specific improvements can be scoped. After go-live, collect friction points: Is the workflow too many clicks? Is it unclear which transactions are unreconciled? Is the balance matching confusing? Does it need bank statement import integration? Revisit this TODO with concrete findings and then scope specific fixes.
+
+---
+
+## Completed
+
+### SimpleFin Import: Manual Transaction Reconciliation & Transfer Dedup
+**Completed:** v0.2.1.0 (2026-03-27)
+
+Reconciliation matching links bank-imported transactions to existing manually-entered ones. Transfer dedup detects when the same transfer is imported from both sides and links them. "Bank-verified" badge in ledger. Match counts in sync results.

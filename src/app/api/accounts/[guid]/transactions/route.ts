@@ -332,8 +332,9 @@ export async function GET(
             transaction_guid: string;
             source: string;
             reviewed: boolean;
+            match_type: string | null;
         }[]>`
-            SELECT transaction_guid, source, reviewed
+            SELECT transaction_guid, source, reviewed, match_type
             FROM gnucash_web_transaction_meta
             WHERE transaction_guid = ANY(${txGuids}::text[])
         `;
@@ -401,6 +402,7 @@ export async function GET(
                 // Transaction meta: reviewed status and source
                 reviewed: meta?.reviewed ?? true, // default to reviewed if no meta row
                 source: meta?.source ?? 'manual',
+                match_type: meta?.match_type ?? null,
                 // Investment running totals (only present for investment accounts)
                 ...(investmentRunningTotals ? {
                     share_balance: investmentRunningTotals.get(tx.guid)?.shareBalance.toString() ?? '0',

@@ -24,6 +24,10 @@ interface SyncResult {
   accountsProcessed: number;
   transactionsImported: number;
   transactionsSkipped: number;
+  transactionsMatched?: {
+    manualReconciliation: number;
+    transferDedup: number;
+  };
   errors: { account: string; error: string }[];
 }
 
@@ -184,7 +188,9 @@ export default function ConnectionsPage() {
       }
       if (data.direct) {
         setSfSyncResult(data);
-        success(`Imported ${data.transactionsImported} transactions, skipped ${data.transactionsSkipped} duplicates`);
+        const matched = (data.transactionsMatched?.manualReconciliation || 0) + (data.transactionsMatched?.transferDedup || 0);
+        const matchedMsg = matched > 0 ? `, matched ${matched} existing` : '';
+        success(`Imported ${data.transactionsImported} transactions, skipped ${data.transactionsSkipped} duplicates${matchedMsg}`);
       } else {
         success('Sync job queued');
       }
@@ -329,6 +335,17 @@ export default function ConnectionsPage() {
                   Imported {sfSyncResult.transactionsImported} transactions, skipped {sfSyncResult.transactionsSkipped} duplicates
                   ({sfSyncResult.accountsProcessed} accounts processed)
                 </p>
+                {sfSyncResult.transactionsMatched && (sfSyncResult.transactionsMatched.manualReconciliation > 0 || sfSyncResult.transactionsMatched.transferDedup > 0) && (
+                  <p className="text-sm text-cyan-400 mt-1">
+                    {sfSyncResult.transactionsMatched.manualReconciliation > 0 && (
+                      <span>{sfSyncResult.transactionsMatched.manualReconciliation} matched to existing transactions</span>
+                    )}
+                    {sfSyncResult.transactionsMatched.manualReconciliation > 0 && sfSyncResult.transactionsMatched.transferDedup > 0 && ', '}
+                    {sfSyncResult.transactionsMatched.transferDedup > 0 && (
+                      <span>{sfSyncResult.transactionsMatched.transferDedup} transfers deduplicated</span>
+                    )}
+                  </p>
+                )}
                 {sfSyncResult.errors.length > 0 && (
                   <details className="mt-2">
                     <summary className="text-xs text-amber-400 cursor-pointer">
