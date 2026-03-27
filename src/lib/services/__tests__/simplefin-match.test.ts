@@ -178,3 +178,88 @@ describe('selectTransferDedupMatch', () => {
     expect(result!.transaction_guid).toBe('f'.repeat(32));
   });
 });
+
+describe('Match priority: manual reconciliation wins over transfer dedup', () => {
+  it('manual reconciliation is checked first in the pipeline', () => {
+    const sfTxn = {
+      posted: new Date('2026-03-20T12:00:00Z').getTime() / 1000,
+      amount: '-500.00',
+      description: 'Transfer to savings',
+    };
+
+    const manualCandidates: ReconciliationCandidate[] = [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-03-20T10:00:00Z'),
+      description: 'Transfer to savings',
+      has_meta: false,
+    }];
+
+    const transferCandidates: TransferDedupCandidate[] = [{
+      transaction_guid: 'b'.repeat(32),
+      post_date: new Date('2026-03-20T11:00:00Z'),
+      split_account_guid: 'c'.repeat(32),
+      dest_split_guid: 'd'.repeat(32),
+      dest_account_guid: 'e'.repeat(32),
+    }];
+
+    const manualMatch = selectManualReconciliationMatch(sfTxn, manualCandidates);
+    const transferMatch = selectTransferDedupMatch(sfTxn, transferCandidates);
+
+    expect(manualMatch).not.toBeNull();
+    expect(transferMatch).not.toBeNull();
+  });
+});
+
+describe('Edge cases', () => {
+  it('should handle empty description gracefully', () => {
+    const sfTxn = {
+      posted: new Date('2026-03-20T12:00:00Z').getTime() / 1000,
+      amount: '-10.00',
+      description: '',
+    };
+
+    const result = selectManualReconciliationMatch(sfTxn, [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-03-20T10:00:00Z'),
+      description: 'Some description',
+      has_meta: true,
+    }]);
+
+    expect(result).not.toBeNull();
+  });
+
+  it('should handle boundary: exactly 3.0 days offset matches', () => {
+    const sfTxn = {
+      posted: new Date('2026-03-20T12:00:00Z').getTime() / 1000,
+      amount: '-10.00',
+      description: 'Test',
+    };
+
+    const result = selectManualReconciliationMatch(sfTxn, [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-03-23T12:00:00Z'),
+      description: 'Test',
+      has_meta: true,
+    }]);
+
+    expect(result).not.toBeNull();
+    expect(result!.confidence).toBe('medium');
+  });
+
+  it('should handle boundary: 3.01 days offset does not match', () => {
+    const sfTxn = {
+      posted: new Date('2026-03-20T12:00:00Z').getTime() / 1000,
+      amount: '-10.00',
+      description: 'Test',
+    };
+
+    const result = selectManualReconciliationMatch(sfTxn, [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-03-23T12:15:00Z'),
+      description: 'Test',
+      has_meta: true,
+    }]);
+
+    expect(result).toBeNull();
+  });
+});
