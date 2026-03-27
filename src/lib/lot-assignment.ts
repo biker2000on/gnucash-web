@@ -13,6 +13,7 @@ import { generateGuid, toDecimalNumber } from './gnucash';
 import {
   splitSellAcrossLots,
   linkTransferToLot,
+  splitTransferAcrossSourceLots,
   generateCapitalGains,
   type OpenLot,
   type PrismaTx,
@@ -200,23 +201,22 @@ async function assignWithStrategy(
     }
   }
 
-  // Process transfer-ins first (they create new lots via linkTransferToLot)
+  // Process transfer-ins first (they create new lots, potentially multiple per transfer)
   for (const transfer of transferIns) {
-    const result = await linkTransferToLot(transfer.guid, runId, tx);
-    if (result.created) {
-      lotsCreated++;
-      // Add the new lot to openLots
-      const qty = toDecimalNumber(transfer.quantity_num, transfer.quantity_denom);
-      openLots.push({ guid: result.lotGuid, shares: qty, openDate: transfer.post_date });
-    } else {
-      // Already assigned — update openLots if the lot exists
-      const existingIdx = openLots.findIndex(l => l.guid === result.lotGuid);
-      if (existingIdx >= 0) {
-        // shares already counted from existing lots
-      } else {
-        const qty = toDecimalNumber(transfer.quantity_num, transfer.quantity_denom);
-        openLots.push({ guid: result.lotGuid, shares: qty, openDate: transfer.post_date });
-      }
+    const result = await splitTransferAcrossSourceLots(transfer.guid, runId, tx);
+    lotsCreated += result.lotsCreated;
+    splitsCreated += result.subSplitsCreated;
+    // Add each created lot to openLots
+    for (const lotGuid of result.lotGuids) {
+      // Look up the lot's splits to determine its share count
+      const lotSplits = await tx.splits.findMany({
+        where: { lot_guid: lotGuid },
+        select: { quantity_num: true, quantity_denom: true },
+      });
+      const shares = lotSplits.reduce(
+        (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
+      );
+      openLots.push({ guid: lotGuid, shares, openDate: transfer.post_date });
     }
   }
 
