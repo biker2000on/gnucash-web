@@ -203,6 +203,13 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
           continue;
         }
 
+        // Manual reconciliation: match to existing manually-entered transaction
+        if (await findAndLinkManualMatch(sfTxn, mappedAccount.gnucash_account_guid)) {
+          result.transactionsMatched.manualReconciliation++;
+          existingIds.add(sfTxn.id);
+          continue;
+        }
+
         try {
           if (mappedAccount.is_investment) {
             // Investment mode: route to child account by symbol
@@ -383,6 +390,65 @@ export function selectTransferDedupMatch(
   scored.sort((a, b) => a.dayOffset - b.dayOffset);
 
   return scored[0];
+}
+
+/**
+ * Search for and link a manual reconciliation match.
+ * Returns true if a match was found and linked.
+ */
+async function findAndLinkManualMatch(
+  sfTxn: SimpleFinTransaction,
+  bankAccountGuid: string,
+): Promise<boolean> {
+  const amount = parseFloat(sfTxn.amount);
+  if (isNaN(amount) || amount === 0) return false;
+
+  const postDate = new Date(sfTxn.posted * 1000);
+  const { num: absNum, denom } = toNumDenom(Math.abs(amount));
+  const valueNum = amount > 0 ? absNum : -absNum;
+
+  // Find transactions in the same account with exact amount, within ±3 days,
+  // not already linked to a SimpleFin ID, not soft-deleted
+  const candidates = await prisma.$queryRaw<ReconciliationCandidate[]>`
+    SELECT
+      t.guid AS transaction_guid,
+      t.post_date,
+      t.description,
+      CASE WHEN m.id IS NOT NULL THEN TRUE ELSE FALSE END AS has_meta
+    FROM transactions t
+    JOIN splits s ON s.tx_guid = t.guid AND s.account_guid = ${bankAccountGuid}
+    LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
+    WHERE s.value_num = ${BigInt(valueNum)}
+      AND s.value_denom = ${BigInt(denom)}
+      AND t.post_date BETWEEN ${new Date(postDate.getTime() - 3 * 86400000)}
+                          AND ${new Date(postDate.getTime() + 3 * 86400000)}
+      AND (m.simplefin_transaction_id IS NULL)
+      AND (m.deleted_at IS NULL OR m.id IS NULL)
+    ORDER BY t.post_date ASC
+  `;
+
+  const match = selectManualReconciliationMatch(sfTxn, candidates);
+  if (!match) return false;
+
+  if (match.has_meta) {
+    await prisma.$executeRaw`
+      UPDATE gnucash_web_transaction_meta
+      SET simplefin_transaction_id = ${sfTxn.id},
+          match_type = 'manual_reconciliation',
+          match_confidence = ${match.confidence},
+          matched_at = NOW()
+      WHERE transaction_guid = ${match.transaction_guid}
+    `;
+  } else {
+    await prisma.$executeRaw`
+      INSERT INTO gnucash_web_transaction_meta
+        (transaction_guid, source, reviewed, simplefin_transaction_id, match_type, match_confidence, matched_at)
+      VALUES
+        (${match.transaction_guid}, 'manual', TRUE, ${sfTxn.id}, 'manual_reconciliation', ${match.confidence}, NOW())
+    `;
+  }
+
+  return true;
 }
 
 /**
