@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2.0] - 2026-03-28
+
+### Added
+- **Contribution Summary report**: surfaces total contributions to retirement and brokerage accounts with per-account breakdowns, IRS contribution limit tracking with progress bars, and configurable grouping by calendar year or tax year
+- **Contribution classification engine**: automatically categorizes deposits as contributions, employer match, rollovers/transfers, dividends, or fees based on the source account type, with hierarchy-aware retirement flag inheritance
+- **IRS contribution limits service**: hardcoded defaults for 2024-2026 (401k, IRA, Roth IRA, HSA, 403b, 457) with user-editable overrides via database table, catch-up contribution support using birth date from user profile
+- **Retirement account toggle**: investment accounts (STOCK, MUTUAL, ASSET, BANK) can be flagged as retirement accounts with a type selector (401k, IRA, Roth IRA, HSA, etc.) in the account detail page
+- **Tax-year attribution**: per-transaction tax year overrides for prior-year contributions, with inline editing in the report and a backfill script for historical data
+- **Tax-year backfill script** (`scripts/backfill-tax-year.ts`): parses transaction descriptions for year indicators and sets tax-year overrides for historical prior-year contributions
+- API endpoints: `GET/PUT /api/contribution-limits`, `PUT/DELETE /api/contributions/[splitGuid]/tax-year`, `GET /api/reports/contribution-summary`
+- 36 new tests (IRS limits: 12, contribution classifier: 13, report generator: 11)
+
+### Fixed
+- Floating-point drift in financial summation replaced with integer-cent accumulation
+- Birthday read server-side to avoid PII in query parameters
+- Account preferences COALESCE pattern replaced with CASE WHEN to allow clearing retirement_account_type to null
+- Contribution limits PUT endpoint now validates account type, numeric ranges
+- Tax-year override route now checks book scope (isAccountInActiveBook)
+- Retirement account query scoped to active book, O(n) array lookup replaced with Set
+
 ## [0.2.1.0] - 2026-03-27
 
 ### Added

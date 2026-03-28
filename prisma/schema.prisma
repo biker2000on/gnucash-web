@@ -518,11 +518,33 @@ model gnucash_web_tool_config {
 }
 
 model gnucash_web_account_preferences {
-  account_guid          String  @id @db.VarChar(32)
-  cost_basis_method     String? @db.VarChar(20) // 'fifo', 'lifo', 'average'
-  lot_assignment_method String? @db.VarChar(20) // 'fifo', 'lifo', 'average'
+  account_guid            String   @id @db.VarChar(32)
+  cost_basis_method       String?  @db.VarChar(20) // 'fifo', 'lifo', 'average'
+  lot_assignment_method   String?  @db.VarChar(20) // 'fifo', 'lifo', 'average'
+  is_retirement           Boolean  @default(false)
+  retirement_account_type String?  @db.VarChar(20)
 
   @@map("gnucash_web_account_preferences")
+}
+
+model gnucash_web_contribution_limits {
+  id             Int      @id @default(autoincrement())
+  tax_year       Int
+  account_type   String   @db.VarChar(20)
+  base_limit     Decimal  @db.Decimal(12, 2)
+  catch_up_limit Decimal  @default(0) @db.Decimal(12, 2)
+  catch_up_age   Int      @default(50)
+  notes          String?  @db.VarChar(255)
+
+  @@unique([tax_year, account_type])
+  @@map("gnucash_web_contribution_limits")
+}
+
+model gnucash_web_contribution_tax_year {
+  split_guid String @id @db.VarChar(32)
+  tax_year   Int
+
+  @@map("gnucash_web_contribution_tax_year")
 }
 
 model gnucash_web_transaction_types {
