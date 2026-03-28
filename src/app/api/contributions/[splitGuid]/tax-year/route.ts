@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { isAccountInActiveBook } from '@/lib/book-scope';
 
 export async function PUT(
   request: NextRequest,
@@ -14,12 +15,16 @@ export async function PUT(
     const body = await request.json();
     const { taxYear } = body;
 
-    if (!taxYear || typeof taxYear !== 'number') {
-      return NextResponse.json({ error: 'Invalid taxYear' }, { status: 400 });
+    if (!taxYear || typeof taxYear !== 'number' || taxYear < 2000 || taxYear > 2100) {
+      return NextResponse.json({ error: 'Invalid taxYear — must be a number between 2000 and 2100' }, { status: 400 });
     }
 
     const split = await prisma.splits.findUnique({ where: { guid: splitGuid } });
     if (!split) {
+      return NextResponse.json({ error: 'Split not found' }, { status: 404 });
+    }
+
+    if (!await isAccountInActiveBook(split.account_guid)) {
       return NextResponse.json({ error: 'Split not found' }, { status: 404 });
     }
 

@@ -101,8 +101,9 @@ export async function getRetirementAccountGuids(
 ): Promise<Set<string>> {
   if (bookAccountGuids.length === 0) return new Set();
 
+  // Scope to book accounts only
   const flaggedPrefs = await prisma.gnucash_web_account_preferences.findMany({
-    where: { is_retirement: true },
+    where: { is_retirement: true, account_guid: { in: bookAccountGuids } },
     select: { account_guid: true },
   });
   const flaggedGuids = new Set(flaggedPrefs.map(p => p.account_guid));
@@ -115,6 +116,7 @@ export async function getRetirementAccountGuids(
   });
 
   const childrenOf = new Map<string, string[]>();
+  const bookGuidsSet = new Set(bookAccountGuids);
   for (const acct of allAccounts) {
     if (acct.parent_guid) {
       const children = childrenOf.get(acct.parent_guid) ?? [];
@@ -127,7 +129,7 @@ export async function getRetirementAccountGuids(
   const queue = [...flaggedGuids];
   while (queue.length > 0) {
     const guid = queue.pop()!;
-    if (!bookAccountGuids.includes(guid)) continue;
+    if (!bookGuidsSet.has(guid)) continue;
     retirementGuids.add(guid);
     const children = childrenOf.get(guid) ?? [];
     for (const child of children) {

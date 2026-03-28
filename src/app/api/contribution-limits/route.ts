@@ -35,6 +35,17 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields: tax_year, account_type, base_limit' }, { status: 400 });
     }
 
+    const VALID_ACCOUNT_TYPES = ['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage'];
+    if (typeof tax_year !== 'number' || tax_year < 2000 || tax_year > 2100) {
+      return NextResponse.json({ error: 'tax_year must be a number between 2000 and 2100' }, { status: 400 });
+    }
+    if (!VALID_ACCOUNT_TYPES.includes(account_type)) {
+      return NextResponse.json({ error: `Invalid account_type. Must be one of: ${VALID_ACCOUNT_TYPES.join(', ')}` }, { status: 400 });
+    }
+    if (typeof base_limit !== 'number' || base_limit < 0) {
+      return NextResponse.json({ error: 'base_limit must be a non-negative number' }, { status: 400 });
+    }
+
     await prisma.$executeRaw`
       INSERT INTO gnucash_web_contribution_limits (tax_year, account_type, base_limit, catch_up_limit, catch_up_age, notes)
       VALUES (${tax_year}, ${account_type}, ${base_limit}, ${catch_up_limit ?? 0}, ${catch_up_age ?? 50}, ${notes ?? null})

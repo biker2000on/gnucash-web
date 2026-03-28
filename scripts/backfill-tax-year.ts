@@ -24,9 +24,9 @@ const TAX_YEAR_PATTERNS = [
 
 // False positive patterns (dates, reference numbers)
 const FALSE_POSITIVE_PATTERNS = [
-  /\b20\d{2}-\d{2}-\d{2}\b/,
-  /\b20\d{2}\/\d{2}\/\d{2}\b/,
-  /\b#\d+\b/,
+  /\b20\d{2}-\d{2}-\d{2}\b/g,
+  /\b20\d{2}\/\d{2}\/\d{2}\b/g,
+  /\b#\d+\b/g,
 ];
 
 function extractTaxYear(description: string, postDate: Date): number | null {

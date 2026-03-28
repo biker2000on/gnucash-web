@@ -37,8 +37,8 @@ function ContributionSummaryContent() {
                 const prefRes = await fetch('/api/user/preferences?key=birthday');
                 if (prefRes.ok) {
                     const prefData = await prefRes.json();
-                    if (prefData.value) {
-                        params.set('birthday', prefData.value);
+                    if (prefData.preferences?.birthday) {
+                        params.set('birthday', prefData.preferences.birthday);
                     }
                 }
             } catch {
