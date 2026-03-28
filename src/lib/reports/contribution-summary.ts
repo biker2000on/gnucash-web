@@ -4,8 +4,6 @@ import {
   classifyContribution,
   ContributionType,
   getRetirementAccountGuids,
-  getRetirementAccountType,
-  resolveContributionTaxYear,
 } from './contribution-classifier';
 import { getContributionLimit } from './irs-limits';
 import type {
@@ -24,7 +22,7 @@ interface SplitRow {
   quantity_num: bigint;
   quantity_denom: bigint;
   post_date: Date;
-  description: string;
+  description: string | null;
   other_split_guid: string;
   other_account_guid: string;
   other_value_num: bigint;
@@ -143,7 +141,7 @@ export async function generateContributionSummary(
           quantity_denom: row.quantity_denom,
         },
         postDate: row.post_date,
-        description: row.description,
+        description: row.description ?? '',
         otherSplits: [],
       };
       splitMap.set(row.split_guid, entry);
@@ -169,13 +167,22 @@ export async function generateContributionSummary(
   `;
   const accountPathMap = new Map(accountPathRows.map(r => [r.guid, r.fullname]));
 
-  // Step 5: Classify each split and resolve tax year
+  // Step 5: Batch-load tax year overrides to avoid N+1 queries
+  const allSplitGuids = [...splitMap.keys()];
+  const taxYearOverrides = allSplitGuids.length > 0
+    ? await prisma.gnucash_web_contribution_tax_year.findMany({
+        where: { split_guid: { in: allSplitGuids } },
+      })
+    : [];
+  const taxYearMap = new Map(taxYearOverrides.map(o => [o.split_guid, o.tax_year]));
+
+  // Classify each split and resolve tax year
   // Keyed by accountGuid -> year -> array of line items
   const accountYearItems = new Map<string, Map<number, ContributionLineItem[]>>();
 
   for (const [splitGuid, entry] of splitMap) {
     const classification = classifyContribution(entry.split, entry.otherSplits, retirementGuids);
-    const taxYear = await resolveContributionTaxYear(splitGuid, entry.postDate);
+    const taxYear = taxYearMap.get(splitGuid) ?? entry.postDate.getFullYear();
     const year = groupBy === 'tax_year' ? taxYear : entry.postDate.getFullYear();
 
     const amount = toDecimalNumber(entry.split.value_num, entry.split.value_denom);
@@ -194,7 +201,7 @@ export async function generateContributionSummary(
     const lineItem: ContributionLineItem = {
       splitGuid,
       date: entry.postDate.toISOString().split('T')[0],
-      description: entry.description,
+      description: entry.description ?? '',
       amount,
       type: classification,
       taxYear,
@@ -212,12 +219,42 @@ export async function generateContributionSummary(
     yearMap.get(year)!.push(lineItem);
   }
 
-  // Step 6: Get retirement account types for each account
+  // Step 6: Batch-load retirement account types (avoid N+1)
+  const activeAccountGuids = retirementGuidArray.filter(g => accountYearItems.has(g));
+  const retirementPrefs = await prisma.gnucash_web_account_preferences.findMany({
+    where: { account_guid: { in: retirementGuidArray }, is_retirement: true },
+    select: { account_guid: true, retirement_account_type: true },
+  });
+  const retirementPrefMap = new Map(retirementPrefs.map(p => [p.account_guid, p.retirement_account_type]));
+
+  // Build parent map for hierarchy walking
+  const allAccountsForType = await prisma.accounts.findMany({
+    where: { guid: { in: bookAccountGuids } },
+    select: { guid: true, parent_guid: true },
+  });
+  const parentOfMap = new Map(allAccountsForType.map(a => [a.guid, a.parent_guid]));
+
   const accountTypeMap = new Map<string, string | null>();
-  for (const guid of retirementGuidArray) {
-    if (accountYearItems.has(guid)) {
-      const acctType = await getRetirementAccountType(guid, bookAccountGuids);
-      accountTypeMap.set(guid, acctType);
+  for (const guid of activeAccountGuids) {
+    // Check direct preference first
+    if (retirementPrefMap.has(guid) && retirementPrefMap.get(guid)) {
+      accountTypeMap.set(guid, retirementPrefMap.get(guid)!);
+      continue;
+    }
+    // Walk up hierarchy
+    let current = parentOfMap.get(guid);
+    let found = false;
+    while (current) {
+      const pref = retirementPrefMap.get(current);
+      if (pref) {
+        accountTypeMap.set(guid, pref);
+        found = true;
+        break;
+      }
+      current = parentOfMap.get(current) ?? null;
+    }
+    if (!found) {
+      accountTypeMap.set(guid, null);
     }
   }
 
