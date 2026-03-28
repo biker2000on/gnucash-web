@@ -88,20 +88,6 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P2 - Retirement & Brokerage Contribution Reports
-
-**What:** A reporting feature that surfaces total contributions to retirement accounts (401k, IRA, Roth IRA, HSA, etc.) and brokerage accounts over configurable time periods (YTD, annual, lifetime). Show per-account contribution totals, contribution limits vs. actual (where applicable), and aggregate summaries across all retirement/brokerage accounts.
-
-**Why:** Users need visibility into how much they've contributed to tax-advantaged and investment accounts for tax planning, IRS limit tracking, and financial goal monitoring. This data exists in the GnuCash transaction history but isn't surfaced in an actionable way — users currently have to manually trace deposit transactions across multiple accounts.
-
-**Effort:** M (human: ~1 week) / with CC: M (~30 min)
-
-**Depends on:** Account hierarchy (shipped), investment lots/transfers support (shipped).
-
-**Context:** Added 2026-03-26. Key considerations: distinguish contributions from transfers between accounts (a rollover from 401k to IRA is not a new contribution), handle employer match as a separate line item, support IRS annual limits (e.g., $23,500 for 401k in 2025) with progress bars, and allow drill-down to individual transactions backing each contribution total. **Tax-year attribution:** Contributions must be attributed to the correct tax year, not just the transaction date. Retirement accounts (IRA, Roth IRA, HSA) allow prior-year contributions up to the filing deadline (e.g., a 2025 IRA contribution made in February 2026). The transaction description typically contains this info (e.g., "2025 Roth IRA Contribution"). The report should parse descriptions for year indicators and allow manual override of the tax year per transaction. Group-by and filter-by should operate on tax year, not just calendar date.
-
----
-
 ---
 
 ## P2 - Fix Asset Analysis Tool: Manual Account Selection

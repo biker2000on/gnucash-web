@@ -3,14 +3,13 @@
 # Uses pre-built images from ghcr.io with Watchtower auto-updates.
 #
 # Required: Create a .env file with:
-#   DATABASE_URL=postgresql://user:password@host:port/database
+#   DATABASE_URL=postgresql://gnucash:gnucash@postgres:5432/gnucash
 #   NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
 #   NEXTAUTH_URL=http://<truenas-ip>:3000
 #   WATCHTOWER_REPO_USER=<github-username>
 #   WATCHTOWER_REPO_PASS=<github-pat-with-read:packages>
 #
 # Optional services (enable via profiles):
-#   docker compose -f docker-compose.prod.yml --profile ai up -d        # + Ollama
 #   docker compose -f docker-compose.prod.yml --profile storage up -d   # + MinIO
 #
 # Usage:
@@ -37,6 +36,8 @@ services:
       - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-}
       - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_started
     restart: unless-stopped
@@ -59,30 +60,36 @@ services:
       - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-}
       - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_started
     restart: unless-stopped
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gnucash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnucash}
+      POSTGRES_DB: ${POSTGRES_DB:-gnucash}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gnucash}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7-alpine
     volumes:
       - redis-data:/data
     command: redis-server --appendonly yes
-    restart: unless-stopped
-
-  # ---- Optional: Local LLM via Ollama ----
-  # Enable with: --profile ai
-  # Set AI_BASE_URL=http://ollama:11434/v1 in .env
-  # Pull a model: docker compose -f docker-compose.prod.yml exec ollama ollama pull llama3.2
-  ollama:
-    image: ollama/ollama
-    profiles: ["ai"]
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
     restart: unless-stopped
 
   # ---- Optional: S3-compatible storage via MinIO ----
@@ -115,6 +122,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   redis-data:
-  ollama-data:
   minio-data:

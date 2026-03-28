@@ -6,7 +6,6 @@
 # - redis: Job queue and cache
 #
 # Optional services (enable via profiles):
-# - ollama: Local LLM for AI-powered receipt extraction
 # - minio: S3-compatible object storage for receipt files
 #
 # Required environment variables (create .env file):
@@ -16,9 +15,7 @@
 #
 # Usage:
 #   docker compose up -d                              # Core services only
-#   docker compose --profile ai up -d                 # + Ollama
 #   docker compose --profile storage up -d            # + MinIO
-#   docker compose --profile ai --profile storage up -d  # All services
 #   docker compose logs -f app                        # View app logs
 #   docker compose down                               # Stop all services
 
@@ -86,19 +83,6 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
 
-  # ---- Optional: Local LLM via Ollama ----
-  # Enable with: docker compose --profile ai up -d
-  # Then set AI_BASE_URL=http://ollama:11434/v1 in .env
-  # Pull a model: docker compose exec ollama ollama pull llama3.2
-  ollama:
-    image: ollama/ollama
-    profiles: ["ai"]
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    restart: unless-stopped
-
   # ---- Optional: S3-compatible storage via MinIO ----
   # Enable with: docker compose --profile storage up -d
   # Then set in .env:
@@ -122,5 +106,4 @@ services:
 
 volumes:
   redis-data:
-  ollama-data:
   minio-data:
