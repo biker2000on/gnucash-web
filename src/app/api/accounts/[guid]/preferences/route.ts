@@ -132,14 +132,16 @@ export async function PATCH(
     if (hasRetirement) {
       const isRetirement = body.is_retirement ?? false;
       const retirementType = body.retirement_account_type ?? null;
+      const hasIsRetirement = 'is_retirement' in body;
+      const hasRetirementType = 'retirement_account_type' in body;
 
       await prisma.$executeRaw`
         INSERT INTO gnucash_web_account_preferences (account_guid, is_retirement, retirement_account_type)
         VALUES (${guid}, ${isRetirement}, ${retirementType})
         ON CONFLICT (account_guid)
         DO UPDATE SET
-          is_retirement = COALESCE(${body.is_retirement !== undefined ? isRetirement : null}, gnucash_web_account_preferences.is_retirement),
-          retirement_account_type = COALESCE(${body.retirement_account_type !== undefined ? retirementType : null}, gnucash_web_account_preferences.retirement_account_type)
+          is_retirement = CASE WHEN ${hasIsRetirement}::boolean THEN ${isRetirement} ELSE gnucash_web_account_preferences.is_retirement END,
+          retirement_account_type = CASE WHEN ${hasRetirementType}::boolean THEN ${retirementType} ELSE gnucash_web_account_preferences.retirement_account_type END
       `;
     }
 
