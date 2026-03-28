@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3.0] - 2026-03-28
+
+### Added
+- **Execute/skip scheduled transactions**: execute upcoming occurrences from the web UI, creating real GnuCash transactions from templates with proper GUID generation and fraction-based amounts. Skip advances metadata without creating a transaction.
+- **"Since Last Run" batch mode**: contextual amber banner in the Upcoming view shows overdue count with a "Process All" button that batch-executes all overdue occurrences
+- **Enable/disable toggle**: interactive toggle switch on each scheduled transaction row replaces the static enabled/disabled badge. Optimistic UI with rollback on failure.
+- **Create new scheduled transactions**: slide-over panel with name, recurrence pattern (all 9 GnuCash period types), start/end dates, multi-split account picker, auto-create/notify options. Creates full GnuCash template structure (root account, child accounts, slot mappings, template transaction/splits, schedxaction, recurrence)
+- **Mortgage dynamic amounts**: `MortgageService.computePaymentForDate()` computes principal/interest splits from current balance and detected rate for mortgage-linked scheduled transactions
+- **Account editing modal**: notes, tax_related, retirement flags, reparenting support in account service
+- Shared `resolveTemplateSplits()` utility extracted from scheduled transactions route for reuse
+- `SELECT FOR UPDATE` concurrency protection on execute/skip to prevent double-execution
+- 18 new tests (execute/skip: 6, create: 8, mortgage compute: 4)
+
+### Fixed
+- Batch execute sent wrong field name (`scheduledTransactionGuid` instead of `guid`), causing "Process All" to always fail
+
 ## [0.2.2.0] - 2026-03-28
 
 ### Added
