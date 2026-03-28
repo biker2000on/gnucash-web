@@ -19,6 +19,7 @@ export enum ReportType {
   NET_WORTH_CHART = 'net_worth_chart',
   INCOME_EXPENSE_CHART = 'income_expense_chart',
   TAX_HARVESTING = 'tax_harvesting',
+  CONTRIBUTION_SUMMARY = 'contribution_summary',
 }
 
 export interface ReportConfig {
@@ -263,6 +264,13 @@ export const REPORTS: ReportConfig[] = [
     category: 'investment',
   },
   {
+    type: ReportType.CONTRIBUTION_SUMMARY,
+    name: 'Contribution Summary',
+    description: 'Retirement and brokerage account contributions with IRS limit tracking',
+    icon: 'trending',
+    category: 'investment',
+  },
+  {
     type: ReportType.RECONCILIATION,
     name: 'Reconciliation Report',
     description: 'Reconciled, cleared, and uncleared transactions by account',
@@ -358,6 +366,53 @@ export interface SavedReportInput {
   config: Record<string, unknown>;
   filters?: ReportFilters;
   isStarred?: boolean;
+}
+
+export interface ContributionLineItem {
+  splitGuid: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: string;
+  taxYear: number;
+  sourceAccountName: string;
+}
+
+export interface AccountContributionSummary {
+  accountGuid: string;
+  accountName: string;
+  accountPath: string;
+  retirementAccountType: string | null;
+  contributions: number;
+  employerMatch: number;
+  incomeContributions: number;
+  transfers: number;
+  withdrawals: number;
+  netContributions: number;
+  irsLimit: {
+    base: number;
+    catchUp: number;
+    total: number;
+    percentUsed: number;
+  } | null;
+  transactions: ContributionLineItem[];
+}
+
+export interface ContributionSummaryData extends ReportDataBase {
+  type: ReportType.CONTRIBUTION_SUMMARY;
+  groupBy: 'tax_year' | 'calendar_year';
+  periods: Array<{
+    year: number;
+    accounts: AccountContributionSummary[];
+    totalContributions: number;
+    totalEmployerMatch: number;
+    totalTransfers: number;
+    totalWithdrawals: number;
+    totalNetContributions: number;
+  }>;
+  grandTotalContributions: number;
+  grandTotalEmployerMatch: number;
+  grandTotalNetContributions: number;
 }
 
 // Group reports by category

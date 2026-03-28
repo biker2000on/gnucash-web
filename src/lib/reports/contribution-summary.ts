@@ -1,0 +1,346 @@
+import prisma from '@/lib/prisma';
+import { toDecimalNumber } from '@/lib/gnucash';
+import {
+  classifyContribution,
+  ContributionType,
+  getRetirementAccountGuids,
+  getRetirementAccountType,
+  resolveContributionTaxYear,
+} from './contribution-classifier';
+import { getContributionLimit } from './irs-limits';
+import type {
+  ReportFilters,
+  ContributionSummaryData,
+  AccountContributionSummary,
+  ContributionLineItem,
+} from './types';
+import { ReportType } from './types';
+
+interface SplitRow {
+  split_guid: string;
+  account_guid: string;
+  value_num: bigint;
+  value_denom: bigint;
+  quantity_num: bigint;
+  quantity_denom: bigint;
+  post_date: Date;
+  description: string;
+  other_split_guid: string;
+  other_account_guid: string;
+  other_value_num: bigint;
+  other_value_denom: bigint;
+  other_quantity_num: bigint;
+  other_quantity_denom: bigint;
+  other_account_type: string;
+  other_account_name: string;
+  other_commodity_guid: string;
+}
+
+interface AccountPath {
+  guid: string;
+  fullname: string;
+}
+
+function emptyReport(
+  filters: ReportFilters,
+  groupBy: 'tax_year' | 'calendar_year',
+): ContributionSummaryData {
+  return {
+    type: ReportType.CONTRIBUTION_SUMMARY,
+    title: 'Contribution Summary',
+    generatedAt: new Date().toISOString(),
+    filters,
+    groupBy,
+    periods: [],
+    grandTotalContributions: 0,
+    grandTotalEmployerMatch: 0,
+    grandTotalNetContributions: 0,
+  };
+}
+
+export async function generateContributionSummary(
+  filters: ReportFilters,
+  groupBy: 'tax_year' | 'calendar_year',
+  birthday: string | null,
+): Promise<ContributionSummaryData> {
+  const bookAccountGuids = filters.bookAccountGuids ?? [];
+  if (bookAccountGuids.length === 0) {
+    return emptyReport(filters, groupBy);
+  }
+
+  // Step 1: Get all retirement account GUIDs (with hierarchy inheritance)
+  const retirementGuids = await getRetirementAccountGuids(bookAccountGuids);
+  if (retirementGuids.size === 0) {
+    return emptyReport(filters, groupBy);
+  }
+
+  const retirementGuidArray = [...retirementGuids];
+  const startDate = filters.startDate ? new Date(filters.startDate) : new Date('1970-01-01');
+  const endDate = filters.endDate ? new Date(filters.endDate) : new Date();
+
+  // Step 2: Batch-load all splits for retirement accounts in the date range
+  const rows = await prisma.$queryRaw<SplitRow[]>`
+    SELECT
+      s.guid as split_guid,
+      s.account_guid,
+      s.value_num, s.value_denom,
+      s.quantity_num, s.quantity_denom,
+      t.post_date, t.description,
+      s2.guid as other_split_guid,
+      s2.account_guid as other_account_guid,
+      s2.value_num as other_value_num, s2.value_denom as other_value_denom,
+      s2.quantity_num as other_quantity_num, s2.quantity_denom as other_quantity_denom,
+      a2.account_type as other_account_type,
+      a2.name as other_account_name,
+      a2.commodity_guid as other_commodity_guid
+    FROM splits s
+    JOIN transactions t ON s.tx_guid = t.guid
+    JOIN splits s2 ON s2.tx_guid = t.guid AND s2.guid != s.guid
+    JOIN accounts a2 ON s2.account_guid = a2.guid
+    WHERE s.account_guid = ANY(${retirementGuidArray})
+      AND t.post_date >= ${startDate}
+      AND t.post_date <= ${endDate}
+    ORDER BY t.post_date ASC
+  `;
+
+  // Step 3: Group by split_guid (a transaction may have multiple other splits)
+  const splitMap = new Map<string, {
+    split: {
+      guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      quantity_num: bigint;
+      quantity_denom: bigint;
+    };
+    postDate: Date;
+    description: string;
+    otherSplits: Array<{
+      guid: string;
+      account_guid: string;
+      value_num: bigint;
+      value_denom: bigint;
+      quantity_num: bigint;
+      quantity_denom: bigint;
+      account?: {
+        account_type?: string | null;
+        commodity_guid?: string | null;
+        name?: string | null;
+      } | null;
+    }>;
+  }>();
+
+  for (const row of rows) {
+    let entry = splitMap.get(row.split_guid);
+    if (!entry) {
+      entry = {
+        split: {
+          guid: row.split_guid,
+          account_guid: row.account_guid,
+          value_num: row.value_num,
+          value_denom: row.value_denom,
+          quantity_num: row.quantity_num,
+          quantity_denom: row.quantity_denom,
+        },
+        postDate: row.post_date,
+        description: row.description,
+        otherSplits: [],
+      };
+      splitMap.set(row.split_guid, entry);
+    }
+    entry.otherSplits.push({
+      guid: row.other_split_guid,
+      account_guid: row.other_account_guid,
+      value_num: row.other_value_num,
+      value_denom: row.other_value_denom,
+      quantity_num: row.other_quantity_num,
+      quantity_denom: row.other_quantity_denom,
+      account: {
+        account_type: row.other_account_type,
+        commodity_guid: row.other_commodity_guid,
+        name: row.other_account_name,
+      },
+    });
+  }
+
+  // Step 4: Get account paths
+  const accountPathRows = await prisma.$queryRaw<AccountPath[]>`
+    SELECT guid, fullname FROM account_hierarchy WHERE guid = ANY(${retirementGuidArray})
+  `;
+  const accountPathMap = new Map(accountPathRows.map(r => [r.guid, r.fullname]));
+
+  // Step 5: Classify each split and resolve tax year
+  // Keyed by accountGuid -> year -> array of line items
+  const accountYearItems = new Map<string, Map<number, ContributionLineItem[]>>();
+
+  for (const [splitGuid, entry] of splitMap) {
+    const classification = classifyContribution(entry.split, entry.otherSplits, retirementGuids);
+    const taxYear = await resolveContributionTaxYear(splitGuid, entry.postDate);
+    const year = groupBy === 'tax_year' ? taxYear : entry.postDate.getFullYear();
+
+    const amount = toDecimalNumber(entry.split.value_num, entry.split.value_denom);
+
+    // Find primary source account name
+    const cashSources = entry.otherSplits
+      .filter(s => toDecimalNumber(s.value_num, s.value_denom) < 0)
+      .sort((a, b) =>
+        Math.abs(toDecimalNumber(b.value_num, b.value_denom)) -
+        Math.abs(toDecimalNumber(a.value_num, a.value_denom))
+      );
+    const sourceAccountName = cashSources.length > 0
+      ? (cashSources[0].account?.name ?? 'Unknown')
+      : (entry.otherSplits[0]?.account?.name ?? 'Unknown');
+
+    const lineItem: ContributionLineItem = {
+      splitGuid,
+      date: entry.postDate.toISOString().split('T')[0],
+      description: entry.description,
+      amount,
+      type: classification,
+      taxYear,
+      sourceAccountName,
+    };
+
+    const accountGuid = entry.split.account_guid;
+    if (!accountYearItems.has(accountGuid)) {
+      accountYearItems.set(accountGuid, new Map());
+    }
+    const yearMap = accountYearItems.get(accountGuid)!;
+    if (!yearMap.has(year)) {
+      yearMap.set(year, []);
+    }
+    yearMap.get(year)!.push(lineItem);
+  }
+
+  // Step 6: Get retirement account types for each account
+  const accountTypeMap = new Map<string, string | null>();
+  for (const guid of retirementGuidArray) {
+    if (accountYearItems.has(guid)) {
+      const acctType = await getRetirementAccountType(guid, bookAccountGuids);
+      accountTypeMap.set(guid, acctType);
+    }
+  }
+
+  // Step 7: Get account names
+  const accountNameRows = await prisma.accounts.findMany({
+    where: { guid: { in: retirementGuidArray } },
+    select: { guid: true, name: true },
+  });
+  const accountNameMap = new Map(accountNameRows.map(r => [r.guid, r.name]));
+
+  // Step 8: Aggregate by account and year, build periods
+  const allYears = new Set<number>();
+  for (const yearMap of accountYearItems.values()) {
+    for (const year of yearMap.keys()) {
+      allYears.add(year);
+    }
+  }
+
+  const periods: ContributionSummaryData['periods'] = [];
+
+  for (const year of [...allYears].sort((a, b) => b - a)) {
+    const accounts: AccountContributionSummary[] = [];
+
+    for (const [accountGuid, yearMap] of accountYearItems) {
+      const items = yearMap.get(year);
+      if (!items || items.length === 0) continue;
+
+      let contributions = 0;
+      let employerMatch = 0;
+      let incomeContributions = 0;
+      let transfers = 0;
+      let withdrawals = 0;
+
+      for (const item of items) {
+        switch (item.type) {
+          case ContributionType.CONTRIBUTION:
+            contributions += item.amount;
+            break;
+          case ContributionType.EMPLOYER_MATCH:
+            employerMatch += item.amount;
+            break;
+          case ContributionType.INCOME_CONTRIBUTION:
+            incomeContributions += item.amount;
+            break;
+          case ContributionType.TRANSFER:
+            transfers += item.amount;
+            break;
+          case ContributionType.WITHDRAWAL:
+            withdrawals += item.amount;
+            break;
+          // DIVIDEND, FEE, OTHER are not aggregated into contribution totals
+        }
+      }
+
+      const netContributions = contributions + employerMatch + incomeContributions + transfers + withdrawals;
+      const retirementAccountType = accountTypeMap.get(accountGuid) ?? null;
+
+      // IRS limit: employee contributions only (not employer match) count toward limits
+      let irsLimit: AccountContributionSummary['irsLimit'] = null;
+      if (retirementAccountType && retirementAccountType !== 'brokerage') {
+        const limit = await getContributionLimit(year, retirementAccountType, birthday);
+        if (limit) {
+          const employeeContributions = contributions + incomeContributions;
+          irsLimit = {
+            base: limit.base,
+            catchUp: limit.catchUp,
+            total: limit.total,
+            percentUsed: limit.total > 0
+              ? Math.round((employeeContributions / limit.total) * 10000) / 100
+              : 0,
+          };
+        }
+      }
+
+      accounts.push({
+        accountGuid,
+        accountName: accountNameMap.get(accountGuid) ?? 'Unknown',
+        accountPath: accountPathMap.get(accountGuid) ?? 'Unknown',
+        retirementAccountType,
+        contributions,
+        employerMatch,
+        incomeContributions,
+        transfers,
+        withdrawals,
+        netContributions,
+        irsLimit,
+        transactions: items,
+      });
+    }
+
+    // Sort accounts by accountPath
+    accounts.sort((a, b) => a.accountPath.localeCompare(b.accountPath));
+
+    const totalContributions = accounts.reduce((s, a) => s + a.contributions, 0);
+    const totalEmployerMatch = accounts.reduce((s, a) => s + a.employerMatch, 0);
+    const totalTransfers = accounts.reduce((s, a) => s + a.transfers, 0);
+    const totalWithdrawals = accounts.reduce((s, a) => s + a.withdrawals, 0);
+    const totalNetContributions = accounts.reduce((s, a) => s + a.netContributions, 0);
+
+    periods.push({
+      year,
+      accounts,
+      totalContributions,
+      totalEmployerMatch,
+      totalTransfers,
+      totalWithdrawals,
+      totalNetContributions,
+    });
+  }
+
+  const grandTotalContributions = periods.reduce((s, p) => s + p.totalContributions, 0);
+  const grandTotalEmployerMatch = periods.reduce((s, p) => s + p.totalEmployerMatch, 0);
+  const grandTotalNetContributions = periods.reduce((s, p) => s + p.totalNetContributions, 0);
+
+  return {
+    type: ReportType.CONTRIBUTION_SUMMARY,
+    title: 'Contribution Summary',
+    generatedAt: new Date().toISOString(),
+    filters,
+    groupBy,
+    periods,
+    grandTotalContributions,
+    grandTotalEmployerMatch,
+    grandTotalNetContributions,
+  };
+}
