@@ -16,46 +16,6 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P2 - Scheduled Transactions: Execute/Skip Upcoming Occurrences
-
-**What:** Add the ability to execute or skip upcoming scheduled transaction occurrences from the web UI. Executing creates the actual GnuCash transaction (with splits matching the template), skipping advances `last_occur` and decrements `rem_occur` without creating a transaction.
-
-**Why:** The scheduled transactions page is currently read-only — you can see what's coming but can't act on it. The most valuable action is executing upcoming payments (salary, mortgage) directly from the web app instead of opening GnuCash desktop. This is the core use case mentioned in the original feature brief.
-
-**Effort:** M (human: ~1 week) / with CC: S (~30 min)
-
-**Depends on:** Scheduled transactions UI (shipped). Requires write access to GnuCash tables: `transactions`, `splits`, `schedxactions` (updating `last_occur`, `rem_occur`, `instance_count`).
-
-**Context:** Deferred from initial scheduled transactions implementation (2026-03-22). The template resolution logic already exists in the API — executing means creating a real transaction from the resolved template amounts and account mappings, then updating the schedxaction metadata. Need to handle: transaction date (use occurrence date vs today), multi-split transactions, and GnuCash GUID generation for new transactions.
-
----
-
-## P2 - Scheduled Transactions: Enable/Disable
-
-**What:** Toggle scheduled transactions on/off from the web UI. Updates the `enabled` field (0/1) on the `schedxactions` table.
-
-**Why:** Simple quality-of-life feature — disable a scheduled transaction that's no longer relevant (e.g., old subscription) without opening GnuCash desktop. The UI already shows enabled/disabled badges.
-
-**Effort:** S (human: ~2 days) / with CC: S (~10 min)
-
-**Depends on:** Scheduled transactions UI (shipped). Single field update on `schedxactions.enabled`.
-
-**Context:** Deferred from initial implementation. Trivial write operation — PATCH endpoint + toggle button in the UI. Low risk since it only flips a boolean flag.
-
----
-
-## P3 - Scheduled Transactions: Create New
-
-**What:** Create new scheduled transactions from the web UI with recurrence pattern configuration. Particularly useful for salary deposits and mortgage payments — the mortgage calculator could auto-generate a scheduled transaction matching the amortization schedule.
-
-**Why:** Currently scheduled transactions can only be created in GnuCash desktop. For users who primarily use the web app (the goal of this project), being able to set up recurring salary and mortgage payments without desktop access completes the workflow. The mortgage payoff calculator already knows the payment amount, accounts, and frequency.
-
-**Effort:** L (human: ~2 weeks) / with CC: M (~45 min)
-
-**Depends on:** Scheduled transactions UI (shipped), execute/skip feature (for testing the created transactions). Requires writing to: `schedxactions`, `recurrences`, template `accounts`, template `transactions`/`splits`, and `slots` (for account GUID mapping).
-
-**Context:** Deferred from initial implementation. This is the most complex scheduled transaction write operation because it requires creating the full GnuCash template structure (template root account → child template accounts → template transaction with splits → slots mapping template accounts to real accounts). The mortgage calculator integration (auto-creating a scheduled transaction from payoff parameters) would be a natural follow-up.
-
 ---
 
 ## P2 - Payslip Integration (PDF + QuickBooks Online)
