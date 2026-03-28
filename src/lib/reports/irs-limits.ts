@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 
 export const RETIREMENT_ACCOUNT_TYPES = [
-  '401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa',
+  '401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa',
 ] as const;
 
 export type RetirementAccountType = typeof RETIREMENT_ACCOUNT_TYPES[number] | 'brokerage';
@@ -21,6 +21,7 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'roth_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4150, catch_up_limit: 1000, catch_up_age: 55 },
+    { account_type: 'fsa', base_limit: 3200, catch_up_limit: 0, catch_up_age: 50 },
   ],
   2025: [
     { account_type: '401k', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
@@ -29,6 +30,7 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'roth_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4300, catch_up_limit: 1000, catch_up_age: 55 },
+    { account_type: 'fsa', base_limit: 3300, catch_up_limit: 0, catch_up_age: 50 },
   ],
   2026: [
     { account_type: '401k', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
@@ -37,6 +39,7 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'roth_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4300, catch_up_limit: 1000, catch_up_age: 55 },
+    { account_type: 'fsa', base_limit: 3300, catch_up_limit: 0, catch_up_age: 50 },
   ],
 };
 

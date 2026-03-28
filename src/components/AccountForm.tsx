@@ -26,6 +26,8 @@ const RETIREMENT_TYPES = [
     { value: 'traditional_ira', label: 'Traditional IRA' },
     { value: 'roth_ira', label: 'Roth IRA' },
     { value: 'hsa', label: 'HSA' },
+    { value: 'hra', label: 'HRA' },
+    { value: 'fsa', label: 'FSA' },
     { value: 'brokerage', label: 'Brokerage (taxable)' },
 ] as const;
 

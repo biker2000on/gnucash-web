@@ -15,7 +15,7 @@ const prisma = new PrismaClient();
 
 // Patterns that indicate a tax year in description
 const TAX_YEAR_PATTERNS = [
-  /\b(20\d{2})\s+(?:Roth|Traditional|IRA|HSA|401k|403b|457)/i,
+  /\b(20\d{2})\s+(?:Roth|Traditional|IRA|HSA|HRA|FSA|401k|403b|457)/i,
   /(?:Contribution|Deposit|Payment)\s+(?:for|to)\s+(20\d{2})/i,
   /\bTY\s*(20\d{2})\b/i,
   /\bTax\s+Year\s+(20\d{2})\b/i,

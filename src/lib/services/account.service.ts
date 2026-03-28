@@ -44,7 +44,7 @@ export const CreateAccountSchema = z.object({
   notes: z.string().max(4096).optional(),
   tax_related: z.boolean().optional(),
   is_retirement: z.boolean().optional(),
-  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage']).nullable().optional(),
+  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa', 'brokerage']).nullable().optional(),
 });
 
 export const UpdateAccountSchema = z.object({
@@ -57,7 +57,7 @@ export const UpdateAccountSchema = z.object({
   notes: z.string().max(4096).optional(),
   tax_related: z.boolean().optional(),
   is_retirement: z.boolean().optional(),
-  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage']).nullable().optional(),
+  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa', 'brokerage']).nullable().optional(),
 });
 
 export type CreateAccountInput = z.infer<typeof CreateAccountSchema>;

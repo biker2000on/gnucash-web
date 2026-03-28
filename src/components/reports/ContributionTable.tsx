@@ -37,6 +37,8 @@ const RETIREMENT_TYPE_LABELS: Record<string, string> = {
   sep_ira: 'SEP IRA',
   simple_ira: 'SIMPLE IRA',
   hsa: 'HSA',
+  hra: 'HRA',
+  fsa: 'FSA',
 };
 
 interface ContributionTableProps {

@@ -35,7 +35,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields: tax_year, account_type, base_limit' }, { status: 400 });
     }
 
-    const VALID_ACCOUNT_TYPES = ['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage'];
+    const VALID_ACCOUNT_TYPES = ['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa', 'brokerage'];
     if (typeof tax_year !== 'number' || tax_year < 2000 || tax_year > 2100) {
       return NextResponse.json({ error: 'tax_year must be a number between 2000 and 2100' }, { status: 400 });
     }
