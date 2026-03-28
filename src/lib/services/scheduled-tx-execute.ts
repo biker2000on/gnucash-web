@@ -173,13 +173,13 @@ export async function skipOccurrence(
       }
 
       // Update metadata only (no transaction created)
+      // Do NOT increment instance_count on skip — it tracks real transactions created
       const newRemOccur = sx.rem_occur === -1 ? -1 : sx.rem_occur - 1;
-      const newInstanceCount = sx.instance_count + 1;
       const postDate = new Date(occurrenceDate + 'T12:00:00Z');
 
       await tx.$executeRaw`
         UPDATE schedxactions
-        SET last_occur = ${postDate}, rem_occur = ${newRemOccur}, instance_count = ${newInstanceCount}
+        SET last_occur = ${postDate}, rem_occur = ${newRemOccur}
         WHERE guid = ${sxGuid}
       `;
 

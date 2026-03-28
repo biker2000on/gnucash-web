@@ -16,6 +16,12 @@ vi.mock('../prisma', () => {
       $transaction: vi.fn(async (fn: (tx: typeof mockTx) => Promise<unknown>) => {
         return fn(mockTx);
       }),
+      accounts: {
+        findMany: vi.fn().mockImplementation(({ where }: { where: { guid: { in: string[] } } }) => {
+          // Return all requested GUIDs as "found" for happy-path tests
+          return Promise.resolve(where.guid.in.map((g: string) => ({ guid: g })));
+        }),
+      },
       __mockTx: mockTx,
     },
   };

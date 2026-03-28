@@ -69,6 +69,18 @@ export async function createScheduledTransaction(
     return { success: false, error: `Invalid period type: ${input.recurrence.periodType}` };
   }
 
+  // Validate account GUIDs exist
+  const accountGuids = input.splits.map(s => s.accountGuid);
+  const existingAccounts = await prisma.accounts.findMany({
+    where: { guid: { in: accountGuids } },
+    select: { guid: true },
+  });
+  const existingGuids = new Set(existingAccounts.map(a => a.guid));
+  const missing = accountGuids.filter(g => !existingGuids.has(g));
+  if (missing.length > 0) {
+    return { success: false, error: `Account(s) not found: ${missing.join(', ')}` };
+  }
+
   try {
     const sxGuid = generateGuid();
 
@@ -82,14 +94,14 @@ export async function createScheduledTransaction(
       }
       const templateRootGuid = templateRoots[0].guid;
 
-      // Step 2: Get book currency
-      const currencies = await tx.$queryRaw<Array<{ guid: string }>>`
-        SELECT guid FROM commodities WHERE namespace = 'CURRENCY' ORDER BY mnemonic ASC LIMIT 1
+      // Step 2: Get book currency (from books table, not alphabetical commodities)
+      const bookCurrency = await tx.$queryRaw<Array<{ commodity_guid: string }>>`
+        SELECT commodity_guid FROM books LIMIT 1
       `;
-      if (currencies.length === 0) {
-        throw new Error('No currency found');
+      if (bookCurrency.length === 0) {
+        throw new Error('No book currency found');
       }
-      const currencyGuid = currencies[0].guid;
+      const currencyGuid = bookCurrency[0].commodity_guid;
 
       // Step 3: Create template root account for this SX
       const sxRootGuid = generateGuid();

@@ -321,11 +321,19 @@ export default function ScheduledTransactionsPage() {
         body: JSON.stringify({ items }),
       });
       if (!res.ok) throw new Error('Failed');
-      const executedStates: Record<string, 'executed'> = {};
-      for (const o of overdue) {
-        executedStates[`${o.scheduledTransactionGuid}-${o.date}`] = 'executed';
+      const data = await res.json();
+      const resultStates: Record<string, 'executed' | 'error'> = {};
+      if (data.results) {
+        for (const r of data.results) {
+          const key = `${r.guid}-${r.occurrenceDate}`;
+          resultStates[key] = r.success ? 'executed' : 'error';
+        }
+      } else {
+        for (const o of overdue) {
+          resultStates[`${o.scheduledTransactionGuid}-${o.date}`] = 'executed';
+        }
       }
-      setActionStates(prev => ({ ...prev, ...executedStates }));
+      setActionStates(prev => ({ ...prev, ...resultStates }));
       // Refetch data
       await fetchData();
     } catch {
