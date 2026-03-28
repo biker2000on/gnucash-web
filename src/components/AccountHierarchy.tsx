@@ -538,8 +538,22 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         setModalOpen(true);
     }, []);
 
-    const handleEdit = useCallback((account: AccountWithChildren) => {
-        setSelectedAccount(account);
+    const handleEdit = useCallback(async (account: AccountWithChildren) => {
+        // Fetch full account data including notes and preferences
+        try {
+            const res = await fetch(`/api/accounts/${account.guid}`);
+            if (res.ok) {
+                const fullAccount = await res.json();
+                setSelectedAccount({
+                    ...account,
+                    ...fullAccount,
+                });
+            } else {
+                setSelectedAccount(account);
+            }
+        } catch {
+            setSelectedAccount(account);
+        }
         setParentGuid(null);
         setModalMode('edit');
         setModalOpen(true);
@@ -585,6 +599,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         description: string;
         hidden: number;
         placeholder: number;
+        notes: string;
+        tax_related: boolean;
+        is_retirement: boolean;
+        retirement_account_type: string | null;
     }) => {
         const url = modalMode === 'create'
             ? '/api/accounts'
@@ -1211,6 +1229,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 <div className="p-6">
                     <AccountForm
                         mode={modalMode}
+                        accountGuid={selectedAccount?.guid}
                         initialData={selectedAccount ? {
                             name: selectedAccount.name,
                             account_type: selectedAccount.account_type,
@@ -1220,6 +1239,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             description: selectedAccount.description,
                             hidden: selectedAccount.hidden,
                             placeholder: selectedAccount.placeholder,
+                            notes: (selectedAccount as Record<string, unknown>).notes as string ?? '',
+                            tax_related: (selectedAccount as Record<string, unknown>).tax_related as boolean ?? false,
+                            is_retirement: (selectedAccount as Record<string, unknown>).is_retirement as boolean ?? false,
+                            retirement_account_type: (selectedAccount as Record<string, unknown>).retirement_account_type as string | null ?? null,
                         } : undefined}
                         parentGuid={parentGuid}
                         onSave={handleSave}
