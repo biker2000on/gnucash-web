@@ -279,6 +279,48 @@ export class MortgageService {
   }
 
   /**
+   * Compute the principal/interest split for a mortgage payment at a given date.
+   * Uses the current account balance and detected interest rate.
+   *
+   * Returns null if computation fails (balance zero, rate not detected).
+   */
+  static async computePaymentForDate(
+    liabilityAccountGuid: string,
+    interestAccountGuid: string,
+    totalPayment: number,
+  ): Promise<{ principal: number; interest: number } | null> {
+    try {
+      // Get current balance of the liability account
+      const balanceRows = await prisma.$queryRaw<{ balance: string }[]>`
+        SELECT CAST(SUM(CAST(value_num AS DECIMAL) / CAST(value_denom AS DECIMAL)) AS TEXT) as balance
+        FROM splits
+        WHERE account_guid = ${liabilityAccountGuid}
+      `;
+
+      const balance = Math.abs(parseFloat(balanceRows[0]?.balance ?? '0'));
+      if (balance <= 0) return null;
+
+      // Detect interest rate from full mortgage detection pipeline
+      const details = await MortgageService.detectMortgageDetails(
+        liabilityAccountGuid,
+        interestAccountGuid,
+      );
+
+      if (details.interestRate <= 0 || details.paymentsAnalyzed < 3) return null;
+
+      const monthlyRate = details.interestRate / 100 / 12;
+      const interest = Math.round(balance * monthlyRate * 100) / 100;
+      const principal = Math.round((totalPayment - interest) * 100) / 100;
+
+      if (principal <= 0) return null;
+
+      return { principal, interest };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Full pipeline: query DB for splits, separate, detect amount, detect rate.
    *
    * @param mortgageAccountGuid - GUID of the mortgage liability account
