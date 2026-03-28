@@ -49,6 +49,8 @@ function AccountPageContent() {
     const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [isRetirement, setIsRetirement] = useState(false);
+    const [retirementType, setRetirementType] = useState<string | null>(null);
 
     useEffect(() => {
         if (!isInitialized || !guid) return;
@@ -87,6 +89,19 @@ function AccountPageContent() {
 
         fetchData();
     }, [guid, startDate, endDate, isInitialized, activeBookGuid, router]);
+
+    useEffect(() => {
+        if (!guid) return;
+        fetch(`/api/accounts/${guid}/preferences`)
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data) {
+                    setIsRetirement(data.is_retirement ?? false);
+                    setRetirementType(data.retirement_account_type ?? null);
+                }
+            })
+            .catch(() => {});
+    }, [guid]);
 
     // Build breadcrumb path from the account hierarchy data
     const breadcrumbSegments: { name: string; guid: string }[] = [];
@@ -160,6 +175,59 @@ function AccountPageContent() {
             {/* Investment Account View */}
             {isInvestmentAccount && (
                 <InvestmentAccount accountGuid={guid} />
+            )}
+
+            {/* Retirement Account Toggle */}
+            {account && ['STOCK', 'MUTUAL', 'ASSET', 'BANK'].includes(account.account_type ?? '') && (
+                <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4 space-y-3">
+                    <label className="flex items-center gap-3 cursor-pointer select-none">
+                        <input
+                            type="checkbox"
+                            checked={isRetirement}
+                            onChange={async (e) => {
+                                const newVal = e.target.checked;
+                                setIsRetirement(newVal);
+                                await fetch(`/api/accounts/${guid}/preferences`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ is_retirement: newVal }),
+                                });
+                            }}
+                            className="w-4 h-4 rounded border-border bg-input-bg text-cyan-500 focus:ring-cyan-500/30 focus:ring-offset-0"
+                        />
+                        <span className="text-sm text-foreground">Retirement Account</span>
+                        <span className="text-xs text-foreground-tertiary">
+                            (enables IRS contribution limit tracking)
+                        </span>
+                    </label>
+                    {isRetirement && (
+                        <div className="ml-7">
+                            <label className="text-xs text-foreground-secondary block mb-1">Account Type</label>
+                            <select
+                                value={retirementType ?? ''}
+                                onChange={async (e) => {
+                                    const newType = e.target.value || null;
+                                    setRetirementType(newType);
+                                    await fetch(`/api/accounts/${guid}/preferences`, {
+                                        method: 'PATCH',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ retirement_account_type: newType }),
+                                    });
+                                }}
+                                className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm"
+                            >
+                                <option value="">Select type...</option>
+                                <option value="401k">401(k)</option>
+                                <option value="403b">403(b)</option>
+                                <option value="457">457</option>
+                                <option value="traditional_ira">Traditional IRA</option>
+                                <option value="roth_ira">Roth IRA</option>
+                                <option value="hsa">HSA</option>
+                                <option value="brokerage">Brokerage (taxable)</option>
+                            </select>
+                        </div>
+                    )}
+                </div>
             )}
 
             {/* Transaction Ledger */}
