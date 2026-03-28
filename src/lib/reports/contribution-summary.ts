@@ -14,6 +14,12 @@ import type {
 } from './types';
 import { ReportType } from './types';
 
+/** Accumulate amounts as integer cents to avoid floating-point drift */
+function sumCents(values: number[]): number {
+  const cents = values.reduce((sum, v) => sum + Math.round(v * 100), 0);
+  return cents / 100;
+}
+
 interface SplitRow {
   split_guid: string;
   account_guid: string;
@@ -282,34 +288,14 @@ export async function generateContributionSummary(
       const items = yearMap.get(year);
       if (!items || items.length === 0) continue;
 
-      let contributions = 0;
-      let employerMatch = 0;
-      let incomeContributions = 0;
-      let transfers = 0;
-      let withdrawals = 0;
+      const byType = (t: ContributionType) => items.filter(i => i.type === t).map(i => i.amount);
+      const contributions = sumCents(byType(ContributionType.CONTRIBUTION));
+      const employerMatch = sumCents(byType(ContributionType.EMPLOYER_MATCH));
+      const incomeContributions = sumCents(byType(ContributionType.INCOME_CONTRIBUTION));
+      const transfers = sumCents(byType(ContributionType.TRANSFER));
+      const withdrawals = sumCents(byType(ContributionType.WITHDRAWAL));
 
-      for (const item of items) {
-        switch (item.type) {
-          case ContributionType.CONTRIBUTION:
-            contributions += item.amount;
-            break;
-          case ContributionType.EMPLOYER_MATCH:
-            employerMatch += item.amount;
-            break;
-          case ContributionType.INCOME_CONTRIBUTION:
-            incomeContributions += item.amount;
-            break;
-          case ContributionType.TRANSFER:
-            transfers += item.amount;
-            break;
-          case ContributionType.WITHDRAWAL:
-            withdrawals += item.amount;
-            break;
-          // DIVIDEND, FEE, OTHER are not aggregated into contribution totals
-        }
-      }
-
-      const netContributions = contributions + employerMatch + incomeContributions + transfers + withdrawals;
+      const netContributions = sumCents([contributions, employerMatch, incomeContributions, transfers, withdrawals]);
       const retirementAccountType = accountTypeMap.get(accountGuid) ?? null;
 
       // IRS limit: employee contributions only (not employer match) count toward limits
@@ -317,7 +303,7 @@ export async function generateContributionSummary(
       if (retirementAccountType && retirementAccountType !== 'brokerage') {
         const limit = await getContributionLimit(year, retirementAccountType, birthday);
         if (limit) {
-          const employeeContributions = contributions + incomeContributions;
+          const employeeContributions = sumCents([contributions, incomeContributions]);
           irsLimit = {
             base: limit.base,
             catchUp: limit.catchUp,
@@ -348,11 +334,11 @@ export async function generateContributionSummary(
     // Sort accounts by accountPath
     accounts.sort((a, b) => a.accountPath.localeCompare(b.accountPath));
 
-    const totalContributions = accounts.reduce((s, a) => s + a.contributions, 0);
-    const totalEmployerMatch = accounts.reduce((s, a) => s + a.employerMatch, 0);
-    const totalTransfers = accounts.reduce((s, a) => s + a.transfers, 0);
-    const totalWithdrawals = accounts.reduce((s, a) => s + a.withdrawals, 0);
-    const totalNetContributions = accounts.reduce((s, a) => s + a.netContributions, 0);
+    const totalContributions = sumCents(accounts.map(a => a.contributions));
+    const totalEmployerMatch = sumCents(accounts.map(a => a.employerMatch));
+    const totalTransfers = sumCents(accounts.map(a => a.transfers));
+    const totalWithdrawals = sumCents(accounts.map(a => a.withdrawals));
+    const totalNetContributions = sumCents(accounts.map(a => a.netContributions));
 
     periods.push({
       year,
@@ -365,9 +351,9 @@ export async function generateContributionSummary(
     });
   }
 
-  const grandTotalContributions = periods.reduce((s, p) => s + p.totalContributions, 0);
-  const grandTotalEmployerMatch = periods.reduce((s, p) => s + p.totalEmployerMatch, 0);
-  const grandTotalNetContributions = periods.reduce((s, p) => s + p.totalNetContributions, 0);
+  const grandTotalContributions = sumCents(periods.map(p => p.totalContributions));
+  const grandTotalEmployerMatch = sumCents(periods.map(p => p.totalEmployerMatch));
+  const grandTotalNetContributions = sumCents(periods.map(p => p.totalNetContributions));
 
   return {
     type: ReportType.CONTRIBUTION_SUMMARY,
