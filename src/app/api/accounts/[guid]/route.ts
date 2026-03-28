@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import { AccountService, UpdateAccountSchema } from '@/lib/services/account.service';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
@@ -40,7 +41,25 @@ export async function GET(
             return NextResponse.json({ error: 'Account not found' }, { status: 404 });
         }
 
-        return NextResponse.json(account);
+        // Fetch notes from slots table
+        const notesSlot = await prisma.$queryRaw<{ string_val: string }[]>`
+            SELECT string_val FROM slots WHERE obj_guid = ${guid} AND name = 'notes'
+        `;
+
+        // Fetch preferences
+        const prefs = await prisma.$queryRaw<{ tax_related: boolean; is_retirement: boolean; retirement_account_type: string | null }[]>`
+            SELECT tax_related, is_retirement, retirement_account_type
+            FROM gnucash_web_account_preferences
+            WHERE account_guid = ${guid}
+        `;
+
+        return NextResponse.json({
+            ...account,
+            notes: notesSlot[0]?.string_val ?? '',
+            tax_related: prefs[0]?.tax_related ?? false,
+            is_retirement: prefs[0]?.is_retirement ?? false,
+            retirement_account_type: prefs[0]?.retirement_account_type ?? null,
+        });
     } catch (error) {
         console.error('Error fetching account:', error);
         return NextResponse.json({ error: 'Failed to fetch account' }, { status: 500 });
