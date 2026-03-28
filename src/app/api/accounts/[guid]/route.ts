@@ -128,6 +128,13 @@ export async function PUT(
             );
         }
 
+        // Verify new parent belongs to active book if reparenting
+        if (parseResult.data.parent_guid) {
+            if (!await isAccountInActiveBook(parseResult.data.parent_guid)) {
+                return NextResponse.json({ error: 'New parent account not found' }, { status: 400 });
+            }
+        }
+
         const account = await AccountService.update(guid, parseResult.data);
         return NextResponse.json(account);
     } catch (error) {
