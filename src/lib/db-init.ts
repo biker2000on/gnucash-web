@@ -443,6 +443,12 @@ async function createExtensionTables() {
 
         ALTER TABLE gnucash_web_account_preferences
         ADD COLUMN IF NOT EXISTS retirement_account_type VARCHAR(20);
+
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS tax_related BOOLEAN NOT NULL DEFAULT FALSE;
+
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS lot_assignment_method VARCHAR(20);
     `;
 
     const contributionLimitsTableDDL = `
