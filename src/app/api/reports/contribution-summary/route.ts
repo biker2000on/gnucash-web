@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
 import { ReportFilters } from '@/lib/reports/types';
+import { getPreference } from '@/lib/user-preferences';
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
     };
 
     const groupBy = (searchParams.get('groupBy') === 'tax_year' ? 'tax_year' : 'calendar_year') as 'tax_year' | 'calendar_year';
-    const birthday = searchParams.get('birthday') || null;
+    const birthday = await getPreference<string | null>(roleResult.user.id, 'birthday', null);
 
     const report = await generateContributionSummary(filters, groupBy, birthday);
 

@@ -32,19 +32,6 @@ function ContributionSummaryContent() {
             if (filters.endDate) params.set('endDate', filters.endDate);
             params.set('groupBy', groupBy);
 
-            // Fetch birthday for catch-up limit calculation
-            try {
-                const prefRes = await fetch('/api/user/preferences?key=birthday');
-                if (prefRes.ok) {
-                    const prefData = await prefRes.json();
-                    if (prefData.preferences?.birthday) {
-                        params.set('birthday', prefData.preferences.birthday);
-                    }
-                }
-            } catch {
-                // Birthday is optional; proceed without it
-            }
-
             const res = await fetch(`/api/reports/contribution-summary?${params}`);
             if (!res.ok) {
                 throw new Error('Failed to fetch contribution summary');
