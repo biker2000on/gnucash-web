@@ -437,6 +437,34 @@ async function createExtensionTables() {
         );
     `;
 
+    const accountPreferencesRetirementDDL = `
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS is_retirement BOOLEAN NOT NULL DEFAULT FALSE;
+
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS retirement_account_type VARCHAR(20);
+    `;
+
+    const contributionLimitsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_contribution_limits (
+            id SERIAL PRIMARY KEY,
+            tax_year INTEGER NOT NULL,
+            account_type VARCHAR(20) NOT NULL,
+            base_limit DECIMAL(12,2) NOT NULL,
+            catch_up_limit DECIMAL(12,2) NOT NULL DEFAULT 0,
+            catch_up_age INTEGER NOT NULL DEFAULT 50,
+            notes VARCHAR(255),
+            UNIQUE(tax_year, account_type)
+        );
+    `;
+
+    const contributionTaxYearTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_contribution_tax_year (
+            split_guid VARCHAR(32) PRIMARY KEY,
+            tax_year INTEGER NOT NULL
+        );
+    `;
+
     const transactionTypesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_transaction_types (
             split_guid VARCHAR(32) PRIMARY KEY,
@@ -541,6 +569,9 @@ async function createExtensionTables() {
         await query(toolConfigTableDDL);
         await query(toolConfigTriggerDDL);
         await query(accountPreferencesTableDDL);
+        await query(accountPreferencesRetirementDDL);
+        await query(contributionLimitsTableDDL);
+        await query(contributionTaxYearTableDDL);
         await query(transactionTypesTableDDL);
         await query(receiptsTableDDL);
         await query(receiptsExtractedDataDDL);
