@@ -1239,10 +1239,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             description: selectedAccount.description,
                             hidden: selectedAccount.hidden,
                             placeholder: selectedAccount.placeholder,
-                            notes: (selectedAccount as Record<string, unknown>).notes as string ?? '',
-                            tax_related: (selectedAccount as Record<string, unknown>).tax_related as boolean ?? false,
-                            is_retirement: (selectedAccount as Record<string, unknown>).is_retirement as boolean ?? false,
-                            retirement_account_type: (selectedAccount as Record<string, unknown>).retirement_account_type as string | null ?? null,
+                            notes: (selectedAccount as unknown as { notes?: string }).notes ?? '',
+                            tax_related: (selectedAccount as unknown as { tax_related?: boolean }).tax_related ?? false,
+                            is_retirement: (selectedAccount as unknown as { is_retirement?: boolean }).is_retirement ?? false,
+                            retirement_account_type: (selectedAccount as unknown as { retirement_account_type?: string | null }).retirement_account_type ?? null,
                         } : undefined}
                         parentGuid={parentGuid}
                         onSave={handleSave}

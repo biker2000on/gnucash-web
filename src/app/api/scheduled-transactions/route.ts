@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
 import { parseGnuCashDate, formatDate, resolveTemplateSplits } from '@/lib/scheduled-transactions';
+import { createScheduledTransaction, CreateScheduledTxInput } from '@/lib/services/scheduled-tx-create';
 
 interface ScheduledTransactionRow {
   guid: string;
@@ -165,5 +166,24 @@ export async function GET(request: NextRequest) {
       { error: 'Failed to fetch scheduled transactions' },
       { status: 500 }
     );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
+
+    const body: CreateScheduledTxInput = await request.json();
+    const result = await createScheduledTransaction(body);
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json(result, { status: 201 });
+  } catch (error) {
+    console.error('Error creating scheduled transaction:', error);
+    return NextResponse.json({ error: 'Failed to create' }, { status: 500 });
   }
 }
