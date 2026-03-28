@@ -311,7 +311,7 @@ export default function ScheduledTransactionsPage() {
 
     try {
       const items = overdue.map(o => ({
-        scheduledTransactionGuid: o.scheduledTransactionGuid,
+        guid: o.scheduledTransactionGuid,
         occurrenceDate: o.date,
         action: 'execute' as const,
       }));
