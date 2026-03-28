@@ -30,10 +30,18 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
   - `accounts/page.tsx` - Account hierarchy tree view
   - `accounts/[guid]/page.tsx` - Individual account ledger with running balance
   - `ledger/page.tsx` - General ledger (all transactions)
+  - `scheduled-transactions/page.tsx` - Scheduled transactions with execute/skip, enable/disable, batch mode, create new
+  - `reports/contribution_summary/page.tsx` - Contribution report with IRS limit tracking
+  - `reports/` - Reports dashboard with 16+ report types (balance sheet, P&L, portfolio, lots, tax harvesting, etc.)
+  - `tools/` - Mortgage calculator, FIRE calculator, asset analysis
   - `layout.tsx` - Main layout with sidebar navigation, calls `initializeDatabase()`
 - `api/` - API route handlers
-  - `accounts/` - Account hierarchy and account-specific transactions
+  - `accounts/` - Account hierarchy, account-specific transactions, preferences (retirement flag, cost basis)
   - `transactions/` - Paginated transaction listing with search/filter
+  - `reports/` - Contribution summary, investment portfolio, tax harvesting, and other reports
+  - `scheduled-transactions/` - Scheduled transaction listing, execute/skip/batch, create new, enable/disable
+  - `contribution-limits/` - IRS contribution limit management
+  - `contributions/` - Tax-year override per split
 
 ### Key Libraries (src/lib/)
 
@@ -46,12 +54,31 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `cost-basis.ts` - Cost basis tracing across account transfers with FIFO/LIFO/average allocation
 - `types.ts` - Core TypeScript interfaces: Account, Transaction, Split
 - `format.ts` - Currency formatting utility
+- `scheduled-transactions.ts` - Shared utility: `resolveTemplateSplits()`, GnuCash date parsing
+- `recurrence.ts` - Recurrence computation engine (9 period types, weekend adjustment, month-end clamping)
+
+### Reports (src/lib/reports/)
+
+- `contribution-summary.ts` - Contribution report generator: batch SQL query, classification, IRS limits
+- `contribution-classifier.ts` - Classifies deposits as contribution/transfer/employer match/dividend/fee
+- `irs-limits.ts` - IRS contribution limit defaults (2024-2026) with DB overrides and catch-up calculation
+
+### Services (src/lib/services/)
+
+- `scheduled-tx-execute.ts` - Execute/skip/batch scheduled transaction occurrences with SELECT FOR UPDATE locking
+- `scheduled-tx-create.ts` - Create new scheduled transactions with full GnuCash template structure
+- `mortgage.service.ts` - Mortgage detection (Newton-Raphson rate extraction) and dynamic payment computation
+- `account.service.ts` - Account CRUD with notes, tax_related, retirement, reparenting support
+- `financial-summary.service.ts` - Net worth, savings rate, investment value aggregation
 
 ### Components (src/components/)
 
 - `AccountHierarchy.tsx` - Expandable tree with sorting, filtering, localStorage state persistence
 - `AccountLedger.tsx` - Per-account transactions with running balance, infinite scroll
 - `TransactionJournal.tsx` - All transactions with infinite scroll, debounced search
+- `reports/ContributionTable.tsx` - Contribution report with expandable per-account drill-down and tax-year editing
+- `reports/ContributionLimitBar.tsx` - IRS limit progress bar with color-coded thresholds
+- `scheduled-transactions/CreateScheduledPanel.tsx` - Slide-over form for creating new scheduled transactions
 
 ## Key Technical Details
 
@@ -63,10 +90,14 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 
 ## Environment Variables
 
-Required in `.env.local`:
+Required in `.env.local` (see `.env.example` for all options):
 ```
 DATABASE_URL=postgresql://user:password@host:port/database
+NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
+REDIS_URL=redis://localhost:6379
 ```
+
+Optional AI, S3 storage, and other variables documented in `.env.example`.
 
 ## Testing
 

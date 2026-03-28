@@ -11,9 +11,8 @@ All notable changes to this project will be documented in this file.
 - **Create new scheduled transactions**: slide-over panel with name, recurrence pattern (all 9 GnuCash period types), start/end dates, multi-split account picker, auto-create/notify options. Creates full GnuCash template structure (root account, child accounts, slot mappings, template transaction/splits, schedxaction, recurrence)
 - **Mortgage dynamic amounts**: `MortgageService.computePaymentForDate()` computes principal/interest splits from current balance and detected rate for mortgage-linked scheduled transactions
 - **Account editing modal**: notes, tax_related, retirement flags, reparenting support in account service
-- Shared `resolveTemplateSplits()` utility extracted from scheduled transactions route for reuse
-- `SELECT FOR UPDATE` concurrency protection on execute/skip to prevent double-execution
-- 18 new tests (execute/skip: 6, create: 8, mortgage compute: 4)
+- Concurrency protection prevents double-execution when processing scheduled transactions from multiple tabs
+- 18 new tests covering execute/skip, create, and mortgage payment computation
 
 ### Fixed
 - Batch execute sent wrong field name (`scheduledTransactionGuid` instead of `guid`), causing "Process All" to always fail
