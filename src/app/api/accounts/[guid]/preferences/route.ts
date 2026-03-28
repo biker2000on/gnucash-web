@@ -5,6 +5,7 @@ import { isAccountInActiveBook } from '@/lib/book-scope';
 
 const VALID_COST_BASIS_METHODS = ['fifo', 'lifo', 'average'];
 const VALID_LOT_ASSIGNMENT_METHODS = ['fifo', 'lifo', 'average'];
+const VALID_RETIREMENT_TYPES = ['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage'];
 
 // GET /api/accounts/{guid}/preferences
 export async function GET(
@@ -21,14 +22,14 @@ export async function GET(
       return NextResponse.json({ error: 'Account not found' }, { status: 404 });
     }
 
-    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null }[]>`
-      SELECT account_guid, cost_basis_method, lot_assignment_method
+    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null; is_retirement: boolean; retirement_account_type: string | null }[]>`
+      SELECT account_guid, cost_basis_method, lot_assignment_method, is_retirement, retirement_account_type
       FROM gnucash_web_account_preferences
       WHERE account_guid = ${guid}
     `;
 
     if (rows.length === 0) {
-      return NextResponse.json({ account_guid: guid, cost_basis_method: null, lot_assignment_method: null });
+      return NextResponse.json({ account_guid: guid, cost_basis_method: null, lot_assignment_method: null, is_retirement: false, retirement_account_type: null });
     }
 
     return NextResponse.json(rows[0]);
@@ -79,11 +80,24 @@ export async function PATCH(
       }
     }
 
+    // Validate retirement_account_type if present in request body
+    if ('retirement_account_type' in body) {
+      const { retirement_account_type } = body;
+      if (retirement_account_type !== null && retirement_account_type !== undefined &&
+          !VALID_RETIREMENT_TYPES.includes(retirement_account_type)) {
+        return NextResponse.json(
+          { error: `Invalid retirement_account_type. Must be one of: ${VALID_RETIREMENT_TYPES.join(', ')}` },
+          { status: 400 }
+        );
+      }
+    }
+
     // Build the SET clause dynamically — only update fields present in the request body
     const hasCostBasis = 'cost_basis_method' in body;
     const hasLotAssignment = 'lot_assignment_method' in body;
+    const hasRetirement = 'is_retirement' in body || 'retirement_account_type' in body;
 
-    if (!hasCostBasis && !hasLotAssignment) {
+    if (!hasCostBasis && !hasLotAssignment && !hasRetirement) {
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
     }
 
@@ -106,8 +120,7 @@ export async function PATCH(
         ON CONFLICT (account_guid)
         DO UPDATE SET cost_basis_method = ${costBasisValue}
       `;
-    } else {
-      // hasLotAssignment only
+    } else if (hasLotAssignment) {
       await prisma.$executeRaw`
         INSERT INTO gnucash_web_account_preferences (account_guid, lot_assignment_method)
         VALUES (${guid}, ${lotAssignmentValue})
@@ -116,14 +129,28 @@ export async function PATCH(
       `;
     }
 
+    if (hasRetirement) {
+      const isRetirement = body.is_retirement ?? false;
+      const retirementType = body.retirement_account_type ?? null;
+
+      await prisma.$executeRaw`
+        INSERT INTO gnucash_web_account_preferences (account_guid, is_retirement, retirement_account_type)
+        VALUES (${guid}, ${isRetirement}, ${retirementType})
+        ON CONFLICT (account_guid)
+        DO UPDATE SET
+          is_retirement = COALESCE(${body.is_retirement !== undefined ? isRetirement : null}, gnucash_web_account_preferences.is_retirement),
+          retirement_account_type = COALESCE(${body.retirement_account_type !== undefined ? retirementType : null}, gnucash_web_account_preferences.retirement_account_type)
+      `;
+    }
+
     // Fetch and return the updated row
-    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null }[]>`
-      SELECT account_guid, cost_basis_method, lot_assignment_method
+    const rows = await prisma.$queryRaw<{ account_guid: string; cost_basis_method: string | null; lot_assignment_method: string | null; is_retirement: boolean; retirement_account_type: string | null }[]>`
+      SELECT account_guid, cost_basis_method, lot_assignment_method, is_retirement, retirement_account_type
       FROM gnucash_web_account_preferences
       WHERE account_guid = ${guid}
     `;
 
-    return NextResponse.json(rows[0] ?? { account_guid: guid, cost_basis_method: null, lot_assignment_method: null });
+    return NextResponse.json(rows[0] ?? { account_guid: guid, cost_basis_method: null, lot_assignment_method: null, is_retirement: false, retirement_account_type: null });
   } catch (error) {
     console.error('Error updating account preferences:', error);
     return NextResponse.json({ error: 'Failed to update account preferences' }, { status: 500 });
