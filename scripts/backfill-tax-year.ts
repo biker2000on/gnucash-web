@@ -127,7 +127,7 @@ async function main() {
   let skipped = 0;
 
   for (const split of splits) {
-    if (!split.transaction) continue;
+    if (!split.transaction || !split.transaction.description || !split.transaction.post_date) continue;
 
     const taxYear = extractTaxYear(
       split.transaction.description,
