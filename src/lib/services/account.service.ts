@@ -41,6 +41,10 @@ export const CreateAccountSchema = z.object({
   placeholder: z.number().int().min(0).max(1).optional().default(0),
   commodity_scu: z.number().int().optional().default(100),
   non_std_scu: z.number().int().optional().default(0),
+  notes: z.string().optional(),
+  tax_related: z.boolean().optional(),
+  is_retirement: z.boolean().optional(),
+  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage']).nullable().optional(),
 });
 
 export const UpdateAccountSchema = z.object({
@@ -49,6 +53,11 @@ export const UpdateAccountSchema = z.object({
   description: z.string().max(2048).optional(),
   hidden: z.number().int().min(0).max(1).optional(),
   placeholder: z.number().int().min(0).max(1).optional(),
+  parent_guid: z.string().length(32).nullable().optional(),
+  notes: z.string().optional(),
+  tax_related: z.boolean().optional(),
+  is_retirement: z.boolean().optional(),
+  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'brokerage']).nullable().optional(),
 });
 
 export type CreateAccountInput = z.infer<typeof CreateAccountSchema>;
@@ -105,12 +114,40 @@ export class AccountService {
       },
     });
 
+    // Write notes to slots table if provided
+    if (data.notes) {
+      await prisma.$executeRaw`
+        INSERT INTO slots (id, obj_guid, name, slot_type, int64_val, string_val, double_val, timespec_val, guid_val, numeric_val_num, numeric_val_denom, gdate_val)
+        VALUES (
+          (SELECT COALESCE(MAX(id), 0) + 1 FROM slots),
+          ${accountGuid}, 'notes', 4, 0, ${data.notes}, 0, '1970-01-01 00:00:00'::timestamp, NULL, 0, 1, NULL
+        )
+      `;
+    }
+
+    // Write preferences if any preference fields are provided
+    if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined) {
+      await prisma.$executeRaw`
+        INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type)
+        VALUES (
+          ${accountGuid},
+          ${data.tax_related ?? false},
+          ${data.is_retirement ?? false},
+          ${data.retirement_account_type ?? null}
+        )
+        ON CONFLICT (account_guid)
+        DO UPDATE SET
+          tax_related = ${data.tax_related ?? false},
+          is_retirement = ${data.is_retirement ?? false},
+          retirement_account_type = ${data.retirement_account_type ?? null}
+      `;
+    }
+
     return serializeBigInts(account);
   }
 
   /**
    * Update an existing account
-   * Only allows updating safe fields (not type or parent)
    */
   static async update(guid: string, input: UpdateAccountInput) {
     if (!guid || guid.length !== 32) {
@@ -128,6 +165,33 @@ export class AccountService {
       throw new Error(`Account not found: ${guid}`);
     }
 
+    // Handle reparenting if parent_guid is provided
+    if (data.parent_guid !== undefined) {
+      if (data.parent_guid !== null) {
+        if (data.parent_guid === guid) {
+          throw new Error('Cannot move account to be its own parent');
+        }
+        const newParent = await prisma.accounts.findUnique({
+          where: { guid: data.parent_guid },
+        });
+        if (!newParent) {
+          throw new Error(`New parent account not found: ${data.parent_guid}`);
+        }
+        // Check for circular reference
+        let ancestor = newParent;
+        while (ancestor.parent_guid) {
+          if (ancestor.parent_guid === guid) {
+            throw new Error('Cannot move account: would create circular reference');
+          }
+          const nextAncestor = await prisma.accounts.findUnique({
+            where: { guid: ancestor.parent_guid },
+          });
+          if (!nextAncestor) break;
+          ancestor = nextAncestor;
+        }
+      }
+    }
+
     const account = await prisma.accounts.update({
       where: { guid },
       data: {
@@ -136,12 +200,66 @@ export class AccountService {
         ...(data.description !== undefined && { description: data.description }),
         ...(data.hidden !== undefined && { hidden: data.hidden }),
         ...(data.placeholder !== undefined && { placeholder: data.placeholder }),
+        ...(data.parent_guid !== undefined && { parent_guid: data.parent_guid }),
       },
       include: {
         commodity: true,
         parent: true,
       },
     });
+
+    // Upsert notes in slots table
+    if (data.notes !== undefined) {
+      if (data.notes) {
+        // Check if notes slot exists
+        const existingSlot = await prisma.$queryRaw<{ id: number }[]>`
+          SELECT id FROM slots WHERE obj_guid = ${guid} AND name = 'notes'
+        `;
+        if (existingSlot.length > 0) {
+          await prisma.$executeRaw`
+            UPDATE slots SET string_val = ${data.notes} WHERE obj_guid = ${guid} AND name = 'notes'
+          `;
+        } else {
+          await prisma.$executeRaw`
+            INSERT INTO slots (id, obj_guid, name, slot_type, int64_val, string_val, double_val, timespec_val, guid_val, numeric_val_num, numeric_val_denom, gdate_val)
+            VALUES (
+              (SELECT COALESCE(MAX(id), 0) + 1 FROM slots),
+              ${guid}, 'notes', 4, 0, ${data.notes}, 0, '1970-01-01 00:00:00'::timestamp, NULL, 0, 1, NULL
+            )
+          `;
+        }
+      } else {
+        // Delete notes slot if cleared
+        await prisma.$executeRaw`
+          DELETE FROM slots WHERE obj_guid = ${guid} AND name = 'notes'
+        `;
+      }
+    }
+
+    // Upsert preferences if any preference fields are provided
+    if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined) {
+      const taxRelated = data.tax_related;
+      const isRetirement = data.is_retirement;
+      const retirementType = data.retirement_account_type;
+      const hasTaxRelated = data.tax_related !== undefined;
+      const hasIsRetirement = data.is_retirement !== undefined;
+      const hasRetirementType = data.retirement_account_type !== undefined;
+
+      await prisma.$executeRaw`
+        INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type)
+        VALUES (
+          ${guid},
+          ${taxRelated ?? false},
+          ${isRetirement ?? false},
+          ${retirementType ?? null}
+        )
+        ON CONFLICT (account_guid)
+        DO UPDATE SET
+          tax_related = CASE WHEN ${hasTaxRelated}::boolean THEN ${taxRelated ?? false} ELSE gnucash_web_account_preferences.tax_related END,
+          is_retirement = CASE WHEN ${hasIsRetirement}::boolean THEN ${isRetirement ?? false} ELSE gnucash_web_account_preferences.is_retirement END,
+          retirement_account_type = CASE WHEN ${hasRetirementType}::boolean THEN ${retirementType ?? null} ELSE gnucash_web_account_preferences.retirement_account_type END
+      `;
+    }
 
     return serializeBigInts(account);
   }
