@@ -541,6 +541,8 @@ export default function ScheduledTransactionsPage() {
             <span className="text-xs text-emerald-400 font-medium">Executed ✓</span>
           ) : actionState === 'skipped' ? (
             <span className="text-xs text-foreground-muted font-medium">Skipped</span>
+          ) : actionState === 'error' ? (
+            <span className="text-xs text-red-400 font-medium">Failed — try again</span>
           ) : (
             <>
               <button
@@ -585,6 +587,8 @@ export default function ScheduledTransactionsPage() {
               <span className="text-xs text-emerald-400 font-medium whitespace-nowrap">Executed ✓</span>
             ) : actionState === 'skipped' ? (
               <span className="text-xs text-foreground-muted font-medium whitespace-nowrap">Skipped</span>
+            ) : actionState === 'error' ? (
+              <span className="text-xs text-red-400 font-medium whitespace-nowrap">Failed — try again</span>
             ) : (
               <>
                 <button
