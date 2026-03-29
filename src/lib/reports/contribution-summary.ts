@@ -187,7 +187,7 @@ export async function generateContributionSummary(
   const accountYearItems = new Map<string, Map<number, ContributionLineItem[]>>();
 
   for (const [splitGuid, entry] of splitMap) {
-    const classification = classifyContribution(entry.split, entry.otherSplits, retirementGuids);
+    const classification = classifyContribution(entry.split, entry.otherSplits, retirementGuids, entry.description);
     const taxYear = taxYearMap.get(splitGuid) ?? entry.postDate.getFullYear();
     const year = groupBy === 'tax_year' ? taxYear : entry.postDate.getFullYear();
 
@@ -225,13 +225,13 @@ export async function generateContributionSummary(
     yearMap.get(year)!.push(lineItem);
   }
 
-  // Step 6: Batch-load retirement account types (avoid N+1)
-  const activeAccountGuids = retirementGuidArray.filter(g => accountYearItems.has(g));
+  // Step 6: Batch-load retirement account types and find parent accounts
   const retirementPrefs = await prisma.gnucash_web_account_preferences.findMany({
     where: { account_guid: { in: retirementGuidArray }, is_retirement: true },
     select: { account_guid: true, retirement_account_type: true },
   });
   const retirementPrefMap = new Map(retirementPrefs.map(p => [p.account_guid, p.retirement_account_type]));
+  const flaggedGuids = new Set(retirementPrefs.map(p => p.account_guid));
 
   // Build parent map for hierarchy walking
   const allAccountsForType = await prisma.accounts.findMany({
@@ -240,40 +240,63 @@ export async function generateContributionSummary(
   });
   const parentOfMap = new Map(allAccountsForType.map(a => [a.guid, a.parent_guid]));
 
+  // Map each leaf account to its flagged parent retirement account
+  const parentAccountMap = new Map<string, string>(); // leaf guid -> flagged parent guid
   const accountTypeMap = new Map<string, string | null>();
+  const activeAccountGuids = retirementGuidArray.filter(g => accountYearItems.has(g));
+
   for (const guid of activeAccountGuids) {
-    // Check direct preference first
-    if (retirementPrefMap.has(guid) && retirementPrefMap.get(guid)) {
+    // If this account is directly flagged, it IS the parent
+    if (flaggedGuids.has(guid) && retirementPrefMap.get(guid)) {
+      parentAccountMap.set(guid, guid);
       accountTypeMap.set(guid, retirementPrefMap.get(guid)!);
       continue;
     }
-    // Walk up hierarchy
+    // Walk up hierarchy to find flagged parent
     let current = parentOfMap.get(guid);
     let found = false;
     while (current) {
-      const pref = retirementPrefMap.get(current);
-      if (pref) {
-        accountTypeMap.set(guid, pref);
+      if (flaggedGuids.has(current) && retirementPrefMap.get(current)) {
+        parentAccountMap.set(guid, current);
+        accountTypeMap.set(current, retirementPrefMap.get(current)!);
         found = true;
         break;
       }
       current = parentOfMap.get(current) ?? null;
     }
     if (!found) {
+      parentAccountMap.set(guid, guid);
       accountTypeMap.set(guid, null);
     }
   }
 
-  // Step 7: Get account names
+  // Re-group accountYearItems by parent account
+  const parentYearItems = new Map<string, Map<number, ContributionLineItem[]>>();
+  for (const [leafGuid, yearMap] of accountYearItems) {
+    const parentGuid = parentAccountMap.get(leafGuid) ?? leafGuid;
+    if (!parentYearItems.has(parentGuid)) {
+      parentYearItems.set(parentGuid, new Map());
+    }
+    const parentYearMap = parentYearItems.get(parentGuid)!;
+    for (const [year, items] of yearMap) {
+      if (!parentYearMap.has(year)) {
+        parentYearMap.set(year, []);
+      }
+      parentYearMap.get(year)!.push(...items);
+    }
+  }
+
+  // Step 7: Get account names (for parent accounts)
+  const parentGuids = [...new Set(parentAccountMap.values())];
   const accountNameRows = await prisma.accounts.findMany({
-    where: { guid: { in: retirementGuidArray } },
+    where: { guid: { in: parentGuids } },
     select: { guid: true, name: true },
   });
   const accountNameMap = new Map(accountNameRows.map(r => [r.guid, r.name]));
 
   // Step 8: Aggregate by account and year, build periods
   const allYears = new Set<number>();
-  for (const yearMap of accountYearItems.values()) {
+  for (const yearMap of parentYearItems.values()) {
     for (const year of yearMap.keys()) {
       allYears.add(year);
     }
@@ -284,7 +307,7 @@ export async function generateContributionSummary(
   for (const year of [...allYears].sort((a, b) => b - a)) {
     const accounts: AccountContributionSummary[] = [];
 
-    for (const [accountGuid, yearMap] of accountYearItems) {
+    for (const [accountGuid, yearMap] of parentYearItems) {
       const items = yearMap.get(year);
       if (!items || items.length === 0) continue;
 
