@@ -36,6 +36,7 @@ export function classifyContribution(
   split: SplitLike,
   otherSplits: OtherSplitLike[],
   retirementGuids: Set<string>,
+  description?: string,
 ): ContributionType {
   const value = toDecimalNumber(split.value_num, split.value_denom);
   const quantity = toDecimalNumber(split.quantity_num, split.quantity_denom);
@@ -77,7 +78,8 @@ export function classifyContribution(
     if (MATCH_KEYWORDS.some(kw => sourceName.includes(kw))) {
       return ContributionType.EMPLOYER_MATCH;
     }
-    if (DIVIDEND_KEYWORDS.some(kw => sourceName.includes(kw))) {
+    const desc = (description ?? '').toLowerCase();
+    if (DIVIDEND_KEYWORDS.some(kw => sourceName.includes(kw) || desc.includes(kw))) {
       return ContributionType.DIVIDEND;
     }
     return ContributionType.INCOME_CONTRIBUTION;
