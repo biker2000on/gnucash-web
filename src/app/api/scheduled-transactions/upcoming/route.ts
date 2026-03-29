@@ -65,6 +65,8 @@ export async function GET(request: NextRequest) {
 
       const lastOccur = st.lastOccur ? new Date(st.lastOccur) : null;
       const endDate = st.endDate ? new Date(st.endDate) : null;
+      // remainingOccurrences: >0 = limited, 0 = exhausted (skip), null/-1 = unlimited
+      if (st.remainingOccurrences === 0) continue;
       const remOccur = st.remainingOccurrences > 0 ? st.remainingOccurrences : null;
 
       const nextDates = computeNextOccurrences(
