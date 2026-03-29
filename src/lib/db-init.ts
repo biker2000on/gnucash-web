@@ -37,11 +37,10 @@ async function createAccountHierarchyView() {
                 a.placeholder,
                 a.guid AS top_level_guid
             FROM accounts a
-            WHERE a.parent_guid = (
-                SELECT guid 
-                FROM accounts 
-                WHERE account_type = 'ROOT' 
-                AND name LIKE 'Root%'
+            WHERE a.parent_guid IN (
+                SELECT guid
+                FROM accounts
+                WHERE account_type = 'ROOT'
             )
             
             UNION ALL
