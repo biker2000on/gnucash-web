@@ -94,9 +94,11 @@ export async function executeOccurrence(
         return { ...split, amount };
       });
 
-      // Get book currency
+      // Get book currency from root account
       const currencyRows = await tx.$queryRaw<{ commodity_guid: string }[]>`
-        SELECT commodity_guid FROM books LIMIT 1
+        SELECT a.commodity_guid FROM accounts a
+        JOIN books b ON b.root_account_guid = a.guid
+        LIMIT 1
       `;
       const currencyGuid = currencyRows[0]?.commodity_guid;
       if (!currencyGuid) {

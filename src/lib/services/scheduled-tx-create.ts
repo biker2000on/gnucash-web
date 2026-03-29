@@ -94,9 +94,11 @@ export async function createScheduledTransaction(
       }
       const templateRootGuid = templateRoots[0].guid;
 
-      // Step 2: Get book currency (from books table, not alphabetical commodities)
+      // Step 2: Get book currency from root account
       const bookCurrency = await tx.$queryRaw<Array<{ commodity_guid: string }>>`
-        SELECT commodity_guid FROM books LIMIT 1
+        SELECT a.commodity_guid FROM accounts a
+        JOIN books b ON b.root_account_guid = a.guid
+        LIMIT 1
       `;
       if (bookCurrency.length === 0) {
         throw new Error('No book currency found');
