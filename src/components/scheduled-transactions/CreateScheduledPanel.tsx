@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { AccountSelector } from '@/components/ui/AccountSelector';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -277,12 +278,10 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
               <div key={idx} className="flex items-start gap-2">
                 <div className="flex-1 space-y-1">
                   <label className="text-xs text-foreground-secondary block">Account</label>
-                  <input
-                    type="text"
+                  <AccountSelector
                     value={split.accountGuid}
-                    onChange={e => updateSplit(idx, 'accountGuid', e.target.value)}
-                    placeholder="Account GUID"
-                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                    onChange={(guid) => updateSplit(idx, 'accountGuid', guid)}
+                    placeholder="Search accounts..."
                   />
                 </div>
                 <div className="w-28 space-y-1">
