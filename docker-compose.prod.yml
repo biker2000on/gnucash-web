@@ -9,6 +9,10 @@
 #   WATCHTOWER_REPO_USER=<github-username>
 #   WATCHTOWER_REPO_PASS=<github-pat-with-read:packages>
 #
+# Optional:
+#   POSTGRES_PORT=5432            # Host port for PostgreSQL
+#   MINIO_DATA_DIR=./minio-data   # Local folder for MinIO storage
+#
 # Optional services (enable via profiles):
 #   docker compose -f docker-compose.prod.yml --profile storage up -d   # + MinIO
 #
@@ -71,7 +75,7 @@ services:
   postgres:
     image: postgres:17-alpine
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gnucash}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnucash}
@@ -105,7 +109,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
-      - minio-data:/data
+      - ${MINIO_DATA_DIR:-./minio-data}:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
 
@@ -124,4 +128,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  minio-data:
