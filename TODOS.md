@@ -144,6 +144,43 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
+## P2 - Scheduled Transaction: Edit & Create from Existing
+
+**What:** Two enhancements to scheduled transactions:
+1. **Edit scheduled transaction:** From the scheduled transactions list, click an existing scheduled transaction to open an edit panel (similar to the create panel) where users can modify the name, recurrence, splits, amounts, start/end dates, and auto-create/notify settings.
+2. **Create scheduled transaction from existing transaction:** From any ledger (account ledger or general ledger), select a transaction and click "Schedule" to pre-populate a new scheduled transaction with that transaction's description, splits, and amounts. The user then sets the recurrence and saves.
+
+**Why:** Currently scheduled transactions can only be created from scratch with no way to edit after creation. Most scheduled transactions originate from an existing real transaction ("I paid rent, now I want this to repeat monthly"). Creating from an existing transaction saves manual re-entry of accounts and amounts.
+
+**Effort:** M (human: ~1 week) / with CC: S-M (~20-30 min)
+
+**Depends on:** Scheduled transaction create (shipped), AccountSelector component (shipped).
+
+**Context:** Added 2026-03-30. The edit panel should reuse the `CreateScheduledPanel` component (refactored to handle both create and edit modes). The "Schedule" action in ledgers should be part of a new right-click context menu on transaction rows — the ledgers currently have no context menu, and there are now enough actions to justify one (schedule, duplicate, delete, view receipt, etc.). Consider: pre-selecting the recurrence based on transaction patterns (e.g., if similar transactions appear monthly, default to monthly), and an update API endpoint (`PATCH /api/scheduled-transactions/[guid]`).
+
+---
+
+## P3 - Ledger Transaction Context Menu
+
+**What:** A right-click context menu on transaction rows in both the Account Ledger and General Ledger (TransactionJournal). Actions:
+1. **Schedule** — Create a scheduled transaction pre-filled from this transaction (see above)
+2. **Duplicate** — Create a copy of this transaction with today's date
+3. **Delete** — Delete the transaction (with confirmation)
+4. **Edit** — Open the transaction edit modal
+5. **Attach receipt** — Open the receipt upload/link dialog for this transaction
+6. **View in account** — (General Ledger only) Navigate to the account ledger for the selected split's account
+7. **Copy transaction ID** — Copy the GUID to clipboard (power user feature)
+
+**Why:** Currently transaction actions require clicking into edit mode or using keyboard shortcuts. A context menu provides discoverable access to all actions and is the natural place to add new actions like "Schedule" without cluttering the row UI with more buttons.
+
+**Effort:** S-M (human: ~3-4 days) / with CC: S (~15-20 min)
+
+**Depends on:** Ledger components (shipped). Individual actions mostly exist already — this is primarily a UI container.
+
+**Context:** Added 2026-03-30. Implementation: a shared `TransactionContextMenu` component using a portal-based dropdown positioned at the cursor. Trigger on `onContextMenu` event on transaction rows. The menu should be keyboard-accessible (Escape to close, arrow keys to navigate). Consider: touch device support (long-press to trigger), and keeping the menu minimal at first — only include actions that are already implemented, add new ones as they ship.
+
+---
+
 ## Completed
 
 ### SimpleFin Import: Manual Transaction Reconciliation & Transfer Dedup
