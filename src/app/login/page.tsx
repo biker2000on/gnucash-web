@@ -37,7 +37,7 @@ function LoginPageContent() {
     }
 
     return (
-        <div className="min-h-screen bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-background-secondary via-background to-background flex items-center justify-center p-4">
+        <div className="min-h-screen bg-background flex items-center justify-center p-4">
             <LoginForm
                 mode={mode}
                 onToggleMode={() => setMode(mode === 'login' ? 'register' : 'login')}
