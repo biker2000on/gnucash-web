@@ -409,7 +409,7 @@ export default function ScheduledTransactionsPage() {
                   }
                 }}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  tx.enabled ? 'bg-emerald-500' : 'bg-gray-600'
+                  tx.enabled ? 'bg-primary' : 'bg-gray-600'
                 }`}
                 role="switch"
                 aria-checked={tx.enabled}
@@ -459,7 +459,7 @@ export default function ScheduledTransactionsPage() {
                   }
                 }}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  tx.enabled ? 'bg-emerald-500' : 'bg-gray-600'
+                  tx.enabled ? 'bg-primary' : 'bg-gray-600'
                 }`}
                 role="switch"
                 aria-checked={tx.enabled}
@@ -486,7 +486,7 @@ export default function ScheduledTransactionsPage() {
             {isMortgage && (
               <Link
                 href="/tools/mortgage"
-                className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors whitespace-nowrap"
+                className="text-xs text-primary hover:text-primary-hover transition-colors whitespace-nowrap"
               >
                 View in Mortgage Calculator
               </Link>
@@ -501,7 +501,7 @@ export default function ScheduledTransactionsPage() {
           <div className="sm:hidden mt-1">
             <Link
               href="/tools/mortgage"
-              className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+              className="text-xs text-primary hover:text-primary-hover transition-colors"
             >
               View in Mortgage Calculator
             </Link>
@@ -548,7 +548,7 @@ export default function ScheduledTransactionsPage() {
               <button
                 onClick={() => handleExecute(occ.scheduledTransactionGuid, occ.date)}
                 disabled={actionState === 'loading'}
-                className="px-3 py-1 text-xs font-medium rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+                className="px-3 py-1 text-xs font-medium rounded-md bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50"
               >
                 {actionState === 'loading' ? '...' : 'Execute'}
               </button>
@@ -575,7 +575,7 @@ export default function ScheduledTransactionsPage() {
             {isMortgage && (
               <Link
                 href="/tools/mortgage"
-                className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors whitespace-nowrap"
+                className="text-xs text-primary hover:text-primary-hover transition-colors whitespace-nowrap"
               >
                 View in Mortgage Calculator
               </Link>
@@ -594,7 +594,7 @@ export default function ScheduledTransactionsPage() {
                 <button
                   onClick={() => handleExecute(occ.scheduledTransactionGuid, occ.date)}
                   disabled={actionState === 'loading'}
-                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 whitespace-nowrap"
+                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 whitespace-nowrap"
                 >
                   {actionState === 'loading' ? '...' : 'Execute'}
                 </button>
@@ -613,7 +613,7 @@ export default function ScheduledTransactionsPage() {
           <div className="sm:hidden mt-1">
             <Link
               href="/tools/mortgage"
-              className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+              className="text-xs text-primary hover:text-primary-hover transition-colors"
             >
               View in Mortgage Calculator
             </Link>
@@ -638,7 +638,7 @@ export default function ScheduledTransactionsPage() {
         </div>
         <button
           onClick={() => setShowCreatePanel(true)}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white transition-colors flex items-center gap-2"
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors flex items-center gap-2"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -680,7 +680,7 @@ export default function ScheduledTransactionsPage() {
             placeholder="Search by name..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-input-bg border border-border rounded-lg text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+            className="w-full pl-9 pr-3 py-2 bg-input-bg border border-border rounded-lg text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
           />
           <svg
             className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-muted pointer-events-none"
@@ -699,7 +699,7 @@ export default function ScheduledTransactionsPage() {
           <select
             value={enabledFilter}
             onChange={e => setEnabledFilter(e.target.value as typeof enabledFilter)}
-            className="px-3 py-2 bg-input-bg border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+            className="px-3 py-2 bg-input-bg border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
           >
             <option value="all">All statuses</option>
             <option value="enabled">Enabled only</option>

@@ -289,7 +289,7 @@ export default function SettingsPage() {
     return (
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
           <span className="text-foreground-secondary">Loading settings...</span>
         </div>
       </div>
@@ -310,7 +310,7 @@ export default function SettingsPage() {
           </div>
           <Link
             href="/settings/commodities"
-            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
           >
             Open Commodity Settings
           </Link>
@@ -328,7 +328,7 @@ export default function SettingsPage() {
               type="checkbox"
               checked={schedule.enabled}
               onChange={(e) => handleScheduleToggle(e.target.checked)}
-              className="w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover rounded focus:ring-emerald-500/50"
+              className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
             />
             <span className="text-sm text-foreground">Enable automatic price refresh</span>
           </label>
@@ -340,7 +340,7 @@ export default function SettingsPage() {
                 type="checkbox"
                 checked={simplefinSyncEnabled}
                 onChange={(e) => updateSimplefinSync(e.target.checked)}
-                className="w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover rounded focus:ring-emerald-500/50"
+                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
               />
               <span className="text-sm text-foreground">Sync SimpleFin transactions with each refresh</span>
             </label>
@@ -353,7 +353,7 @@ export default function SettingsPage() {
               value={schedule.intervalHours}
               onChange={(e) => handleIntervalChange(Number(e.target.value))}
               disabled={!schedule.enabled}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {INTERVAL_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -373,7 +373,7 @@ export default function SettingsPage() {
               value={utcToLocal(schedule.refreshTime)}
               onChange={(e) => handleTimeChange(e.target.value)}
               disabled={!schedule.enabled}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <p className="text-xs text-foreground-muted">
               Schedule after US market close (4 PM ET) for complete daily prices.
@@ -384,7 +384,7 @@ export default function SettingsPage() {
           <button
             onClick={handleRefreshNow}
             disabled={refreshing}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {refreshing && (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -419,7 +419,7 @@ export default function SettingsPage() {
           )}
 
           {indexCoverage?.isUpToDate && (
-            <p className="text-sm text-emerald-500 flex items-center gap-1.5">
+            <p className="text-sm text-primary flex items-center gap-1.5">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
@@ -430,7 +430,7 @@ export default function SettingsPage() {
           <button
             onClick={handleBackfillIndices}
             disabled={backfilling || (indexCoverage?.isUpToDate ?? false)}
-            className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {backfilling && (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -490,7 +490,7 @@ export default function SettingsPage() {
                   }
                 }}
                 placeholder="0.00"
-                className="w-32 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                className="w-32 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
               />
               <span className="text-sm text-foreground-muted">%</span>
             </div>
@@ -518,7 +518,7 @@ export default function SettingsPage() {
               key={option.value}
               className={`block p-4 rounded-xl border cursor-pointer transition-all ${
                 balanceReversal === option.value
-                  ? 'bg-emerald-500/10 border-emerald-500/50'
+                  ? 'bg-primary/10 border-primary/50'
                   : 'bg-surface border-border hover:border-border-hover'
               }`}
             >
@@ -530,13 +530,13 @@ export default function SettingsPage() {
                   checked={balanceReversal === option.value}
                   onChange={() => handleBalanceReversalChange(option.value)}
                   disabled={savingBalance}
-                  className="mt-1 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
+                  className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
                 />
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-foreground">{option.label}</span>
                     {savingBalance && balanceReversal === option.value && (
-                      <div className="w-3 h-3 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                      <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     )}
                   </div>
                   <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
@@ -580,7 +580,7 @@ export default function SettingsPage() {
               type="checkbox"
               checked={costBasisCarryOver}
               onChange={(e) => setCostBasisCarryOver(e.target.checked)}
-              className="w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover rounded focus:ring-emerald-500/50"
+              className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
             />
             <div>
               <span className="text-sm text-foreground">Carry over cost basis on transfers</span>
@@ -599,7 +599,7 @@ export default function SettingsPage() {
                     key={option.value}
                     className={`block p-3 rounded-lg border cursor-pointer transition-all ${
                       costBasisMethod === option.value
-                        ? 'bg-emerald-500/10 border-emerald-500/50'
+                        ? 'bg-primary/10 border-primary/50'
                         : 'bg-surface border-border hover:border-border-hover'
                     }`}
                   >
@@ -610,7 +610,7 @@ export default function SettingsPage() {
                         value={option.value}
                         checked={costBasisMethod === option.value}
                         onChange={() => setCostBasisMethod(option.value)}
-                        className="mt-0.5 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
+                        className="mt-0.5 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
                       />
                       <div className="flex-1">
                         <span className="font-medium text-foreground text-sm">{option.label}</span>
@@ -636,7 +636,7 @@ export default function SettingsPage() {
             <select
               value={dateFormat}
               onChange={(e) => setDateFormat(e.target.value as DateFormat)}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
               <option value="MM/DD/YYYY">MM/DD/YYYY</option>
               <option value="YYYY-MM-DD">YYYY-MM-DD</option>
@@ -653,7 +653,7 @@ export default function SettingsPage() {
             <select
               value={defaultLedgerMode}
               onChange={(e) => setDefaultLedgerMode(e.target.value as 'readonly' | 'edit')}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
               <option value="readonly">Read-only</option>
               <option value="edit">Edit Mode</option>

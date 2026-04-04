@@ -209,7 +209,7 @@ function InputField({ label, value, onChange, type = 'number', suffix, placehold
           max={max}
           placeholder={placeholder}
           aria-label={ariaLabel || label}
-          className={`w-full bg-input-bg border border-border rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
+          className={`w-full bg-input-bg border border-border rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
             prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
           }${prefix && sfx ? ' pr-10' : ''}`}
         />
@@ -227,27 +227,27 @@ interface ResultCardProps {
   label: string;
   value: string;
   sublabel: string;
-  color: 'cyan' | 'emerald' | 'purple' | 'amber' | 'rose';
+  color: 'primary' | 'emerald' | 'purple' | 'amber' | 'rose';
 }
 
 function ResultCard({ label, value, sublabel, color }: ResultCardProps) {
-  const gradients: Record<string, string> = {
-    cyan: 'from-cyan-500/20 to-cyan-600/5',
-    emerald: 'from-emerald-500/20 to-emerald-600/5',
-    purple: 'from-purple-500/20 to-purple-600/5',
-    amber: 'from-amber-500/20 to-amber-600/5',
-    rose: 'from-rose-500/20 to-rose-600/5',
+  const backgrounds: Record<string, string> = {
+    primary: 'bg-primary/10',
+    emerald: 'bg-primary/10',
+    purple: 'bg-purple-500/10',
+    amber: 'bg-amber-500/10',
+    rose: 'bg-rose-500/10',
   };
   const accents: Record<string, string> = {
-    cyan: 'text-cyan-400',
-    emerald: 'text-emerald-400',
+    primary: 'text-primary',
+    emerald: 'text-primary',
     purple: 'text-purple-400',
     amber: 'text-amber-400',
     rose: 'text-rose-400',
   };
 
   return (
-    <div className={`bg-gradient-to-br ${gradients[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
+    <div className={`${backgrounds[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
       <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider">{label}</p>
       <p className={`text-2xl font-bold mt-1 ${accents[color]}`}>{value}</p>
       <p className="text-xs text-foreground-muted mt-1">{sublabel}</p>
@@ -268,7 +268,7 @@ interface SavedCardProps {
 
 function SavedMortgageCard({ config, onLoad, onDelete, isDeleting }: SavedCardProps) {
   return (
-    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-cyan-500/30 transition-colors">
+    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
       <button
         type="button"
         onClick={() => onLoad(config)}
@@ -751,7 +751,7 @@ export default function MortgageCalculatorPage() {
             label="Interest Rate"
             value={`${annualRate.toFixed(2)}%`}
             sublabel={`${(annualRate / 12).toFixed(4)}% monthly`}
-            color="cyan"
+            color="primary"
           />
           <ResultCard
             label="Payoff Date"
@@ -801,7 +801,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setEntryMode('linked')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               entryMode === 'linked'
-                ? 'bg-cyan-600 text-white'
+                ? 'bg-primary text-white'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -812,7 +812,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setEntryMode('new')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               entryMode === 'new'
-                ? 'bg-cyan-600 text-white'
+                ? 'bg-primary text-white'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -856,7 +856,7 @@ export default function MortgageCalculatorPage() {
                     });
                     setExtraPayment('0');
                   }}
-                  className="text-xs text-foreground-muted hover:text-cyan-400 transition-colors"
+                  className="text-xs text-foreground-muted hover:text-primary transition-colors"
                 >
                   + New Mortgage
                 </button>
@@ -908,7 +908,7 @@ export default function MortgageCalculatorPage() {
                   value={loanTermPreset}
                   onChange={e => setLoanTermPreset(e.target.value)}
                   aria-label="Loan term in years"
-                  className="w-full bg-input-bg border border-border rounded-lg py-2 pl-3 pr-8 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                  className="w-full bg-input-bg border border-border rounded-lg py-2 pl-3 pr-8 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 >
                   <option value="10">10 years</option>
                   <option value="15">15 years</option>
@@ -954,12 +954,12 @@ export default function MortgageCalculatorPage() {
                 type="button"
                 onClick={handleSave}
                 disabled={saveStatus === 'saving' || !name.trim()}
-                className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-5 py-2 bg-primary hover:bg-primary-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {saveStatus === 'saving' ? 'Saving...' : editingId ? 'Update' : 'Save'}
               </button>
               {saveStatus === 'saved' && (
-                <span className="text-sm text-emerald-400">Saved successfully</span>
+                <span className="text-sm text-primary">Saved successfully</span>
               )}
               {saveStatus === 'error' && (
                 <span className="text-sm text-rose-400">Failed to save</span>
@@ -978,7 +978,7 @@ export default function MortgageCalculatorPage() {
           label="Monthly Payment (P&I)"
           value={fmtFull.format(calculations.monthlyPayment)}
           sublabel={extra > 0 ? `+ ${fmtFull.format(extra)} extra = ${fmtFull.format(calculations.monthlyPayment + extra)}/mo` : 'Principal & Interest only'}
-          color="cyan"
+          color="primary"
         />
         <ResultCard
           label="Total Interest"
@@ -1029,7 +1029,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setPayoffMode('extra-to-date')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               payoffMode === 'extra-to-date'
-                ? 'bg-cyan-600 text-white'
+                ? 'bg-primary text-white'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -1040,7 +1040,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setPayoffMode('date-to-payment')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               payoffMode === 'date-to-payment'
-                ? 'bg-cyan-600 text-white'
+                ? 'bg-primary text-white'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -1082,7 +1082,7 @@ export default function MortgageCalculatorPage() {
                 label="Time Saved"
                 value={formatMonthsToYearsMonths(payoffExtraCalc.monthsSaved)}
                 sublabel={`${payoffExtraCalc.monthsSaved} fewer payments`}
-                color="cyan"
+                color="primary"
               />
               <ResultCard
                 label="Interest Saved"
@@ -1146,11 +1146,11 @@ export default function MortgageCalculatorPage() {
                 <span className="text-sm text-rose-400">{payoffTargetCalc.error}</span>
               </div>
             ) : payoffTargetCalc.noExtraNeeded ? (
-              <div className="flex items-center gap-3 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
-                <svg className="w-5 h-5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/30 rounded-xl">
+                <svg className="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-sm text-emerald-400">
+                <span className="text-sm text-primary">
                   No extra payment needed! Your mortgage will already be paid off before {targetYear} with regular payments.
                 </span>
               </div>
@@ -1162,7 +1162,7 @@ export default function MortgageCalculatorPage() {
                     label="Required Monthly Payment"
                     value={fmtFull.format(payoffTargetCalc.requiredPayment)}
                     sublabel="Total payment including extra"
-                    color="cyan"
+                    color="primary"
                   />
                   <ResultCard
                     label="Required Extra Payment"

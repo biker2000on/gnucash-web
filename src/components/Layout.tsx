@@ -404,7 +404,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     className={`relative flex items-center rounded-xl transition-all duration-200 group
                         ${isCollapsed ? 'justify-center px-0 py-3' : 'px-4 py-3'}
                         ${isActive
-                            ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-emerald-500/10'
+                            ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
                             : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
                         }`}
                 >
@@ -480,7 +480,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     ${collapsed && hydrated ? 'justify-center px-2 py-4' : 'justify-between px-6 py-4'}`}>
                     {/* Title (hidden when collapsed) */}
                     {!(collapsed && hydrated) && (
-                        <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent truncate">
+                        <h1 className="text-xl font-bold text-primary truncate">
                             GnuCash Web
                         </h1>
                     )}
@@ -511,7 +511,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {!(collapsed && hydrated) && (
                     <div
                         onPointerDown={handleDragStart}
-                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-cyan-500/30 active:bg-cyan-500/50 transition-colors z-10"
+                        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors z-10"
                         title="Drag to resize sidebar"
                     />
                 )}
@@ -536,7 +536,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
                 {/* Mobile header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-sidebar-border">
-                    <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+                    <h1 className="text-xl font-bold text-primary">
                         GnuCash Web
                     </h1>
                     <button
@@ -582,7 +582,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                     onClick={handleMobileParentClick}
                                     className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200
                                         ${isActive
-                                            ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-emerald-500/10'
+                                            ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
                                             : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
                                         }`}
                                 >

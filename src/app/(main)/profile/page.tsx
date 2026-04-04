@@ -172,7 +172,7 @@ export default function ProfilePage() {
             <div className="max-w-2xl mx-auto">
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 shadow-2xl">
                     <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading profile...</span>
                     </div>
                 </div>
@@ -207,7 +207,7 @@ export default function ProfilePage() {
             {/* User Info Card */}
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
                 <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center text-white text-2xl font-bold">
+                    <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-white text-2xl font-bold">
                         {user.username.charAt(0).toUpperCase()}
                     </div>
                     <div>
@@ -228,7 +228,7 @@ export default function ProfilePage() {
                     <div
                         className={`mb-4 px-4 py-2 rounded-lg text-sm ${
                             birthdayMessage.type === 'success'
-                                ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                                ? 'bg-primary/10 border border-primary/30 text-primary'
                                 : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
                         }`}
                     >
@@ -244,14 +244,14 @@ export default function ProfilePage() {
                             value={birthday}
                             onChange={(e) => setBirthday(e.target.value)}
                             disabled={birthdayLoading}
-                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 disabled:opacity-50"
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50"
                         />
                     </div>
                     <button
                         type="button"
                         onClick={handleBirthdaySave}
                         disabled={birthdaySaving || !birthday}
-                        className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed text-sm"
+                        className="bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed text-sm"
                     >
                         {birthdaySaving ? 'Saving...' : 'Save'}
                     </button>
@@ -276,7 +276,7 @@ export default function ProfilePage() {
                             key={option.value}
                             className={`block p-4 rounded-xl border cursor-pointer transition-all ${
                                 theme === option.value
-                                    ? 'bg-emerald-500/10 border-emerald-500/50'
+                                    ? 'bg-primary/10 border-primary/50'
                                     : 'bg-surface/50 border-border hover:border-border-hover'
                             }`}
                         >
@@ -287,7 +287,7 @@ export default function ProfilePage() {
                                     value={option.value}
                                     checked={theme === option.value}
                                     onChange={() => setTheme(option.value)}
-                                    className="mt-1 w-4 h-4 text-emerald-500 bg-background-tertiary border-border-hover focus:ring-emerald-500/50"
+                                    className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
                                 />
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2">
@@ -309,13 +309,13 @@ export default function ProfilePage() {
                 </p>
 
                 {installMessage && (
-                    <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-cyan-500/10 border border-cyan-500/30 text-cyan-300">
+                    <div className="mb-4 px-4 py-3 rounded-lg text-sm bg-primary/10 border border-primary/30 text-primary">
                         {installMessage}
                     </div>
                 )}
 
                 {isInstalled ? (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+                    <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary">
                         This app is already installed on this device.
                     </div>
                 ) : (
@@ -325,7 +325,7 @@ export default function ProfilePage() {
                                 type="button"
                                 onClick={handleInstallApp}
                                 disabled={installingApp}
-                                className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                className="w-full sm:w-auto bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {installingApp && (
                                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -372,7 +372,7 @@ export default function ProfilePage() {
                     <div
                         className={`mb-4 px-4 py-2 rounded-lg text-sm ${
                             passwordMessage.type === 'success'
-                                ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                                ? 'bg-primary/10 border border-primary/30 text-primary'
                                 : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
                         }`}
                     >
@@ -388,7 +388,7 @@ export default function ProfilePage() {
                             value={currentPassword}
                             onChange={(e) => setCurrentPassword(e.target.value)}
                             required
-                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
                     <div>
@@ -399,7 +399,7 @@ export default function ProfilePage() {
                             onChange={(e) => setNewPassword(e.target.value)}
                             required
                             minLength={8}
-                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
                     <div>
@@ -410,13 +410,13 @@ export default function ProfilePage() {
                             onChange={(e) => setConfirmPassword(e.target.value)}
                             required
                             minLength={8}
-                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
                     <button
                         type="submit"
                         disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {changingPassword && (
                             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

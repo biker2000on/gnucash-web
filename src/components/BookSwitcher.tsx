@@ -165,7 +165,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                 key={book.guid}
                                 className={`flex items-center w-full transition-colors
                                     ${index === highlightedIndex
-                                        ? 'bg-emerald-500/20 text-foreground'
+                                        ? 'bg-primary/20 text-foreground'
                                         : book.guid === activeBookGuid
                                             ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
                                             : 'text-foreground-secondary hover:bg-surface-hover'

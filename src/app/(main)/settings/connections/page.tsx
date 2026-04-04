@@ -226,7 +226,7 @@ export default function ConnectionsPage() {
     return (
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-3">
-          <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
           <span className="text-foreground-secondary">Loading connections...</span>
         </div>
       </div>
@@ -241,14 +241,14 @@ export default function ConnectionsPage() {
       <div className="bg-surface rounded-xl border border-border p-6">
         <h2 className="text-lg font-semibold text-foreground mb-2">Bank Connections</h2>
         <p className="text-sm text-foreground-muted mb-4">
-          Connect your bank accounts via <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">SimpleFin Bridge</a> to automatically import transactions.
+          Connect your bank accounts via <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-hover">SimpleFin Bridge</a> to automatically import transactions.
         </p>
 
         {!simplefinConnected ? (
           <div className="space-y-4">
             <div className="text-sm text-foreground-secondary space-y-2">
               <ol className="list-decimal list-inside space-y-1 text-foreground-muted">
-                <li>Visit <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">SimpleFin Bridge</a> and create an account ($1.50/month)</li>
+                <li>Visit <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-hover">SimpleFin Bridge</a> and create an account ($1.50/month)</li>
                 <li>Connect your banks through their secure portal</li>
                 <li>Generate a setup token</li>
                 <li>Paste the token below</li>
@@ -261,12 +261,12 @@ export default function ConnectionsPage() {
                 value={sfSetupToken}
                 onChange={(e) => setSfSetupToken(e.target.value)}
                 placeholder="Paste your SimpleFin setup token..."
-                className="flex-1 bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                className="flex-1 bg-input-bg border border-border rounded-lg px-4 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
               />
               <button
                 onClick={handleSfConnect}
                 disabled={sfConnecting || !sfSetupToken.trim()}
-                className="px-6 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
+                className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
               >
                 {sfConnecting ? (
                   <>
@@ -285,7 +285,7 @@ export default function ConnectionsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-primary" />
                   <span className="text-sm font-medium text-foreground">Connected</span>
                 </div>
                 <p className="text-xs text-foreground-muted">
@@ -308,7 +308,7 @@ export default function ConnectionsPage() {
                 <button
                   onClick={handleSfSync}
                   disabled={sfSyncing}
-                  className="px-4 py-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
+                  className="px-4 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
                 >
                   {sfSyncing ? (
                     <>
@@ -330,13 +330,13 @@ export default function ConnectionsPage() {
 
             {/* Sync Results */}
             {sfSyncResult && (
-              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-                <p className="text-sm text-emerald-400 font-medium">
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                <p className="text-sm text-primary font-medium">
                   Imported {sfSyncResult.transactionsImported} transactions, skipped {sfSyncResult.transactionsSkipped} duplicates
                   ({sfSyncResult.accountsProcessed} accounts processed)
                 </p>
                 {sfSyncResult.transactionsMatched && (sfSyncResult.transactionsMatched.manualReconciliation > 0 || sfSyncResult.transactionsMatched.transferDedup > 0) && (
-                  <p className="text-sm text-cyan-400 mt-1">
+                  <p className="text-sm text-primary mt-1">
                     {sfSyncResult.transactionsMatched.manualReconciliation > 0 && (
                       <span>{sfSyncResult.transactionsMatched.manualReconciliation} matched to existing transactions</span>
                     )}
@@ -397,7 +397,7 @@ export default function ConnectionsPage() {
                                 type="checkbox"
                                 checked={account.isInvestment}
                                 onChange={(e) => handleSfToggleInvestment(account.id, e.target.checked, account)}
-                                className="w-3 h-3 text-cyan-500 bg-background-tertiary border-border-hover rounded focus:ring-cyan-500/50"
+                                className="w-3 h-3 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
                               />
                               <span className="text-[10px] text-foreground-muted">
                                 Investment (routes to child accounts by symbol)
@@ -407,7 +407,7 @@ export default function ConnectionsPage() {
                         </td>
                         <td className="px-4 py-2">
                           {account.isMapped ? (
-                            <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
                               Mapped
                             </span>
                           ) : (
@@ -426,7 +426,7 @@ export default function ConnectionsPage() {
             {sfAccounts.length === 0 && (
               <p className="text-sm text-foreground-muted text-center py-4">
                 No bank accounts found. Make sure you have connected banks on{' '}
-                <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300">
+                <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-hover">
                   SimpleFin Bridge
                 </a>.
               </p>

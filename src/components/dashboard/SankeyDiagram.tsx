@@ -250,7 +250,7 @@ export default function SankeyDiagram({ data, loading }: SankeyDiagramProps) {
                     <select
                         value={displayLevel}
                         onChange={(e) => setDisplayLevel(parseInt(e.target.value))}
-                        className="text-sm bg-background border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        className="text-sm bg-background border border-border rounded px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                     >
                         {Array.from({ length: maxDepth }, (_, i) => (
                             <option key={i + 1} value={i + 1}>

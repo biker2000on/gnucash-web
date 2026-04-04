@@ -2,17 +2,17 @@
 
 // GnuCash account types
 export const ACCOUNT_TYPES = [
-    { value: 'ASSET', label: 'Asset', color: 'emerald' },
-    { value: 'BANK', label: 'Bank', color: 'emerald' },
-    { value: 'CASH', label: 'Cash', color: 'emerald' },
+    { value: 'ASSET', label: 'Asset', color: 'primary' },
+    { value: 'BANK', label: 'Bank', color: 'primary' },
+    { value: 'CASH', label: 'Cash', color: 'primary' },
     { value: 'CREDIT', label: 'Credit Card', color: 'rose' },
     { value: 'LIABILITY', label: 'Liability', color: 'rose' },
-    { value: 'INCOME', label: 'Income', color: 'cyan' },
+    { value: 'INCOME', label: 'Income', color: 'primary' },
     { value: 'EXPENSE', label: 'Expense', color: 'orange' },
     { value: 'EQUITY', label: 'Equity', color: 'purple' },
     { value: 'STOCK', label: 'Stock', color: 'amber' },
     { value: 'MUTUAL', label: 'Mutual Fund', color: 'amber' },
-    { value: 'RECEIVABLE', label: 'Receivable', color: 'emerald' },
+    { value: 'RECEIVABLE', label: 'Receivable', color: 'primary' },
     { value: 'PAYABLE', label: 'Payable', color: 'rose' },
 ] as const;
 
@@ -31,9 +31,8 @@ export function AccountTypeFilter({ selectedTypes, onChange }: AccountTypeFilter
     };
 
     const colorClasses: Record<string, string> = {
-        emerald: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400',
+        primary: 'bg-primary/20 border-primary/50 text-primary',
         rose: 'bg-rose-500/20 border-rose-500/50 text-rose-400',
-        cyan: 'bg-cyan-500/20 border-cyan-500/50 text-cyan-400',
         orange: 'bg-orange-500/20 border-orange-500/50 text-orange-400',
         purple: 'bg-purple-500/20 border-purple-500/50 text-purple-400',
         amber: 'bg-amber-500/20 border-amber-500/50 text-amber-400',

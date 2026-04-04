@@ -598,7 +598,7 @@ export default function FireCalculatorPage() {
       {isLoading && (
         <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-8">
           <div className="flex items-center gap-4">
-            <div className="animate-spin h-6 w-6 border-2 border-cyan-500 border-t-transparent rounded-full" />
+            <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
             <div>
               <p className="text-foreground font-medium">Loading your financial data...</p>
               <p className="text-sm text-foreground-muted mt-1">Fetching KPIs and portfolio performance</p>
@@ -628,7 +628,7 @@ export default function FireCalculatorPage() {
           <div className="flex gap-3">
             <button
               onClick={handleRetry}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm rounded-lg transition-colors"
+              className="px-4 py-2 bg-primary hover:bg-primary-hover text-white text-sm rounded-lg transition-colors"
             >
               Retry
             </button>
@@ -661,7 +661,7 @@ export default function FireCalculatorPage() {
             label="Net Worth"
             value={fmt.format(currentSavings)}
             sublabel={sourceLabel(currentSavingsDDV) === 'data' ? 'Current portfolio value' : 'Manual entry'}
-            color="cyan"
+            color="primary"
           />
           <ResultCard
             label="FI Number"
@@ -693,7 +693,7 @@ export default function FireCalculatorPage() {
       {!isLoading && !isNaN(calculations.yearsToFI) && isFinite(calculations.yearsToFI) && calculations.yearsToFI > 0 && (
         <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
           {currentAge + calculations.yearsToFI <= targetRetirementAge ? (
-            <div className="flex items-center gap-3 text-emerald-400">
+            <div className="flex items-center gap-3 text-primary">
               <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
@@ -884,7 +884,7 @@ export default function FireCalculatorPage() {
                 <button
                   type="button"
                   onClick={() => { setBirthdayEditing(true); setBirthdayInput(''); }}
-                  className="mt-1 text-xs text-emerald-500 hover:text-emerald-400"
+                  className="mt-1 text-xs text-primary hover:text-primary-hover"
                 >
                   Set your birthday to auto-calculate age
                 </button>
@@ -895,13 +895,13 @@ export default function FireCalculatorPage() {
                     type="date"
                     value={birthdayInput}
                     onChange={(e) => setBirthdayInput(e.target.value)}
-                    className="bg-background-tertiary border border-border rounded-lg px-2 py-1 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                    className="bg-background-tertiary border border-border rounded-lg px-2 py-1 text-sm text-foreground focus:outline-none focus:border-primary/50"
                   />
                   <button
                     type="button"
                     onClick={() => birthdayInput && saveBirthday(birthdayInput)}
                     disabled={!birthdayInput || birthdaySaving}
-                    className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white px-3 py-1 rounded-lg"
+                    className="text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white px-3 py-1 rounded-lg"
                   >
                     {birthdaySaving ? 'Saving...' : 'Save'}
                   </button>
@@ -940,8 +940,8 @@ export default function FireCalculatorPage() {
                 role="switch"
                 aria-checked={adjustForInflation}
                 onClick={() => setAdjustForInflation(!adjustForInflation)}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-transparent ${
-                  adjustForInflation ? 'bg-cyan-600' : 'bg-foreground-muted/30'
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-transparent ${
+                  adjustForInflation ? 'bg-primary' : 'bg-foreground-muted/30'
                 }`}
               >
                 <span
@@ -975,12 +975,12 @@ export default function FireCalculatorPage() {
               value={configName}
               onChange={e => setConfigName(e.target.value)}
               placeholder="Configuration name..."
-              className="flex-1 bg-input-bg border border-border rounded-lg py-2 px-3 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+              className="flex-1 bg-input-bg border border-border rounded-lg py-2 px-3 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
             />
             <button
               onClick={handleSave}
               disabled={!configName.trim() || saveStatus === 'saving'}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors whitespace-nowrap"
+              className="px-4 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors whitespace-nowrap"
             >
               {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : editingId ? 'Update' : 'Save'}
             </button>
@@ -1053,7 +1053,7 @@ function InputField({ label, value, onChange, type, suffix }: InputFieldProps) {
           value={value}
           onChange={e => onChange(parseFloat(e.target.value) || 0)}
           step={type === 'percent' ? 0.1 : type === 'currency' ? 1000 : 1}
-          className={`w-full bg-input-bg border border-border rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
+          className={`w-full bg-input-bg border border-border rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
             prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
           }${prefix && sfx ? ' pr-10' : ''}`}
         />
@@ -1111,7 +1111,7 @@ function DataDrivenInputField({
       <div className="flex items-center gap-2 mb-1">
         <label className="block text-sm font-medium text-foreground-muted">{label}</label>
         {sourceText && (
-          <span className={`text-xs ${source === 'data' ? 'text-cyan-400' : 'text-amber-400'}`}>
+          <span className={`text-xs ${source === 'data' ? 'text-primary' : 'text-amber-400'}`}>
             {sourceText}
           </span>
         )}
@@ -1141,7 +1141,7 @@ function DataDrivenInputField({
             onKeyDown={e => { if (e.key === 'Enter') onCommit(field); if (e.key === 'Escape') onCommit(field); }}
             autoFocus
             step={type === 'percent' ? 0.1 : 1000}
-            className={`w-full bg-input-bg border border-cyan-500 rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
+            className={`w-full bg-input-bg border border-primary rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
               prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
             }${prefix && sfx ? ' pr-10' : ''}`}
           />
@@ -1155,7 +1155,7 @@ function DataDrivenInputField({
         <button
           type="button"
           onClick={() => onStartEdit(field, value)}
-          className="w-full text-left bg-input-bg border border-border rounded-lg py-2 px-3 text-foreground text-sm hover:border-cyan-500/50 transition-colors group flex items-center justify-between"
+          className="w-full text-left bg-input-bg border border-border rounded-lg py-2 px-3 text-foreground text-sm hover:border-primary/50 transition-colors group flex items-center justify-between"
         >
           <span>
             {type === 'currency' ? fmt.format(value) : `${value.toFixed(type === 'percent' ? 2 : 0)}%`}
@@ -1177,32 +1177,32 @@ interface ResultCardProps {
   label: string;
   value: string;
   sublabel: string;
-  color: 'cyan' | 'emerald' | 'purple' | 'amber';
+  color: 'primary' | 'emerald' | 'purple' | 'amber';
   progress?: number;
 }
 
 function ResultCard({ label, value, sublabel, color, progress }: ResultCardProps) {
-  const gradients: Record<string, string> = {
-    cyan: 'from-cyan-500/20 to-cyan-600/5',
-    emerald: 'from-emerald-500/20 to-emerald-600/5',
-    purple: 'from-purple-500/20 to-purple-600/5',
-    amber: 'from-amber-500/20 to-amber-600/5',
+  const backgrounds: Record<string, string> = {
+    primary: 'bg-primary/10',
+    emerald: 'bg-primary/10',
+    purple: 'bg-purple-500/10',
+    amber: 'bg-amber-500/10',
   };
   const accents: Record<string, string> = {
-    cyan: 'text-cyan-400',
-    emerald: 'text-emerald-400',
+    primary: 'text-primary',
+    emerald: 'text-primary',
     purple: 'text-purple-400',
     amber: 'text-amber-400',
   };
   const bars: Record<string, string> = {
-    cyan: 'bg-cyan-500',
-    emerald: 'bg-emerald-500',
+    primary: 'bg-primary',
+    emerald: 'bg-primary',
     purple: 'bg-purple-500',
     amber: 'bg-amber-500',
   };
 
   return (
-    <div className={`bg-gradient-to-br ${gradients[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
+    <div className={`${backgrounds[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
       <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider">{label}</p>
       <p className={`text-2xl font-bold mt-1 ${accents[color]}`}>{value}</p>
       <p className="text-xs text-foreground-muted mt-1">{sublabel}</p>
@@ -1231,7 +1231,7 @@ interface SavedCardProps {
 
 function SavedConfigCard({ config, onLoad, onDelete, isDeleting }: SavedCardProps) {
   return (
-    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-cyan-500/30 transition-colors">
+    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
       <button
         type="button"
         onClick={() => onLoad(config)}

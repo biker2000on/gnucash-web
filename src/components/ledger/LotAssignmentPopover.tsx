@@ -78,7 +78,7 @@ export default function LotAssignmentPopover({
         onClick={() => setIsOpen(!isOpen)}
         className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
           currentLotGuid
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+            ? 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20'
             : 'border-border/50 bg-background-secondary/20 text-foreground-muted hover:bg-background-secondary/40'
         }`}
         title={currentLot ? `Assigned to: ${currentLot.title}` : 'Assign to lot'}
@@ -110,7 +110,7 @@ export default function LotAssignmentPopover({
                 disabled={loading || lot.guid === currentLotGuid}
                 className={`w-full text-left px-2 py-1.5 text-xs rounded transition-colors ${
                   lot.guid === currentLotGuid
-                    ? 'bg-emerald-500/10 text-emerald-400'
+                    ? 'bg-primary/10 text-primary'
                     : 'hover:bg-background-secondary/40 text-foreground'
                 }`}
               >
@@ -130,7 +130,7 @@ export default function LotAssignmentPopover({
                   value={newTitle}
                   onChange={e => setNewTitle(e.target.value)}
                   placeholder="Lot title..."
-                  className="w-full px-2 py-1 text-xs bg-input-bg border border-border rounded text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                  className="w-full px-2 py-1 text-xs bg-input-bg border border-border rounded text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-1 focus:ring-primary/50"
                   autoFocus
                   onKeyDown={e => {
                     if (e.key === 'Enter') handleCreate();
@@ -141,7 +141,7 @@ export default function LotAssignmentPopover({
                   <button
                     onClick={handleCreate}
                     disabled={loading || !newTitle.trim()}
-                    className="flex-1 px-2 py-1 text-xs bg-emerald-500/20 text-emerald-400 rounded hover:bg-emerald-500/30 disabled:opacity-50 transition-colors"
+                    className="flex-1 px-2 py-1 text-xs bg-primary/20 text-primary rounded hover:bg-primary/30 disabled:opacity-50 transition-colors"
                   >
                     Create
                   </button>
@@ -156,7 +156,7 @@ export default function LotAssignmentPopover({
             ) : (
               <button
                 onClick={() => setIsCreating(true)}
-                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-background-secondary/40 text-cyan-400 transition-colors"
+                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-background-secondary/40 text-primary transition-colors"
               >
                 + New Lot
               </button>

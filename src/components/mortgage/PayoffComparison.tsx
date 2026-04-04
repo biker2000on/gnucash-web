@@ -74,7 +74,7 @@ export function PayoffComparison({
           <tr className="border-t border-border/50">
             <td className="py-3 px-4 text-foreground-muted font-medium">Monthly Payment</td>
             <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmtFull.format(originalPayment)}</td>
-            <td className="py-3 px-4 text-right text-cyan-400 font-semibold tabular-nums">{fmtFull.format(acceleratedPayment)}</td>
+            <td className="py-3 px-4 text-right text-primary font-semibold tabular-nums">{fmtFull.format(acceleratedPayment)}</td>
           </tr>
           <tr className="border-t border-border/50 bg-surface/20">
             <td className="py-3 px-4 text-foreground-muted font-medium">Payoff Term</td>
@@ -92,15 +92,15 @@ export function PayoffComparison({
             <td className="py-3 px-4 text-right text-emerald-400 font-semibold tabular-nums">{fmt.format(acceleratedTotal)}</td>
           </tr>
           {/* Delta row */}
-          <tr className="border-t-2 border-emerald-500/30 bg-emerald-500/10">
-            <td className="py-3 px-4 text-emerald-400 font-semibold">Savings</td>
-            <td className="py-3 px-4 text-right text-emerald-400 font-semibold tabular-nums">
+          <tr className="border-t-2 border-primary/30 bg-primary/10">
+            <td className="py-3 px-4 text-primary font-semibold">Savings</td>
+            <td className="py-3 px-4 text-right text-primary font-semibold tabular-nums">
               +{fmtFull.format(paymentDelta)}/mo
             </td>
-            <td className="py-3 px-4 text-right text-emerald-400 font-semibold">
+            <td className="py-3 px-4 text-right text-primary font-semibold">
               {monthsDelta > 0 && <span className="block">{formatMonthsToYearsMonths(monthsDelta)} sooner</span>}
               <span className="block tabular-nums">{fmt.format(interestDelta)} interest saved</span>
-              <span className="block text-xs text-emerald-400/70 tabular-nums">{fmt.format(totalDelta)} total saved</span>
+              <span className="block text-xs text-primary/70 tabular-nums">{fmt.format(totalDelta)} total saved</span>
             </td>
           </tr>
         </tbody>

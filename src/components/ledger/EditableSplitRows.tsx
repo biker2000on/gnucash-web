@@ -283,7 +283,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                         data-split-row
                         className={`border-b border-border/30 ${
                             isFocused
-                                ? 'bg-cyan-500/5 ring-1 ring-cyan-500/30 ring-inset'
+                                ? 'bg-primary/5 ring-1 ring-primary/30 ring-inset'
                                 : 'bg-background-secondary/30'
                         } ${isPlaceholder ? 'opacity-60' : ''}`}
                         onClick={() => onFocusedSplitChange?.(index)}
@@ -303,7 +303,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onFocus={() => onColumnFocus?.(0)}
                                     autoFocus={focusedColumnIndex === 0}
                                     placeholder="Memo..."
-                                    className="w-full bg-transparent text-xs outline-none border-b border-transparent focus:border-cyan-500/50"
+                                    className="w-full bg-transparent text-xs outline-none border-b border-transparent focus:border-primary/50"
                                     onKeyDown={e => {
                                         if (e.key === 'ArrowUp') {
                                             e.preventDefault();
@@ -365,7 +365,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     }}
                                 />
                             ) : (
-                                <span className="text-xs text-cyan-400">
+                                <span className="text-xs text-primary">
                                     {split.account_name || ''}
                                 </span>
                             )}

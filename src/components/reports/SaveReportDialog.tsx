@@ -92,7 +92,7 @@ export default function SaveReportDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={255}
-            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary"
             placeholder="Report name"
             disabled={loading}
           />
@@ -107,7 +107,7 @@ export default function SaveReportDialog({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary resize-none"
             placeholder="Optional description"
             disabled={loading}
           />
@@ -119,7 +119,7 @@ export default function SaveReportDialog({
             type="checkbox"
             checked={isStarred}
             onChange={(e) => setIsStarred(e.target.checked)}
-            className="w-4 h-4 rounded border-border bg-input-bg text-cyan-600 focus:ring-cyan-500 focus:ring-2"
+            className="w-4 h-4 rounded border-border bg-input-bg text-primary focus:ring-primary focus:ring-2"
             disabled={loading}
           />
           <label htmlFor="report-starred" className="text-sm text-foreground">
@@ -144,7 +144,7 @@ export default function SaveReportDialog({
           <button
             onClick={handleSave}
             disabled={loading}
-            className="flex-1 px-4 py-2 text-sm font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Saving...' : 'Save'}
           </button>

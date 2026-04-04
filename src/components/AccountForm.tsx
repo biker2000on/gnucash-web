@@ -19,21 +19,7 @@ const ACCOUNT_TYPES = [
     { value: 'TRADING', label: 'Trading', group: 'Other' },
 ] as const;
 
-const RETIREMENT_TYPES = [
-    { value: '401k', label: '401(k)' },
-    { value: '403b', label: '403(b)' },
-    { value: '457', label: '457' },
-    { value: 'traditional_ira', label: 'Traditional IRA' },
-    { value: 'roth_ira', label: 'Roth IRA' },
-    { value: 'hsa', label: 'HSA' },
-    { value: 'hra', label: 'HRA' },
-    { value: 'fsa', label: 'FSA' },
-    { value: 'brokerage', label: 'Brokerage (taxable)' },
-] as const;
-
-const RETIREMENT_ELIGIBLE_TYPES = ['STOCK', 'MUTUAL', 'ASSET', 'BANK'];
-
-export interface AccountFormData {
+interface AccountFormData {
     name: string;
     account_type: string;
     parent_guid: string | null;
@@ -42,10 +28,6 @@ export interface AccountFormData {
     description: string;
     hidden: number;
     placeholder: number;
-    notes: string;
-    tax_related: boolean;
-    is_retirement: boolean;
-    retirement_account_type: string | null;
 }
 
 interface FlatAccount {
@@ -66,13 +48,12 @@ interface Commodity {
 interface AccountFormProps {
     mode: 'create' | 'edit';
     initialData?: Partial<AccountFormData>;
-    accountGuid?: string;
-    parentGuid?: string | null;
+    parentGuid?: string | null; // Pre-selected parent for "New Child" action
     onSave: (data: AccountFormData) => Promise<void>;
     onCancel: () => void;
 }
 
-export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave, onCancel }: AccountFormProps) {
+export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }: AccountFormProps) {
     const [formData, setFormData] = useState<AccountFormData>({
         name: initialData?.name || '',
         account_type: initialData?.account_type || 'ASSET',
@@ -82,10 +63,6 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
         description: initialData?.description || '',
         hidden: initialData?.hidden ?? 0,
         placeholder: initialData?.placeholder ?? 0,
-        notes: initialData?.notes ?? '',
-        tax_related: initialData?.tax_related ?? false,
-        is_retirement: initialData?.is_retirement ?? false,
-        retirement_account_type: initialData?.retirement_account_type ?? null,
     });
 
     const [accounts, setAccounts] = useState<FlatAccount[]>([]);
@@ -96,6 +73,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
     const [saving, setSaving] = useState(false);
     const formRef = useRef<HTMLFormElement>(null);
 
+    // Fetch accounts and commodities for dropdowns
     useEffect(() => {
         async function fetchData() {
             setLoading(true);
@@ -112,14 +90,17 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
 
                 if (commoditiesRes.ok) {
                     const allComms = await commoditiesRes.json();
+                    // Filter to currencies only for the selector
                     const comms = allComms.filter((c: Commodity) =>
                         c.namespace === 'CURRENCY' || c.namespace === 'ISO4217'
                     );
                     setCommodities(comms);
+                    // Set default commodity if not set
                     setFormData(prev => {
                         if (prev.commodity_guid || comms.length === 0) {
                             return prev;
                         }
+
                         const usd = comms.find((c: Commodity) => c.mnemonic === 'USD');
                         return {
                             ...prev,
@@ -133,9 +114,11 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                 setLoading(false);
             }
         }
+
         fetchData();
     }, []);
 
+    // Update commodity when parent changes (inherit from parent)
     useEffect(() => {
         if (mode === 'create' && formData.parent_guid) {
             const parent = accounts.find(a => a.guid === formData.parent_guid);
@@ -157,9 +140,6 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
         if (mode === 'create' && !formData.commodity_guid) {
             fieldErrors.commodity_guid = 'Required';
         }
-        if (formData.is_retirement && !formData.retirement_account_type) {
-            fieldErrors.retirement_account_type = 'Required when retirement is enabled';
-        }
 
         const hasErrors = Object.keys(fieldErrors).length > 0;
         return {
@@ -177,6 +157,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
         setError(validation.error);
 
         if (!validation.valid) {
+            // Focus first invalid field
             const firstErrorField = Object.keys(validation.fieldErrors)[0];
             if (firstErrorField) {
                 const element = document.querySelector(`[data-field="${firstErrorField}"]`) as HTMLElement;
@@ -196,6 +177,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
         }
     };
 
+    // Setup keyboard shortcut
     useFormKeyboardShortcuts(formRef, () => handleSubmit(), {
         validate: () => validateForm().valid
     });
@@ -206,31 +188,16 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
         return acc;
     }, {} as Record<string, typeof ACCOUNT_TYPES[number][]>);
 
-    const accountTypeLabel = ACCOUNT_TYPES.find(t => t.value === formData.account_type)?.label || formData.account_type;
-    const commodityLabel = commodities.find(c => c.guid === formData.commodity_guid);
-    const commodityDisplayText = commodityLabel
-        ? `${commodityLabel.mnemonic} - ${commodityLabel.fullname || commodityLabel.mnemonic}`
-        : initialData?.commodity_guid || 'Unknown';
-
-    const availableParentAccounts = accounts.filter(a => {
-        if (mode === 'edit' && accountGuid) {
-            if (a.guid === accountGuid) return false;
-        }
-        return true;
-    });
-
-    const showRetirementSection = RETIREMENT_ELIGIBLE_TYPES.includes(formData.account_type);
-
     if (loading) {
         return (
             <div className="flex items-center justify-center p-8">
-                <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
             </div>
         );
     }
 
     return (
-        <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
                 <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-rose-400 text-sm">
                     {error}
@@ -248,7 +215,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                     data-field="name"
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all ${
+                    className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all ${
                         fieldErrors.name ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
                     }`}
                     placeholder="e.g., Checking Account"
@@ -258,8 +225,8 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                 )}
             </div>
 
-            {/* Account Type */}
-            {mode === 'create' ? (
+            {/* Account Type - only for create mode */}
+            {mode === 'create' && (
                 <div>
                     <label className="block text-sm font-medium text-foreground-secondary mb-2">
                         Account Type <span className="text-rose-400">*</span>
@@ -268,7 +235,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                         required
                         value={formData.account_type}
                         onChange={e => setFormData(prev => ({ ...prev, account_type: e.target.value }))}
-                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
                     >
                         {Object.entries(groupedAccountTypes).map(([group, types]) => (
                             <optgroup key={group} label={group}>
@@ -281,43 +248,34 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                         ))}
                     </select>
                 </div>
-            ) : (
+            )}
+
+            {/* Parent Account - only for create mode */}
+            {mode === 'create' && (
                 <div>
                     <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Account Type
+                        Parent Account
                     </label>
-                    <div className="w-full bg-input-bg/50 border border-border rounded-xl px-4 py-3 text-foreground-secondary">
-                        {accountTypeLabel}
-                    </div>
+                    <select
+                        value={formData.parent_guid || ''}
+                        onChange={e => setFormData(prev => ({ ...prev, parent_guid: e.target.value || null }))}
+                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
+                    >
+                        <option value="">(Top Level)</option>
+                        {accounts.map(acc => (
+                            <option key={acc.guid} value={acc.guid}>
+                                {acc.fullname}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="mt-1 text-xs text-foreground-muted">
+                        Select a parent to create a sub-account, or leave empty for top-level.
+                    </p>
                 </div>
             )}
 
-            {/* Parent Account */}
-            <div>
-                <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    Parent Account
-                </label>
-                <select
-                    value={formData.parent_guid || ''}
-                    onChange={e => setFormData(prev => ({ ...prev, parent_guid: e.target.value || null }))}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
-                >
-                    <option value="">(Top Level)</option>
-                    {availableParentAccounts.map(acc => (
-                        <option key={acc.guid} value={acc.guid}>
-                            {acc.fullname}
-                        </option>
-                    ))}
-                </select>
-                <p className="mt-1 text-xs text-foreground-muted">
-                    {mode === 'create'
-                        ? 'Select a parent to create a sub-account, or leave empty for top-level.'
-                        : 'Change the parent to move this account in the hierarchy.'}
-                </p>
-            </div>
-
-            {/* Currency/Commodity */}
-            {mode === 'create' ? (
+            {/* Currency/Commodity - only for create mode */}
+            {mode === 'create' && (
                 <div>
                     <label className="block text-sm font-medium text-foreground-secondary mb-2">
                         Currency <span className="text-rose-400">*</span>
@@ -327,7 +285,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                         data-field="commodity_guid"
                         value={formData.commodity_guid}
                         onChange={e => setFormData(prev => ({ ...prev, commodity_guid: e.target.value }))}
-                        className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer ${
+                        className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer ${
                             fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
                         }`}
                     >
@@ -341,15 +299,6 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                         <p className="mt-1 text-xs text-rose-400">{fieldErrors.commodity_guid}</p>
                     )}
                 </div>
-            ) : (
-                <div>
-                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Currency
-                    </label>
-                    <div className="w-full bg-input-bg/50 border border-border rounded-xl px-4 py-3 text-foreground-secondary">
-                        {commodityDisplayText}
-                    </div>
-                </div>
             )}
 
             {/* Account Code */}
@@ -361,7 +310,7 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                     type="text"
                     value={formData.code}
                     onChange={e => setFormData(prev => ({ ...prev, code: e.target.value }))}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all"
                     placeholder="e.g., 1010"
                 />
                 <p className="mt-1 text-xs text-foreground-muted">
@@ -377,34 +326,20 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                 <textarea
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                    rows={2}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all resize-none"
+                    rows={3}
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all resize-none"
                     placeholder="Optional description..."
                 />
             </div>
 
-            {/* Notes */}
-            <div>
-                <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    Notes
-                </label>
-                <textarea
-                    value={formData.notes}
-                    onChange={e => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                    rows={3}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-emerald-500/50 transition-all resize-none"
-                    placeholder="Optional notes (stored in GnuCash slots)..."
-                />
-            </div>
-
             {/* Flags */}
-            <div className="flex flex-wrap gap-6">
+            <div className="flex gap-6">
                 <label className="flex items-center gap-3 cursor-pointer">
                     <input
                         type="checkbox"
                         checked={formData.hidden === 1}
                         onChange={e => setFormData(prev => ({ ...prev, hidden: e.target.checked ? 1 : 0 }))}
-                        className="w-5 h-5 rounded border-border-hover bg-background text-emerald-500 focus:ring-emerald-500/50"
+                        className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
                     />
                     <span className="text-sm text-foreground-secondary">Hidden</span>
                 </label>
@@ -414,73 +349,15 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                         type="checkbox"
                         checked={formData.placeholder === 1}
                         onChange={e => setFormData(prev => ({ ...prev, placeholder: e.target.checked ? 1 : 0 }))}
-                        className="w-5 h-5 rounded border-border-hover bg-background text-emerald-500 focus:ring-emerald-500/50"
+                        className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
                     />
                     <span className="text-sm text-foreground-secondary">Placeholder</span>
-                </label>
-
-                <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                        type="checkbox"
-                        checked={formData.tax_related}
-                        onChange={e => setFormData(prev => ({ ...prev, tax_related: e.target.checked }))}
-                        className="w-5 h-5 rounded border-border-hover bg-background text-emerald-500 focus:ring-emerald-500/50"
-                    />
-                    <span className="text-sm text-foreground-secondary">Tax Related</span>
                 </label>
             </div>
 
             <p className="text-xs text-foreground-muted">
                 Placeholder accounts are used for organization and cannot hold transactions directly.
             </p>
-
-            {/* Retirement Section */}
-            {showRetirementSection && (
-                <div className="bg-background-secondary/30 border border-border rounded-xl p-4 space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer select-none">
-                        <input
-                            type="checkbox"
-                            checked={formData.is_retirement}
-                            onChange={e => setFormData(prev => ({
-                                ...prev,
-                                is_retirement: e.target.checked,
-                                retirement_account_type: e.target.checked ? prev.retirement_account_type : null,
-                            }))}
-                            className="w-5 h-5 rounded border-border-hover bg-background text-emerald-500 focus:ring-emerald-500/50"
-                        />
-                        <span className="text-sm text-foreground">Retirement Account</span>
-                        <span className="text-xs text-foreground-tertiary">
-                            (enables IRS contribution limit tracking)
-                        </span>
-                    </label>
-                    {formData.is_retirement && (
-                        <div className="ml-8">
-                            <label className="text-xs text-foreground-secondary block mb-1">Retirement Account Type</label>
-                            <select
-                                data-field="retirement_account_type"
-                                value={formData.retirement_account_type ?? ''}
-                                onChange={e => setFormData(prev => ({
-                                    ...prev,
-                                    retirement_account_type: e.target.value || null,
-                                }))}
-                                className={`w-full bg-input-bg border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer ${
-                                    fieldErrors.retirement_account_type ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
-                                }`}
-                            >
-                                <option value="">Select type...</option>
-                                {RETIREMENT_TYPES.map(type => (
-                                    <option key={type.value} value={type.value}>
-                                        {type.label}
-                                    </option>
-                                ))}
-                            </select>
-                            {fieldErrors.retirement_account_type && (
-                                <p className="mt-1 text-xs text-rose-400">{fieldErrors.retirement_account_type}</p>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
 
             {/* Actions */}
             <div className="flex flex-col-reverse sm:flex-row sm:justify-between sm:items-center gap-3 pt-4 border-t border-border">
@@ -497,8 +374,8 @@ export function AccountForm({ mode, initialData, accountGuid, parentGuid, onSave
                     </button>
                     <button
                         type="submit"
-                        disabled={saving || !formData.name || (mode === 'create' && !formData.commodity_guid)}
-                        className="px-6 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                        disabled={saving || !formData.name || !formData.commodity_guid}
+                        className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                     >
                         {saving ? 'Saving...' : mode === 'create' ? 'Create Account' : 'Save Changes'}
                     </button>

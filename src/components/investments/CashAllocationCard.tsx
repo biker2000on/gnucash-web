@@ -26,13 +26,13 @@ interface CashAllocationCardProps {
 function getCashColor(percent: number): string {
   if (percent > 20) return 'text-red-400';
   if (percent > 10) return 'text-amber-400';
-  return 'text-emerald-400';
+  return 'text-primary';
 }
 
 function getBarColor(percent: number): string {
   if (percent > 20) return 'bg-red-400/70';
   if (percent > 10) return 'bg-amber-400/70';
-  return 'bg-emerald-400/70';
+  return 'bg-primary/70';
 }
 
 export function CashAllocationCard({ cashByAccount, overallCash }: CashAllocationCardProps) {
@@ -95,7 +95,7 @@ function CashBar({ cashPercent }: { cashPercent: number }) {
   const clampedPercent = Math.min(Math.max(cashPercent, 0), 100);
 
   return (
-    <div className="w-full h-2 bg-cyan-600/30 rounded-full overflow-hidden">
+    <div className="w-full h-2 bg-primary/30 rounded-full overflow-hidden">
       <div
         className={`h-full rounded-full transition-all ${getBarColor(cashPercent)}`}
         style={{ width: `${clampedPercent}%` }}

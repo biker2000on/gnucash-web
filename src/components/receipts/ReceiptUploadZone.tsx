@@ -88,8 +88,8 @@ export function ReceiptUploadZone({ transactionGuid, onUploadComplete }: Receipt
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
         className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-colors ${
           isDragging
-            ? 'border-emerald-500 bg-emerald-500/10'
-            : 'border-border hover:border-emerald-400 hover:bg-surface-hover'
+            ? 'border-primary bg-primary/10'
+            : 'border-border hover:border-primary-hover hover:bg-surface-hover'
         }`}
       >
         <svg className="w-10 h-10 text-foreground-secondary mb-3" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
@@ -114,7 +114,7 @@ export function ReceiptUploadZone({ transactionGuid, onUploadComplete }: Receipt
         <>
           <button
             onClick={() => cameraInputRef.current?.click()}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors text-sm font-medium min-h-[44px]"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors text-sm font-medium min-h-[44px]"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
@@ -138,7 +138,7 @@ export function ReceiptUploadZone({ transactionGuid, onUploadComplete }: Receipt
           {uploads.map((upload, i) => (
             <div key={i} className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
               upload.status === 'uploading' ? 'bg-blue-500/10 text-blue-400' :
-              upload.status === 'success' ? 'bg-emerald-500/10 text-emerald-400' :
+              upload.status === 'success' ? 'bg-primary/10 text-primary' :
               'bg-red-500/10 text-red-400'
             }`}>
               {upload.status === 'uploading' && (

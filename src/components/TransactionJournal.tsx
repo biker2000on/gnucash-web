@@ -384,7 +384,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             <div className="p-6 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div className="flex items-center gap-3">
                     <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
-                        <span className="w-2 h-6 bg-cyan-500 rounded-full" />
+                        <span className="w-2 h-6 bg-primary rounded-full" />
                         General Ledger
                     </h2>
                     <span className="text-xs text-foreground-muted uppercase tracking-widest pt-1">
@@ -429,7 +429,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             ref={filterInputRef}
                             type="text"
                             placeholder="Search... (press / to focus)"
-                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
+                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                             value={filterText}
                             onChange={(e) => setFilterText(e.target.value)}
                         />
@@ -477,7 +477,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     <div ref={loader} className="p-6 flex justify-center border-t border-border">
                         {loading ? (
                             <div className="flex items-center gap-3">
-                                <div className="w-4 h-4 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                                <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                                 <span className="text-sm text-foreground-secondary">Loading more...</span>
                             </div>
                         ) : hasMore ? (
@@ -567,7 +567,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                     <div ref={loader} className="p-8 flex justify-center border-t border-border">
                         {loading ? (
                             <div className="flex items-center gap-3">
-                                <div className="w-4 h-4 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                                <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                                 <span className="text-sm text-foreground-secondary">Loading more transactions...</span>
                             </div>
                         ) : hasMore ? (

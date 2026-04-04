@@ -39,7 +39,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
             {index > 0 && (
               <div
                 className={`h-px w-8 transition-colors ${
-                  isCompleted ? 'bg-cyan-500' : 'bg-border'
+                  isCompleted ? 'bg-primary' : 'bg-border'
                 }`}
               />
             )}
@@ -47,9 +47,9 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
                   isActive
-                    ? 'bg-cyan-600 text-white'
+                    ? 'bg-primary text-white'
                     : isCompleted
-                      ? 'bg-cyan-600/30 text-cyan-400'
+                      ? 'bg-primary/30 text-primary'
                       : 'bg-surface-hover text-foreground-tertiary'
                 }`}
               >
@@ -266,7 +266,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           type="text"
           value={bookName}
           onChange={(e) => setBookName(e.target.value)}
-          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary"
           placeholder="e.g. My Finances"
           autoFocus
         />
@@ -281,7 +281,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           value={bookDescription}
           onChange={(e) => setBookDescription(e.target.value)}
           rows={3}
-          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary resize-none"
           placeholder="Optional description for this book"
         />
       </div>
@@ -314,7 +314,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
             const newLocale = locales.find(l => l.code === e.target.value);
             setSelectedTemplateId(newLocale?.templates[0]?.id ?? null);
           }}
-          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
         >
           {locales.map((loc) => (
             <option key={loc.code} value={loc.code}>
@@ -333,7 +333,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           <label
             className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
               selectedTemplateId === null
-                ? 'border-cyan-500/50 bg-cyan-500/5'
+                ? 'border-primary/50 bg-primary/5'
                 : 'border-border hover:border-border hover:bg-surface-hover/50'
             }`}
           >
@@ -342,7 +342,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
               name="template"
               checked={selectedTemplateId === null}
               onChange={() => setSelectedTemplateId(null)}
-              className="mt-0.5 accent-cyan-500"
+              className="mt-0.5 accent-primary"
             />
             <div>
               <div className="text-sm font-medium text-foreground">No Template</div>
@@ -358,7 +358,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
               key={tmpl.id}
               className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                 selectedTemplateId === tmpl.id
-                  ? 'border-cyan-500/50 bg-cyan-500/5'
+                  ? 'border-primary/50 bg-primary/5'
                   : 'border-border hover:border-border hover:bg-surface-hover/50'
               }`}
             >
@@ -367,7 +367,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
                 name="template"
                 checked={selectedTemplateId === tmpl.id}
                 onChange={() => setSelectedTemplateId(tmpl.id)}
-                className="mt-0.5 accent-cyan-500"
+                className="mt-0.5 accent-primary"
               />
               <div>
                 <div className="text-sm font-medium text-foreground">{tmpl.name}</div>
@@ -468,7 +468,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           <button
             onClick={handleNext}
             disabled={!canGoNext()}
-            className="px-5 py-2 text-sm font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-5 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next
           </button>
@@ -476,7 +476,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           <button
             onClick={handleCreate}
             disabled={creating}
-            className="px-5 py-2 text-sm font-medium text-white bg-cyan-600 rounded-lg hover:bg-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-5 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {creating ? (
               <>

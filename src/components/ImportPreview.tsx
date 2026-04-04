@@ -64,7 +64,7 @@ export function ImportPreview({ counts, onConfirm, onCancel, importing }: Import
         <button
           onClick={onConfirm}
           disabled={importing}
-          className="flex items-center gap-2 px-5 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-xl transition-colors"
+          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-xl transition-colors"
         >
           {importing ? (
             <>

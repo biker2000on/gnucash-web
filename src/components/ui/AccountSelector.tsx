@@ -268,7 +268,7 @@ export function AccountSelector({
             <div
                 className={`flex items-center bg-input-bg border rounded-lg ${compact ? 'px-2 py-1' : 'px-3 py-2'} cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-border-hover'
-                } ${isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'}`}
+                } ${isOpen ? 'border-primary/50 ring-1 ring-primary/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'}`}
                 onClick={() => !disabled && inputRef.current?.focus()}
             >
                 <input
@@ -325,9 +325,9 @@ export function AccountSelector({
                                                 ref={el => { itemRefs.current[currentIndex] = el; }}
                                                 className={`px-3 py-2 cursor-pointer text-foreground hover:bg-surface-hover/50 ${
                                                     currentIndex === focusedIndex
-                                                        ? 'bg-cyan-500/20'
+                                                        ? 'bg-primary/20'
                                                         : account.guid === value
-                                                            ? 'bg-cyan-500/10'
+                                                            ? 'bg-primary/10'
                                                             : ''
                                                 }`}
                                                 onClick={() => handleSelect(account)}

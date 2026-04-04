@@ -117,7 +117,7 @@ export function ReceiptGallery() {
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2 capitalize transition-colors min-h-[44px] ${
                 activeTab === tab
-                  ? 'bg-emerald-600 text-white font-medium'
+                  ? 'bg-primary text-white font-medium'
                   : 'bg-background text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
               }`}
             >
@@ -144,7 +144,7 @@ export function ReceiptGallery() {
                 }
               }}
               disabled={regenRunning}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2 bg-secondary hover:bg-secondary-hover disabled:bg-secondary/50 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:cursor-not-allowed"
             >
               {regenRunning ? (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -158,7 +158,7 @@ export function ReceiptGallery() {
           )}
           <button
             onClick={() => setBatchUploadOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors min-h-[44px]"
+            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors min-h-[44px]"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
@@ -175,7 +175,7 @@ export function ReceiptGallery() {
           placeholder="Search receipt text..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-foreground-secondary focus:outline-none focus:border-emerald-500"
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-foreground-secondary focus:outline-none focus:border-primary"
         />
       )}
 
@@ -199,7 +199,7 @@ export function ReceiptGallery() {
             <button
               key={receipt.id}
               onClick={() => setSelectedReceipt(receipt)}
-              className="group relative bg-surface-hover rounded-xl overflow-hidden aspect-square hover:ring-2 hover:ring-emerald-500 transition-all"
+              className="group relative bg-surface-hover rounded-xl overflow-hidden aspect-square hover:ring-2 hover:ring-primary transition-all"
             >
               {receipt.thumbnail_key ? (
                 <img
@@ -230,7 +230,7 @@ export function ReceiptGallery() {
 
       {activeTab !== 'inbox' && loading && (
         <div className="flex justify-center py-4">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-500" />
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
         </div>
       )}
 

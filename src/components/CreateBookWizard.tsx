@@ -115,14 +115,14 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <button
             onClick={() => setStep('template')}
-            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-cyan-500/50 transition-colors group"
+            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group"
           >
-            <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center mb-4">
-              <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-cyan-400 transition-colors">
+            <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
               Start from Template
             </h3>
             <p className="text-sm text-foreground-muted">
@@ -132,14 +132,14 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
 
           <button
             onClick={() => setStep('import')}
-            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-cyan-500/50 transition-colors group"
+            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group"
           >
-            <div className="w-10 h-10 bg-cyan-500/10 rounded-lg flex items-center justify-center mb-4">
-              <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
+              <svg className="w-5 h-5 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-cyan-400 transition-colors">
+            <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
               Import from GnuCash
             </h3>
             <p className="text-sm text-foreground-muted">
@@ -184,7 +184,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
               type="text"
               value={bookName}
               onChange={e => setBookName(e.target.value)}
-              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
+              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
               placeholder="e.g., My Finances"
             />
           </div>
@@ -199,7 +199,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           <button
             onClick={handleCreate}
             disabled={loading || !bookName.trim()}
-            className="w-full py-3 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 disabled:from-foreground-muted disabled:to-foreground-muted text-white font-medium rounded-lg transition-all"
+            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-white font-medium rounded-lg transition-all"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
@@ -238,7 +238,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
 
       {templatesLoading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
         </div>
       ) : (
         <div className="space-y-6">
@@ -257,7 +257,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
                     setCurrency(loc.templates[0].currency);
                   }
                 }}
-                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
+                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
               >
                 {locales.map(l => (
                   <option key={l.code} value={l.code}>{l.name}</option>
@@ -277,7 +277,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
                   onClick={() => handleTemplateSelect(t.id)}
                   className={`w-full text-left p-4 rounded-lg border transition-colors ${
                     selectedTemplate === t.id
-                      ? 'border-cyan-500/50 bg-cyan-500/5'
+                      ? 'border-primary/50 bg-primary/5'
                       : 'border-border bg-surface/30 hover:border-border-hover'
                   }`}
                 >
@@ -296,7 +296,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
               type="text"
               value={bookName}
               onChange={e => setBookName(e.target.value)}
-              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
+              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
               placeholder={currentTemplate ? `e.g., My ${currentTemplate.name}` : 'Enter a name'}
             />
           </div>
@@ -311,7 +311,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           <button
             onClick={handleCreate}
             disabled={loading || !bookName.trim() || !selectedTemplate}
-            className="w-full py-3 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 disabled:from-foreground-muted disabled:to-foreground-muted text-white font-medium rounded-lg transition-all"
+            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-white font-medium rounded-lg transition-all"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">

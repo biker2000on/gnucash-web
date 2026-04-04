@@ -5,13 +5,13 @@
    ======================================== */
 
 :root {
-    --font-geist-sans: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    --font-geist-mono: "SFMono-Regular", "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+    --font-geist-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+    --font-geist-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
 
     /* Light theme colors (default) */
     --background: #ffffff;
     --background-secondary: #f8fafc;
-    --background-tertiary: #f1f5f9;
+    --background-tertiary: #e2e8f0;
     --foreground: #0f172a;
     --foreground-secondary: #475569;
     --foreground-muted: #94a3b8;
@@ -25,16 +25,16 @@
     --border: #e2e8f0;
     --border-hover: #cbd5e1;
 
-    /* Primary accent (emerald) */
-    --primary: #059669;
-    --primary-hover: #047857;
-    --primary-light: #d1fae5;
+    /* Primary accent (teal) */
+    --primary: #0d9488;
+    --primary-hover: #0f766e;
+    --primary-light: #ccfbf1;
     --primary-foreground: #ffffff;
 
-    /* Secondary accent (cyan) */
-    --secondary: #0891b2;
-    --secondary-hover: #0e7490;
-    --secondary-light: #cffafe;
+    /* Secondary accent (blue) */
+    --secondary: #2563eb;
+    --secondary-hover: #1d4ed8;
+    --secondary-light: #dbeafe;
 
     /* Status colors */
     --success: #16a34a;
@@ -52,14 +52,14 @@
     --sidebar-bg: #f8fafc;
     --sidebar-border: #e2e8f0;
     --sidebar-text: #475569;
-    --sidebar-text-active: #059669;
+    --sidebar-text-active: #0d9488;
     --sidebar-hover: #f1f5f9;
-    --sidebar-active-bg: #ecfdf5;
+    --sidebar-active-bg: #ccfbf1;
 
     /* Input */
     --input-bg: #ffffff;
     --input-border: #e2e8f0;
-    --input-focus: #059669;
+    --input-focus: #0d9488;
 
     /* Shadow */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
@@ -69,32 +69,32 @@
 
 /* Dark theme colors */
 .dark {
-    --background: #0a0a0a;
-    --background-secondary: #0f0f0f;
-    --background-tertiary: #171717;
-    --foreground: #fafafa;
-    --foreground-secondary: #a3a3a3;
-    --foreground-muted: #525252;
+    --background: #0c1322;
+    --background-secondary: #101828;
+    --background-tertiary: #131d2e;
+    --foreground: #e2e8f0;
+    --foreground-secondary: #94a3b8;
+    --foreground-muted: #64748b;
 
     /* Card and surface colors */
-    --surface: #171717;
-    --surface-elevated: #1c1c1c;
-    --surface-hover: #262626;
+    --surface: #131d2e;
+    --surface-elevated: #1a2742;
+    --surface-hover: #1e2d4a;
 
     /* Border colors */
-    --border: #262626;
-    --border-hover: #404040;
+    --border: #243049;
+    --border-hover: #2d3d5a;
 
-    /* Primary accent (emerald) */
-    --primary: #34d399;
-    --primary-hover: #6ee7b7;
-    --primary-light: #064e3b;
-    --primary-foreground: #0a0a0a;
+    /* Primary accent (teal) */
+    --primary: #2dd4bf;
+    --primary-hover: #5eead4;
+    --primary-light: #0a3d36;
+    --primary-foreground: #0c1322;
 
-    /* Secondary accent (cyan) */
-    --secondary: #22d3ee;
-    --secondary-hover: #67e8f9;
-    --secondary-light: #164e63;
+    /* Secondary accent (blue) */
+    --secondary: #60a5fa;
+    --secondary-hover: #93c5fd;
+    --secondary-light: #172554;
 
     /* Status colors */
     --success: #4ade80;
@@ -109,17 +109,17 @@
     --negative: #f87171;
 
     /* Sidebar */
-    --sidebar-bg: #0f0f0f;
-    --sidebar-border: #262626;
-    --sidebar-text: #a3a3a3;
-    --sidebar-text-active: #34d399;
-    --sidebar-hover: #171717;
-    --sidebar-active-bg: #052e16;
+    --sidebar-bg: #101828;
+    --sidebar-border: #243049;
+    --sidebar-text: #94a3b8;
+    --sidebar-text-active: #2dd4bf;
+    --sidebar-hover: #131d2e;
+    --sidebar-active-bg: #0a3d36;
 
     /* Input */
-    --input-bg: #0f0f0f;
-    --input-border: #262626;
-    --input-focus: #34d399;
+    --input-bg: #101828;
+    --input-border: #243049;
+    --input-focus: #2dd4bf;
 
     /* Shadow */
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);

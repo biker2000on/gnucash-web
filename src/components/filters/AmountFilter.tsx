@@ -21,7 +21,7 @@ export function AmountFilter({ minAmount, maxAmount, onMinChange, onMaxChange }:
                         placeholder="Min"
                         value={minAmount}
                         onChange={(e) => onMinChange(e.target.value)}
-                        className="w-full bg-input-bg border border-border rounded-lg pl-7 pr-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 placeholder:text-foreground-muted"
+                        className="w-full bg-input-bg border border-border rounded-lg pl-7 pr-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 placeholder:text-foreground-muted"
                         min="0"
                         step="0.01"
                     />
@@ -34,7 +34,7 @@ export function AmountFilter({ minAmount, maxAmount, onMinChange, onMaxChange }:
                         placeholder="Max"
                         value={maxAmount}
                         onChange={(e) => onMaxChange(e.target.value)}
-                        className="w-full bg-input-bg border border-border rounded-lg pl-7 pr-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 placeholder:text-foreground-muted"
+                        className="w-full bg-input-bg border border-border rounded-lg pl-7 pr-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 placeholder:text-foreground-muted"
                         min="0"
                         step="0.01"
                     />

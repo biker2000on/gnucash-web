@@ -226,9 +226,9 @@ function TreasurerReportContent() {
         <div className="space-y-6">
             {/* Migration Banner */}
             {migrationBanner && (
-                <div className="flex items-center justify-between px-4 py-3 bg-cyan-500/10 border border-cyan-500/30 rounded-lg text-sm text-cyan-400">
+                <div className="flex items-center justify-between px-4 py-3 bg-primary/10 border border-primary/30 rounded-lg text-sm text-primary">
                     <span>Previous configuration loaded. Click &quot;Save Configuration&quot; to keep it permanently.</span>
-                    <button onClick={() => setMigrationBanner(false)} className="ml-2 text-cyan-400/60 hover:text-cyan-400">&times;</button>
+                    <button onClick={() => setMigrationBanner(false)} className="ml-2 text-primary/60 hover:text-primary">&times;</button>
                 </div>
             )}
 
@@ -253,7 +253,7 @@ function TreasurerReportContent() {
                     </button>
                     <button
                         onClick={() => setIsSaveDialogOpen(true)}
-                        className="mr-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                        className="mr-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                     >
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
@@ -273,7 +273,7 @@ function TreasurerReportContent() {
                                     value={config.organization}
                                     onChange={e => setConfig(prev => ({ ...prev, organization: e.target.value }))}
                                     placeholder="e.g., My Organization"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 />
                             </div>
                             <div>
@@ -285,7 +285,7 @@ function TreasurerReportContent() {
                                     value={config.personName}
                                     onChange={e => setConfig(prev => ({ ...prev, personName: e.target.value }))}
                                     placeholder="e.g., John Smith"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 />
                             </div>
                             <div>
@@ -297,7 +297,7 @@ function TreasurerReportContent() {
                                     value={config.roleName}
                                     onChange={e => setConfig(prev => ({ ...prev, roleName: e.target.value }))}
                                     placeholder="e.g., Treasurer"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 />
                             </div>
                         </div>
@@ -337,7 +337,7 @@ function TreasurerReportContent() {
                         <div className="border-t border-border p-4 flex justify-end no-print">
                             <button
                                 onClick={handleExportCSV}
-                                className="flex items-center gap-2 px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                                className="flex items-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />

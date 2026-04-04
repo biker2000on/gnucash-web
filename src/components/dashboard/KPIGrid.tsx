@@ -74,7 +74,7 @@ interface KPICardProps {
 
 function KPICard({ icon, label, value, change, sublabel }: KPICardProps) {
     return (
-        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 transition-all hover:border-emerald-500/30">
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 transition-all hover:border-primary/30">
             <div className="flex items-center gap-3 sm:mb-4">
                 <div className="w-10 h-10 rounded-lg bg-background-secondary flex items-center justify-center text-foreground-secondary flex-shrink-0">
                     {icon}

@@ -84,7 +84,7 @@ export function DateCell({ value, onChange, autoFocus, onEnter, onArrowUp, onArr
             onBlur={handleBlur}
             onKeyDown={handleKeyDown}
             placeholder="MM/DD/YYYY"
-            className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground focus:outline-none focus:border-cyan-500/50 font-mono leading-tight"
+            className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground focus:outline-none focus:border-primary/50 font-mono leading-tight"
         />
     );
 }

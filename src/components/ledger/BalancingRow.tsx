@@ -34,11 +34,11 @@ export default function BalancingRow({
   const absAmount = Math.abs(balancingAmount);
 
   return (
-    <tr className="bg-emerald-950/20 border-b border-border/30 border-l-2 border-l-emerald-500">
+    <tr className="bg-primary-light border-b border-border/30 border-l-2 border-l-primary">
       {/* Empty date */}
       <td className="px-3 py-1.5" />
       {/* Placeholder description */}
-      <td className="px-3 py-1.5 pl-8 text-xs text-emerald-400 italic">
+      <td className="px-3 py-1.5 pl-8 text-xs text-primary italic">
         New split...
       </td>
       {/* Account selector */}
@@ -48,15 +48,15 @@ export default function BalancingRow({
           placeholder="Select account"
           value={selectedAccountGuid}
           onChange={e => setSelectedAccountGuid(e.target.value)}
-          className="w-full px-2 py-0.5 bg-background-tertiary border border-border rounded text-xs text-emerald-400 focus:border-emerald-500 focus:outline-none"
+          className="w-full px-2 py-0.5 bg-background-tertiary border border-border rounded text-xs text-primary focus:border-primary focus:outline-none"
         />
       </td>
       {/* Debit */}
-      <td className="px-3 py-1.5 text-right text-xs text-emerald-400 font-mono">
+      <td className="px-3 py-1.5 text-right text-xs text-primary font-mono">
         {isDebit ? formatCurrency(absAmount, currencyMnemonic) : ''}
       </td>
       {/* Credit */}
-      <td className="px-3 py-1.5 text-right text-xs text-emerald-400 font-mono">
+      <td className="px-3 py-1.5 text-right text-xs text-primary font-mono">
         {!isDebit ? formatCurrency(absAmount, currencyMnemonic) : ''}
       </td>
       {/* Empty balance */}

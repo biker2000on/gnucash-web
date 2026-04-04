@@ -51,14 +51,14 @@ export default async function LandingPage() {
       {/* Header */}
       <header className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-          <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+          <h1 className="text-xl font-bold text-primary">
             GnuCash Web
           </h1>
           <div className="flex gap-3">
             <Link href="/login" className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors">
               Sign In
             </Link>
-            <Link href="/login" className="px-4 py-2 text-sm bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white rounded-lg transition-all">
+            <Link href="/login" className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-all">
               Get Started
             </Link>
           </div>
@@ -73,7 +73,7 @@ export default async function LandingPage() {
         <p className="text-lg text-foreground-muted max-w-2xl mx-auto mb-10">
           A modern web interface for your GnuCash financial data. Dashboards, reports, transaction management, and more.
         </p>
-        <Link href="/login" className="inline-block px-8 py-3 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-medium rounded-lg transition-all">
+        <Link href="/login" className="inline-block px-8 py-3 bg-primary hover:bg-primary-hover text-white font-medium rounded-lg transition-all">
           Sign In to Get Started
         </Link>
       </section>
@@ -86,7 +86,7 @@ export default async function LandingPage() {
               key={feature.title}
               className="bg-surface rounded-xl border border-border p-6 hover:border-border-hover transition-colors"
             >
-              <div className="text-emerald-400 mb-4">{feature.icon}</div>
+              <div className="text-primary mb-4">{feature.icon}</div>
               <h3 className="text-lg font-semibold text-foreground mb-2">{feature.title}</h3>
               <p className="text-sm text-foreground-muted">{feature.description}</p>
             </div>

@@ -54,7 +54,7 @@ export default function CashDetailsPage() {
             onClick={() => setSortMode('percent')}
             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
               sortMode === 'percent'
-                ? 'bg-cyan-600 text-white'
+                ? 'bg-primary text-white'
                 : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
             }`}
           >
@@ -64,7 +64,7 @@ export default function CashDetailsPage() {
             onClick={() => setSortMode('amount')}
             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
               sortMode === 'amount'
-                ? 'bg-cyan-600 text-white'
+                ? 'bg-primary text-white'
                 : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
             }`}
           >

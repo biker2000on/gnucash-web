@@ -140,7 +140,7 @@ export function CurrencyConverter({
                         value={amount}
                         onChange={e => setAmount(e.target.value)}
                         placeholder="Enter amount"
-                        className="w-full bg-input-bg border border-border rounded-lg px-4 py-3 text-lg font-mono text-foreground focus:outline-none focus:border-cyan-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-4 py-3 text-lg font-mono text-foreground focus:outline-none focus:border-primary/50"
                     />
                 </div>
 
@@ -153,7 +153,7 @@ export function CurrencyConverter({
                         <select
                             value={fromCurrency}
                             onChange={e => setFromCurrency(e.target.value)}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary/50"
                         >
                             {currencies.map(c => (
                                 <option key={c.guid} value={c.mnemonic}>
@@ -166,7 +166,7 @@ export function CurrencyConverter({
                     {/* Swap Button */}
                     <button
                         onClick={swapCurrencies}
-                        className="mt-5 p-2 text-foreground-secondary hover:text-cyan-400 transition-colors"
+                        className="mt-5 p-2 text-foreground-secondary hover:text-primary transition-colors"
                         title="Swap currencies"
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -181,7 +181,7 @@ export function CurrencyConverter({
                         <select
                             value={toCurrency}
                             onChange={e => setToCurrency(e.target.value)}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary/50"
                         >
                             {currencies.map(c => (
                                 <option key={c.guid} value={c.mnemonic}>
@@ -195,14 +195,14 @@ export function CurrencyConverter({
                 {/* Result */}
                 {loading ? (
                     <div className="flex items-center justify-center py-4">
-                        <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     </div>
                 ) : error ? (
                     <div className="py-4 text-center text-rose-400 text-sm">{error}</div>
                 ) : result ? (
                     <div className="bg-background-tertiary/50 rounded-lg p-4">
                         <div className="text-center">
-                            <div className="text-2xl font-mono font-bold text-cyan-400">
+                            <div className="text-2xl font-mono font-bold text-primary">
                                 {result.convertedAmount.toLocaleString(undefined, {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 4,
@@ -270,7 +270,7 @@ export function CurrencySelector({
             )}
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-left text-foreground focus:outline-none focus:border-cyan-500/50 flex items-center justify-between"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-left text-foreground focus:outline-none focus:border-primary/50 flex items-center justify-between"
             >
                 <span>{selectedCurrency ? `${selectedCurrency.mnemonic} - ${selectedCurrency.fullname || selectedCurrency.mnemonic}` : 'Select currency'}</span>
                 <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -286,7 +286,7 @@ export function CurrencySelector({
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             placeholder="Search currencies..."
-                            className="w-full bg-background border border-border-hover rounded px-2 py-1 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-background border border-border-hover rounded px-2 py-1 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             onClick={e => e.stopPropagation()}
                         />
                     </div>

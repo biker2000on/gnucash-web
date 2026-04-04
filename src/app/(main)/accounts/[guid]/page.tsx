@@ -110,7 +110,7 @@ function AccountPageContent() {
             <header className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
                 <div>
                     <nav className="flex items-center gap-2 text-xs text-foreground-muted uppercase tracking-widest mb-2">
-                        <Link href="/accounts" className="hover:text-emerald-400 transition-colors">Accounts</Link>
+                        <Link href="/accounts" className="hover:text-primary transition-colors">Accounts</Link>
                         <span>/</span>
                         <span className="text-foreground-secondary">{account?.name || 'Loading...'}</span>
                     </nav>
@@ -129,7 +129,7 @@ function AccountPageContent() {
                                     ) : (
                                         <Link
                                             href={`/accounts/${segment.guid}`}
-                                            className="hover:text-emerald-400 transition-colors hover:underline"
+                                            className="hover:text-primary transition-colors hover:underline"
                                         >
                                             {segment.name}
                                         </Link>
@@ -165,7 +165,7 @@ function AccountPageContent() {
             {loading ? (
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading transactions...</span>
                     </div>
                 </div>
@@ -204,7 +204,7 @@ export default function AccountPage() {
                 </header>
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading...</span>
                     </div>
                 </div>

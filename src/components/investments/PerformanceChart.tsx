@@ -36,7 +36,7 @@ const INDEX_COLORS = {
   djia: '#a855f7',     // purple
   nasdaq: '#22c55e',   // green
   russell2000: '#ec4899', // pink
-  portfolio: '#06b6d4', // cyan
+  portfolio: '#14b8a6', // teal
 };
 
 export function PerformanceChart({
@@ -301,7 +301,7 @@ export function PerformanceChart({
                 onClick={() => setPeriod(p)}
                 className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   period === p
-                    ? 'bg-cyan-600 text-white'
+                    ? 'bg-primary text-white'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
               >
@@ -317,7 +317,7 @@ export function PerformanceChart({
               title="Show dollar value"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'value'
-                  ? 'bg-cyan-600 text-white'
+                  ? 'bg-primary text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
@@ -331,7 +331,7 @@ export function PerformanceChart({
               title="Time-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'twr'
-                  ? 'bg-cyan-600 text-white'
+                  ? 'bg-primary text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
@@ -345,7 +345,7 @@ export function PerformanceChart({
               title="Money-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'mwr'
-                  ? 'bg-cyan-600 text-white'
+                  ? 'bg-primary text-white'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
@@ -557,7 +557,7 @@ export function PerformanceChart({
             <Line
               type="monotone"
               dataKey="value"
-              stroke="#06b6d4"
+              stroke="#14b8a6"
               strokeWidth={2}
               dot={false}
               animationDuration={300}

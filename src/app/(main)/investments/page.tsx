@@ -162,7 +162,7 @@ export default function HoldingsPage() {
                 onClick={() => setAllocationTab(tab.key)}
                 className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                   allocationTab === tab.key
-                    ? 'bg-cyan-600 text-white'
+                    ? 'bg-primary text-white'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
               >

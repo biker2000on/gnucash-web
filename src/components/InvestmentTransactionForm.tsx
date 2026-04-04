@@ -586,7 +586,7 @@ export function InvestmentTransactionForm({
                     const account = accounts.find(a => a.guid === e.target.value);
                     if (account) onSelect(account);
                 }}
-                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             >
                 <option value="">{placeholder}</option>
                 {accounts.map(account => (
@@ -632,7 +632,7 @@ export function InvestmentTransactionForm({
                             onClick={() => handleChange('action', option.value)}
                             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                                 form.action === option.value
-                                    ? 'bg-cyan-600 text-white'
+                                    ? 'bg-primary text-white'
                                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                             }`}
                             title={option.description}
@@ -663,7 +663,7 @@ export function InvestmentTransactionForm({
                         }
                     }}
                     placeholder="MM/DD/YYYY"
-                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                 />
             </div>
 
@@ -674,7 +674,7 @@ export function InvestmentTransactionForm({
                         <div>
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'shares'
-                                    ? 'text-cyan-400'
+                                    ? 'text-primary'
                                     : 'text-foreground-muted'
                             }`}>
                                 Shares {getCalculatedField() === 'shares' && '(auto)'}
@@ -688,15 +688,15 @@ export function InvestmentTransactionForm({
                                 placeholder="0"
                                 className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
                                     getCalculatedField() === 'shares'
-                                        ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
+                                        ? 'bg-primary/10 border-primary/30 text-primary'
                                         : 'bg-input-bg border-border text-foreground'
-                                } focus:border-cyan-500/50`}
+                                } focus:border-primary/50`}
                             />
                         </div>
                         <div>
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'price'
-                                    ? 'text-cyan-400'
+                                    ? 'text-primary'
                                     : 'text-foreground-muted'
                             }`}>
                                 Price per Share {getCalculatedField() === 'price' && '(auto)'}
@@ -710,15 +710,15 @@ export function InvestmentTransactionForm({
                                 placeholder="0.00"
                                 className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
                                     getCalculatedField() === 'price'
-                                        ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
+                                        ? 'bg-primary/10 border-primary/30 text-primary'
                                         : 'bg-input-bg border-border text-foreground'
-                                } focus:border-cyan-500/50`}
+                                } focus:border-primary/50`}
                             />
                         </div>
                         <div>
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'total'
-                                    ? 'text-cyan-400'
+                                    ? 'text-primary'
                                     : 'text-foreground-muted'
                             }`}>
                                 Total {getCalculatedField() === 'total' && '(auto)'}
@@ -732,9 +732,9 @@ export function InvestmentTransactionForm({
                                 placeholder="0.00"
                                 className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
                                     getCalculatedField() === 'total'
-                                        ? 'bg-cyan-950/30 border-cyan-800/50 text-cyan-200'
+                                        ? 'bg-primary/10 border-primary/30 text-primary'
                                         : 'bg-input-bg border-border text-foreground'
-                                } focus:border-cyan-500/50`}
+                                } focus:border-primary/50`}
                             />
                         </div>
                     </div>
@@ -751,7 +751,7 @@ export function InvestmentTransactionForm({
                                 value={form.commission}
                                 onChange={(e) => handleChange('commission', e.target.value)}
                                 placeholder="0.00"
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             />
                         </div>
                         {renderAccountSelector(
@@ -789,7 +789,7 @@ export function InvestmentTransactionForm({
                             value={form.amount}
                             onChange={(e) => handleChange('amount', e.target.value)}
                             placeholder="0.00"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
 
@@ -828,7 +828,7 @@ export function InvestmentTransactionForm({
                             value={form.amount}
                             onChange={(e) => handleChange('amount', e.target.value)}
                             placeholder="0.00"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
 
@@ -857,7 +857,7 @@ export function InvestmentTransactionForm({
                             value={form.shares}
                             onChange={(e) => handleChange('shares', e.target.value)}
                             placeholder="0"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                         <p className="text-xs text-foreground-muted mt-1">
                             Enter the number of additional shares you receive from the split.
@@ -874,7 +874,7 @@ export function InvestmentTransactionForm({
                             value={form.splitRatio}
                             onChange={(e) => handleChange('splitRatio', e.target.value)}
                             placeholder="e.g., 2-for-1"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
                 </>
@@ -890,7 +890,7 @@ export function InvestmentTransactionForm({
                     value={form.memo}
                     onChange={(e) => handleChange('memo', e.target.value)}
                     placeholder="Additional notes..."
-                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
                 />
             </div>
 
@@ -939,7 +939,7 @@ export function InvestmentTransactionForm({
                 <button
                     type="submit"
                     disabled={saving || loadingAccounts}
-                    className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors flex items-center gap-2"
+                    className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors flex items-center gap-2"
                 >
                     {saving ? (
                         <>

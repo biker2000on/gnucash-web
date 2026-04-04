@@ -33,7 +33,7 @@ function ScoreBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
   const colorClass =
     pct >= 80
-      ? 'text-emerald-400 bg-emerald-500/10'
+      ? 'text-primary bg-primary/10'
       : pct >= 50
       ? 'text-yellow-400 bg-yellow-500/10'
       : 'text-foreground-secondary bg-surface-hover';
@@ -219,7 +219,7 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
                 <button
                   onClick={() => handleLink(candidate.guid)}
                   disabled={linking || dismissing !== null}
-                  className="text-xs px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors min-h-[36px] disabled:opacity-50 font-medium"
+                  className="text-xs px-2 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors min-h-[36px] disabled:opacity-50 font-medium"
                 >
                   {linking ? (
                     <span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" />
@@ -302,7 +302,7 @@ export function ReceiptInbox() {
   if (loading) {
     return (
       <div className="flex justify-center py-12">
-        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-500" />
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
       </div>
     );
   }

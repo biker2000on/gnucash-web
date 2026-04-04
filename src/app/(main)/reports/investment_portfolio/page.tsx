@@ -65,7 +65,7 @@ function InvestmentPortfolioContent() {
                         type="checkbox"
                         checked={showZeroShares}
                         onChange={(e) => setShowZeroShares(e.target.checked)}
-                        className="w-4 h-4 rounded border-border bg-input-bg text-cyan-500 focus:ring-cyan-500/30 focus:ring-offset-0"
+                        className="w-4 h-4 rounded border-border bg-input-bg text-primary focus:ring-primary/30 focus:ring-offset-0"
                     />
                     <span className="text-sm text-foreground">
                         Show zero-share accounts
@@ -93,7 +93,7 @@ function InvestmentPortfolioContent() {
                         <div className="border-t border-border p-4 flex justify-end no-print">
                             <button
                                 onClick={handleExportCSV}
-                                className="flex items-center gap-2 px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                                className="flex items-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
