@@ -145,7 +145,7 @@ export default function UsersPage() {
         return (
             <div className="max-w-3xl mx-auto">
                 <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     <span className="text-foreground-secondary">Loading user management...</span>
                 </div>
             </div>
@@ -180,7 +180,7 @@ export default function UsersPage() {
                                 <span className="text-sm font-medium text-foreground">{u.username}</span>
                                 <span className={`text-xs px-2 py-0.5 rounded-full ${
                                     u.role === 'admin' ? 'bg-amber-500/20 text-amber-400' :
-                                    u.role === 'edit' ? 'bg-cyan-500/20 text-cyan-400' :
+                                    u.role === 'edit' ? 'bg-primary/20 text-primary' :
                                     'bg-gray-500/20 text-gray-400'
                                 }`}>
                                     {u.role}
@@ -205,7 +205,7 @@ export default function UsersPage() {
                             <select
                                 value={inviteRole}
                                 onChange={(e) => setInviteRole(e.target.value as 'readonly' | 'edit')}
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             >
                                 <option value="readonly">Read Only</option>
                                 <option value="edit">Edit</option>
@@ -217,7 +217,7 @@ export default function UsersPage() {
                             <select
                                 value={inviteExpiry}
                                 onChange={(e) => setInviteExpiry(Number(e.target.value))}
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             >
                                 {EXPIRY_OPTIONS.map(opt => (
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -230,7 +230,7 @@ export default function UsersPage() {
                             <select
                                 value={inviteMaxUses}
                                 onChange={(e) => setInviteMaxUses(Number(e.target.value))}
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             >
                                 {MAX_USES_OPTIONS.map(opt => (
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -242,7 +242,7 @@ export default function UsersPage() {
                     <button
                         onClick={handleCreateInvitation}
                         disabled={creating}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {creating && (
                             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -265,7 +265,7 @@ export default function UsersPage() {
                                             {inv.code.slice(0, 12)}...
                                         </code>
                                         <span className={`text-xs px-2 py-0.5 rounded-full ${
-                                            inv.role === 'edit' ? 'bg-cyan-500/20 text-cyan-400' :
+                                            inv.role === 'edit' ? 'bg-primary/20 text-primary' :
                                             'bg-gray-500/20 text-gray-400'
                                         }`}>
                                             {inv.role}

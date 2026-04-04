@@ -130,8 +130,8 @@ export default function AutoAssignDialog({
           {result ? (
             /* Success summary view */
             <div className="space-y-3">
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4">
-                <p className="text-sm font-semibold text-emerald-400 mb-2">Assignment complete</p>
+              <div className="bg-primary/10 border border-primary/20 rounded-lg p-4">
+                <p className="text-sm font-semibold text-primary mb-2">Assignment complete</p>
                 <ul className="text-sm text-foreground-secondary space-y-1">
                   <li>{result.lotsCreated} lot{result.lotsCreated !== 1 ? 's' : ''} created</li>
                   <li>{result.splitsAssigned} split{result.splitsAssigned !== 1 ? 's' : ''} assigned</li>
@@ -172,7 +172,7 @@ export default function AutoAssignDialog({
                 )}
                 <button
                   onClick={onClose}
-                  className="ml-auto px-4 py-2 text-sm bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-colors font-medium"
+                  className="ml-auto px-4 py-2 text-sm bg-primary/20 text-primary rounded-lg hover:bg-primary/30 transition-colors font-medium"
                 >
                   Done
                 </button>
@@ -194,14 +194,14 @@ export default function AutoAssignDialog({
                     onClick={() => setSelectedMethod(method.value)}
                     className={`w-full text-left p-3 rounded-lg border transition-colors ${
                       selectedMethod === method.value
-                        ? 'border-emerald-500/50 bg-emerald-500/5'
+                        ? 'border-primary/50 bg-primary/5'
                         : 'border-border/50 hover:border-border'
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <div className={`w-3 h-3 rounded-full border-2 ${
                         selectedMethod === method.value
-                          ? 'border-emerald-500 bg-emerald-500'
+                          ? 'border-primary bg-primary'
                           : 'border-foreground-muted'
                       }`} />
                       <span className="text-sm font-medium text-foreground">{method.label}</span>
@@ -250,7 +250,7 @@ export default function AutoAssignDialog({
                   <button
                     onClick={handleAssign}
                     disabled={loading || freeSplitsCount === 0}
-                    className="px-4 py-2 text-sm bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 disabled:opacity-50 transition-colors font-medium"
+                    className="px-4 py-2 text-sm bg-primary/20 text-primary rounded-lg hover:bg-primary/30 disabled:opacity-50 transition-colors font-medium"
                   >
                     {loading ? 'Assigning...' : `Assign ${freeSplitsCount} Splits`}
                   </button>

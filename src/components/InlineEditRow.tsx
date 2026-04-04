@@ -147,7 +147,7 @@ export function InlineEditRow({
     const balanceValue = applyBalanceReversal(parseFloat(transaction.running_balance), accountType, balanceReversal);
 
     return (
-        <tr className="bg-cyan-500/5 ring-2 ring-cyan-500/30 ring-inset">
+        <tr className="bg-primary/5 ring-2 ring-primary/30 ring-inset">
             {/* Reconcile checkbox column placeholder (during reconciliation) */}
             {columnCount > 6 && <td className="px-3 py-1"></td>}
 
@@ -177,7 +177,7 @@ export function InlineEditRow({
                     }}
                     onKeyDown={handleDateKeyDown}
                     placeholder="MM/DD/YYYY"
-                    className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground focus:outline-none focus:border-cyan-500/50 font-mono leading-tight"
+                    className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground focus:outline-none focus:border-primary/50 font-mono leading-tight"
                 />
             </td>
 
@@ -213,10 +213,10 @@ export function InlineEditRow({
                         onBlur={handleDebitBlur}
                         onKeyDown={handleDebitKeyDown}
                         placeholder="0.00"
-                        className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground text-right focus:outline-none focus:border-cyan-500/50 font-mono leading-tight"
+                        className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground text-right focus:outline-none focus:border-primary/50 font-mono leading-tight"
                     />
                     {containsMathExpression(debit) && (
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
                     )}
                 </div>
             </td>
@@ -231,10 +231,10 @@ export function InlineEditRow({
                         onChange={(e) => { setCredit(e.target.value); if (e.target.value) setDebit(''); }}
                         onBlur={handleCreditBlur}
                         placeholder="0.00"
-                        className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground text-right focus:outline-none focus:border-cyan-500/50 font-mono leading-tight"
+                        className="w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-foreground text-right focus:outline-none focus:border-primary/50 font-mono leading-tight"
                     />
                     {containsMathExpression(credit) && (
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
                     )}
                 </div>
             </td>

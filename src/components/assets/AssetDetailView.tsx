@@ -265,7 +265,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                 value={adjustTarget}
                 onChange={(e) => setAdjustTarget(e.target.value)}
                 placeholder={asset.currentBalance.toFixed(2)}
-                className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
             </div>
             <div>
@@ -287,7 +287,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                   }
                 }}
                 placeholder="MM/DD/YYYY"
-                className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+                className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
             </div>
           </div>
@@ -298,7 +298,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
             <select
               value={adjustContraGuid}
               onChange={(e) => setAdjustContraGuid(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+              className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
             >
               <option value="">-- Select account --</option>
               {contraAccounts.map((acc) => (
@@ -316,14 +316,14 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
               type="text"
               value={adjustNotes}
               onChange={(e) => setAdjustNotes(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+              className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
             />
           </div>
           <div className="flex gap-3">
             <button
               onClick={handleAdjust}
               disabled={adjusting}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+              className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
             >
               {adjusting ? 'Adjusting...' : 'Submit Adjustment'}
             </button>
@@ -372,7 +372,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                 <Line
                   type="monotone"
                   dataKey="balance"
-                  stroke="#06b6d4"
+                  stroke="#14b8a6"
                   strokeWidth={2}
                   dot={false}
                 />
@@ -431,7 +431,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
           </h3>
           <button
             onClick={() => setShowScheduleForm((prev) => !prev)}
-            className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+            className="text-sm text-primary hover:text-primary-hover transition-colors"
           >
             {showScheduleForm ? 'Hide Form' : schedule ? 'Edit Schedule' : 'Configure Schedule'}
           </button>
@@ -459,7 +459,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
               </div>
               <div>
                 <p className="text-foreground-muted">Status</p>
-                <p className={`font-medium ${schedule.enabled ? 'text-emerald-400' : 'text-gray-400'}`}>
+                <p className={`font-medium ${schedule.enabled ? 'text-primary' : 'text-gray-400'}`}>
                   {schedule.enabled ? 'Active' : 'Disabled'}
                 </p>
               </div>

@@ -79,12 +79,12 @@ export function TransactionPicker({ isOpen, onClose, onSelect }: TransactionPick
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           autoFocus
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-foreground-secondary focus:outline-none focus:border-emerald-500"
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-foreground-secondary focus:outline-none focus:border-primary"
         />
 
         {loading && (
           <div className="flex justify-center py-4">
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-emerald-500" />
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
           </div>
         )}
 

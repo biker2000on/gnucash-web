@@ -248,7 +248,7 @@ export function DescriptionAutocomplete({
         placeholder={placeholder}
         data-field="description"
         className={`w-full bg-input-bg border rounded-lg ${compact ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'} text-foreground placeholder-foreground-muted focus:outline-none ${
-          isOpen ? 'border-cyan-500/50 ring-1 ring-cyan-500/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border focus:border-cyan-500/50'
+          isOpen ? 'border-primary/50 ring-1 ring-primary/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border focus:border-primary/50'
         }`}
       />
 
@@ -261,7 +261,7 @@ export function DescriptionAutocomplete({
           {loading ? (
             <div className="px-3 py-4 text-center text-foreground-muted text-sm">
               <div className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-foreground-muted border-t-cyan-500 rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-foreground-muted border-t-primary rounded-full animate-spin" />
                 Loading suggestions...
               </div>
             </div>
@@ -275,7 +275,7 @@ export function DescriptionAutocomplete({
                 key={index}
                 ref={el => { itemRefs.current[index] = el; }}
                 className={`px-3 py-2 cursor-pointer hover:bg-surface-hover/50 ${
-                  index === focusedIndex ? 'bg-cyan-500/20' : ''
+                  index === focusedIndex ? 'bg-primary/20' : ''
                 }`}
                 onClick={() => handleSelect(suggestion)}
               >

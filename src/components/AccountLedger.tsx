@@ -1504,7 +1504,7 @@ export default function AccountLedger({
 
     const getReconcileIcon = (state: string) => {
         switch (state) {
-            case 'y': return { icon: 'Y', color: 'text-emerald-400 bg-emerald-500/10', label: 'Reconciled' };
+            case 'y': return { icon: 'Y', color: 'text-primary bg-primary/10', label: 'Reconciled' };
             case 'c': return { icon: 'C', color: 'text-amber-400 bg-amber-500/10', label: 'Cleared' };
             default: return { icon: 'N', color: 'text-foreground-muted bg-surface/10', label: 'Not Reconciled' };
         }
@@ -1537,7 +1537,7 @@ export default function AccountLedger({
                             ref={searchInputRef}
                             type="text"
                             placeholder="Search... (press / to focus)"
-                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50 transition-all pl-10"
+                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                             value={searchText}
                             onChange={(e) => setSearchText(e.target.value)}
                         />
@@ -1614,7 +1614,7 @@ export default function AccountLedger({
                         onClick={handleToggleEditMode}
                         className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors ${
                             isEditMode
-                                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                                ? 'bg-primary/10 border-primary/30 text-primary'
                                 : 'border-border text-foreground-muted hover:text-foreground'
                         }`}
                     >
@@ -1800,7 +1800,7 @@ export default function AccountLedger({
                                         <span className="text-blue-400">Stock Split</span>
                                     )}
                                     {invRow.transactionType === 'reinvested_dividend' && (
-                                        <span className="text-cyan-400">DRIP</span>
+                                        <span className="text-primary">DRIP</span>
                                     )}
                                     {invRow.transactionType === 'return_of_capital' && (
                                         <span className="text-amber-400">Return of Capital</span>
@@ -1819,7 +1819,7 @@ export default function AccountLedger({
                                     { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
                                     { label: 'Transfer', value: transferName },
                                     ...(amount >= 0
-                                        ? [{ label: 'Debit', value: <span className="text-emerald-400 font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
+                                        ? [{ label: 'Debit', value: <span className="text-primary font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
                                         : [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
                                     ),
                                     { label: 'Balance', value: balanceValue !== null
@@ -1834,7 +1834,7 @@ export default function AccountLedger({
                     <div ref={loader} className="p-8 flex justify-center border-t border-border/50">
                         {loading ? (
                             <div className="flex items-center gap-3">
-                                <div className="w-4 h-4 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                                <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                                 <span className="text-xs text-foreground-muted uppercase tracking-widest">Updating Ledger...</span>
                             </div>
                         ) : hasMore ? (
@@ -1863,7 +1863,7 @@ export default function AccountLedger({
                                                         else setEditSelectedGuids(new Set());
                                                     }}
                                                     tabIndex={-1}
-                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-cyan-500 cursor-pointer"
+                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
                                                 />
                                             )}
                                         </th>
@@ -2179,7 +2179,7 @@ export default function AccountLedger({
                                 return (
                                     <React.Fragment key={row.id}>
                                     <tr
-                                        className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-cyan-500/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
+                                        className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
                                         onClick={(e) => {
                                             // Don't trigger on checkbox or button clicks
                                             if ((e.target as HTMLElement).closest('input, button')) return;
@@ -2346,7 +2346,7 @@ export default function AccountLedger({
                                                         {isMultiSplit && !isExpanded ? (
                                                             <button
                                                                 onClick={() => toggleExpand(tx.guid)}
-                                                                className="text-foreground-muted hover:text-cyan-400 transition-colors flex items-center gap-1 italic text-xs"
+                                                                className="text-foreground-muted hover:text-primary transition-colors flex items-center gap-1 italic text-xs"
                                                             >
                                                                 <span>-- Multiple Splits --</span>
                                                                 <span className="text-[10px]">&#9660;</span>
@@ -2368,7 +2368,7 @@ export default function AccountLedger({
                                                                 {isMultiSplit && isExpanded && (
                                                                     <button
                                                                         onClick={() => toggleExpand(tx.guid)}
-                                                                        className="text-cyan-500/50 hover:text-cyan-400 transition-colors text-[10px] mt-1"
+                                                                        className="text-primary/50 hover:text-primary transition-colors text-[10px] mt-1"
                                                                     >
                                                                         &#9650; Show less
                                                                     </button>
@@ -2524,7 +2524,7 @@ export default function AccountLedger({
                 {isEditMode && displayTransactions.length === 0 && (
                     <div className="p-12 text-center">
                         <div className="text-4xl mb-4">&#10003;</div>
-                        <h3 className="text-lg font-semibold text-emerald-400 mb-2">All caught up!</h3>
+                        <h3 className="text-lg font-semibold text-primary mb-2">All caught up!</h3>
                         <p className="text-sm text-foreground-muted">
                             {editReviewedCount > 0
                                 ? `You reviewed ${editReviewedCount} transaction${editReviewedCount !== 1 ? 's' : ''} this session.`
@@ -2542,7 +2542,7 @@ export default function AccountLedger({
                 <div ref={loader} className="p-8 flex justify-center border-t border-border/50">
                     {loading ? (
                         <div className="flex items-center gap-3">
-                            <div className="w-4 h-4 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                             <span className="text-xs text-foreground-muted uppercase tracking-widest">Updating Ledger...</span>
                         </div>
                     ) : hasMore ? (

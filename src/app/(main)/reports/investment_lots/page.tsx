@@ -133,7 +133,7 @@ function InvestmentLotsContent() {
                         type="checkbox"
                         checked={showClosed}
                         onChange={(e) => setShowClosed(e.target.checked)}
-                        className="w-4 h-4 rounded border-border bg-input-bg text-cyan-500 focus:ring-cyan-500/30 focus:ring-offset-0"
+                        className="w-4 h-4 rounded border-border bg-input-bg text-primary focus:ring-primary/30 focus:ring-offset-0"
                     />
                     <span className="text-sm text-foreground">Show closed lots</span>
                 </label>
@@ -198,7 +198,7 @@ function InvestmentLotsContent() {
                                 <h3 className="text-sm font-semibold text-foreground-secondary flex items-center gap-2">
                                     <Link
                                         href={`/accounts/${group.accountGuid}`}
-                                        className="hover:text-cyan-400 transition-colors"
+                                        className="hover:text-primary transition-colors"
                                     >
                                         {group.accountName}
                                     </Link>
@@ -308,7 +308,7 @@ export default function InvestmentLotsPage() {
         <Suspense fallback={
             <div className="flex items-center justify-center py-12">
                 <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     <span className="text-foreground-secondary">Loading report...</span>
                 </div>
             </div>

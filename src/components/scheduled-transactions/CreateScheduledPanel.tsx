@@ -192,7 +192,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="e.g. Monthly Rent"
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
             />
           </div>
 
@@ -206,7 +206,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
               <select
                 value={periodType}
                 onChange={e => setPeriodType(e.target.value)}
-                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
               >
                 {PERIOD_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -225,7 +225,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                   min={1}
                   value={multiplier}
                   onChange={e => setMultiplier(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-24 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                  className="w-24 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
                 />
               </div>
             )}
@@ -238,7 +238,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                 required
                 value={startDate}
                 onChange={e => setStartDate(e.target.value)}
-                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
               />
             </div>
 
@@ -249,7 +249,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                 type="date"
                 value={endDate}
                 onChange={e => setEndDate(e.target.value)}
-                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
               />
             </div>
 
@@ -260,7 +260,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                 <select
                   value={weekendAdjust}
                   onChange={e => setWeekendAdjust(e.target.value)}
-                  className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                  className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
                 >
                   {WEEKEND_ADJUST_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -292,7 +292,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                     value={split.amount}
                     onChange={e => updateSplit(idx, 'amount', e.target.value)}
                     placeholder="0.00"
-                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500/40 focus:border-cyan-500/40 transition-colors"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40 transition-colors"
                   />
                 </div>
                 {splits.length > 2 && (
@@ -313,7 +313,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
             <button
               type="button"
               onClick={addSplit}
-              className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors font-medium"
+              className="text-xs text-primary hover:text-primary-hover transition-colors font-medium"
             >
               + Add Split
             </button>
@@ -328,7 +328,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                 type="checkbox"
                 checked={autoCreate}
                 onChange={e => setAutoCreate(e.target.checked)}
-                className="rounded border-border bg-input-bg text-cyan-600 focus:ring-cyan-500/40"
+                className="rounded border-border bg-input-bg text-primary focus:ring-primary/40"
               />
               <span className="text-sm text-foreground">Auto-create</span>
             </label>
@@ -338,7 +338,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
                 type="checkbox"
                 checked={autoNotify}
                 onChange={e => setAutoNotify(e.target.checked)}
-                className="rounded border-border bg-input-bg text-cyan-600 focus:ring-cyan-500/40"
+                className="rounded border-border bg-input-bg text-primary focus:ring-primary/40"
               />
               <span className="text-sm text-foreground">Auto-notify</span>
             </label>
@@ -361,7 +361,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
             <button
               type="submit"
               disabled={!isValid || submitting}
-              className="px-4 py-2 text-sm font-medium rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? 'Creating...' : 'Create'}
             </button>

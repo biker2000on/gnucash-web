@@ -244,7 +244,7 @@ export function AccountPickerModal({
                         placeholder="Search accounts..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full px-3 py-2 bg-background-tertiary border border-border-hover rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                        className="w-full px-3 py-2 bg-background-tertiary border border-border-hover rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                         autoFocus
                     />
                 </div>
@@ -286,7 +286,7 @@ export function AccountPickerModal({
                                     <div
                                         className={`flex items-center w-full px-4 py-2 text-left transition-colors ${
                                             node.isBudgeted
-                                                ? 'bg-cyan-500/5'
+                                                ? 'bg-primary/5'
                                                 : 'hover:bg-surface-hover/50'
                                         }`}
                                         style={{ paddingLeft: searchTerm ? '16px' : `${16 + node.depth * 20}px` }}
@@ -322,7 +322,7 @@ export function AccountPickerModal({
                                                     </span>
                                                 )}
                                                 {node.isBudgeted && (
-                                                    <span className="inline-block px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 rounded text-xs flex-shrink-0">
+                                                    <span className="inline-block px-1.5 py-0.5 bg-primary/20 text-primary rounded text-xs flex-shrink-0">
                                                         budgeted
                                                     </span>
                                                 )}
@@ -342,7 +342,7 @@ export function AccountPickerModal({
                                             <button
                                                 onClick={() => handleAddAccount(node)}
                                                 disabled={isAdding}
-                                                className="ml-2 p-1.5 text-foreground-secondary hover:text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors disabled:opacity-50 flex-shrink-0"
+                                                className="ml-2 p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-50 flex-shrink-0"
                                                 title="Add to budget"
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

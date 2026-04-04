@@ -143,7 +143,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                                 }
                             }}
                             placeholder="MM/DD/YYYY"
-                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
                     <div>
@@ -167,7 +167,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                                 }
                             }}
                             placeholder="MM/DD/YYYY"
-                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     </div>
                 </div>
@@ -180,7 +180,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                             onClick={() => handlePreset(preset)}
                             className={`px-3 py-2 text-xs rounded-lg transition-colors ${
                                 isActive(preset)
-                                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                    ? 'bg-primary/20 text-primary border border-primary/30'
                                     : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                             }`}
                         >
@@ -196,7 +196,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                             type="checkbox"
                             checked={localFilters.compareToPrevious || false}
                             onChange={e => setLocalFilters(prev => ({ ...prev, compareToPrevious: e.target.checked }))}
-                            className="w-4 h-4 rounded border-border-hover bg-background text-cyan-500 focus:ring-cyan-500/50"
+                            className="w-4 h-4 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
                         />
                         <span className="text-sm text-foreground-secondary">Compare to previous period</span>
                     </label>
@@ -212,7 +212,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                     </button>
                     <button
                         onClick={handleApply}
-                        className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                        className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                     >
                         Apply
                     </button>

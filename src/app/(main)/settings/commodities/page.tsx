@@ -180,7 +180,7 @@ export default function CommodityPriceSettingsPage() {
             }));
           }}
           placeholder="Finance::Quote"
-          className="w-44 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+          className="w-44 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
         />
       ),
     },
@@ -199,7 +199,7 @@ export default function CommodityPriceSettingsPage() {
             }));
           }}
           placeholder="America/New_York"
-          className="w-44 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+          className="w-44 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
         />
       ),
     },
@@ -210,7 +210,7 @@ export default function CommodityPriceSettingsPage() {
         <button
           onClick={() => handleSave(row.original.guid)}
           disabled={!row.original.dirty || row.original.saving}
-          className="px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/40 text-white rounded-lg transition-colors disabled:cursor-not-allowed"
+          className="px-3 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/40 text-white rounded-lg transition-colors disabled:cursor-not-allowed"
         >
           {row.original.saving ? 'Saving...' : 'Save'}
         </button>
@@ -307,7 +307,7 @@ export default function CommodityPriceSettingsPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search symbol, name, source, timezone..."
-              className="w-full md:w-80 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+              className="w-full md:w-80 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
             />
             <button
               onClick={loadCommodities}

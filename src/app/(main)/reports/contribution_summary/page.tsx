@@ -76,7 +76,7 @@ function ContributionSummaryContent() {
                         onClick={() => setGroupBy('calendar_year')}
                         className={`px-4 py-1.5 text-sm transition-colors ${
                             groupBy === 'calendar_year'
-                                ? 'bg-cyan-600 text-white'
+                                ? 'bg-primary text-white'
                                 : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                         }`}
                     >
@@ -86,7 +86,7 @@ function ContributionSummaryContent() {
                         onClick={() => setGroupBy('tax_year')}
                         className={`px-4 py-1.5 text-sm transition-colors ${
                             groupBy === 'tax_year'
-                                ? 'bg-cyan-600 text-white'
+                                ? 'bg-primary text-white'
                                 : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                         }`}
                     >
@@ -129,7 +129,7 @@ function ContributionSummaryContent() {
                                     </div>
                                     <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
                                         <div className="text-xs text-foreground-tertiary mb-1">Employer Match</div>
-                                        <div className="text-2xl font-bold text-cyan-400">
+                                        <div className="text-2xl font-bold text-primary">
                                             {formatCurrency(reportData.grandTotalEmployerMatch)}
                                         </div>
                                     </div>
@@ -154,7 +154,7 @@ function ContributionSummaryContent() {
                                                 </span>
                                                 {period.totalEmployerMatch !== 0 && (
                                                     <span>
-                                                        Employer: <span className="text-cyan-400">{formatCurrency(period.totalEmployerMatch)}</span>
+                                                        Employer: <span className="text-primary">{formatCurrency(period.totalEmployerMatch)}</span>
                                                     </span>
                                                 )}
                                                 <span>

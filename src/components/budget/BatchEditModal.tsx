@@ -87,7 +87,7 @@ export function BatchEditModal({
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
                             placeholder="0.00"
-                            className={`w-full pl-7 pr-3 py-2 bg-background-tertiary border rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent ${
+                            className={`w-full pl-7 pr-3 py-2 bg-background-tertiary border rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
                                 error ? 'border-rose-500' : 'border-border-hover'
                             }`}
                             autoFocus
@@ -99,8 +99,8 @@ export function BatchEditModal({
                 </div>
 
                 {amount && !isNaN(parseFloat(amount)) && (
-                    <div className="p-3 bg-cyan-900/30 border border-cyan-800/50 rounded-md text-sm text-cyan-300">
-                        Total for all {numPeriods} periods: <strong className="text-cyan-200">${(parseFloat(amount) * numPeriods).toFixed(2)}</strong>
+                    <div className="p-3 bg-primary/10 border border-primary/20 rounded-md text-sm text-primary">
+                        Total for all {numPeriods} periods: <strong className="text-primary-hover">${(parseFloat(amount) * numPeriods).toFixed(2)}</strong>
                     </div>
                 )}
 
@@ -114,7 +114,7 @@ export function BatchEditModal({
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !amount}
-                        className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-500 transition-colors disabled:opacity-50"
+                        className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary-hover transition-colors disabled:opacity-50"
                     >
                         {isSaving ? 'Saving...' : 'Apply to All Periods'}
                     </button>

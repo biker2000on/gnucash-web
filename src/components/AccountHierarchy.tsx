@@ -659,9 +659,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         )}
                         <Link
                             href={`/accounts/${account.guid}`}
-                            className={`text-foreground-secondary font-medium truncate hover:text-emerald-400 transition-colors ${
+                            className={`text-foreground-secondary font-medium truncate hover:text-primary transition-colors ${
                                 filterText && account.name.toLowerCase().includes(filterText.toLowerCase())
-                                    ? 'text-emerald-400 underline underline-offset-4 decoration-emerald-500/50'
+                                    ? 'text-primary underline underline-offset-4 decoration-primary/50'
                                     : ''
                             }`}
                             onClick={(event) => event.stopPropagation()}
@@ -686,7 +686,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         )}
                         <Link
                             href={`/accounts/${account.guid}`}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 min-h-[24px] min-w-[24px] flex items-center justify-center hover:bg-border-hover rounded text-foreground-muted hover:text-emerald-400 ml-0.5"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 min-h-[24px] min-w-[24px] flex items-center justify-center hover:bg-border-hover rounded text-foreground-muted hover:text-primary ml-0.5"
                             title="View Ledger"
                             onClick={(event) => event.stopPropagation()}
                         >
@@ -700,7 +700,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     event.stopPropagation();
                                     handleNewChild(account);
                                 }}
-                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-emerald-500/20 text-foreground-muted hover:text-emerald-400 transition-colors"
+                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
                                 title="Add Child Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -712,7 +712,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     event.stopPropagation();
                                     handleEdit(account);
                                 }}
-                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
+                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
                                 title="Edit Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -795,7 +795,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             cell: ({ row }) => (
                 <div className="px-3 py-1 leading-tight text-right">
                     {row.original.placeholder === 1 ? (
-                        <span className="text-[10px] px-2 py-1 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 uppercase tracking-wide">
+                        <span className="text-[10px] px-2 py-1 rounded-full bg-primary/10 text-primary-hover border border-primary/20 uppercase tracking-wide">
                             Placeholder
                         </span>
                     ) : (
@@ -975,13 +975,13 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-border/50">
                 <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
                     <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
-                        <span className="w-2 h-6 bg-emerald-500 rounded-full" />
+                        <span className="w-2 h-6 bg-primary rounded-full" />
                         Account Assets & Liabilities
                     </h2>
                     <div className="flex flex-wrap items-center gap-4">
                         <button
                             onClick={handleNewAccount}
-                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-colors"
+                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -1001,7 +1001,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             <span className="text-sm text-foreground-secondary">Show Hidden</span>
                             <button
                                 onClick={() => setShowHidden(!showHidden)}
-                                className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-emerald-500' : 'bg-border-hover'}`}
+                                className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-primary' : 'bg-border-hover'}`}
                             >
                                 <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'}`} />
                             </button>
@@ -1015,7 +1015,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             ref={filterInputRef}
                             type="text"
                             placeholder="Filter accounts... (press / to focus)"
-                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all"
+                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
                             value={filterText}
                             onChange={(event) => setFilterText(event.target.value)}
                         />
@@ -1037,7 +1037,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     setExpandToDepth(0);
                                     setManualExpanded({});
                                 }}
-                                className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-emerald-500/50 transition-all flex items-center"
+                                className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-primary/50 transition-all flex items-center"
                                 title="Collapse All"
                             >
                                 Collapse All
@@ -1047,14 +1047,14 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     setExpandToDepth(Infinity);
                                     setManualExpanded({});
                                 }}
-                                className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-emerald-500/50 transition-all flex items-center"
+                                className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground-secondary hover:bg-surface-hover hover:border-primary/50 transition-all flex items-center"
                                 title="Expand All"
                             >
                                 Expand All
                             </button>
                         </div>
                         <select
-                            className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 min-h-[44px] text-xs text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
                             value={expandToDepth === Infinity ? 'all' : expandToDepth}
                             onChange={(event) => {
                                 setExpandToDepth(event.target.value === 'all' ? Infinity : parseInt(event.target.value, 10));
@@ -1075,7 +1075,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     <div className="flex items-center gap-2">
                         <span className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Sort By</span>
                         <select
-                            className="bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-emerald-500/50 transition-all cursor-pointer"
+                            className="bg-input-bg border border-border rounded-xl px-3 py-2 min-h-[44px] text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
                             value={sortKey}
                             onChange={(event) => setSortKey(event.target.value as SortKey)}
                         >
@@ -1195,7 +1195,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     if (el) rowRefs.current.set(rowIndex, el);
                                     else rowRefs.current.delete(rowIndex);
                                 }}
-                                className={`group hover:bg-surface-hover/20 transition-colors ${row.getCanExpand() ? 'cursor-pointer' : ''} ${rowIndex === focusedRowIndex ? 'ring-2 ring-emerald-500/50 ring-inset bg-white/[0.03]' : ''}`}
+                                className={`group hover:bg-surface-hover/20 transition-colors ${row.getCanExpand() ? 'cursor-pointer' : ''} ${rowIndex === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-white/[0.03]' : ''}`}
                                 onClick={() => {
                                     setFocusedRowIndex(rowIndex);
                                     if (row.getCanExpand()) {

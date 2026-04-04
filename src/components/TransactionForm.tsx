@@ -683,7 +683,7 @@ export function TransactionForm({
                             <button
                                 type="button"
                                 onClick={() => adjustDate(-1)}
-                                className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-input-bg border border-border rounded-lg text-foreground-muted hover:text-foreground hover:border-cyan-500/50 transition-colors text-lg font-bold"
+                                className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-input-bg border border-border rounded-lg text-foreground-muted hover:text-foreground hover:border-primary/50 transition-colors text-lg font-bold"
                             >
                                 −
                             </button>
@@ -699,12 +699,12 @@ export function TransactionForm({
                                     }
                                 }}
                                 data-field="post_date"
-                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             />
                             <button
                                 type="button"
                                 onClick={() => adjustDate(1)}
-                                className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-input-bg border border-border rounded-lg text-foreground-muted hover:text-foreground hover:border-cyan-500/50 transition-colors text-lg font-bold"
+                                className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-input-bg border border-border rounded-lg text-foreground-muted hover:text-foreground hover:border-primary/50 transition-colors text-lg font-bold"
                             >
                                 +
                             </button>
@@ -728,7 +728,7 @@ export function TransactionForm({
                             onKeyDown={handleDateKeyDown}
                             data-field="post_date"
                             placeholder="MM/DD/YYYY"
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
                     )}
                 </div>
@@ -756,7 +756,7 @@ export function TransactionForm({
                     value={formData.num}
                     onChange={(e) => setFormData(f => ({ ...f, num: e.target.value }))}
                     placeholder="Check #, reference, etc."
-                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
                 />
             </div>
 
@@ -770,7 +770,7 @@ export function TransactionForm({
                         <button
                             type="button"
                             onClick={switchToAdvanced}
-                            className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                            className="text-xs text-primary hover:text-primary-hover transition-colors"
                         >
                             Switch to Advanced (Multiple Splits)
                         </button>
@@ -791,10 +791,10 @@ export function TransactionForm({
                                     onBlur={handleAmountBlur}
                                     onKeyDown={handleAmountKeyDown}
                                     placeholder="0.00"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
                                 />
                                 {containsMathExpression(simpleData.amount) && (
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
                                 )}
                             </div>
                             {defaultTaxRate > 0 && (
@@ -832,7 +832,7 @@ export function TransactionForm({
                                     fromAccountGuid: prev.toAccountGuid,
                                     toAccountGuid: prev.fromAccountGuid,
                                 }))}
-                                className="p-1.5 rounded-lg text-foreground-muted hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                                className="p-1.5 rounded-lg text-foreground-muted hover:text-primary hover:bg-primary/10 transition-colors"
                                 title="Swap accounts (reverse transfer direction)"
                             >
                                 <svg className="w-5 h-5 md:w-6 md:h-6 md:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -862,14 +862,14 @@ export function TransactionForm({
                             <button
                                 type="button"
                                 onClick={switchToSimple}
-                                className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                                className="text-xs text-primary hover:text-primary-hover transition-colors"
                             >
                                 Switch to Simple Mode
                             </button>
                             <button
                                 type="button"
                                 onClick={autoBalanceLastSplit}
-                                className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                                className="text-xs text-primary hover:text-primary-hover transition-colors"
                             >
                                 Auto-balance
                             </button>
@@ -966,7 +966,7 @@ export function TransactionForm({
                             type="button"
                             onClick={() => saveAndAnotherRef.current?.()}
                             disabled={saving}
-                            className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 text-white rounded-lg transition-colors"
+                            className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors"
                         >
                             Save & New
                         </button>
@@ -974,7 +974,7 @@ export function TransactionForm({
                     <button
                         type="submit"
                         disabled={saving}
-                        className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors flex items-center gap-2"
+                        className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors flex items-center gap-2"
                     >
                         {saving ? (
                             <>

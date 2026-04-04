@@ -66,7 +66,7 @@ export function UserMenu() {
         return (
             <Link
                 href="/login"
-                className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
             >
                 Sign In
             </Link>
@@ -79,7 +79,7 @@ export function UserMenu() {
                 onClick={() => setIsOpen(!isOpen)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface-hover transition-colors"
             >
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center text-white font-medium">
+                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-white font-medium">
                     {user.username.charAt(0).toUpperCase()}
                 </div>
                 <span className="text-sm text-foreground-secondary hidden sm:block">{user.username}</span>

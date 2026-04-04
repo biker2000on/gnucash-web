@@ -85,7 +85,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
             onClick={() => setActiveTab('view')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'view'
-                ? 'border-emerald-500 text-emerald-500'
+                ? 'border-primary text-primary'
                 : 'border-transparent text-foreground-secondary hover:text-foreground'
             }`}
           >
@@ -95,7 +95,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
             onClick={() => setActiveTab('upload')}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'upload'
-                ? 'border-emerald-500 text-emerald-500'
+                ? 'border-primary text-primary'
                 : 'border-transparent text-foreground-secondary hover:text-foreground'
             }`}
           >
@@ -111,14 +111,14 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
             />
           ) : loading ? (
             <div className="flex items-center justify-center py-16">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500" />
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
           ) : receipts.length === 0 ? (
             <div className="text-center py-16 text-foreground-secondary">
               <p>No receipts attached.</p>
               <button
                 onClick={() => setActiveTab('upload')}
-                className="mt-2 text-emerald-500 hover:text-emerald-400 text-sm"
+                className="mt-2 text-primary hover:text-primary-hover text-sm"
               >
                 Upload one
               </button>
@@ -152,7 +152,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
                       key={r.id}
                       onClick={() => setActiveIndex(i)}
                       className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${
-                        i === activeIndex ? 'border-emerald-500' : 'border-border hover:border-emerald-400'
+                        i === activeIndex ? 'border-primary' : 'border-border hover:border-primary-hover'
                       }`}
                     >
                       {r.thumbnail_key ? (

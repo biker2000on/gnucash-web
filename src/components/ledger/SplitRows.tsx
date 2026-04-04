@@ -62,7 +62,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
                 {split.memo || ''}
               </td>
               {/* Account (transfer col) */}
-              <td className="px-3 py-1.5 text-xs text-cyan-400">
+              <td className="px-3 py-1.5 text-xs text-primary">
                 {split.account_fullname || split.account_name}
               </td>
               {/* Shares */}
@@ -119,7 +119,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
               {split.memo || ''}
             </td>
             {/* Account path in transfer column */}
-            <td className="px-3 py-1.5 text-xs text-cyan-400">
+            <td className="px-3 py-1.5 text-xs text-primary">
               {split.account_fullname || split.account_name}
             </td>
             {/* Debit */}

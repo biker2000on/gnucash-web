@@ -321,7 +321,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
         return (
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-8 flex items-center justify-center">
                 <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     <span className="text-foreground-secondary">Loading investment data...</span>
                 </div>
             </div>
@@ -353,7 +353,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 {commodity?.mnemonic || 'Unknown'}
                             </h2>
                             {commodity?.namespace && (
-                                <span className="px-2 py-1 text-xs bg-cyan-500/20 text-cyan-400 rounded-lg">
+                                <span className="px-2 py-1 text-xs bg-primary/20 text-primary rounded-lg">
                                     {commodity.namespace}
                                 </span>
                             )}
@@ -365,7 +365,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                     <div className="flex flex-wrap items-center gap-2">
                         <button
                             onClick={() => setShowTransactionModal(true)}
-                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-colors"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-primary hover:border-primary/30 hover:bg-primary/10 transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -375,7 +375,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                         <button
                             onClick={handleFetchPrice}
                             disabled={fetchingPrice}
-                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-cyan-400 hover:border-cyan-500/30 hover:bg-cyan-500/10 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-primary hover:border-primary/30 hover:bg-primary/10 transition-colors disabled:opacity-50"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -388,7 +388,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                 setNewPrice({ date: toLocalDateString(new Date()), value: '' });
                                 setShowPriceModal(true);
                             }}
-                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-cyan-400 hover:border-cyan-500/30 hover:bg-cyan-500/10 transition-colors"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-border text-foreground-muted hover:text-primary hover:border-primary/30 hover:bg-primary/10 transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -458,7 +458,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         onClick={() => handlePeriodChange(period)}
                                         className={`px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg transition-colors ${
                                             selectedPeriod === period
-                                                ? 'bg-cyan-600 text-white'
+                                                ? 'bg-primary text-white'
                                                 : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                         }`}
                                     >
@@ -471,7 +471,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     onClick={() => setChartMode('price')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                                         chartMode === 'price'
-                                            ? 'bg-cyan-600 text-white'
+                                            ? 'bg-primary text-white'
                                             : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                     }`}
                                 >
@@ -481,7 +481,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     onClick={() => setChartMode('percentChange')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                                         chartMode === 'percentChange'
-                                            ? 'bg-cyan-600 text-white'
+                                            ? 'bg-primary text-white'
                                             : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                     }`}
                                 >
@@ -691,7 +691,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         }
                                     }}
                                     placeholder="MM/DD/YYYY"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary/50"
                                 />
                             </div>
                             <div>
@@ -704,7 +704,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     value={newPrice.value}
                                     onChange={e => setNewPrice(prev => ({ ...prev, value: e.target.value }))}
                                     placeholder="0.00"
-                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-cyan-500/50"
+                                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground focus:outline-none focus:border-primary/50"
                                 />
                             </div>
                         </div>
@@ -718,7 +718,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             <button
                                 onClick={handleAddPrice}
                                 disabled={savingPrice || !newPrice.date || !newPrice.value}
-                                className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-lg transition-colors"
+                                className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors"
                             >
                                 {savingPrice ? 'Saving...' : 'Add Price'}
                             </button>

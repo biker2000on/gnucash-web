@@ -585,7 +585,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 </div>
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 flex items-center justify-center">
                     <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading budget...</span>
                     </div>
                 </div>
@@ -642,7 +642,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary/10 text-primary border border-primary/20">
                             {budget.num_periods === 12 ? 'Monthly' : budget.num_periods === 4 ? 'Quarterly' : `${budget.num_periods} Periods`}
                         </span>
                         <span className="text-foreground-muted text-sm">
@@ -650,7 +650,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         </span>
                         <button
                             onClick={() => setShowAccountPicker(true)}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -676,7 +676,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     </div>
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Average per Period</div>
-                        <div className="text-2xl font-bold text-cyan-400">
+                        <div className="text-2xl font-bold text-primary">
                             {formatCurrency((incomeTotal / budget.num_periods).toString(), budgetCurrency)}
                         </div>
                     </div>
@@ -709,7 +709,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         </p>
                         <button
                             onClick={() => setShowAccountPicker(true)}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -735,7 +735,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                             </button>
                             <button
                                 onClick={autoExpandBudgeted}
-                                className="text-xs text-cyan-400 hover:text-cyan-300 px-2 py-1 rounded hover:bg-cyan-500/10 transition-colors"
+                                className="text-xs text-primary hover:text-primary-hover px-2 py-1 rounded hover:bg-primary/10 transition-colors"
                                 title="Expand only branches that contain budgeted accounts"
                             >
                                 Auto-expand
@@ -756,7 +756,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                 onClick={() => setShowAllAccounts(!showAllAccounts)}
                                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                                     showAllAccounts
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        ? 'bg-primary/20 text-primary border border-primary/30'
                                         : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
                                 }`}
                             >
@@ -814,14 +814,14 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         <div>
                                                             <Link
                                                                 href={`/accounts/${account.guid}`}
-                                                                className={`hover:text-cyan-400 transition-colors ${isUnbudgeted ? 'text-foreground-muted' : ''}`}
+                                                                className={`hover:text-primary transition-colors ${isUnbudgeted ? 'text-foreground-muted' : ''}`}
                                                             >
                                                                 {account.name}
                                                             </Link>
                                                             <div className="text-xs text-foreground-muted">
                                                                 {account.type}
                                                                 {showRolledUp && account.rolledUpTotal !== 0 && (
-                                                                    <span className="ml-2 text-cyan-600">(subtotal)</span>
+                                                                    <span className="ml-2 text-primary">(subtotal)</span>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -882,7 +882,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             <td key={i} className={`px-2 py-1 text-right font-mono text-sm ${
                                                                 isSubtotal
                                                                     ? `italic ${displayValue < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
-                                                                    : displayValue < 0 ? 'text-rose-400' : 'text-cyan-600'
+                                                                    : displayValue < 0 ? 'text-rose-400' : 'text-primary'
                                                             }`}>
                                                                 {value === 0 ? '—' : formatCurrency(displayValue, account.mnemonic)}
                                                             </td>
@@ -911,7 +911,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
                                                                 onClick={() => setBatchEditAccount({ guid: account.guid, name: account.name })}
-                                                                className="p-1.5 text-foreground-secondary hover:text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                                                                className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
                                                                 title="Set all periods"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -920,7 +920,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             </button>
                                                             <button
                                                                 onClick={() => handleEstimate(account.guid)}
-                                                                className="p-1.5 text-foreground-secondary hover:text-emerald-400 hover:bg-emerald-500/10 rounded transition-colors"
+                                                                className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
                                                                 title="Estimate from history"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -941,7 +941,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                     ) : !hasChildren && showAllAccounts ? (
                                                         <button
                                                             onClick={() => handleAddToBudget(account.guid)}
-                                                            className="p-1.5 text-foreground-secondary hover:text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                                                            className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
                                                             title="Add to budget"
                                                         >
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1006,7 +1006,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                             Remaining to Budget
                                         </td>
                                         {remainingPeriods.map((val, i) => (
-                                            <td key={i} className={`px-3 py-3 text-right font-mono ${val < 0 ? 'text-rose-400' : 'text-cyan-400'}`}>
+                                            <td key={i} className={`px-3 py-3 text-right font-mono ${val < 0 ? 'text-rose-400' : 'text-primary'}`}>
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}

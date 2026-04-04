@@ -70,7 +70,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
 
         if (score <= 2) return { score, label: 'Weak', color: 'bg-rose-500' };
         if (score <= 4) return { score, label: 'Fair', color: 'bg-yellow-500' };
-        return { score, label: 'Strong', color: 'bg-emerald-500' };
+        return { score, label: 'Strong', color: 'bg-primary' };
     };
 
     const passwordStrength = getPasswordStrength(password);
@@ -79,7 +79,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
         <div className="w-full max-w-md">
             <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-2xl p-8">
                 <div className="text-center mb-8">
-                    <h1 className="text-2xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+                    <h1 className="text-2xl font-bold text-primary">
                         GnuCash Web
                     </h1>
                     <p className="text-foreground-muted mt-2">
@@ -104,7 +104,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
                             onChange={e => setUsername(e.target.value)}
                             required
                             minLength={3}
-                            className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
+                            className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
                             placeholder="Enter username"
                         />
                     </div>
@@ -119,7 +119,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
                             onChange={e => setPassword(e.target.value)}
                             required
                             minLength={8}
-                            className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
+                            className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
                             placeholder="Enter password"
                         />
                         {mode === 'register' && password && (
@@ -147,7 +147,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
                                 value={confirmPassword}
                                 onChange={e => setConfirmPassword(e.target.value)}
                                 required
-                                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-colors"
+                                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
                                 placeholder="Confirm password"
                             />
                             {confirmPassword && password !== confirmPassword && (
@@ -159,7 +159,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
                     <button
                         type="submit"
                         disabled={loading || (mode === 'register' && password !== confirmPassword)}
-                        className="w-full py-3 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 disabled:from-foreground-muted disabled:to-foreground-muted text-white font-medium rounded-lg transition-all"
+                        className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-white font-medium rounded-lg transition-all"
                     >
                         {loading ? (
                             <span className="flex items-center justify-center gap-2">
@@ -175,7 +175,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormPro
                 <div className="mt-6 text-center">
                     <button
                         onClick={onToggleMode}
-                        className="text-sm text-foreground-secondary hover:text-cyan-400 transition-colors"
+                        className="text-sm text-foreground-secondary hover:text-primary-hover transition-colors"
                     >
                         {mode === 'login'
                             ? "Don't have an account? Sign up"

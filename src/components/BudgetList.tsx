@@ -61,13 +61,13 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                             <td className="px-6 py-4">
                                 <Link
                                     href={`/budgets/${budget.guid}`}
-                                    className="text-foreground font-medium hover:text-cyan-400 transition-colors"
+                                    className="text-foreground font-medium hover:text-primary transition-colors"
                                 >
                                     {budget.name}
                                 </Link>
                             </td>
                             <td className="px-6 py-4">
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20">
                                     {getPeriodLabel(budget.num_periods)}
                                 </span>
                             </td>
@@ -81,7 +81,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                                 <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <Link
                                         href={`/budgets/${budget.guid}`}
-                                        className="p-2 rounded-lg hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
+                                        className="p-2 rounded-lg hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
                                         title="View Budget"
                                     >
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -92,7 +92,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                                     {onEdit && (
                                         <button
                                             onClick={() => onEdit(budget)}
-                                            className="p-2 rounded-lg hover:bg-cyan-500/20 text-foreground-muted hover:text-cyan-400 transition-colors"
+                                            className="p-2 rounded-lg hover:bg-primary/20 text-foreground-muted hover:text-primary transition-colors"
                                             title="Edit Budget"
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

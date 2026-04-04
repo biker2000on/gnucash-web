@@ -84,7 +84,7 @@ export function TransactionModal({
 
     const getReconcileLabel = (state: string) => {
         switch (state) {
-            case 'y': return { label: 'Reconciled', color: 'text-emerald-400 bg-emerald-500/10' };
+            case 'y': return { label: 'Reconciled', color: 'text-primary bg-primary/10' };
             case 'c': return { label: 'Cleared', color: 'text-amber-400 bg-amber-500/10' };
             default: return { label: 'Not Reconciled', color: 'text-foreground-secondary bg-surface/10' };
         }
@@ -140,7 +140,7 @@ export function TransactionModal({
             {loading ? (
                 <div className="p-8 flex items-center justify-center">
                     <div className="flex items-center gap-3">
-                        <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                         <span className="text-foreground-secondary">Loading transaction...</span>
                     </div>
                 </div>
@@ -201,7 +201,7 @@ export function TransactionModal({
                                                 <td className="px-4 py-3 whitespace-nowrap">
                                                     <Link
                                                         href={`/accounts/${split.account_guid}`}
-                                                        className="text-foreground hover:text-cyan-400 transition-colors"
+                                                        className="text-foreground hover:text-primary transition-colors"
                                                         onClick={onClose}
                                                     >
                                                         {formatAccountPath(split.account_fullname, split.account_name)}
@@ -262,7 +262,7 @@ export function TransactionModal({
                             {onEdit && (
                                 <button
                                     onClick={handleEditClick}
-                                    className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors"
+                                    className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors"
                                 >
                                     Edit Transaction
                                 </button>

@@ -95,11 +95,11 @@ export default function AssetsPage() {
             <Link
               key={asset.guid}
               href={`/assets/${asset.guid}`}
-              className="block bg-background-secondary rounded-lg border border-border p-5 hover:border-cyan-500/40 hover:shadow-lg hover:shadow-cyan-500/5 transition-all duration-200 group"
+              className="block bg-background-secondary rounded-lg border border-border p-5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all duration-200 group"
             >
               {/* Name & Path */}
               <div className="mb-3">
-                <h3 className="text-lg font-semibold text-foreground group-hover:text-cyan-400 transition-colors">
+                <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
                   {asset.name}
                 </h3>
                 <p className="text-sm text-foreground-muted truncate">

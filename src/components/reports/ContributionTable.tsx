@@ -19,7 +19,7 @@ const TYPE_LABELS: Record<string, string> = {
 const TYPE_COLORS: Record<string, string> = {
   contribution: 'text-green-400',
   income_contribution: 'text-green-400',
-  employer_match: 'text-cyan-400',
+  employer_match: 'text-primary',
   transfer: 'text-foreground-secondary',
   fee: 'text-red-400',
   withdrawal: 'text-red-400',
@@ -172,7 +172,7 @@ function AccountCard({
             {account.accountPath}
           </span>
           {retirementLabel && (
-            <span className="text-xs px-2 py-0.5 bg-cyan-500/20 text-cyan-400 rounded-full flex-shrink-0">
+            <span className="text-xs px-2 py-0.5 bg-primary/20 text-primary rounded-full flex-shrink-0">
               {retirementLabel}
             </span>
           )}
@@ -184,7 +184,7 @@ function AccountCard({
             </span>
           )}
           {account.employerMatch !== 0 && (
-            <span className="text-cyan-400">
+            <span className="text-primary">
               Employer: {formatCurrency(account.employerMatch)}
             </span>
           )}

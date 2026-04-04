@@ -277,13 +277,13 @@ export function AccountPicker({
                     {selectedGuids.slice(0, 10).map(guid => (
                         <span
                             key={guid}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-cyan-500/10 text-cyan-400 rounded-full"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-primary/10 text-primary rounded-full"
                         >
                             {accountNameMap.get(guid) || guid.slice(0, 8)}
                             <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); removeSelected(guid); }}
-                                className="hover:text-cyan-200 transition-colors"
+                                className="hover:text-primary-hover transition-colors"
                             >
                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -384,7 +384,7 @@ export function AccountPicker({
                                                 type="checkbox"
                                                 checked={selectedSet.has(node.guid)}
                                                 onChange={() => toggleSelect(node.guid)}
-                                                className="mr-2 accent-cyan-500 flex-shrink-0"
+                                                className="mr-2 accent-primary flex-shrink-0"
                                             />
 
                                             {/* Account name */}

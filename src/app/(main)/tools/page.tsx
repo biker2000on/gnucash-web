@@ -46,21 +46,21 @@ function ToolCard({ title, description, icon, href }: ToolCardProps) {
     return (
         <Link
             href={href}
-            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-cyan-500/50 hover:bg-surface/50 transition-all duration-200"
+            className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
         >
             <div className="flex items-start gap-4">
-                <div className="p-3 bg-gradient-to-br from-cyan-500/20 to-emerald-500/20 rounded-xl text-cyan-400 group-hover:from-cyan-500/30 group-hover:to-emerald-500/30 transition-colors">
+                <div className="p-3 bg-primary/20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
                     <ToolIcon icon={icon} />
                 </div>
                 <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-semibold text-foreground group-hover:text-cyan-400 transition-colors">
+                    <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
                         {title}
                     </h3>
                     <p className="mt-1 text-sm text-foreground-muted line-clamp-2">
                         {description}
                     </p>
                 </div>
-                <div className="text-foreground-muted group-hover:text-cyan-400 transition-colors">
+                <div className="text-foreground-muted group-hover:text-primary transition-colors">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>

@@ -89,7 +89,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
         return (
             <div className="flex items-center justify-center py-12">
                 <div className="flex items-center gap-3">
-                    <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+                    <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                     <span className="text-foreground-secondary">Loading lots...</span>
                 </div>
             </div>
@@ -183,7 +183,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                 onClick={() => setSelectedLotGuid(lot.guid)}
                                 className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${
                                     isSelected
-                                        ? 'bg-surface border-emerald-500/30'
+                                        ? 'bg-surface border-primary/30'
                                         : 'bg-background-secondary/20 border-border/50 hover:border-border hover:bg-background-secondary/40'
                                 } ${lot.isClosed ? 'opacity-60' : ''}`}
                             >
@@ -195,7 +195,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                         {lot.holdingPeriod && (
                                             <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${
                                                 lot.holdingPeriod === 'long_term'
-                                                    ? 'bg-emerald-500/20 text-emerald-400'
+                                                    ? 'bg-primary/20 text-primary'
                                                     : 'bg-amber-500/20 text-amber-400'
                                             }`}>
                                                 {lot.holdingPeriod === 'long_term' ? 'LT' : 'ST'}
@@ -204,7 +204,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                                             lot.isClosed
                                                 ? 'bg-foreground-muted/10 text-foreground-muted'
-                                                : 'bg-emerald-500/10 text-emerald-400'
+                                                : 'bg-primary/10 text-primary'
                                         }`}>
                                             {lot.isClosed ? 'Closed' : 'Open'}
                                         </span>
@@ -302,7 +302,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                 {selectedLot.holdingPeriod && (
                                     <span className={`text-xs font-bold px-2 py-1 rounded ${
                                         selectedLot.holdingPeriod === 'long_term'
-                                            ? 'bg-emerald-500/20 text-emerald-400'
+                                            ? 'bg-primary/20 text-primary'
                                             : 'bg-amber-500/20 text-amber-400'
                                     }`}>
                                         {selectedLot.holdingPeriod === 'long_term' ? 'Long Term' : 'Short Term'}
@@ -311,7 +311,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                 <span className={`text-xs font-bold px-2 py-1 rounded ${
                                     selectedLot.isClosed
                                         ? 'bg-foreground-muted/10 text-foreground-muted'
-                                        : 'bg-emerald-500/10 text-emerald-400'
+                                        : 'bg-primary/10 text-primary'
                                 }`}>
                                     {selectedLot.isClosed ? 'Closed' : 'Open'}
                                 </span>

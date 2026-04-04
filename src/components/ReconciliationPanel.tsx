@@ -222,7 +222,7 @@ export function ReconciliationPanel({
                     <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Selected ({selectedSplits.size})
                     </div>
-                    <div className="font-mono text-cyan-400 text-xs">
+                    <div className="font-mono text-primary text-xs">
                         {formatCurrency(selectedBalance.toFixed(2), accountCurrency)}
                     </div>
                 </div>
@@ -256,7 +256,7 @@ export function ReconciliationPanel({
                 <button
                     onClick={handleFinish}
                     disabled={saving || selectedSplits.size === 0}
-                    className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-1.5"
+                    className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-1.5"
                 >
                     {saving ? (
                         <>

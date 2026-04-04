@@ -99,7 +99,7 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
               onClick={() => handleSelect(book.guid)}
               className={`flex items-center gap-3 w-full px-4 py-3 text-left transition-colors ${
                 index === selectedIndex
-                  ? 'bg-emerald-500/20 text-foreground ring-1 ring-inset ring-emerald-500/30'
+                  ? 'bg-primary/20 text-foreground ring-1 ring-inset ring-primary/30'
                   : 'text-foreground-secondary hover:bg-surface-hover'
               }`}
             >

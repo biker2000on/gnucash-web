@@ -82,7 +82,7 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
                       : ''
                   } ${
                     isPayoffMonth
-                      ? 'bg-emerald-500/10 font-semibold'
+                      ? 'bg-primary/10 font-semibold'
                       : isActual
                         ? idx % 2 === 0 ? 'bg-transparent' : 'bg-surface/20'
                         : idx % 2 === 0 ? 'bg-transparent opacity-75' : 'bg-surface/20 opacity-75'
@@ -99,7 +99,7 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
                   <td className="py-2 px-4 text-right text-foreground tabular-nums">{fmtFull.format(row.payment)}</td>
                   <td className="py-2 px-4 text-right text-emerald-400 tabular-nums">{fmtFull.format(row.principal)}</td>
                   <td className="py-2 px-4 text-right text-rose-400 tabular-nums">{fmtFull.format(row.interest)}</td>
-                  {hasExtra && <td className="py-2 px-4 text-right text-cyan-400 tabular-nums">{fmtFull.format(row.extra)}</td>}
+                  {hasExtra && <td className="py-2 px-4 text-right text-primary tabular-nums">{fmtFull.format(row.extra)}</td>}
                   <td className="py-2 px-4 text-right text-foreground tabular-nums">{fmtFull.format(row.balance)}</td>
                 </tr>
               );
@@ -110,7 +110,7 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
               <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmtFull.format(totals.payment)}</td>
               <td className="py-3 px-4 text-right text-emerald-400 tabular-nums">{fmtFull.format(totals.principal)}</td>
               <td className="py-3 px-4 text-right text-rose-400 tabular-nums">{fmtFull.format(totals.interest)}</td>
-              {hasExtra && <td className="py-3 px-4 text-right text-cyan-400 tabular-nums">{fmtFull.format(totals.extra)}</td>}
+              {hasExtra && <td className="py-3 px-4 text-right text-primary tabular-nums">{fmtFull.format(totals.extra)}</td>}
               <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmtFull.format(0)}</td>
             </tr>
           </tbody>

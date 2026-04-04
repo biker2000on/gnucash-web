@@ -217,7 +217,7 @@ export default function ImportExportPage() {
             onClick={() => fileInputRef.current?.click()}
             className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all
               ${dragOver
-                ? 'border-cyan-500 bg-cyan-500/10'
+                ? 'border-primary bg-primary/10'
                 : 'border-border hover:border-foreground-secondary hover:bg-surface/50'
               }`}
           >
@@ -265,7 +265,7 @@ export default function ImportExportPage() {
             <button
               onClick={handlePreview}
               disabled={previewing}
-              className="flex items-center gap-2 px-5 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-xl transition-colors"
+              className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-xl transition-colors"
             >
               {previewing ? (
                 <>
@@ -298,8 +298,8 @@ export default function ImportExportPage() {
         {/* Import Result */}
         {importResult && (
           <div className="space-y-4">
-            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
-              <h3 className="text-emerald-400 font-semibold mb-2">Import Successful</h3>
+            <div className="bg-primary/10 border border-primary/30 rounded-lg p-4">
+              <h3 className="text-primary font-semibold mb-2">Import Successful</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                 <div>
                   <span className="text-foreground-muted">Commodities: </span>
@@ -386,7 +386,7 @@ export default function ImportExportPage() {
         <button
           onClick={handleExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-5 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white rounded-xl transition-colors"
+          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-xl transition-colors"
         >
           {exporting ? (
             <>

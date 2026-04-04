@@ -138,7 +138,7 @@ export function ScrubAllButton() {
                           value={m}
                           checked={method === m}
                           onChange={() => setMethod(m)}
-                          className="accent-cyan-500 w-4 h-4"
+                          className="accent-primary w-4 h-4"
                         />
                         <span className="text-sm text-foreground-secondary group-hover:text-foreground transition-colors">
                           {methodLabels[m]}
@@ -184,7 +184,7 @@ export function ScrubAllButton() {
                   <button
                     onClick={handleConfirm}
                     disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary hover:bg-primary-hover text-white font-medium transition-colors disabled:opacity-50"
                   >
                     {loading && (
                       <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -199,7 +199,7 @@ export function ScrubAllButton() {
             ) : (
               /* Results summary */
               <>
-                <div className="mb-4 flex items-center gap-2 text-emerald-400">
+                <div className="mb-4 flex items-center gap-2 text-primary">
                   <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
@@ -253,7 +253,7 @@ export function ScrubAllButton() {
                 <div className="flex justify-end">
                   <button
                     onClick={closeDialog}
-                    className="px-4 py-2 text-sm rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-medium transition-colors"
+                    className="px-4 py-2 text-sm rounded-lg bg-primary hover:bg-primary-hover text-white font-medium transition-colors"
                   >
                     Close
                   </button>

@@ -375,11 +375,11 @@ export default function DashboardPage() {
                     <button
                         onClick={handleCreateDefault}
                         disabled={creatingBook}
-                        className="bg-surface border border-border rounded-xl p-6 text-left hover:border-emerald-500/50 transition-colors group disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <div className="flex items-center gap-3 mb-3">
-                            <div className="flex items-center justify-center w-10 h-10 bg-emerald-500/10 rounded-lg group-hover:bg-emerald-500/20 transition-colors">
-                                <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
+                                <svg className="w-5 h-5 text-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
                                 </svg>
                             </div>
@@ -391,10 +391,10 @@ export default function DashboardPage() {
                     </button>
 
                     {/* Import Card */}
-                    <Link href="/import-export" className="bg-surface border border-border rounded-xl p-6 text-left hover:border-cyan-500/50 transition-colors group">
+                    <Link href="/import-export" className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group">
                         <div className="flex items-center gap-3 mb-3">
-                            <div className="flex items-center justify-center w-10 h-10 bg-cyan-500/10 rounded-lg group-hover:bg-cyan-500/20 transition-colors">
-                                <svg className="w-5 h-5 text-cyan-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
+                                <svg className="w-5 h-5 text-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                                 </svg>
                             </div>

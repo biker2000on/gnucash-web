@@ -389,7 +389,7 @@ function LoginInstallPrompt() {
 
     return (
         <div className="fixed top-4 right-4 left-4 md:left-auto md:w-[28rem] z-50">
-            <div className="rounded-2xl border border-emerald-500/30 bg-surface/95 backdrop-blur-xl shadow-2xl p-5">
+            <div className="rounded-2xl border border-primary/30 bg-surface/95 backdrop-blur-xl shadow-2xl p-5">
                 <div className="flex items-start justify-between gap-4">
                     <div>
                         <p className="text-sm font-semibold text-foreground">Install GnuCash Web</p>
@@ -419,7 +419,7 @@ function LoginInstallPrompt() {
                             type="button"
                             onClick={handleInstall}
                             disabled={installing}
-                            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-600/50 px-4 py-2 text-sm font-medium text-white transition-colors"
+                            className="rounded-lg bg-primary hover:bg-primary-hover disabled:bg-primary/50 px-4 py-2 text-sm font-medium text-white transition-colors"
                         >
                             {installing ? 'Opening...' : 'Install App'}
                         </button>

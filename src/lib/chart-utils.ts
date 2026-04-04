@@ -5,9 +5,9 @@
 
 // Colors
 export const CHART_COLORS = {
-  green: '#10b981',    // emerald-500 — positive returns
+  green: '#2dd4bf',    // teal-400 — positive returns
   red: '#f43f5e',      // rose-500 — negative returns
-  cyan: '#06b6d4',     // cyan-500 — default price mode
+  cyan: '#14b8a6',     // teal-500 — default price mode
 } as const;
 
 export const GRADIENT_FILL_OPACITY = 0.3;

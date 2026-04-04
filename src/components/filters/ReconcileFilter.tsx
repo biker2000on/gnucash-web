@@ -3,7 +3,7 @@
 export const RECONCILE_STATES = [
     { value: 'n', label: 'Not Reconciled', shortLabel: 'N', color: 'neutral' },
     { value: 'c', label: 'Cleared', shortLabel: 'C', color: 'amber' },
-    { value: 'y', label: 'Reconciled', shortLabel: 'R', color: 'emerald' },
+    { value: 'y', label: 'Reconciled', shortLabel: 'R', color: 'primary' },
 ] as const;
 
 interface ReconcileFilterProps {
@@ -29,8 +29,8 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
             selected: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
             unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
-        emerald: {
-            selected: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400',
+        primary: {
+            selected: 'bg-primary/20 border-primary/50 text-primary',
             unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
     };

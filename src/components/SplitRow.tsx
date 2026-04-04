@@ -145,10 +145,10 @@ export function SplitRow({
                             onChange={(e) => handleDebitChange(e.target.value)}
                             onBlur={handleDebitBlur}
                             onKeyDown={(e) => handleAmountKeyDown(e, 'debit')}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-primary/50 text-right font-mono"
                         />
                         {containsMathExpression(split.debit) && (
-                            <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                            <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
                         )}
                     </div>
 
@@ -162,10 +162,10 @@ export function SplitRow({
                             onChange={(e) => handleCreditChange(e.target.value)}
                             onBlur={handleCreditBlur}
                             onKeyDown={(e) => handleAmountKeyDown(e, 'credit')}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50 text-right font-mono"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-primary/50 text-right font-mono"
                         />
                         {containsMathExpression(split.credit) && (
-                            <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-cyan-400 pointer-events-none">=</span>
+                            <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
                         )}
                     </div>
                 </div>
@@ -179,7 +179,7 @@ export function SplitRow({
                             placeholder="Memo"
                             value={split.memo}
                             onChange={(e) => onChange(index, 'memo', e.target.value)}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-cyan-500/50"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
                         />
                     </div>
 

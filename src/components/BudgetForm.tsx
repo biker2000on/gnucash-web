@@ -59,7 +59,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                     required
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all"
                     placeholder="e.g., 2024 Annual Budget"
                 />
             </div>
@@ -73,7 +73,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                     value={formData.description}
                     onChange={e => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     rows={3}
-                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all resize-none"
+                    className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all resize-none"
                     placeholder="Optional description..."
                 />
             </div>
@@ -101,7 +101,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 ...prev,
                                 num_periods: Math.max(1, Math.min(60, parseInt(e.target.value) || 12))
                             }))}
-                            className="w-24 bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-cyan-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-24 bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                     </div>
                     {mode === 'edit' && formData.recurrence_period_type && (
@@ -121,7 +121,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 onClick={() => setFormData(prev => ({ ...prev, num_periods: 12 }))}
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 12
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        ? 'bg-primary/20 text-primary border border-primary/30'
                                         : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                                 }`}
                             >
@@ -132,7 +132,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 onClick={() => setFormData(prev => ({ ...prev, num_periods: 4 }))}
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 4
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        ? 'bg-primary/20 text-primary border border-primary/30'
                                         : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                                 }`}
                             >
@@ -143,7 +143,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                                 onClick={() => setFormData(prev => ({ ...prev, num_periods: 1 }))}
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 1
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        ? 'bg-primary/20 text-primary border border-primary/30'
                                         : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                                 }`}
                             >
@@ -171,7 +171,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                 <button
                     type="submit"
                     disabled={saving || !formData.name}
-                    className="px-6 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                    className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                 >
                     {saving ? 'Saving...' : mode === 'create' ? 'Create Budget' : 'Save Changes'}
                 </button>

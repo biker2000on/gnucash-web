@@ -166,7 +166,7 @@ export function DepreciationScheduleForm({
             onClick={() => handleChange('isAppreciation', true)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               form.isAppreciation
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                ? 'bg-primary/20 text-primary border border-primary/40'
                 : 'bg-background-tertiary text-foreground-secondary border border-border hover:border-foreground-muted'
             }`}
           >
@@ -187,7 +187,7 @@ export function DepreciationScheduleForm({
             min="0"
             value={form.purchasePrice || ''}
             onChange={(e) => handleChange('purchasePrice', parseFloat(e.target.value) || 0)}
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
         <div>
@@ -209,7 +209,7 @@ export function DepreciationScheduleForm({
               }
             }}
             placeholder="MM/DD/YYYY"
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
       </div>
@@ -225,7 +225,7 @@ export function DepreciationScheduleForm({
             min="1"
             value={form.usefulLifeYears || ''}
             onChange={(e) => handleChange('usefulLifeYears', parseInt(e.target.value) || 1)}
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
         <div>
@@ -238,7 +238,7 @@ export function DepreciationScheduleForm({
             min="0"
             value={form.salvageValue || ''}
             onChange={(e) => handleChange('salvageValue', parseFloat(e.target.value) || 0)}
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
       </div>
@@ -252,7 +252,7 @@ export function DepreciationScheduleForm({
           <select
             value={form.method}
             onChange={(e) => handleChange('method', e.target.value as ScheduleData['method'])}
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
             <option value="straight-line">Straight-Line</option>
             <option value="declining-balance">Declining Balance</option>
@@ -265,7 +265,7 @@ export function DepreciationScheduleForm({
           <select
             value={form.frequency}
             onChange={(e) => handleChange('frequency', e.target.value as ScheduleData['frequency'])}
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           >
             <option value="monthly">Monthly</option>
             <option value="quarterly">Quarterly</option>
@@ -290,7 +290,7 @@ export function DepreciationScheduleForm({
               handleChange('declineRate', e.target.value ? parseFloat(e.target.value) : null)
             }
             placeholder={`${(2 / form.usefulLifeYears).toFixed(4)}`}
-            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+            className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
       )}
@@ -303,7 +303,7 @@ export function DepreciationScheduleForm({
         <select
           value={form.contraAccountGuid}
           onChange={(e) => handleChange('contraAccountGuid', e.target.value)}
-          className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40"
+          className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
         >
           <option value="">-- Select account --</option>
           {contraAccounts.map((acc) => (
@@ -323,7 +323,7 @@ export function DepreciationScheduleForm({
           value={form.notes}
           onChange={(e) => handleChange('notes', e.target.value)}
           rows={2}
-          className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-cyan-500/40 resize-none"
+          className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
         />
       </div>
 
@@ -332,7 +332,7 @@ export function DepreciationScheduleForm({
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+          className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
         >
           {saving ? 'Saving...' : 'Save Schedule'}
         </button>

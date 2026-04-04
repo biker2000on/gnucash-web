@@ -111,7 +111,7 @@ export default function TaxHarvestingPage() {
       {loading && (
         <div className="flex items-center justify-center py-12">
           <div className="flex items-center gap-3">
-            <div className="w-5 h-5 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
             <span className="text-foreground-secondary">Loading...</span>
           </div>
         </div>
@@ -183,7 +183,7 @@ export default function TaxHarvestingPage() {
                         <td className="px-4 py-3">
                           <Link
                             href={`/accounts/${c.accountGuid}`}
-                            className="text-cyan-400 hover:text-cyan-300 transition-colors"
+                            className="text-primary hover:text-primary-hover transition-colors"
                           >
                             {c.accountName}
                           </Link>

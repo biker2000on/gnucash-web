@@ -17,8 +17,8 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
                 onClick={() => setIsOpen(!isOpen)}
                 className={`flex items-center gap-2 px-4 py-2 min-h-[44px] text-sm rounded-xl border transition-all ${
                     activeFilterCount > 0
-                        ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-400'
-                        : 'bg-surface/50 border-border text-foreground-secondary hover:border-cyan-500/50'
+                        ? 'bg-primary/10 border-primary/50 text-primary'
+                        : 'bg-surface/50 border-border text-foreground-secondary hover:border-primary/50'
                 }`}
             >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -26,7 +26,7 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
                 </svg>
                 <span>Filters</span>
                 {activeFilterCount > 0 && (
-                    <span className="bg-cyan-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                    <span className="bg-primary text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
                         {activeFilterCount}
                     </span>
                 )}

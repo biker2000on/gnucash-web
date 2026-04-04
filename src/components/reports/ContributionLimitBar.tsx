@@ -25,7 +25,7 @@ export function ContributionLimitBar({ current, limit, label, catchUp }: Contrib
       <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${
-            isOver ? 'bg-red-500' : percent >= 90 ? 'bg-yellow-500' : 'bg-cyan-500'
+            isOver ? 'bg-red-500' : percent >= 90 ? 'bg-yellow-500' : 'bg-primary'
           }`}
           style={{ width: `${Math.min(100, percent)}%` }}
         />

@@ -151,9 +151,9 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
             onMouseEnter={() => setHighlightedIndex(i)}
             className={`px-4 py-2 cursor-pointer text-sm transition-colors ${
               i === highlightedIndex
-                ? 'bg-cyan-500/10 text-foreground'
+                ? 'bg-primary/10 text-foreground'
                 : c.code === value
-                  ? 'text-cyan-400'
+                  ? 'text-primary'
                   : 'text-foreground hover:bg-surface-hover'
             }`}
           >
@@ -182,7 +182,7 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
             // Focus input after state update
             setTimeout(() => inputRef.current?.focus(), 0);
           }}
-          className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground text-left focus:outline-none focus:border-cyan-500/50 transition-colors"
+          className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground text-left focus:outline-none focus:border-primary/50 transition-colors"
         >
           {displayValue}
         </button>
@@ -207,7 +207,7 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
           onChange={e => setSearch(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Search currencies..."
-          className="w-full bg-input-bg border border-cyan-500/50 rounded-lg px-4 py-3 text-foreground focus:outline-none transition-colors"
+          className="w-full bg-input-bg border border-primary/50 rounded-lg px-4 py-3 text-foreground focus:outline-none transition-colors"
         />
       )}
 

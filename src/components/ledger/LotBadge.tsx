@@ -74,7 +74,7 @@ export default function LotBadge({ lotIndex, isClosed, tooltip, className = '' }
                                 <div>
                                     <span className={`inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold ${
                                         tooltip.holdingPeriod === 'long_term'
-                                            ? 'bg-emerald-500/20 text-emerald-400'
+                                            ? 'bg-primary/20 text-primary'
                                             : 'bg-amber-500/20 text-amber-400'
                                     }`}>
                                         {tooltip.holdingPeriod === 'long_term' ? 'LT' : 'ST'}

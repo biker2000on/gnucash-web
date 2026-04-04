@@ -41,7 +41,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
         : `/reports/${report.baseReportType}`;
 
     return (
-        <div className="relative bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-5 hover:border-cyan-500/50 transition-all group">
+        <div className="relative bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-5 hover:border-primary/50 transition-all group">
             {/* Star button */}
             <button
                 onClick={() => onToggleStar(report.id)}
@@ -61,7 +61,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
 
             {/* Report name as link */}
             <Link href={href} className="block mb-2 pr-8">
-                <h3 className="text-base font-semibold text-foreground group-hover:text-cyan-400 transition-colors truncate">
+                <h3 className="text-base font-semibold text-foreground group-hover:text-primary transition-colors truncate">
                     {report.name}
                 </h3>
             </Link>
@@ -75,7 +75,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
 
             {/* Badge and time */}
             <div className="flex items-center gap-2 mb-4">
-                <span className="px-2 py-0.5 text-xs rounded-full bg-cyan-500/10 text-cyan-400">
+                <span className="px-2 py-0.5 text-xs rounded-full bg-primary/10 text-primary">
                     {displayName}
                 </span>
                 <span className="text-xs text-foreground-tertiary">

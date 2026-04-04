@@ -87,7 +87,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
         <div className={`relative ${className}`} ref={dropdownRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 bg-surface/50 border border-border rounded-xl px-4 py-2 text-sm text-foreground hover:border-emerald-500/50 transition-all"
+                className="flex items-center gap-2 bg-surface/50 border border-border rounded-xl px-4 py-2 text-sm text-foreground hover:border-primary/50 transition-all"
             >
                 <svg className="w-4 h-4 text-foreground-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -113,7 +113,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                                         onClick={() => handlePresetClick(preset)}
                                         className={`px-3 py-2 text-sm rounded-lg text-left transition-colors ${
                                             isActive
-                                                ? 'bg-emerald-500/20 text-emerald-400'
+                                                ? 'bg-primary/20 text-primary'
                                                 : 'text-foreground-secondary hover:bg-surface-hover'
                                         }`}
                                     >
@@ -145,7 +145,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                                     }
                                 }}
                                 placeholder="MM/DD/YYYY"
-                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             />
                             <span className="text-foreground-muted">to</span>
                             <input
@@ -165,12 +165,12 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                                     }
                                 }}
                                 placeholder="MM/DD/YYYY"
-                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-emerald-500/50"
+                                className="flex-1 min-w-0 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             />
                         </div>
                         <button
                             onClick={handleCustomApply}
-                            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+                            className="w-full bg-primary hover:bg-primary-hover text-white text-sm font-medium py-2 rounded-lg transition-colors"
                         >
                             Apply
                         </button>

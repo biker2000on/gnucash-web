@@ -89,7 +89,7 @@ function EditableValue({
               }
               if (e.key === 'Escape') setEditing(false);
             }}
-            className="w-32 bg-input-bg border border-border rounded-lg py-1.5 px-3 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="w-32 bg-input-bg border border-border rounded-lg py-1.5 px-3 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             aria-label={ariaLabel}
             autoFocus
           />
@@ -101,7 +101,7 @@ function EditableValue({
               if (!isNaN(parsed)) onChange(parsed);
               setEditing(false);
             }}
-            className="text-xs text-cyan-400 hover:text-cyan-300"
+            className="text-xs text-primary hover:text-primary-hover"
           >
             Save
           </button>
@@ -121,7 +121,7 @@ function EditableValue({
     <div>
       <p className="text-xs text-foreground-muted mb-1">{label}</p>
       <div className="flex items-center gap-2">
-        <span className="text-emerald-400">
+        <span className="text-primary">
           <svg className="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
@@ -133,7 +133,7 @@ function EditableValue({
             setEditValue(String(value));
             setEditing(true);
           }}
-          className="text-xs text-foreground-muted hover:text-cyan-400 transition-colors"
+          className="text-xs text-foreground-muted hover:text-primary transition-colors"
           title="Edit value"
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -153,7 +153,7 @@ function DetectionSkeleton() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <div className="w-5 h-5 rounded-full bg-cyan-500/20 animate-pulse" />
+        <div className="w-5 h-5 rounded-full bg-primary/20 animate-pulse" />
         <p className="text-sm text-foreground-muted">Analyzing payments...</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -319,7 +319,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
                 <button
                   type="button"
                   onClick={runDetection}
-                  className="text-xs text-cyan-400 hover:text-cyan-300 font-medium"
+                  className="text-xs text-primary hover:text-primary-hover font-medium"
                 >
                   Try Again
                 </button>
@@ -421,7 +421,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
             <span>
               Confidence:{' '}
               <span className={
-                result.confidence === 'high' ? 'text-emerald-400' :
+                result.confidence === 'high' ? 'text-primary' :
                 result.confidence === 'medium' ? 'text-amber-400' : 'text-rose-400'
               }>
                 {result.confidence}
@@ -434,7 +434,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
           <button
             type="button"
             onClick={handleUseValues}
-            className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium rounded-lg transition-colors"
+            className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white text-sm font-medium rounded-lg transition-colors"
           >
             Use These Values
           </button>
