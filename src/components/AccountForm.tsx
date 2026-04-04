@@ -28,6 +28,10 @@ interface AccountFormData {
     description: string;
     hidden: number;
     placeholder: number;
+    notes: string;
+    tax_related: boolean;
+    is_retirement: boolean;
+    retirement_account_type: string | null;
 }
 
 interface FlatAccount {
@@ -47,13 +51,14 @@ interface Commodity {
 
 interface AccountFormProps {
     mode: 'create' | 'edit';
+    accountGuid?: string;
     initialData?: Partial<AccountFormData>;
     parentGuid?: string | null; // Pre-selected parent for "New Child" action
     onSave: (data: AccountFormData) => Promise<void>;
     onCancel: () => void;
 }
 
-export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }: AccountFormProps) {
+export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave, onCancel }: AccountFormProps) {
     const [formData, setFormData] = useState<AccountFormData>({
         name: initialData?.name || '',
         account_type: initialData?.account_type || 'ASSET',
@@ -63,6 +68,10 @@ export function AccountForm({ mode, initialData, parentGuid, onSave, onCancel }:
         description: initialData?.description || '',
         hidden: initialData?.hidden ?? 0,
         placeholder: initialData?.placeholder ?? 0,
+        notes: initialData?.notes ?? '',
+        tax_related: initialData?.tax_related ?? false,
+        is_retirement: initialData?.is_retirement ?? false,
+        retirement_account_type: initialData?.retirement_account_type ?? null,
     });
 
     const [accounts, setAccounts] = useState<FlatAccount[]>([]);
