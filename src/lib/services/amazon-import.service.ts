@@ -599,13 +599,16 @@ export class AmazonImportService {
         await TransactionService.update({
           guid: transactionGuid,
           currency_guid: txDetail.currency_guid,
-          post_date: txDetail.post_date,
-          description: txDetail.description,
+          num: txDetail.num ?? '',
+          post_date: txDetail.post_date ?? new Date(),
+          description: txDetail.description ?? '',
           splits: newSplits.map((s) => ({
             account_guid: s.account_guid,
             value_num: s.value_num,
             value_denom: s.value_denom,
             memo: s.memo,
+            action: '',
+            reconcile_state: 'n' as const,
           })),
         });
 

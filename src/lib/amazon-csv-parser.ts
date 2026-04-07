@@ -414,9 +414,9 @@ export function parseAmazonCsv(csvContent: string): ParseResult {
 
 export async function extractCsvFromZip(zipBuffer: Buffer | Uint8Array): Promise<string> {
   const uint8 =
-    zipBuffer instanceof Uint8Array
+    zipBuffer instanceof Uint8Array && !(zipBuffer instanceof Buffer)
       ? zipBuffer
-      : new Uint8Array(zipBuffer.buffer, zipBuffer.byteOffset, zipBuffer.byteLength);
+      : new Uint8Array((zipBuffer as Buffer).buffer, (zipBuffer as Buffer).byteOffset, (zipBuffer as Buffer).byteLength);
   const files = unzipSync(uint8);
 
   for (const path of Object.keys(files)) {
