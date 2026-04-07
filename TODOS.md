@@ -2,6 +2,20 @@
 
 Items deferred from plan reviews for future implementation.
 
+## P3 - Amazon Order History Reports CSV Format Support
+
+**What:** Support Amazon's "Order History Reports" CSV format (multi-file: orders CSV + items CSV joined by Order ID) as an alternative to the "Request My Data" single-file format.
+
+**Why:** The MVP Amazon import only supports "Request My Data" format. The "Order History Reports" format includes Amazon's item categories (useful for auto-categorization) and is more familiar to users who've used Amazon's built-in download feature. Requires a multi-file upload UI and a join step in the parser.
+
+**Effort:** S (human: ~3 days) / with CC: S (~15 min)
+
+**Depends on:** Amazon Order Import feature.
+
+**Context:** Deferred from eng review 2026-04-06. The "Request My Data" format has item-level detail in one file, making it simpler to parse. Adding "Order History Reports" later is a clean extension: add a second parser function, detect format by header row, and allow multi-file upload. The two formats have different column names and structures, but both normalize to the same `AmazonOrder` interface.
+
+---
+
 ## P2 - Monte Carlo FIRE Projections
 
 **What:** Replace the single-line FIRE projection with a Monte Carlo simulation that samples from historical market return distributions. Show confidence bands (e.g., 10th/25th/50th/75th/90th percentile outcomes) instead of a single deterministic line.
