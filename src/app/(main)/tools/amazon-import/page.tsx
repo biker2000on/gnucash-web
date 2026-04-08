@@ -1,38 +1,58 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
+import { AccountSelector } from '@/components/ui/AccountSelector';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-interface AccountOption {
-    guid: string;
-    name: string;
-    fullname?: string;
-    account_type: string;
-}
-
-interface OrderItem {
+interface BatchOrderItem {
+    id: number;
     name: string;
     price: number;
-    accountGuid: string;
+    quantity: number;
+    tax: number;
+    category: string | null;
+    csvRowIndex: number;
+    suggestedAccountGuid: string | null;
+    suggestedAccountConfidence: number;
 }
 
-interface MatchInfo {
-    score: number;
+interface MatchCandidate {
+    transaction_guid: string;
     description: string;
-    date: string;
+    post_date: string;
     amount: number;
+    split_guid: string;
+    score: number;
+    score_breakdown: { amount: number; date: number };
 }
 
-interface OrderCard {
+interface BatchOrder {
+    id: number;
     orderId: string;
-    date: string;
-    total: number;
-    items: OrderItem[];
-    match: MatchInfo | null;
-    status: 'pending' | 'confirmed' | 'skipped';
+    orderDate: string;
+    orderTotal: number;
+    chargeAmount: number | null;
+    items: BatchOrderItem[];
+    matchStatus: string;
+    matchCandidates: MatchCandidate[];
+    matchedTransactionGuid: string | null;
+    // Client-side state
+    selectedTransaction?: string;
+    itemAccountGuids?: Record<number, string>;
+    confirmed?: boolean;
+    skipped?: boolean;
+}
+
+interface ImportResult {
+    batchId: number;
+    totalOrders: number;
+    totalItems: number;
+    matchedOrders: number;
+    duplicateCount: number;
+    errors: string[];
 }
 
 interface ApplyResult {
@@ -42,8 +62,8 @@ interface ApplyResult {
 }
 
 type PageState = 'upload' | 'review' | 'applied';
-type TaxHandling = 'separate' | 'rollup';
-type ShippingHandling = 'separate' | 'rollup';
+type TaxMode = 'separate' | 'rolled_in';
+type ShippingMode = 'separate' | 'rolled_in';
 
 /* ------------------------------------------------------------------ */
 /* Formatters                                                          */
@@ -65,23 +85,20 @@ export default function AmazonImportPage() {
     const [pageState, setPageState] = useState<PageState>('upload');
 
     // Upload form state
-    const [creditCardAccount, setCreditCardAccount] = useState('');
-    const [taxHandling, setTaxHandling] = useState<TaxHandling>('separate');
-    const [shippingHandling, setShippingHandling] = useState<ShippingHandling>('separate');
-    const [taxAccount, setTaxAccount] = useState('');
-    const [shippingAccount, setShippingAccount] = useState('');
+    const [creditCardAccountGuid, setCreditCardAccountGuid] = useState('');
+    const [taxMode, setTaxMode] = useState<TaxMode>('separate');
+    const [shippingMode, setShippingMode] = useState<ShippingMode>('separate');
+    const [taxAccountGuid, setTaxAccountGuid] = useState('');
+    const [shippingAccountGuid, setShippingAccountGuid] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState<string | null>(null);
 
-    // Account data
-    const [creditAccounts, setCreditAccounts] = useState<AccountOption[]>([]);
-    const [allAccounts, setAllAccounts] = useState<AccountOption[]>([]);
-    const [accountsLoading, setAccountsLoading] = useState(true);
-
     // Review state
-    const [orders, setOrders] = useState<OrderCard[]>([]);
+    const [batchId, setBatchId] = useState<number | null>(null);
+    const [orders, setOrders] = useState<BatchOrder[]>([]);
     const [filename, setFilename] = useState('');
+    const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
     // Applied state
     const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
@@ -90,56 +107,6 @@ export default function AmazonImportPage() {
     // Drag state
     const [isDragging, setIsDragging] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    /* -------------------------------------------------------------- */
-    /* Fetch accounts                                                  */
-    /* -------------------------------------------------------------- */
-
-    useEffect(() => {
-        let cancelled = false;
-
-        async function fetchAccounts() {
-            setAccountsLoading(true);
-            try {
-                const [creditRes, allRes] = await Promise.all([
-                    fetch('/api/accounts?flat=true&noBalances=true&type=CREDIT,LIABILITY,BANK'),
-                    fetch('/api/accounts?flat=true&noBalances=true'),
-                ]);
-
-                if (!cancelled) {
-                    if (creditRes.ok) {
-                        const data = await creditRes.json();
-                        setCreditAccounts(
-                            data.map((a: AccountOption) => ({
-                                guid: a.guid,
-                                name: a.name,
-                                fullname: a.fullname,
-                                account_type: a.account_type,
-                            }))
-                        );
-                    }
-                    if (allRes.ok) {
-                        const data = await allRes.json();
-                        setAllAccounts(
-                            data.map((a: AccountOption) => ({
-                                guid: a.guid,
-                                name: a.name,
-                                fullname: a.fullname,
-                                account_type: a.account_type,
-                            }))
-                        );
-                    }
-                }
-            } catch {
-                // Accounts will just be empty
-            } finally {
-                if (!cancelled) setAccountsLoading(false);
-            }
-        }
-
-        fetchAccounts();
-        return () => { cancelled = true; };
-    }, []);
 
     /* -------------------------------------------------------------- */
     /* File handling                                                    */
@@ -170,7 +137,7 @@ export default function AmazonImportPage() {
     /* -------------------------------------------------------------- */
 
     const handleUpload = async () => {
-        if (!file || !creditCardAccount) return;
+        if (!file || !creditCardAccountGuid) return;
 
         setUploading(true);
         setUploadError(null);
@@ -178,17 +145,17 @@ export default function AmazonImportPage() {
         try {
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('creditCardAccount', creditCardAccount);
-            formData.append('taxHandling', taxHandling);
-            formData.append('shippingHandling', shippingHandling);
-            if (taxHandling === 'separate' && taxAccount) {
-                formData.append('taxAccount', taxAccount);
+            formData.append('creditCardAccountGuid', creditCardAccountGuid);
+            formData.append('taxMode', taxMode);
+            formData.append('shippingMode', shippingMode);
+            if (taxMode === 'separate' && taxAccountGuid) {
+                formData.append('taxAccountGuid', taxAccountGuid);
             }
-            if (shippingHandling === 'separate' && shippingAccount) {
-                formData.append('shippingAccount', shippingAccount);
+            if (shippingMode === 'separate' && shippingAccountGuid) {
+                formData.append('shippingAccountGuid', shippingAccountGuid);
             }
 
-            const res = await fetch('/api/amazon-import/upload', {
+            const res = await fetch('/api/amazon/import', {
                 method: 'POST',
                 body: formData,
             });
@@ -198,9 +165,30 @@ export default function AmazonImportPage() {
                 throw new Error(errorData?.error || `Upload failed (${res.status})`);
             }
 
-            const data = await res.json();
-            setOrders(data.orders || []);
+            const result: ImportResult = await res.json();
+            setImportResult(result);
+            setBatchId(result.batchId);
             setFilename(file.name);
+
+            // Fetch batch details with orders and match suggestions
+            const batchRes = await fetch(`/api/amazon/import/${result.batchId}`);
+            if (!batchRes.ok) {
+                throw new Error('Failed to load batch details');
+            }
+            const batchData = await batchRes.json();
+
+            // Initialize client-side state on each order
+            const ordersWithState: BatchOrder[] = batchData.orders.map((o: BatchOrder) => ({
+                ...o,
+                selectedTransaction: o.matchedTransactionGuid || (o.matchCandidates.length > 0 ? o.matchCandidates[0].transaction_guid : undefined),
+                itemAccountGuids: Object.fromEntries(
+                    o.items.map(item => [item.id, item.suggestedAccountGuid || ''])
+                ),
+                confirmed: o.matchStatus === 'confirmed',
+                skipped: false,
+            }));
+
+            setOrders(ordersWithState);
             setPageState('review');
         } catch (err) {
             setUploadError(err instanceof Error ? err.message : 'Upload failed');
@@ -213,26 +201,66 @@ export default function AmazonImportPage() {
     /* Review actions                                                  */
     /* -------------------------------------------------------------- */
 
-    const updateOrderStatus = (orderId: string, status: 'pending' | 'confirmed' | 'skipped') => {
+    const confirmOrder = async (orderId: string) => {
+        if (!batchId) return;
+
+        const order = orders.find(o => o.orderId === orderId);
+        if (!order || !order.selectedTransaction) return;
+
+        try {
+            const res = await fetch(`/api/amazon/import/${batchId}/match`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    orderId,
+                    transactionGuid: order.selectedTransaction,
+                    items: order.items.map(item => ({
+                        itemName: item.name,
+                        accountGuid: order.itemAccountGuids?.[item.id] || '',
+                    })),
+                }),
+            });
+
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => null);
+                throw new Error(errorData?.error || 'Failed to confirm match');
+            }
+
+            setOrders(prev =>
+                prev.map(o => (o.orderId === orderId ? { ...o, confirmed: true, skipped: false } : o))
+            );
+        } catch (err) {
+            setUploadError(err instanceof Error ? err.message : 'Failed to confirm');
+        }
+    };
+
+    const toggleSkip = (orderId: string) => {
         setOrders(prev =>
-            prev.map(o => (o.orderId === orderId ? { ...o, status } : o))
+            prev.map(o => (o.orderId === orderId ? { ...o, skipped: !o.skipped, confirmed: false } : o))
         );
     };
 
-    const updateItemAccount = (orderId: string, itemIndex: number, accountGuid: string) => {
+    const updateItemAccount = (orderId: string, itemId: number, accountGuid: string) => {
         setOrders(prev =>
             prev.map(o => {
                 if (o.orderId !== orderId) return o;
-                const newItems = [...o.items];
-                newItems[itemIndex] = { ...newItems[itemIndex], accountGuid };
-                return { ...o, items: newItems };
+                return {
+                    ...o,
+                    itemAccountGuids: { ...o.itemAccountGuids, [itemId]: accountGuid },
+                };
             })
         );
     };
 
-    const confirmedCount = orders.filter(o => o.status === 'confirmed').length;
-    const skippedCount = orders.filter(o => o.status === 'skipped').length;
-    const matchedCount = orders.filter(o => o.match && o.match.score > 0).length;
+    const updateSelectedTransaction = (orderId: string, txGuid: string) => {
+        setOrders(prev =>
+            prev.map(o => (o.orderId === orderId ? { ...o, selectedTransaction: txGuid } : o))
+        );
+    };
+
+    const confirmedCount = orders.filter(o => o.confirmed).length;
+    const skippedCount = orders.filter(o => o.skipped).length;
+    const matchedCount = orders.filter(o => o.matchStatus === 'suggested' || o.matchStatus === 'confirmed').length;
     const unmatchedCount = orders.length - matchedCount;
 
     /* -------------------------------------------------------------- */
@@ -240,23 +268,13 @@ export default function AmazonImportPage() {
     /* -------------------------------------------------------------- */
 
     const handleApply = async () => {
-        const confirmed = orders.filter(o => o.status === 'confirmed');
-        if (confirmed.length === 0) return;
+        if (!batchId || confirmedCount === 0) return;
 
         setApplying(true);
 
         try {
-            const res = await fetch('/api/amazon-import/apply', {
+            const res = await fetch(`/api/amazon/import/${batchId}/apply`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    orders: confirmed,
-                    creditCardAccount,
-                    taxHandling,
-                    shippingHandling,
-                    taxAccount: taxHandling === 'separate' ? taxAccount : undefined,
-                    shippingAccount: shippingHandling === 'separate' ? shippingAccount : undefined,
-                }),
             });
 
             if (!res.ok) {
@@ -288,6 +306,8 @@ export default function AmazonImportPage() {
         setFile(null);
         setOrders([]);
         setFilename('');
+        setBatchId(null);
+        setImportResult(null);
         setApplyResult(null);
         setUploadError(null);
     };
@@ -306,6 +326,21 @@ export default function AmazonImportPage() {
                     </p>
                 </header>
 
+                {/* How to get your data */}
+                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-3">
+                    <h2 className="text-lg font-semibold text-foreground">How to Download Your Amazon Data</h2>
+                    <ol className="list-decimal list-inside space-y-2 text-sm text-foreground-secondary">
+                        <li>Go to <span className="font-medium text-foreground">Amazon.com</span> and sign in</li>
+                        <li>Navigate to <span className="font-medium text-foreground">Account &amp; Lists &rarr; Your Account</span></li>
+                        <li>Under &ldquo;Ordering and shopping preferences&rdquo;, click <span className="font-medium text-foreground">Download order reports</span></li>
+                        <li>Alternatively, use <span className="font-medium text-foreground">Request My Data</span> at <span className="font-mono text-xs bg-surface-elevated px-1.5 py-0.5 rounded">amazon.com/gp/privacycentral/dsar/preview.html</span></li>
+                        <li>Select the date range you want, then download the CSV or ZIP file</li>
+                    </ol>
+                    <p className="text-xs text-foreground-muted">
+                        The &ldquo;Request My Data&rdquo; export is recommended as it includes item-level detail. Order History Reports are also supported.
+                    </p>
+                </section>
+
                 {/* Import Settings */}
                 <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-6">
                     <h2 className="text-lg font-semibold text-foreground">Import Settings</h2>
@@ -315,21 +350,12 @@ export default function AmazonImportPage() {
                         <label className="block text-sm font-medium text-foreground-secondary">
                             Credit Card Account
                         </label>
-                        <select
-                            value={creditCardAccount}
-                            onChange={e => setCreditCardAccount(e.target.value)}
-                            disabled={accountsLoading}
-                            className="w-full bg-surface-elevated border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-                        >
-                            <option value="">
-                                {accountsLoading ? 'Loading accounts...' : 'Select account...'}
-                            </option>
-                            {creditAccounts.map(a => (
-                                <option key={a.guid} value={a.guid}>
-                                    {a.fullname || a.name}
-                                </option>
-                            ))}
-                        </select>
+                        <AccountSelector
+                            value={creditCardAccountGuid}
+                            onChange={(guid) => setCreditCardAccountGuid(guid)}
+                            placeholder="Search for account..."
+                            accountTypes={['CREDIT', 'LIABILITY', 'BANK']}
+                        />
                     </div>
 
                     {/* Tax and Shipping - side by side on desktop */}
@@ -343,10 +369,10 @@ export default function AmazonImportPage() {
                                 <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                                     <input
                                         type="radio"
-                                        name="taxHandling"
+                                        name="taxMode"
                                         value="separate"
-                                        checked={taxHandling === 'separate'}
-                                        onChange={() => setTaxHandling('separate')}
+                                        checked={taxMode === 'separate'}
+                                        onChange={() => setTaxMode('separate')}
                                         className="accent-primary"
                                     />
                                     Separate split
@@ -354,10 +380,10 @@ export default function AmazonImportPage() {
                                 <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                                     <input
                                         type="radio"
-                                        name="taxHandling"
-                                        value="rollup"
-                                        checked={taxHandling === 'rollup'}
-                                        onChange={() => setTaxHandling('rollup')}
+                                        name="taxMode"
+                                        value="rolled_in"
+                                        checked={taxMode === 'rolled_in'}
+                                        onChange={() => setTaxMode('rolled_in')}
                                         className="accent-primary"
                                     />
                                     Roll into items
@@ -365,24 +391,17 @@ export default function AmazonImportPage() {
                             </div>
 
                             {/* Tax Account (conditional) */}
-                            {taxHandling === 'separate' && (
+                            {taxMode === 'separate' && (
                                 <div className="space-y-1.5 mt-2">
                                     <label className="block text-xs font-medium text-foreground-muted">
                                         Tax Account
                                     </label>
-                                    <select
-                                        value={taxAccount}
-                                        onChange={e => setTaxAccount(e.target.value)}
-                                        disabled={accountsLoading}
-                                        className="w-full bg-surface-elevated border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-                                    >
-                                        <option value="">Select account...</option>
-                                        {allAccounts.map(a => (
-                                            <option key={a.guid} value={a.guid}>
-                                                {a.fullname || a.name}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <AccountSelector
+                                        value={taxAccountGuid}
+                                        onChange={(guid) => setTaxAccountGuid(guid)}
+                                        placeholder="Search for account..."
+                                        compact
+                                    />
                                 </div>
                             )}
                         </div>
@@ -396,10 +415,10 @@ export default function AmazonImportPage() {
                                 <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                                     <input
                                         type="radio"
-                                        name="shippingHandling"
+                                        name="shippingMode"
                                         value="separate"
-                                        checked={shippingHandling === 'separate'}
-                                        onChange={() => setShippingHandling('separate')}
+                                        checked={shippingMode === 'separate'}
+                                        onChange={() => setShippingMode('separate')}
                                         className="accent-primary"
                                     />
                                     Separate split
@@ -407,10 +426,10 @@ export default function AmazonImportPage() {
                                 <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
                                     <input
                                         type="radio"
-                                        name="shippingHandling"
-                                        value="rollup"
-                                        checked={shippingHandling === 'rollup'}
-                                        onChange={() => setShippingHandling('rollup')}
+                                        name="shippingMode"
+                                        value="rolled_in"
+                                        checked={shippingMode === 'rolled_in'}
+                                        onChange={() => setShippingMode('rolled_in')}
                                         className="accent-primary"
                                     />
                                     Roll into items
@@ -418,24 +437,17 @@ export default function AmazonImportPage() {
                             </div>
 
                             {/* Shipping Account (conditional) */}
-                            {shippingHandling === 'separate' && (
+                            {shippingMode === 'separate' && (
                                 <div className="space-y-1.5 mt-2">
                                     <label className="block text-xs font-medium text-foreground-muted">
                                         Shipping Account
                                     </label>
-                                    <select
-                                        value={shippingAccount}
-                                        onChange={e => setShippingAccount(e.target.value)}
-                                        disabled={accountsLoading}
-                                        className="w-full bg-surface-elevated border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-                                    >
-                                        <option value="">Select account...</option>
-                                        {allAccounts.map(a => (
-                                            <option key={a.guid} value={a.guid}>
-                                                {a.fullname || a.name}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <AccountSelector
+                                        value={shippingAccountGuid}
+                                        onChange={(guid) => setShippingAccountGuid(guid)}
+                                        placeholder="Search for account..."
+                                        compact
+                                    />
                                 </div>
                             )}
                         </div>
@@ -504,7 +516,7 @@ export default function AmazonImportPage() {
                     {/* Upload Button */}
                     <button
                         onClick={handleUpload}
-                        disabled={!file || !creditCardAccount || uploading}
+                        disabled={!file || !creditCardAccountGuid || uploading}
                         className="w-full px-4 py-2.5 rounded-md text-sm font-medium transition-colors
                             bg-primary text-primary-foreground hover:bg-primary-hover
                             disabled:opacity-40 disabled:cursor-not-allowed"
@@ -541,6 +553,11 @@ export default function AmazonImportPage() {
                             ({orders.length} orders)
                         </span>
                     </h1>
+                    {importResult && importResult.duplicateCount > 0 && (
+                        <p className="text-sm text-foreground-muted mt-1">
+                            {importResult.duplicateCount} duplicate items skipped
+                        </p>
+                    )}
                 </header>
 
                 {/* Status Bar */}
@@ -557,9 +574,9 @@ export default function AmazonImportPage() {
                         <div
                             key={order.orderId}
                             className={`bg-surface/30 backdrop-blur-xl border rounded-xl p-6 transition-colors
-                                ${order.status === 'confirmed'
+                                ${order.confirmed
                                     ? 'border-success/30'
-                                    : order.status === 'skipped'
+                                    : order.skipped
                                         ? 'border-border opacity-60'
                                         : 'border-border'
                                 }`}
@@ -571,58 +588,86 @@ export default function AmazonImportPage() {
                                         {order.orderId}
                                     </h3>
                                     <p className="text-xs text-foreground-muted font-mono mt-0.5">
-                                        {order.date}
+                                        {order.orderDate}
                                     </p>
                                 </div>
                                 <span className="text-lg font-semibold text-foreground font-mono">
-                                    {fmt.format(order.total)}
+                                    {fmt.format(order.orderTotal)}
                                 </span>
                             </div>
 
                             {/* Items */}
                             <div className="space-y-3 mb-4">
-                                {order.items.map((item, idx) => (
-                                    <div key={idx} className="flex flex-wrap items-center gap-3">
+                                {order.items.map(item => (
+                                    <div key={item.id} className="flex flex-wrap items-center gap-3">
                                         <span className="flex-1 min-w-[200px] text-sm text-foreground truncate">
                                             {item.name}
                                         </span>
                                         <span className="text-sm font-mono text-foreground-secondary w-20 text-right">
                                             {fmt.format(item.price)}
                                         </span>
-                                        <select
-                                            value={item.accountGuid}
-                                            onChange={e => updateItemAccount(order.orderId, idx, e.target.value)}
-                                            className="w-64 bg-surface-elevated border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
-                                        >
-                                            <option value="">Select account...</option>
-                                            {allAccounts.map(a => (
-                                                <option key={a.guid} value={a.guid}>
-                                                    {a.fullname || a.name}
-                                                </option>
-                                            ))}
-                                        </select>
+                                        <div className="w-64">
+                                            <AccountSelector
+                                                value={order.itemAccountGuids?.[item.id] || ''}
+                                                onChange={(guid) => updateItemAccount(order.orderId, item.id, guid)}
+                                                placeholder="Select account..."
+                                                compact
+                                            />
+                                        </div>
                                     </div>
                                 ))}
                             </div>
 
-                            {/* Match info */}
-                            {order.match && order.match.score > 0 && (
+                            {/* Match candidates */}
+                            {order.matchCandidates.length > 0 && (
                                 <div className="bg-surface-elevated/50 rounded-md px-4 py-3 mb-4">
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-xs font-medium text-foreground-muted">Match</span>
-                                        <span className={`text-xs font-semibold font-mono ${
-                                            order.match.score >= 90 ? 'text-success' :
-                                            order.match.score >= 70 ? 'text-warning' :
-                                            'text-negative'
-                                        }`}>
-                                            {order.match.score}%
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className="text-xs font-medium text-foreground-muted">
+                                            {order.matchCandidates.length === 1 ? 'Match' : 'Match candidates'}
                                         </span>
                                     </div>
-                                    <p className="text-sm text-foreground-secondary truncate">
-                                        {order.match.description}
+                                    {order.matchCandidates.map((candidate, idx) => (
+                                        <label
+                                            key={candidate.transaction_guid}
+                                            className={`flex items-start gap-2 text-sm cursor-pointer rounded-md px-2 py-1.5 transition-colors
+                                                ${order.selectedTransaction === candidate.transaction_guid ? 'bg-primary/10' : 'hover:bg-surface-hover/50'}
+                                                ${idx > 0 ? 'mt-1' : ''}`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name={`match-${order.orderId}`}
+                                                checked={order.selectedTransaction === candidate.transaction_guid}
+                                                onChange={() => updateSelectedTransaction(order.orderId, candidate.transaction_guid)}
+                                                className="accent-primary mt-1"
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-foreground-secondary truncate">
+                                                    {candidate.description}
+                                                </p>
+                                                <p className="text-xs text-foreground-muted font-mono">
+                                                    {candidate.post_date} &middot; {fmt.format(candidate.amount)}
+                                                </p>
+                                            </div>
+                                            <span className={`text-xs font-semibold font-mono shrink-0 ${
+                                                candidate.score >= 0.9 ? 'text-success' :
+                                                candidate.score >= 0.7 ? 'text-warning' :
+                                                'text-negative'
+                                            }`}>
+                                                {Math.round(candidate.score * 100)}%
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* No match info */}
+                            {order.matchCandidates.length === 0 && order.matchStatus === 'unmatched' && (
+                                <div className="bg-warning/5 border border-warning/20 rounded-md px-4 py-3 mb-4">
+                                    <p className="text-xs text-warning font-medium">
+                                        No matching transaction found
                                     </p>
-                                    <p className="text-xs text-foreground-muted font-mono">
-                                        {order.match.date} &middot; {fmt.format(order.match.amount)}
+                                    <p className="text-xs text-foreground-muted mt-0.5">
+                                        This order couldn&apos;t be matched to any credit card transaction. You can skip it or manually reconcile later.
                                     </p>
                                 </div>
                             )}
@@ -630,25 +675,25 @@ export default function AmazonImportPage() {
                             {/* Action buttons */}
                             <div className="flex gap-2">
                                 <button
-                                    onClick={() => updateOrderStatus(order.orderId, 'confirmed')}
-                                    disabled={order.status === 'confirmed'}
+                                    onClick={() => confirmOrder(order.orderId)}
+                                    disabled={order.confirmed || !order.selectedTransaction}
                                     className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-                                        ${order.status === 'confirmed'
+                                        ${order.confirmed
                                             ? 'bg-success/20 text-success border border-success/30'
                                             : 'bg-surface-elevated text-foreground-secondary hover:bg-success/10 hover:text-success border border-border hover:border-success/30'
-                                        }`}
+                                        } disabled:opacity-40 disabled:cursor-not-allowed`}
                                 >
-                                    {order.status === 'confirmed' ? 'Confirmed' : 'Confirm'}
+                                    {order.confirmed ? 'Confirmed' : 'Confirm'}
                                 </button>
                                 <button
-                                    onClick={() => updateOrderStatus(order.orderId, order.status === 'skipped' ? 'pending' : 'skipped')}
+                                    onClick={() => toggleSkip(order.orderId)}
                                     className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-                                        ${order.status === 'skipped'
+                                        ${order.skipped
                                             ? 'bg-foreground-muted/20 text-foreground-muted border border-foreground-muted/30'
                                             : 'bg-surface-elevated text-foreground-secondary hover:bg-surface-hover border border-border'
                                         }`}
                                 >
-                                    {order.status === 'skipped' ? 'Unskip' : 'Skip'}
+                                    {order.skipped ? 'Unskip' : 'Skip'}
                                 </button>
                             </div>
                         </div>
