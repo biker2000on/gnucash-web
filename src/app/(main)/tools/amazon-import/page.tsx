@@ -330,14 +330,25 @@ export default function AmazonImportPage() {
                 <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-3">
                     <h2 className="text-lg font-semibold text-foreground">How to Download Your Amazon Data</h2>
                     <ol className="list-decimal list-inside space-y-2 text-sm text-foreground-secondary">
-                        <li>Go to <span className="font-medium text-foreground">Amazon.com</span> and sign in</li>
-                        <li>Navigate to <span className="font-medium text-foreground">Account &amp; Lists &rarr; Your Account</span></li>
-                        <li>Under &ldquo;Ordering and shopping preferences&rdquo;, click <span className="font-medium text-foreground">Download order reports</span></li>
-                        <li>Alternatively, use <span className="font-medium text-foreground">Request My Data</span> at <span className="font-mono text-xs bg-surface-elevated px-1.5 py-0.5 rounded">amazon.com/gp/privacycentral/dsar/preview.html</span></li>
-                        <li>Select the date range you want, then download the CSV or ZIP file</li>
+                        <li>
+                            Go to{' '}
+                            <a
+                                href="https://www.amazon.com/hz/privacy-central/data-requests/preview.html"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-medium text-primary hover:underline"
+                            >
+                                Request Your Data
+                            </a>
+                            {' '}on Amazon and sign in
+                        </li>
+                        <li>Select <span className="font-medium text-foreground">Your Orders</span> from the data categories</li>
+                        <li>Submit the request and confirm via the email Amazon sends you</li>
+                        <li>Amazon will email you a download link (usually within a few hours)</li>
+                        <li>Download the ZIP file containing your order history CSVs</li>
                     </ol>
-                    <p className="text-xs text-foreground-muted">
-                        The &ldquo;Request My Data&rdquo; export is recommended as it includes item-level detail. Order History Reports are also supported.
+                    <p className="text-xs text-foreground-muted mt-2">
+                        Upload the ZIP directly, or extract and upload individual CSV files. Both formats are supported.
                     </p>
                 </section>
 
