@@ -1,13 +1,11 @@
 # GnuCash Web - Production Docker Compose (TrueNAS)
 #
-# Uses pre-built images from ghcr.io with Watchtower auto-updates.
+# Uses pre-built images from ghcr.io.
 #
 # Required: Create a .env file with:
 #   DATABASE_URL=postgresql://gnucash:gnucash@postgres:5432/gnucash
 #   NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
 #   NEXTAUTH_URL=http://<truenas-ip>:3000
-#   WATCHTOWER_REPO_USER=<github-username>
-#   WATCHTOWER_REPO_PASS=<github-pat-with-read:packages>
 #
 # Optional:
 #   POSTGRES_PORT=5432            # Host port for PostgreSQL
@@ -45,8 +43,6 @@ services:
       redis:
         condition: service_started
     restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
 
   worker:
     image: ghcr.io/biker2000on/gnucash-web:latest
@@ -69,8 +65,6 @@ services:
       redis:
         condition: service_started
     restart: unless-stopped
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
 
   postgres:
     image: postgres:17-alpine
@@ -113,17 +107,6 @@ services:
     command: server /data --console-address ":9001"
     restart: unless-stopped
 
-  watchtower:
-    image: containrrr/watchtower
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      WATCHTOWER_POLL_INTERVAL: 300
-      WATCHTOWER_LABEL_ENABLE: "true"
-      WATCHTOWER_CLEANUP: "true"
-      REPO_USER: ${WATCHTOWER_REPO_USER}
-      REPO_PASS: ${WATCHTOWER_REPO_PASS}
-    restart: unless-stopped
 
 volumes:
   postgres-data:
