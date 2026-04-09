@@ -551,7 +551,7 @@ export function PerformanceChart({
             <Tooltip
               contentStyle={{ backgroundColor: '#262626', border: '1px solid #404040', borderRadius: '8px' }}
               labelStyle={{ color: '#f5f5f5' }}
-              formatter={(value: number | undefined) => value !== undefined ? [formatCurrency(value), 'Portfolio Value'] : ['', '']}
+              formatter={(value) => value !== undefined ? [formatCurrency(Number(value)), 'Portfolio Value'] : ['', '']}
               labelFormatter={(date) => new Date(date).toLocaleDateString()}
             />
             <Line

@@ -366,7 +366,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                     borderRadius: '8px',
                     color: '#fff',
                   }}
-                  formatter={(value: number | undefined) => [formatCurrency(value ?? 0), 'Value']}
+                  formatter={(value) => [formatCurrency(Number(value ?? 0)), 'Value']}
                   labelFormatter={(label) => `Date: ${label}`}
                 />
                 <Line

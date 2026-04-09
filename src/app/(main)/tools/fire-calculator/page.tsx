@@ -748,10 +748,10 @@ export default function FireCalculatorPage() {
                   }}
                 />
                 <Tooltip
-                  formatter={(value: number | undefined, name?: string) => {
+                  formatter={(value, name) => {
                     if (value === undefined || value === null) return ['', ''];
                     const label = name === 'projected' ? 'Projected' : 'Portfolio Value';
-                    return [fmtFull.format(value), label];
+                    return [fmtFull.format(Number(value)), label];
                   }}
                   labelFormatter={(label) => `Year ${label}`}
                   contentStyle={{

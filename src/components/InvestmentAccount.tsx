@@ -549,7 +549,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                             borderRadius: '8px'
                                         }}
                                         labelStyle={{ color: '#a3a3a3' }}
-                                        formatter={(value: number | undefined) => [
+                                        formatter={(value) => [
                                             `${Number(value).toFixed(2)}%`,
                                             '% Change'
                                         ]}
@@ -611,7 +611,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                             borderRadius: '8px'
                                         }}
                                         labelStyle={{ color: '#a3a3a3' }}
-                                        formatter={(value: number | undefined) => [
+                                        formatter={(value) => [
                                             `$${Number(value).toFixed(2)}`,
                                             'Price'
                                         ]}
