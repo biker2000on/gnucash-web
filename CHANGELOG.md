@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0.0] - 2026-04-08
+
+### Added
+- **Amazon Order Import**: Upload Amazon order history (CSV or ZIP from "Request My Data" export) and match orders to existing credit card transactions with item-level splits
+- Amazon CSV parser with ZIP extraction, supporting "Request My Data" and "Order History Reports" formats
+- Order matching engine scores transactions by amount and date proximity
+- Split generator with rounding absorber for balanced GnuCash transactions
+- Category mapper with learned suggestions from prior imports
+- Batch-based import flow: upload, review matches, confirm, and apply
+- Searchable account picker (reuses existing AccountSelector) for credit card, tax, and shipping account selection
+- Collapsible download instructions with direct links to Chrome extensions (Order History Reporter, Order Exporter, OrderPro) for instant export
+- Amazon Import card on Tools hub page
+- Database tables for import batches, Amazon orders, and category mappings
+- 287 tests covering CSV parsing, matching, split generation, category mapping, and service layer
+
 ## [0.2.3.0] - 2026-03-28
 
 ### Added
