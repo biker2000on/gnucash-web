@@ -204,6 +204,7 @@ const navItems: NavItem[] = [
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
             { name: 'Scheduled Transactions', href: '/scheduled-transactions' },
             { name: 'Asset Analysis', href: '/assets' },
+            { name: 'Amazon Import', href: '/tools/amazon-import' },
         ],
     },
     {

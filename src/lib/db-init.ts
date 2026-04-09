@@ -550,6 +550,75 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Amazon Order Import tables
+    const amazonOrdersTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_amazon_orders (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            order_id VARCHAR(100) NOT NULL,
+            order_date DATE NOT NULL,
+            item_name TEXT NOT NULL,
+            item_price NUMERIC(15,4) NOT NULL,
+            item_quantity INTEGER NOT NULL DEFAULT 1,
+            category VARCHAR(200),
+            tax_amount NUMERIC(15,4) DEFAULT 0,
+            shipping_amount NUMERIC(15,4) DEFAULT 0,
+            order_total NUMERIC(15,4) NOT NULL,
+            charge_amount NUMERIC(15,4),
+            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+            transaction_guid VARCHAR(32),
+            split_guid VARCHAR(32),
+            match_status VARCHAR(20) NOT NULL DEFAULT 'unmatched',
+            apply_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            import_batch_id INTEGER,
+            raw_csv_row JSONB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            csv_row_index INTEGER,
+            UNIQUE(book_guid, order_id, item_name, item_price, csv_row_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_amazon_orders_match
+          ON gnucash_web_amazon_orders (book_guid, match_status);
+        CREATE INDEX IF NOT EXISTS idx_amazon_orders_date
+          ON gnucash_web_amazon_orders (order_date);
+        CREATE INDEX IF NOT EXISTS idx_amazon_orders_tx
+          ON gnucash_web_amazon_orders (transaction_guid);
+    `;
+
+    const categoryMappingsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_category_mappings (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            source VARCHAR(50) NOT NULL DEFAULT 'amazon',
+            keyword TEXT NOT NULL,
+            keyword_normalized TEXT NOT NULL,
+            account_guid VARCHAR(32) NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 1,
+            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(book_guid, source, keyword_normalized)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_category_mappings_lookup
+          ON gnucash_web_category_mappings (book_guid, source, keyword_normalized);
+    `;
+
+    const importBatchesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            source VARCHAR(50) NOT NULL DEFAULT 'amazon',
+            filename VARCHAR(500),
+            total_items INTEGER NOT NULL DEFAULT 0,
+            matched_items INTEGER NOT NULL DEFAULT 0,
+            user_id INTEGER,
+            status VARCHAR(20) NOT NULL DEFAULT 'processing',
+            settings JSONB DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP
+        );
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -582,6 +651,9 @@ async function createExtensionTables() {
         await query(receiptsExtractedDataDDL);
         await query(receiptsFtsDDL);
         await query(aiConfigTableDDL);
+        await query(amazonOrdersTableDDL);
+        await query(categoryMappingsTableDDL);
+        await query(importBatchesTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`
