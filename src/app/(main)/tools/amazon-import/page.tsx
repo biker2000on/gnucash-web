@@ -326,31 +326,8 @@ export default function AmazonImportPage() {
                     </p>
                 </header>
 
-                {/* How to get your data */}
-                <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-3">
-                    <h2 className="text-lg font-semibold text-foreground">How to Download Your Amazon Data</h2>
-                    <ol className="list-decimal list-inside space-y-2 text-sm text-foreground-secondary">
-                        <li>
-                            Go to{' '}
-                            <a
-                                href="https://www.amazon.com/hz/privacy-central/data-requests/preview.html"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-medium text-primary hover:underline"
-                            >
-                                Request Your Data
-                            </a>
-                            {' '}on Amazon and sign in
-                        </li>
-                        <li>Select <span className="font-medium text-foreground">Your Orders</span> from the data categories</li>
-                        <li>Submit the request and confirm via the email Amazon sends you</li>
-                        <li>Amazon will email you a download link (usually within a few hours)</li>
-                        <li>Download the ZIP file containing your order history CSVs</li>
-                    </ol>
-                    <p className="text-xs text-foreground-muted mt-2">
-                        Upload the ZIP directly, or extract and upload individual CSV files. Both formats are supported.
-                    </p>
-                </section>
+                {/* How to get your data — collapsible */}
+                <DownloadInstructions />
 
                 {/* Import Settings */}
                 <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-6">
@@ -814,5 +791,119 @@ function StatusBadge({
                 {value}{total !== undefined ? `/${total}` : ''}
             </span>
         </div>
+    );
+}
+
+/* ------------------------------------------------------------------ */
+/* Download Instructions (collapsible)                                 */
+/* ------------------------------------------------------------------ */
+
+function DownloadInstructions() {
+    const [isOpen, setIsOpen] = useState(false);
+
+    return (
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="w-full flex items-center justify-between px-6 py-4 text-left"
+            >
+                <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-foreground-muted" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+                    </svg>
+                    <span className="text-sm font-medium text-foreground">
+                        How to get your Amazon order data
+                    </span>
+                </div>
+                <svg
+                    className={`w-4 h-4 text-foreground-muted transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                    fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+            </button>
+
+            {isOpen && (
+                <div className="px-6 pb-5 space-y-5">
+                    {/* Option 1: Browser extensions (fast) */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-success/20 text-success text-xs font-bold">1</span>
+                            Instant export with a browser extension
+                        </h3>
+                        <p className="text-xs text-foreground-muted mb-2">
+                            Install a Chrome extension to export your orders as CSV in seconds.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            <a
+                                href="https://chromewebstore.google.com/detail/amazon-order-history-repo/mgkilgclilajckgnedgjgnfdokkgnibi"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline bg-primary/5 border border-primary/20 rounded-md px-2.5 py-1.5"
+                            >
+                                Order History Reporter
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-4.5-6H18m0 0v4.5m0-4.5L10.5 13.5" />
+                                </svg>
+                            </a>
+                            <a
+                                href="https://chromewebstore.google.com/detail/amazon-order-exporter/elpppjmghbnfblipobolbnpkjcjcjlak"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline bg-primary/5 border border-primary/20 rounded-md px-2.5 py-1.5"
+                            >
+                                Order Exporter
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-4.5-6H18m0 0v4.5m0-4.5L10.5 13.5" />
+                                </svg>
+                            </a>
+                            <a
+                                href="https://chromewebstore.google.com/detail/orderpro-export-amazon-eb/gnemaookpcekfeidmgocagofgijpoced"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline bg-primary/5 border border-primary/20 rounded-md px-2.5 py-1.5"
+                            >
+                                OrderPro
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-4.5-6H18m0 0v4.5m0-4.5L10.5 13.5" />
+                                </svg>
+                            </a>
+                        </div>
+                    </div>
+
+                    {/* Option 2: Request Your Data (official) */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
+                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-foreground-muted/20 text-foreground-muted text-xs font-bold">2</span>
+                            Official Amazon data export
+                        </h3>
+                        <p className="text-xs text-foreground-muted mb-2">
+                            Request your data directly from Amazon. Takes a few hours to a few days.
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1.5 text-sm text-foreground-secondary">
+                            <li>
+                                Go to{' '}
+                                <a
+                                    href="https://www.amazon.com/hz/privacy-central/data-requests/preview.html"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-medium text-primary hover:underline"
+                                >
+                                    Request Your Data
+                                </a>
+                                {' '}and sign in
+                            </li>
+                            <li>Select <span className="font-medium text-foreground">Your Orders</span> from the data categories</li>
+                            <li>Submit the request, then confirm via the email Amazon sends</li>
+                            <li>Download the ZIP when Amazon emails the link</li>
+                        </ol>
+                    </div>
+
+                    <p className="text-xs text-foreground-muted">
+                        Upload the ZIP directly or extract individual CSV files. Both formats are supported.
+                    </p>
+                </div>
+            )}
+        </section>
     );
 }
