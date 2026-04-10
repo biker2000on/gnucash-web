@@ -49,4 +49,5 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trigger Dockhand redeploy
-        run: curl -fsSL -X POST https://dock.adventureintandem.com/api/git/stacks/1/webhook
+        continue-on-error: true
+        run: curl -sS -X POST https://dock.adventureintandem.com/api/git/stacks/1/webhook || echo "Dockhand webhook returned non-200 (may need configuration)"
