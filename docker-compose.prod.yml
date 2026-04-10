@@ -1,15 +1,20 @@
-# GnuCash Web - Production Docker Compose (TrueNAS)
+# GnuCash Web - Production Docker Compose
 #
 # Uses pre-built images from ghcr.io.
 #
 # Required: Create a .env file with:
-#   DATABASE_URL=postgresql://gnucash:gnucash@postgres:5432/gnucash
 #   NEXTAUTH_SECRET=<generate with: openssl rand -base64 32>
-#   NEXTAUTH_URL=http://<truenas-ip>:3000
+#   NEXTAUTH_URL=http://<host-ip>:3000
+#
+# Database is auto-configured from POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
 #
 # Optional:
+#   APP_PORT=3000                 # Host port for the web app
 #   POSTGRES_PORT=5432            # Host port for PostgreSQL
-#   MINIO_DATA_DIR=./minio-data   # Local folder for MinIO storage
+#   MINIO_API_PORT=9000           # Host port for MinIO API
+#   MINIO_CONSOLE_PORT=9001       # Host port for MinIO console
+#   POSTGRES_DATA_DIR=./postgres-data  # Local folder for PostgreSQL data
+#   MINIO_DATA_DIR=./minio-data       # Local folder for MinIO storage
 #
 # Optional services (enable via profiles):
 #   docker compose -f docker-compose.prod.yml --profile storage up -d   # + MinIO
@@ -22,21 +27,21 @@ services:
   app:
     image: ghcr.io/biker2000on/gnucash-web:latest
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-}
       - AI_API_KEY=${AI_API_KEY:-}
-      - RECEIPT_STORAGE=${RECEIPT_STORAGE:-filesystem}
-      - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-}
+      - RECEIPT_STORAGE=${RECEIPT_STORAGE:-s3}
+      - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-http://minio:9000}
       - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
       - RECEIPT_S3_REGION=${RECEIPT_S3_REGION:-us-east-1}
-      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-}
-      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-}
+      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,17 +53,17 @@ services:
     image: ghcr.io/biker2000on/gnucash-web:latest
     command: ["npx", "tsx", "worker.ts"]
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-}
       - AI_API_KEY=${AI_API_KEY:-}
-      - RECEIPT_STORAGE=${RECEIPT_STORAGE:-filesystem}
-      - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-}
+      - RECEIPT_STORAGE=${RECEIPT_STORAGE:-s3}
+      - RECEIPT_S3_ENDPOINT=${RECEIPT_S3_ENDPOINT:-http://minio:9000}
       - RECEIPT_S3_BUCKET=${RECEIPT_S3_BUCKET:-gnucash-receipts}
       - RECEIPT_S3_REGION=${RECEIPT_S3_REGION:-us-east-1}
-      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-}
-      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-}
+      - RECEIPT_S3_ACCESS_KEY=${RECEIPT_S3_ACCESS_KEY:-${MINIO_ROOT_USER:-minioadmin}}
+      - RECEIPT_S3_SECRET_KEY=${RECEIPT_S3_SECRET_KEY:-${MINIO_ROOT_PASSWORD:-minioadmin}}
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,7 +80,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gnucash}
       POSTGRES_DB: ${POSTGRES_DB:-gnucash}
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gnucash}"]
@@ -97,8 +102,8 @@ services:
     image: minio/minio
     profiles: ["storage"]
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -109,5 +114,4 @@ services:
 
 
 volumes:
-  postgres-data:
   redis-data:
