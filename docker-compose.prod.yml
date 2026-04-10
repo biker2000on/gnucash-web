@@ -26,6 +26,7 @@
 services:
   app:
     image: ghcr.io/biker2000on/gnucash-web:latest
+    pull_policy: always
     ports:
       - "${APP_PORT:-3000}:3000"
     environment:
@@ -51,6 +52,7 @@ services:
 
   worker:
     image: ghcr.io/biker2000on/gnucash-web:latest
+    pull_policy: always
     command: ["npx", "tsx", "worker.ts"]
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
