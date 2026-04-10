@@ -47,3 +47,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Trigger Dockhand redeploy
+        run: curl -fsSL -X POST https://dock.adventureintandem.com/api/git/stacks/1/webhook

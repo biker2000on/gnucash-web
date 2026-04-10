@@ -10,7 +10,7 @@ export function OnboardingGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
-    if (!loading && hasNoBooks && pathname !== '/onboarding') {
+    if (!loading && hasNoBooks && pathname !== '/onboarding' && !pathname.startsWith('/profile') && !pathname.startsWith('/settings')) {
       router.push('/onboarding');
     }
   }, [hasNoBooks, loading, pathname, router]);
