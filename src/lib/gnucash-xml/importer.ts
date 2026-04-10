@@ -258,7 +258,33 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
       summary.accounts++;
     }
 
-    // 4. Create transactions and splits
+    // 4. Create lots referenced by splits.
+    // GnuCash splits can carry a lot_guid; the schema enforces a FK to lots,
+    // so lot rows must exist before their splits are inserted. Collect the
+    // distinct (lotId, accountGuid) pairs from all splits and insert them
+    // up front. A lot belongs to the account of the split that references it.
+    const lotAccountMap = new Map<string, string>();
+    for (const transaction of data.transactions) {
+      for (const split of transaction.splits) {
+        if (!split.lotId) continue;
+        if (lotAccountMap.has(split.lotId)) continue;
+        const accountGuid = accountGuidMap.get(split.accountId);
+        if (!accountGuid) continue;
+        lotAccountMap.set(split.lotId, accountGuid);
+      }
+    }
+    if (lotAccountMap.size > 0) {
+      await tx.lots.createMany({
+        data: Array.from(lotAccountMap, ([guid, account_guid]) => ({
+          guid,
+          account_guid,
+          is_closed: 0,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    // 5. Create transactions and splits
     for (const transaction of data.transactions) {
       // Resolve currency GUID
       const currencyKey = `${transaction.currency.space}:${transaction.currency.id}`;
@@ -319,7 +345,7 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
       }
     }
 
-    // 5. Create prices
+    // 6. Create prices
     for (const price of data.pricedb) {
       const commodityKey = `${price.commodity.space}:${price.commodity.id}`;
       const currencyKey = `${price.currency.space}:${price.currency.id}`;
@@ -356,7 +382,7 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
       summary.prices++;
     }
 
-    // 6. Create budgets and budget amounts
+    // 7. Create budgets and budget amounts
     for (const budget of data.budgets) {
       await tx.budgets.create({
         data: {
