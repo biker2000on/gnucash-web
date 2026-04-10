@@ -12,7 +12,7 @@ interface LoginFormProps {
 const LOGIN_INSTALL_PENDING_KEY = 'pwa-install-pending-after-login';
 const INSTALL_STATE_CHANGE_EVENT = 'pwa-install-state-change';
 
-export function LoginForm({ mode, onToggleMode, redirectTo = '/' }: LoginFormProps) {
+export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard' }: LoginFormProps) {
     const router = useRouter();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');

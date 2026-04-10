@@ -7,7 +7,7 @@ import { LoginForm } from '@/components/LoginForm';
 function LoginPageContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const redirectTo = searchParams.get('redirect') || '/';
+    const redirectTo = searchParams.get('redirect') || '/dashboard';
     const [mode, setMode] = useState<'login' | 'register'>('login');
     const [checking, setChecking] = useState(true);
 
