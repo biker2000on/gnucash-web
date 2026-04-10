@@ -1,12 +1,41 @@
-# Install dependencies only when needed
+# Install ALL dependencies (including dev) for the build stage
 FROM node:24-alpine AS deps
 # Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ecaf0bd06d133421a#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
 RUN npm config set strict-ssl false && npm install
+
+# Install only production dependencies for the runtime image.
+# This is a separate stage so dev deps (playwright, vitest, eslint, tsc, …)
+# never land in the final image.
+FROM node:24-alpine AS prod-deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY prisma ./prisma
+# Install prod deps, then drop known dead weight:
+#   - @next/swc-linux-x64-gnu, @napi-rs/canvas-linux-x64-gnu,
+#     lightningcss-linux-x64-gnu — glibc variants unused on Alpine (musl)
+#   - playwright(-core) — pulled transitively but never used at runtime
+#   - typescript — only a peer dep of @prisma/client, not needed at runtime
+# and strip docs/sources from deep node_modules.
+# --omit=peer prevents npm from auto-installing peer deps like typescript.
+# NOTE: @prisma/studio-core and @prisma/dev must stay — the prisma CLI
+# requires them at load time even for `prisma db push`.
+RUN npm config set strict-ssl false \
+ && npm install --omit=dev --omit=peer \
+ && rm -rf \
+      node_modules/@next/swc-linux-x64-gnu \
+      node_modules/@napi-rs/canvas-linux-x64-gnu \
+      node_modules/lightningcss-linux-x64-gnu \
+      node_modules/playwright \
+      node_modules/playwright-core \
+      node_modules/typescript \
+ && find node_modules \( -name "*.md" -o -name "*.map" -o -name "CHANGELOG*" -o -name "LICENSE*" -o -name "README*" \) -delete 2>/dev/null || true \
+ && find node_modules -type d \( -name "test" -o -name "tests" -o -name "__tests__" -o -name "docs" -o -name "example" -o -name "examples" \) -prune -exec rm -rf {} + 2>/dev/null || true \
+ && npm cache clean --force
 
 # Rebuild the source code only when needed
 FROM node:24-alpine AS builder
@@ -57,7 +86,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=builder --chown=nextjs:nodejs /app/src ./src
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
-COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 
