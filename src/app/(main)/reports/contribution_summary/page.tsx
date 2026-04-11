@@ -76,7 +76,7 @@ function ContributionSummaryContent() {
                         onClick={() => setGroupBy('calendar_year')}
                         className={`px-4 py-1.5 text-sm transition-colors ${
                             groupBy === 'calendar_year'
-                                ? 'bg-primary text-white'
+                                ? 'bg-primary text-primary-foreground'
                                 : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                         }`}
                     >
@@ -86,7 +86,7 @@ function ContributionSummaryContent() {
                         onClick={() => setGroupBy('tax_year')}
                         className={`px-4 py-1.5 text-sm transition-colors ${
                             groupBy === 'tax_year'
-                                ? 'bg-primary text-white'
+                                ? 'bg-primary text-primary-foreground'
                                 : 'bg-background-tertiary text-foreground-secondary hover:text-foreground'
                         }`}
                     >

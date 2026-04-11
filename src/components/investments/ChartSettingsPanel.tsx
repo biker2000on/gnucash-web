@@ -215,8 +215,8 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
               saveError
                 ? 'bg-red-600 text-white'
                 : saved
-                  ? 'bg-primary text-white'
-                  : 'bg-primary hover:bg-primary-hover text-white disabled:opacity-50'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-primary hover:bg-primary-hover text-primary-foreground disabled:opacity-50'
             }`}
           >
             {saveError ? 'Save failed' : saved ? 'Saved!' : saving ? 'Saving...' : 'Save Defaults'}

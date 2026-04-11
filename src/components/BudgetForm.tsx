@@ -171,7 +171,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                 <button
                     type="submit"
                     disabled={saving || !formData.name}
-                    className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                    className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                 >
                     {saving ? 'Saving...' : mode === 'create' ? 'Create Budget' : 'Save Changes'}
                 </button>

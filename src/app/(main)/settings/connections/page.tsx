@@ -266,7 +266,7 @@ export default function ConnectionsPage() {
               <button
                 onClick={handleSfConnect}
                 disabled={sfConnecting || !sfSetupToken.trim()}
-                className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
+                className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors font-medium flex items-center gap-2"
               >
                 {sfConnecting ? (
                   <>
@@ -308,7 +308,7 @@ export default function ConnectionsPage() {
                 <button
                   onClick={handleSfSync}
                   disabled={sfSyncing}
-                  className="px-4 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors font-medium flex items-center gap-2"
+                  className="px-4 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors font-medium flex items-center gap-2"
                 >
                   {sfSyncing ? (
                     <>

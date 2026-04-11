@@ -434,7 +434,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
           <button
             type="button"
             onClick={handleUseValues}
-            className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white text-sm font-medium rounded-lg transition-colors"
+            className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-primary-foreground text-sm font-medium rounded-lg transition-colors"
           >
             Use These Values
           </button>

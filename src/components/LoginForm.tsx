@@ -159,7 +159,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard' }: Log
                     <button
                         type="submit"
                         disabled={loading || (mode === 'register' && password !== confirmPassword)}
-                        className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-white font-medium rounded-lg transition-all"
+                        className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
                     >
                         {loading ? (
                             <span className="flex items-center justify-center gap-2">

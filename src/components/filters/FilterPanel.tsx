@@ -26,7 +26,7 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
                 </svg>
                 <span>Filters</span>
                 {activeFilterCount > 0 && (
-                    <span className="bg-primary text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                    <span className="bg-primary text-primary-foreground text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
                         {activeFilterCount}
                     </span>
                 )}

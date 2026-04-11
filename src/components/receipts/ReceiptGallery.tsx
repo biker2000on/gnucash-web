@@ -117,7 +117,7 @@ export function ReceiptGallery() {
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2 capitalize transition-colors min-h-[44px] ${
                 activeTab === tab
-                  ? 'bg-primary text-white font-medium'
+                  ? 'bg-primary text-primary-foreground font-medium'
                   : 'bg-background text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
               }`}
             >
@@ -158,7 +158,7 @@ export function ReceiptGallery() {
           )}
           <button
             onClick={() => setBatchUploadOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors min-h-[44px]"
+            className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg text-sm font-medium transition-colors min-h-[44px]"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />

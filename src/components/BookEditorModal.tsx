@@ -177,7 +177,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
                     <button
                         onClick={handleSave}
                         disabled={loading || deleting}
-                        className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex-1 px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {loading ? 'Saving...' : 'Save'}
                     </button>

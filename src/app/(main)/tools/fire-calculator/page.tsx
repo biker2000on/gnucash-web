@@ -628,7 +628,7 @@ export default function FireCalculatorPage() {
           <div className="flex gap-3">
             <button
               onClick={handleRetry}
-              className="px-4 py-2 bg-primary hover:bg-primary-hover text-white text-sm rounded-lg transition-colors"
+              className="px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground text-sm rounded-lg transition-colors"
             >
               Retry
             </button>
@@ -901,7 +901,7 @@ export default function FireCalculatorPage() {
                     type="button"
                     onClick={() => birthdayInput && saveBirthday(birthdayInput)}
                     disabled={!birthdayInput || birthdaySaving}
-                    className="text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white px-3 py-1 rounded-lg"
+                    className="text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground px-3 py-1 rounded-lg"
                   >
                     {birthdaySaving ? 'Saving...' : 'Save'}
                   </button>
@@ -980,7 +980,7 @@ export default function FireCalculatorPage() {
             <button
               onClick={handleSave}
               disabled={!configName.trim() || saveStatus === 'saving'}
-              className="px-4 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors whitespace-nowrap"
+              className="px-4 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-primary-foreground text-sm rounded-lg transition-colors whitespace-nowrap"
             >
               {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : editingId ? 'Update' : 'Save'}
             </button>

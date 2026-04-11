@@ -323,7 +323,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
             <button
               onClick={handleAdjust}
               disabled={adjusting}
-              className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+              className="px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors disabled:opacity-50 font-medium"
             >
               {adjusting ? 'Adjusting...' : 'Submit Adjustment'}
             </button>

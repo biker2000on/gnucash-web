@@ -301,7 +301,7 @@ export function PerformanceChart({
                 onClick={() => setPeriod(p)}
                 className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                   period === p
-                    ? 'bg-primary text-white'
+                    ? 'bg-primary text-primary-foreground'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
                 }`}
               >
@@ -317,7 +317,7 @@ export function PerformanceChart({
               title="Show dollar value"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'value'
-                  ? 'bg-primary text-white'
+                  ? 'bg-primary text-primary-foreground'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
@@ -331,7 +331,7 @@ export function PerformanceChart({
               title="Time-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'twr'
-                  ? 'bg-primary text-white'
+                  ? 'bg-primary text-primary-foreground'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >
@@ -345,7 +345,7 @@ export function PerformanceChart({
               title="Money-weighted return"
               className={`px-2.5 py-1.5 min-h-[44px] min-w-[44px] text-xs rounded transition-colors flex items-center justify-center ${
                 chartMode === 'mwr'
-                  ? 'bg-primary text-white'
+                  ? 'bg-primary text-primary-foreground'
                   : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
               }`}
             >

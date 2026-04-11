@@ -981,7 +981,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     <div className="flex flex-wrap items-center gap-4">
                         <button
                             onClick={handleNewAccount}
-                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-xl transition-colors"
+                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

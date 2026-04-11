@@ -384,7 +384,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     <button
                         type="submit"
                         disabled={saving || !formData.name || !formData.commodity_guid}
-                        className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                        className="px-6 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                     >
                         {saving ? 'Saving...' : mode === 'create' ? 'Create Account' : 'Save Changes'}
                     </button>

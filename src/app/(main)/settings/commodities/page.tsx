@@ -210,7 +210,7 @@ export default function CommodityPriceSettingsPage() {
         <button
           onClick={() => handleSave(row.original.guid)}
           disabled={!row.original.dirty || row.original.saving}
-          className="px-3 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/40 text-white rounded-lg transition-colors disabled:cursor-not-allowed"
+          className="px-3 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/40 text-primary-foreground rounded-lg transition-colors disabled:cursor-not-allowed"
         >
           {row.original.saving ? 'Saving...' : 'Save'}
         </button>

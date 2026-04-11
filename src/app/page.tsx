@@ -58,7 +58,7 @@ export default async function LandingPage() {
             <Link href="/login" className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors">
               Sign In
             </Link>
-            <Link href="/login" className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-white rounded-lg transition-all">
+            <Link href="/login" className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-all">
               Get Started
             </Link>
           </div>
@@ -73,7 +73,7 @@ export default async function LandingPage() {
         <p className="text-lg text-foreground-muted max-w-2xl mx-auto mb-10">
           A modern web interface for your GnuCash financial data. Dashboards, reports, transaction management, and more.
         </p>
-        <Link href="/login" className="inline-block px-8 py-3 bg-primary hover:bg-primary-hover text-white font-medium rounded-lg transition-all">
+        <Link href="/login" className="inline-block px-8 py-3 bg-primary hover:bg-primary-hover text-primary-foreground font-medium rounded-lg transition-all">
           Sign In to Get Started
         </Link>
       </section>

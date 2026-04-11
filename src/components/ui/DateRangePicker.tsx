@@ -170,7 +170,7 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
                         </div>
                         <button
                             onClick={handleCustomApply}
-                            className="w-full bg-primary hover:bg-primary-hover text-white text-sm font-medium py-2 rounded-lg transition-colors"
+                            className="w-full bg-primary hover:bg-primary-hover text-primary-foreground text-sm font-medium py-2 rounded-lg transition-colors"
                         >
                             Apply
                         </button>

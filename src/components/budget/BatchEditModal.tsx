@@ -114,7 +114,7 @@ export function BatchEditModal({
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !amount}
-                        className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary-hover transition-colors disabled:opacity-50"
+                        className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary-hover transition-colors disabled:opacity-50"
                     >
                         {isSaving ? 'Saving...' : 'Apply to All Periods'}
                     </button>

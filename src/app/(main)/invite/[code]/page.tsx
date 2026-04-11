@@ -150,7 +150,7 @@ export default function InviteAcceptPage() {
                 <button
                     onClick={handleAccept}
                     disabled={accepting}
-                    className="w-full bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-medium px-4 py-3 rounded-lg transition-all disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="w-full bg-primary hover:bg-primary-hover disabled:opacity-50 text-primary-foreground font-medium px-4 py-3 rounded-lg transition-all disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                     {accepting && (
                         <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

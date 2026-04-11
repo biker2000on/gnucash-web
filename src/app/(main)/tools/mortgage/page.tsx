@@ -801,7 +801,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setEntryMode('linked')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               entryMode === 'linked'
-                ? 'bg-primary text-white'
+                ? 'bg-primary text-primary-foreground'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -812,7 +812,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setEntryMode('new')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               entryMode === 'new'
-                ? 'bg-primary text-white'
+                ? 'bg-primary text-primary-foreground'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -954,7 +954,7 @@ export default function MortgageCalculatorPage() {
                 type="button"
                 onClick={handleSave}
                 disabled={saveStatus === 'saving' || !name.trim()}
-                className="px-5 py-2 bg-primary hover:bg-primary-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-5 py-2 bg-primary hover:bg-primary-hover text-primary-foreground text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {saveStatus === 'saving' ? 'Saving...' : editingId ? 'Update' : 'Save'}
               </button>
@@ -1029,7 +1029,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setPayoffMode('extra-to-date')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               payoffMode === 'extra-to-date'
-                ? 'bg-primary text-white'
+                ? 'bg-primary text-primary-foreground'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >
@@ -1040,7 +1040,7 @@ export default function MortgageCalculatorPage() {
             onClick={() => setPayoffMode('date-to-payment')}
             className={`flex-1 text-sm py-2 px-3 rounded-md font-medium transition-colors ${
               payoffMode === 'date-to-payment'
-                ? 'bg-primary text-white'
+                ? 'bg-primary text-primary-foreground'
                 : 'text-foreground-muted hover:text-foreground'
             }`}
           >

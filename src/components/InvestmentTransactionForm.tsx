@@ -632,7 +632,7 @@ export function InvestmentTransactionForm({
                             onClick={() => handleChange('action', option.value)}
                             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                                 form.action === option.value
-                                    ? 'bg-primary text-white'
+                                    ? 'bg-primary text-primary-foreground'
                                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                             }`}
                             title={option.description}
@@ -939,7 +939,7 @@ export function InvestmentTransactionForm({
                 <button
                     type="submit"
                     disabled={saving || loadingAccounts}
-                    className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors flex items-center gap-2"
+                    className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors flex items-center gap-2"
                 >
                     {saving ? (
                         <>

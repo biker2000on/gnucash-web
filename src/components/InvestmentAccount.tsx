@@ -458,7 +458,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                         onClick={() => handlePeriodChange(period)}
                                         className={`px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-lg transition-colors ${
                                             selectedPeriod === period
-                                                ? 'bg-primary text-white'
+                                                ? 'bg-primary text-primary-foreground'
                                                 : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                         }`}
                                     >
@@ -471,7 +471,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     onClick={() => setChartMode('price')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                                         chartMode === 'price'
-                                            ? 'bg-primary text-white'
+                                            ? 'bg-primary text-primary-foreground'
                                             : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                     }`}
                                 >
@@ -481,7 +481,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                                     onClick={() => setChartMode('percentChange')}
                                     className={`px-3 py-1 text-sm rounded-lg transition-colors ${
                                         chartMode === 'percentChange'
-                                            ? 'bg-primary text-white'
+                                            ? 'bg-primary text-primary-foreground'
                                             : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
                                     }`}
                                 >
@@ -718,7 +718,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             <button
                                 onClick={handleAddPrice}
                                 disabled={savingPrice || !newPrice.date || !newPrice.value}
-                                className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-lg transition-colors"
+                                className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors"
                             >
                                 {savingPrice ? 'Saving...' : 'Add Price'}
                             </button>

@@ -419,7 +419,7 @@ function LoginInstallPrompt() {
                             type="button"
                             onClick={handleInstall}
                             disabled={installing}
-                            className="rounded-lg bg-primary hover:bg-primary-hover disabled:bg-primary/50 px-4 py-2 text-sm font-medium text-white transition-colors"
+                            className="rounded-lg bg-primary hover:bg-primary-hover disabled:bg-primary/50 px-4 py-2 text-sm font-medium text-primary-foreground transition-colors"
                         >
                             {installing ? 'Opening...' : 'Install App'}
                         </button>

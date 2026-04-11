@@ -256,7 +256,7 @@ export function ReconciliationPanel({
                 <button
                     onClick={handleFinish}
                     disabled={saving || selectedSplits.size === 0}
-                    className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-1.5"
+                    className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors flex items-center gap-1.5"
                 >
                     {saving ? (
                         <>

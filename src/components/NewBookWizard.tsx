@@ -47,7 +47,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
                   isActive
-                    ? 'bg-primary text-white'
+                    ? 'bg-primary text-primary-foreground'
                     : isCompleted
                       ? 'bg-primary/30 text-primary'
                       : 'bg-surface-hover text-foreground-tertiary'
@@ -468,7 +468,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           <button
             onClick={handleNext}
             disabled={!canGoNext()}
-            className="px-5 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-5 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Next
           </button>
@@ -476,7 +476,7 @@ export default function NewBookWizard({ isOpen, onClose, onSuccess }: NewBookWiz
           <button
             onClick={handleCreate}
             disabled={creating}
-            className="px-5 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-5 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {creating ? (
               <>

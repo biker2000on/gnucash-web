@@ -332,7 +332,7 @@ export function DepreciationScheduleForm({
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+          className="px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors disabled:opacity-50 font-medium"
         >
           {saving ? 'Saving...' : 'Save Schedule'}
         </button>

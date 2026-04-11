@@ -199,7 +199,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           <button
             onClick={handleCreate}
             disabled={loading || !bookName.trim()}
-            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-white font-medium rounded-lg transition-all"
+            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
@@ -311,7 +311,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           <button
             onClick={handleCreate}
             disabled={loading || !bookName.trim() || !selectedTemplate}
-            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-white font-medium rounded-lg transition-all"
+            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">

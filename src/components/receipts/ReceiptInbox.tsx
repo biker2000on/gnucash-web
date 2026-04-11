@@ -219,7 +219,7 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
                 <button
                   onClick={() => handleLink(candidate.guid)}
                   disabled={linking || dismissing !== null}
-                  className="text-xs px-2 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors min-h-[36px] disabled:opacity-50 font-medium"
+                  className="text-xs px-2 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors min-h-[36px] disabled:opacity-50 font-medium"
                 >
                   {linking ? (
                     <span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" />

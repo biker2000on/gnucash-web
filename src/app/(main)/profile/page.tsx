@@ -207,7 +207,7 @@ export default function ProfilePage() {
             {/* User Info Card */}
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
                 <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-white text-2xl font-bold">
+                    <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-2xl font-bold">
                         {user.username.charAt(0).toUpperCase()}
                     </div>
                     <div>
@@ -251,7 +251,7 @@ export default function ProfilePage() {
                         type="button"
                         onClick={handleBirthdaySave}
                         disabled={birthdaySaving || !birthday}
-                        className="bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed text-sm"
+                        className="bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed text-sm"
                     >
                         {birthdaySaving ? 'Saving...' : 'Save'}
                     </button>
@@ -325,7 +325,7 @@ export default function ProfilePage() {
                                 type="button"
                                 onClick={handleInstallApp}
                                 disabled={installingApp}
-                                className="w-full sm:w-auto bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                className="w-full sm:w-auto bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {installingApp && (
                                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -416,7 +416,7 @@ export default function ProfilePage() {
                     <button
                         type="submit"
                         disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
-                        className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {changingPassword && (
                             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
