@@ -96,6 +96,9 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
   let createdBookGuid = '';
 
   await prisma.$transaction(async (tx) => {
+    // The import fans out into thousands of inserts per book. We keep a
+    // single transaction for atomic rollback, but batch the hot loops with
+    // createMany so we don't blow past Prisma's interactive timeout.
     // 1. Create/find commodities
     // Build a map of (space:id) -> database GUID
     const commodityMap = new Map<string, string>();
@@ -284,9 +287,33 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
       });
     }
 
-    // 5. Create transactions and splits
+    // 5. Build transaction + split rows in memory, then createMany them.
+    // Splits FK-reference transactions, so transactions must be inserted
+    // first — but within each table we can batch a single INSERT.
+    const transactionRows: Array<{
+      guid: string;
+      currency_guid: string;
+      num: string;
+      post_date: Date | null;
+      enter_date: Date | null;
+      description: string;
+    }> = [];
+    const splitRows: Array<{
+      guid: string;
+      tx_guid: string;
+      account_guid: string;
+      memo: string;
+      action: string;
+      reconcile_state: string;
+      reconcile_date: Date | null;
+      value_num: bigint;
+      value_denom: bigint;
+      quantity_num: bigint;
+      quantity_denom: bigint;
+      lot_guid: string | null;
+    }> = [];
+
     for (const transaction of data.transactions) {
-      // Resolve currency GUID
       const currencyKey = `${transaction.currency.space}:${transaction.currency.id}`;
       let currencyGuid = commodityMap.get(currencyKey);
       if (!currencyGuid) {
@@ -294,22 +321,16 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
         currencyGuid = rootCommodityGuid;
       }
 
-      const postDate = parseGnuCashDate(transaction.datePosted);
-      const enterDate = parseGnuCashDate(transaction.dateEntered);
-
-      await tx.transactions.create({
-        data: {
-          guid: transaction.id,
-          currency_guid: currencyGuid,
-          num: transaction.num || '',
-          post_date: postDate,
-          enter_date: enterDate,
-          description: transaction.description,
-        },
+      transactionRows.push({
+        guid: transaction.id,
+        currency_guid: currencyGuid,
+        num: transaction.num || '',
+        post_date: parseGnuCashDate(transaction.datePosted),
+        enter_date: parseGnuCashDate(transaction.dateEntered),
+        description: transaction.description,
       });
       summary.transactions++;
 
-      // Create splits for this transaction
       for (const split of transaction.splits) {
         const accountGuid = accountGuidMap.get(split.accountId);
         if (!accountGuid) {
@@ -321,31 +342,46 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
 
         const value = parseFraction(split.value);
         const quantity = parseFraction(split.quantity);
-        const reconcileDate = split.reconcileDate
-          ? parseGnuCashDate(split.reconcileDate)
-          : null;
 
-        await tx.splits.create({
-          data: {
-            guid: split.id,
-            tx_guid: transaction.id,
-            account_guid: accountGuid,
-            memo: split.memo || '',
-            action: split.action || '',
-            reconcile_state: split.reconciledState || 'n',
-            reconcile_date: reconcileDate,
-            value_num: value.num,
-            value_denom: value.denom,
-            quantity_num: quantity.num,
-            quantity_denom: quantity.denom,
-            lot_guid: split.lotId || null,
-          },
+        splitRows.push({
+          guid: split.id,
+          tx_guid: transaction.id,
+          account_guid: accountGuid,
+          memo: split.memo || '',
+          action: split.action || '',
+          reconcile_state: split.reconciledState || 'n',
+          reconcile_date: split.reconcileDate ? parseGnuCashDate(split.reconcileDate) : null,
+          value_num: value.num,
+          value_denom: value.denom,
+          quantity_num: quantity.num,
+          quantity_denom: quantity.denom,
+          lot_guid: split.lotId || null,
         });
         summary.splits++;
       }
     }
 
+    // Chunk very large inserts. Postgres caps parameter count at ~65k,
+    // so with ~12 columns per row we cap each batch at ~5000 rows.
+    const CHUNK = 2000;
+    for (let i = 0; i < transactionRows.length; i += CHUNK) {
+      await tx.transactions.createMany({ data: transactionRows.slice(i, i + CHUNK) });
+    }
+    for (let i = 0; i < splitRows.length; i += CHUNK) {
+      await tx.splits.createMany({ data: splitRows.slice(i, i + CHUNK) });
+    }
+
     // 6. Create prices
+    const priceRows: Array<{
+      guid: string;
+      commodity_guid: string;
+      currency_guid: string;
+      date: Date;
+      source: string | null;
+      type: string | null;
+      value_num: bigint;
+      value_denom: bigint;
+    }> = [];
     for (const price of data.pricedb) {
       const commodityKey = `${price.commodity.space}:${price.commodity.id}`;
       const currencyKey = `${price.currency.space}:${price.currency.id}`;
@@ -359,30 +395,37 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
         continue;
       }
 
-      const value = parseFraction(price.value);
       const priceDate = parseGnuCashDate(price.date);
-
       if (!priceDate) {
         summary.warnings.push(`Price skipped: invalid date "${price.date}"`);
         continue;
       }
 
-      await tx.prices.create({
-        data: {
-          guid: price.id || generateGuid(),
-          commodity_guid: commodityGuid,
-          currency_guid: currencyGuid,
-          date: priceDate,
-          source: price.source || null,
-          type: price.type || null,
-          value_num: value.num,
-          value_denom: value.denom,
-        },
+      const value = parseFraction(price.value);
+      priceRows.push({
+        guid: price.id || generateGuid(),
+        commodity_guid: commodityGuid,
+        currency_guid: currencyGuid,
+        date: priceDate,
+        source: price.source || null,
+        type: price.type || null,
+        value_num: value.num,
+        value_denom: value.denom,
       });
       summary.prices++;
     }
+    for (let i = 0; i < priceRows.length; i += CHUNK) {
+      await tx.prices.createMany({ data: priceRows.slice(i, i + CHUNK) });
+    }
 
     // 7. Create budgets and budget amounts
+    const budgetAmountRows: Array<{
+      budget_guid: string;
+      account_guid: string;
+      period_num: number;
+      amount_num: bigint;
+      amount_denom: bigint;
+    }> = [];
     for (const budget of data.budgets) {
       await tx.budgets.create({
         data: {
@@ -402,21 +445,25 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
           );
           continue;
         }
-
         const amountFraction = parseFraction(amount.amount);
-
-        await tx.budget_amounts.create({
-          data: {
-            budget_guid: budget.id,
-            account_guid: accountGuid,
-            period_num: amount.periodNum,
-            amount_num: amountFraction.num,
-            amount_denom: amountFraction.denom,
-          },
+        budgetAmountRows.push({
+          budget_guid: budget.id,
+          account_guid: accountGuid,
+          period_num: amount.periodNum,
+          amount_num: amountFraction.num,
+          amount_denom: amountFraction.denom,
         });
         summary.budgetAmounts++;
       }
     }
+    for (let i = 0; i < budgetAmountRows.length; i += CHUNK) {
+      await tx.budget_amounts.createMany({ data: budgetAmountRows.slice(i, i + CHUNK) });
+    }
+  }, {
+    // Large books routinely ship 10k+ splits; default 5s interactive
+    // timeout isn't enough. 5 minutes should cover any realistic book.
+    maxWait: 10_000,
+    timeout: 300_000,
   });
 
   summary.bookGuid = createdBookGuid;

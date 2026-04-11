@@ -11,6 +11,13 @@ function record(op: string) {
   });
 }
 
+function recordMany(op: string) {
+  return vi.fn(async (args: { data: unknown[] }) => {
+    calls.push({ op, data: args.data });
+    return { count: args.data.length };
+  });
+}
+
 const tx = {
   commodities: {
     findMany: vi.fn(async () => []),
@@ -23,25 +30,25 @@ const tx = {
     create: record('books.create'),
   },
   lots: {
-    createMany: vi.fn(async (args: { data: unknown[] }) => {
-      calls.push({ op: 'lots.createMany', data: args.data });
-      return { count: args.data.length };
-    }),
+    createMany: recordMany('lots.createMany'),
   },
   transactions: {
-    create: record('transactions.create'),
+    createMany: recordMany('transactions.createMany'),
   },
   splits: {
-    create: record('splits.create'),
+    createMany: recordMany('splits.createMany'),
   },
-  prices: { create: record('prices.create') },
+  prices: { createMany: recordMany('prices.createMany') },
   budgets: { create: record('budgets.create') },
-  budget_amounts: { create: record('budget_amounts.create') },
+  budget_amounts: { createMany: recordMany('budget_amounts.createMany') },
 };
 
 vi.mock('@/lib/prisma', () => ({
   default: {
-    $transaction: async (fn: (t: typeof tx) => Promise<void>) => fn(tx),
+    $transaction: async (
+      fn: (t: typeof tx) => Promise<void>,
+      _opts?: { maxWait?: number; timeout?: number },
+    ) => fn(tx),
   },
 }));
 
@@ -113,7 +120,7 @@ describe('importGnuCashData — lot FK handling', () => {
     await importGnuCashData(minimalData(), 'Test Book');
 
     const lotIdx = calls.findIndex((c) => c.op === 'lots.createMany');
-    const firstSplitIdx = calls.findIndex((c) => c.op === 'splits.create');
+    const firstSplitIdx = calls.findIndex((c) => c.op === 'splits.createMany');
 
     expect(lotIdx).toBeGreaterThanOrEqual(0);
     expect(firstSplitIdx).toBeGreaterThan(lotIdx);
@@ -131,10 +138,9 @@ describe('importGnuCashData — lot FK handling', () => {
       },
     ]);
 
-    const splitWithLot = calls
-      .filter((c) => c.op === 'splits.create')
-      .map((c) => c.data as { guid: string; lot_guid: string | null })
-      .find((s) => s.guid === 'split-buy-aapl-0000000000000000');
+    const splitBatch = calls.find((c) => c.op === 'splits.createMany')!
+      .data as Array<{ guid: string; lot_guid: string | null }>;
+    const splitWithLot = splitBatch.find((s) => s.guid === 'split-buy-aapl-0000000000000000');
     expect(splitWithLot?.lot_guid).toBe('lot-aapl-0000000000000000000000');
   });
 
