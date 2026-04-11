@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Account } from '@/lib/types';
 import { useAccounts } from '@/lib/hooks/useAccounts';
-import { useBooks } from '@/contexts/BookContext';
 import { formatAccountPath } from '@/lib/account-utils';
 
 interface AccountSelectorProps {
@@ -54,13 +53,6 @@ export function AccountSelector({
     // Use React Query hook for accounts
     const { data: accounts = [], isLoading: loading, error } = useAccounts({ flat: true });
 
-    // Get active book name for stripping from account paths
-    const { activeBookGuid, books } = useBooks();
-    const bookName = useMemo(() => {
-        if (!activeBookGuid) return undefined;
-        return books.find(b => b.guid === activeBookGuid)?.name;
-    }, [activeBookGuid, books]);
-
     // Log errors
     useEffect(() => {
         if (error) {
@@ -83,12 +75,12 @@ export function AccountSelector({
         if (value && accounts.length > 0) {
             const selected = accounts.find(a => a.guid === value);
             if (selected) {
-                setSelectedName(formatAccountPath(selected.fullname, selected.name, bookName));
+                setSelectedName(formatAccountPath(selected.fullname, selected.name));
             }
         } else if (!value) {
             setSelectedName('');
         }
-    }, [value, accounts, bookName]);
+    }, [value, accounts]);
 
     // Calculate dropdown position when opening — flip upward if near bottom
     useEffect(() => {
@@ -151,11 +143,11 @@ export function AccountSelector({
             if (account.account_type === 'ROOT') return false;
             if (accountTypes && !accountTypes.includes(account.account_type)) return false;
             const searchLower = search.toLowerCase();
-            const displayName = formatAccountPath(account.fullname, account.name, bookName);
+            const displayName = formatAccountPath(account.fullname, account.name);
             return displayName.toLowerCase().includes(searchLower) ||
                 account.account_type.toLowerCase().includes(searchLower);
         }),
-        [accounts, search, bookName, accountTypes]
+        [accounts, search, accountTypes]
     );
 
     // Group accounts by type (memoized)
@@ -193,7 +185,7 @@ export function AccountSelector({
     }, [search, isOpen]);
 
     const handleSelect = (account: Account) => {
-        const displayName = formatAccountPath(account.fullname, account.name, bookName);
+        const displayName = formatAccountPath(account.fullname, account.name);
         onChange(account.guid, displayName);
         setSelectedName(displayName);
         setSearch('');
@@ -332,7 +324,7 @@ export function AccountSelector({
                                                 }`}
                                                 onClick={() => handleSelect(account)}
                                             >
-                                                <div className="text-sm">{formatAccountPath(account.fullname, account.name, bookName)}</div>
+                                                <div className="text-sm">{formatAccountPath(account.fullname, account.name)}</div>
                                             </div>
                                         );
                                     })}

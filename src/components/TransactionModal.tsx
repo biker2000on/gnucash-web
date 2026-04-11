@@ -6,6 +6,7 @@ import { Modal } from './ui/Modal';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { Transaction, Split } from '@/lib/types';
 import { formatCurrency } from '@/lib/format';
+import { formatAccountPath } from '@/lib/account-utils';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -16,15 +17,6 @@ function getReconcileStatus(splits: Split[] | undefined): {
         hasReconciled: splits.some(s => s.reconcile_state === 'y'),
         hasCleared: splits.some(s => s.reconcile_state === 'c'),
     };
-}
-
-// Format account path, stripping "Root Account:" prefix
-function formatAccountPath(fullname: string | undefined, name: string): string {
-    const path = fullname || name;
-    if (path.startsWith('Root Account:')) {
-        return path.substring('Root Account:'.length);
-    }
-    return path;
 }
 
 interface TransactionModalProps {

@@ -57,6 +57,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [auditing, setAuditing] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [indexCoverage, setIndexCoverage] = useState<IndexCoverage | null>(null);
   const [taxRateInput, setTaxRateInput] = useState('');
@@ -237,6 +238,41 @@ export default function SettingsPage() {
       showError('Failed to start price refresh');
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleRunPriceAudit = async () => {
+    setAuditing(true);
+    try {
+      const res = await fetch('/api/prices/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ async: true }),
+      });
+
+      if (!res.ok) {
+        const raw = await res.text();
+        let parsed: { error?: string } | null = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          // non-JSON response
+        }
+        throw new Error(parsed?.error || raw.slice(0, 200) || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.queued) {
+        success(`Price audit queued (job ${data.jobId}) — watch the worker logs for progress.`);
+      } else {
+        success(
+          `Price audit complete — stored ${data.stored}, audited ${data.audited}, failed ${data.failed}.`,
+        );
+      }
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Failed to start price audit');
+    } finally {
+      setAuditing(false);
     }
   };
 
@@ -427,16 +463,29 @@ export default function SettingsPage() {
             </p>
           )}
 
-          <button
-            onClick={handleBackfillIndices}
-            disabled={backfilling || (indexCoverage?.isUpToDate ?? false)}
-            className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {backfilling && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            )}
-            <span>{backfilling ? 'Backfilling...' : 'Backfill Historical Index Data'}</span>
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={handleBackfillIndices}
+              disabled={backfilling || (indexCoverage?.isUpToDate ?? false)}
+              className="flex-1 bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {backfilling && (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              )}
+              <span>{backfilling ? 'Backfilling...' : 'Backfill Historical Index Data'}</span>
+            </button>
+            <button
+              onClick={handleRunPriceAudit}
+              disabled={auditing}
+              title="Audits every commodity held in this book, fills gaps, and backfills history from Yahoo Finance. Runs in the background worker."
+              className="flex-1 bg-surface-elevated hover:bg-surface-hover disabled:opacity-60 text-foreground border border-border font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {auditing && (
+                <div className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
+              )}
+              <span>{auditing ? 'Queuing…' : 'Run Full Price Audit'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

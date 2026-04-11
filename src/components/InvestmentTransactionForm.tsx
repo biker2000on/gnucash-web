@@ -7,17 +7,9 @@ import { useAccounts } from '@/lib/hooks/useAccounts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
+import { formatAccountPath } from '@/lib/account-utils';
 
 type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
-
-// Helper to strip "Root Account:" prefix from account paths
-function formatAccountPath(fullname: string | undefined, name: string): string {
-    const path = fullname || name;
-    if (path.startsWith('Root Account:')) {
-        return path.substring('Root Account:'.length);
-    }
-    return path;
-}
 
 interface InvestmentTransactionFormProps {
     accountGuid: string;
