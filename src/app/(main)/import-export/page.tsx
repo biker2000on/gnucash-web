@@ -36,6 +36,7 @@ export default function ImportExportPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [overwrite, setOverwrite] = useState(false);
 
   // Export state
   const [exporting, setExporting] = useState(false);
@@ -117,6 +118,7 @@ export default function ImportExportPage() {
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
+      if (overwrite) formData.append('overwrite', 'true');
 
       const res = await fetch('/api/import', {
         method: 'POST',
@@ -125,6 +127,11 @@ export default function ImportExportPage() {
 
       if (!res.ok) {
         const data = await res.json();
+        if (res.status === 409 && data.code === 'BOOK_EXISTS' && !overwrite) {
+          throw new Error(
+            'This book was already imported. Check "Overwrite existing book" and try again to replace its data.',
+          );
+        }
         throw new Error(data.error || 'Import failed');
       }
 
@@ -138,7 +145,7 @@ export default function ImportExportPage() {
     } finally {
       setImporting(false);
     }
-  }, [selectedFile, refreshBooks]);
+  }, [selectedFile, overwrite, refreshBooks]);
 
   const handleCancelPreview = useCallback(() => {
     setPreviewData(null);
@@ -259,29 +266,44 @@ export default function ImportExportPage() {
           </div>
         )}
 
-        {/* Action Buttons (when file selected but no preview yet) */}
+        {/* Overwrite toggle + action buttons (when file selected but no preview yet) */}
         {selectedFile && !previewData && !importResult && (
-          <div className="flex gap-3">
-            <button
-              onClick={handlePreview}
-              disabled={previewing}
-              className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-xl transition-colors"
-            >
-              {previewing ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                'Preview Import'
-              )}
-            </button>
-            <button
-              onClick={handleReset}
-              className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
-            >
-              Clear
-            </button>
+          <div className="space-y-3">
+            <label className="flex items-start gap-2 text-sm text-foreground-secondary cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={overwrite}
+                onChange={(e) => setOverwrite(e.target.checked)}
+                className="mt-0.5 accent-primary"
+              />
+              <span>
+                Overwrite existing book if this GnuCash file was already imported.
+                Deletes the existing book&apos;s accounts, transactions, splits, lots,
+                and budgets before re-importing.
+              </span>
+            </label>
+            <div className="flex gap-3">
+              <button
+                onClick={handlePreview}
+                disabled={previewing}
+                className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
+              >
+                {previewing ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  'Preview Import'
+                )}
+              </button>
+              <button
+                onClick={handleReset}
+                className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
+              >
+                Clear
+              </button>
+            </div>
           </div>
         )}
 
@@ -386,7 +408,7 @@ export default function ImportExportPage() {
         <button
           onClick={handleExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white rounded-xl transition-colors"
+          className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
         >
           {exporting ? (
             <>

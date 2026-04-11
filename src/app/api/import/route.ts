@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseGnuCashXml } from '@/lib/gnucash-xml/parser';
-import { importGnuCashData } from '@/lib/gnucash-xml/importer';
+import { importGnuCashData, BookAlreadyExistsError } from '@/lib/gnucash-xml/importer';
 import { requireRole } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
 
@@ -61,8 +61,10 @@ export async function POST(request: NextRequest) {
       .replace(/[_-]+/g, ' ')
       .trim() || 'Imported Book';
 
+    const overwrite = formData.get('overwrite') === 'true';
+
     // Import the data
-    const summary = await importGnuCashData(data, bookName);
+    const summary = await importGnuCashData(data, bookName, { overwrite });
 
     // Grant the importing user admin access to the new book
     if (summary.bookGuid) {
@@ -71,6 +73,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, summary });
   } catch (error) {
+    if (error instanceof BookAlreadyExistsError) {
+      return NextResponse.json(
+        {
+          error: 'This book was already imported. Re-upload with the "overwrite existing book" option to replace it.',
+          code: 'BOOK_EXISTS',
+          bookGuid: error.bookGuid,
+        },
+        { status: 409 },
+      );
+    }
     console.error('Import error:', error);
     const message = error instanceof Error ? error.message : 'Import failed';
     return NextResponse.json({ error: message }, { status: 500 });

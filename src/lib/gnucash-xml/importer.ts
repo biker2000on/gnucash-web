@@ -78,9 +78,87 @@ function topologicalSortAccounts(
 }
 
 /**
+ * Delete every row that the incoming XML would collide with, in the
+ * order the FK graph requires. Used when re-importing a book with
+ * overwrite: true. Runs inside the caller's interactive transaction.
+ *
+ * Commodities and prices are deliberately left alone — they're shared
+ * across books and rarely need to be wiped to re-import a single book.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function deleteExistingBookRows(tx: any, data: GnuCashXmlData, oldRootAccountGuid: string | null) {
+  const accountGuids = data.accounts.map((a) => a.id).filter(Boolean);
+  const transactionGuids = data.transactions.map((t) => t.id).filter(Boolean);
+  const budgetGuids = data.budgets.map((b) => b.id).filter(Boolean);
+
+  const lotGuids = new Set<string>();
+  for (const t of data.transactions) {
+    for (const s of t.splits) if (s.lotId) lotGuids.add(s.lotId);
+  }
+
+  // Budgets first — budget_amounts cascade via FK onDelete: Cascade.
+  if (budgetGuids.length) {
+    await tx.budgets.deleteMany({ where: { guid: { in: budgetGuids } } });
+  }
+
+  // Transactions — splits cascade via FK onDelete: Cascade.
+  if (transactionGuids.length) {
+    await tx.transactions.deleteMany({ where: { guid: { in: transactionGuids } } });
+  }
+
+  // Lots referenced by splits we just deleted.
+  if (lotGuids.size) {
+    await tx.lots.deleteMany({ where: { guid: { in: Array.from(lotGuids) } } });
+  }
+
+  // Accounts self-reference via parent_guid, so null parents first, then
+  // delete the XML accounts, then the previously-generated root account
+  // (which lives outside the XML account set).
+  if (accountGuids.length) {
+    await tx.accounts.updateMany({
+      where: { guid: { in: accountGuids } },
+      data: { parent_guid: null },
+    });
+    await tx.accounts.deleteMany({ where: { guid: { in: accountGuids } } });
+  }
+  if (oldRootAccountGuid) {
+    await tx.accounts.deleteMany({ where: { guid: oldRootAccountGuid } });
+  }
+
+  // Finally the book row itself. Role grants reference the book guid
+  // in gnucash_web_book_permissions, but grantRole is an upsert on
+  // (user_id, book_guid), so leaving those rows in place is fine —
+  // the API route re-grants after a successful overwrite import.
+  if (data.book?.id) {
+    await tx.books.deleteMany({ where: { guid: data.book.id } });
+  }
+}
+
+/**
  * Import parsed GnuCash XML data into the database.
  */
-export async function importGnuCashData(data: GnuCashXmlData, bookName?: string): Promise<ImportSummary> {
+export class BookAlreadyExistsError extends Error {
+  readonly code = 'BOOK_EXISTS';
+  constructor(public readonly bookGuid: string) {
+    super(`Book ${bookGuid} already exists. Pass overwrite: true to replace it.`);
+    this.name = 'BookAlreadyExistsError';
+  }
+}
+
+export interface ImportOptions {
+  /**
+   * If true and the book GUID from the XML already exists, delete the book
+   * and every row the incoming XML references before re-importing. If false
+   * and the book exists, throw BookAlreadyExistsError.
+   */
+  overwrite?: boolean;
+}
+
+export async function importGnuCashData(
+  data: GnuCashXmlData,
+  bookName?: string,
+  options: ImportOptions = {},
+): Promise<ImportSummary> {
   const summary: ImportSummary = {
     commodities: 0,
     accounts: 0,
@@ -99,6 +177,24 @@ export async function importGnuCashData(data: GnuCashXmlData, bookName?: string)
     // The import fans out into thousands of inserts per book. We keep a
     // single transaction for atomic rollback, but batch the hot loops with
     // createMany so we don't blow past Prisma's interactive timeout.
+
+    // 0. Re-import guard. Books, accounts, transactions etc. preserve
+    // their original XML guids as primary keys, so importing the same
+    // XML twice collides. If the caller opted in to overwrite, delete
+    // every row the incoming XML references (in the correct FK order)
+    // before re-inserting; otherwise bail with a structured error so
+    // the API can surface a confirmation prompt.
+    const xmlBookGuid = data.book?.id;
+    if (xmlBookGuid) {
+      const existing = await tx.books.findUnique({ where: { guid: xmlBookGuid } });
+      if (existing) {
+        if (!options.overwrite) {
+          throw new BookAlreadyExistsError(xmlBookGuid);
+        }
+        await deleteExistingBookRows(tx, data, existing.root_account_guid);
+      }
+    }
+
     // 1. Create/find commodities
     // Build a map of (space:id) -> database GUID
     const commodityMap = new Map<string, string>();

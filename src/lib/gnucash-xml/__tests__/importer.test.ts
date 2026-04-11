@@ -18,6 +18,8 @@ function recordMany(op: string) {
   });
 }
 
+const existingBookRef: { current: { root_account_guid: string | null } | null } = { current: null };
+
 const tx = {
   commodities: {
     findMany: vi.fn(async () => []),
@@ -25,21 +27,48 @@ const tx = {
   },
   accounts: {
     create: record('accounts.create'),
+    updateMany: vi.fn(async (args: { where: unknown; data: unknown }) => {
+      calls.push({ op: 'accounts.updateMany', data: args });
+      return { count: 0 };
+    }),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'accounts.deleteMany', data: args });
+      return { count: 0 };
+    }),
   },
   books: {
     create: record('books.create'),
+    findUnique: vi.fn(async () => existingBookRef.current),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'books.deleteMany', data: args });
+      return { count: 0 };
+    }),
   },
   lots: {
     createMany: recordMany('lots.createMany'),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'lots.deleteMany', data: args });
+      return { count: 0 };
+    }),
   },
   transactions: {
     createMany: recordMany('transactions.createMany'),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'transactions.deleteMany', data: args });
+      return { count: 0 };
+    }),
   },
   splits: {
     createMany: recordMany('splits.createMany'),
   },
   prices: { createMany: recordMany('prices.createMany') },
-  budgets: { create: record('budgets.create') },
+  budgets: {
+    create: record('budgets.create'),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'budgets.deleteMany', data: args });
+      return { count: 0 };
+    }),
+  },
   budget_amounts: { createMany: recordMany('budget_amounts.createMany') },
 };
 
@@ -114,6 +143,7 @@ describe('importGnuCashData — lot FK handling', () => {
     calls.length = 0;
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
+    existingBookRef.current = null;
   });
 
   it('creates referenced lots before inserting splits that point at them', async () => {
@@ -151,5 +181,57 @@ describe('importGnuCashData — lot FK handling', () => {
     await importGnuCashData(data, 'Test Book');
 
     expect(tx.lots.createMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('importGnuCashData — re-import handling', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    vi.clearAllMocks();
+    tx.commodities.findMany.mockResolvedValue([]);
+    existingBookRef.current = null;
+  });
+
+  it('throws BookAlreadyExistsError when the book guid exists and overwrite is off', async () => {
+    existingBookRef.current = { root_account_guid: 'old-root-guid-000000000000000000' };
+
+    const { importGnuCashData: importFn, BookAlreadyExistsError } = await import('../importer');
+
+    await expect(importFn(minimalData(), 'Test Book')).rejects.toBeInstanceOf(
+      BookAlreadyExistsError,
+    );
+  });
+
+  it('wipes the old book rows before re-inserting when overwrite is true', async () => {
+    existingBookRef.current = { root_account_guid: 'old-root-guid-000000000000000000' };
+
+    await importGnuCashData(minimalData(), 'Test Book', { overwrite: true });
+
+    const ops = calls.map((c) => c.op);
+    // Deletes must come before inserts.
+    const firstInsertIdx = ops.findIndex((op) => op.endsWith('.create') || op.endsWith('.createMany'));
+    const lastDeleteIdx = Math.max(
+      ops.lastIndexOf('transactions.deleteMany'),
+      ops.lastIndexOf('lots.deleteMany'),
+      ops.lastIndexOf('accounts.deleteMany'),
+      ops.lastIndexOf('books.deleteMany'),
+    );
+    expect(lastDeleteIdx).toBeGreaterThanOrEqual(0);
+    expect(lastDeleteIdx).toBeLessThan(firstInsertIdx);
+
+    // The previously-generated root account must be deleted too.
+    const oldRootDelete = calls.find(
+      (c) =>
+        c.op === 'accounts.deleteMany' &&
+        JSON.stringify(c.data).includes('old-root-guid-000000000000000000'),
+    );
+    expect(oldRootDelete).toBeDefined();
+
+    // Accounts must have their parent nulled before being removed to
+    // avoid breaking the self-referential parent_guid FK.
+    const nullParentIdx = ops.indexOf('accounts.updateMany');
+    const accountDeleteIdx = ops.indexOf('accounts.deleteMany');
+    expect(nullParentIdx).toBeGreaterThanOrEqual(0);
+    expect(nullParentIdx).toBeLessThan(accountDeleteIdx);
   });
 });
