@@ -82,18 +82,27 @@ function topologicalSortAccounts(
  * order the FK graph requires. Used when re-importing a book with
  * overwrite: true. Runs inside the caller's interactive transaction.
  *
- * Commodities and prices are deliberately left alone — they're shared
- * across books and rarely need to be wiped to re-import a single book.
+ * Commodities are deliberately left alone — they're shared across
+ * books and the insert path already skips duplicates. Prices collide
+ * on their own guid if the same book is re-imported, so we delete the
+ * specific price rows the incoming XML is about to re-insert.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function deleteExistingBookRows(tx: any, data: GnuCashXmlData, oldRootAccountGuid: string | null) {
   const accountGuids = data.accounts.map((a) => a.id).filter(Boolean);
   const transactionGuids = data.transactions.map((t) => t.id).filter(Boolean);
   const budgetGuids = data.budgets.map((b) => b.id).filter(Boolean);
+  const priceGuids = data.pricedb.map((p) => p.id).filter((g): g is string => Boolean(g));
 
   const lotGuids = new Set<string>();
   for (const t of data.transactions) {
     for (const s of t.splits) if (s.lotId) lotGuids.add(s.lotId);
+  }
+
+  // Prices first — they carry guids that collide on re-import and
+  // have no dependents in the GnuCash schema.
+  if (priceGuids.length) {
+    await tx.prices.deleteMany({ where: { guid: { in: priceGuids } } });
   }
 
   // Budgets first — budget_amounts cascade via FK onDelete: Cascade.

@@ -126,13 +126,20 @@ export default function ImportExportPage() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        if (res.status === 409 && data.code === 'BOOK_EXISTS' && !overwrite) {
+        const raw = await res.text();
+        let parsed: { error?: string; code?: string } | null = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          // Server returned HTML or a non-JSON body — fall through.
+        }
+        if (res.status === 409 && parsed?.code === 'BOOK_EXISTS' && !overwrite) {
           throw new Error(
             'This book was already imported. Check "Overwrite existing book" and try again to replace its data.',
           );
         }
-        throw new Error(data.error || 'Import failed');
+        const detail = parsed?.error || raw.slice(0, 200) || `HTTP ${res.status}`;
+        throw new Error(`Import failed (${res.status}): ${detail}`);
       }
 
       const data = await res.json();
