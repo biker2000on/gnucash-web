@@ -542,11 +542,18 @@ export async function importGnuCashData(
       });
       summary.budgets++;
 
+      // GnuCash leaves orphaned budget slots behind when an account is
+      // deleted, so a single missing account can appear under many
+      // periods (up to num-periods). Count them per budget and emit one
+      // summary warning instead of flooding the summary with duplicates.
+      const orphanAccountCounts = new Map<string, number>();
+
       for (const amount of budget.amounts) {
         const accountGuid = accountGuidMap.get(amount.accountId);
         if (!accountGuid) {
-          summary.warnings.push(
-            `Budget amount skipped: account ${amount.accountId} not found for budget "${budget.name}"`
+          orphanAccountCounts.set(
+            amount.accountId,
+            (orphanAccountCounts.get(amount.accountId) ?? 0) + 1,
           );
           continue;
         }
@@ -559,6 +566,13 @@ export async function importGnuCashData(
           amount_denom: amountFraction.denom,
         });
         summary.budgetAmounts++;
+      }
+
+      if (orphanAccountCounts.size > 0) {
+        const totalSkipped = Array.from(orphanAccountCounts.values()).reduce((a, b) => a + b, 0);
+        summary.warnings.push(
+          `Budget "${budget.name}": skipped ${totalSkipped} amount(s) across ${orphanAccountCounts.size} deleted account(s) — these are orphan slots GnuCash left behind when the accounts were removed.`,
+        );
       }
     }
     for (let i = 0; i < budgetAmountRows.length; i += CHUNK) {

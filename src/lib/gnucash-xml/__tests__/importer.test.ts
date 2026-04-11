@@ -184,6 +184,45 @@ describe('importGnuCashData — lot FK handling', () => {
   });
 });
 
+describe('importGnuCashData — orphan budget slots', () => {
+  beforeEach(() => {
+    calls.length = 0;
+    vi.clearAllMocks();
+    tx.commodities.findMany.mockResolvedValue([]);
+    existingBookRef.current = null;
+  });
+
+  it('collapses repeated "account not found" warnings into one line per budget', async () => {
+    const data = minimalData();
+    data.budgets = [
+      {
+        id: 'budget-orphans-00000000000000000',
+        name: 'Orphaned',
+        numPeriods: 12,
+        amounts: [
+          // Same deleted account across 12 periods
+          ...Array.from({ length: 12 }, (_, i) => ({
+            accountId: 'deleted-account-guid-aaaaaaaaaaa',
+            periodNum: i,
+            amount: '100/1',
+          })),
+          // Different deleted account, 3 periods
+          { accountId: 'deleted-account-guid-bbbbbbbbbbb', periodNum: 0, amount: '50/1' },
+          { accountId: 'deleted-account-guid-bbbbbbbbbbb', periodNum: 1, amount: '50/1' },
+          { accountId: 'deleted-account-guid-bbbbbbbbbbb', periodNum: 2, amount: '50/1' },
+        ],
+      },
+    ];
+
+    const result = await importGnuCashData(data, 'Test Book');
+
+    const orphanWarnings = result.warnings.filter((w) => w.startsWith('Budget "Orphaned"'));
+    expect(orphanWarnings).toHaveLength(1);
+    expect(orphanWarnings[0]).toContain('skipped 15 amount(s)');
+    expect(orphanWarnings[0]).toContain('2 deleted account(s)');
+  });
+});
+
 describe('importGnuCashData — re-import handling', () => {
   beforeEach(() => {
     calls.length = 0;
