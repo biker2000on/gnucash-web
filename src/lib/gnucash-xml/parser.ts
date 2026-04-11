@@ -30,6 +30,22 @@ function ensureArray<T>(value: T | T[] | undefined | null): T[] {
 }
 
 /**
+ * Extract the text value from an XML element that may be either a bare
+ * string or an object with attributes (e.g. `<slot:key type="guid">abc</slot:key>`
+ * which fast-xml-parser returns as `{ "@_type": "guid", "#text": "abc" }`).
+ */
+function extractText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    const text = (value as Record<string, unknown>)['#text'];
+    if (text != null) return String(text);
+    return '';
+  }
+  return String(value);
+}
+
+/**
  * Extract a date string from a GnuCash timestamp element.
  * GnuCash stores dates as: <ts:date>2024-01-15 10:30:00 +0000</ts:date>
  */
@@ -354,36 +370,34 @@ function parseBudgets(bookElement: Record<string, unknown>): GnuCashBudget[] {
     // Parse num periods
     const numPeriods = parseInt(String(obj['bgt:num-periods'] || '12'), 10);
 
-    // Parse budget amounts from slots
-    // Budget amounts in GnuCash XML are stored in slots
+    // Parse budget amounts from slots.
+    // Budget slots nest as: <slot><slot:key>ACCOUNT_GUID</slot:key>
+    //   <slot:value type="frame"><slot><slot:key>PERIOD</slot:key>
+    //     <slot:value type="numeric">N/D</slot:value></slot>...
+    // Some GnuCash exports tag the account slot:key with type="guid",
+    // which makes fast-xml-parser return it as an object — extractText
+    // handles both shapes.
     const amounts: GnuCashBudgetAmount[] = [];
     const slotsContainer = obj['bgt:slots'] as Record<string, unknown> | undefined;
     if (slotsContainer) {
       const slotList = ensureArray(slotsContainer['slot'] as unknown);
       for (const slot of slotList) {
         const slotObj = slot as Record<string, unknown>;
-        const slotKey = String(slotObj['slot:key'] || '');
+        const slotKey = extractText(slotObj['slot:key']);
 
-        // Budget amounts have slot keys like account GUIDs
-        // and slot values that are frames containing period->amount pairs
         if (slotObj['slot:value']) {
           const slotValue = slotObj['slot:value'] as Record<string, unknown>;
           const innerSlots = ensureArray(slotValue['slot'] as unknown);
           for (const innerSlot of innerSlots) {
             const innerObj = innerSlot as Record<string, unknown>;
-            const periodKey = String(innerObj['slot:key'] || '');
-            const periodNum = parseInt(periodKey, 10);
-            if (!isNaN(periodNum)) {
-              const amountVal = innerObj['slot:value'] as string | Record<string, unknown>;
-              const amountStr = typeof amountVal === 'string'
-                ? amountVal
-                : String((amountVal as Record<string, unknown>)?.['#text'] || '0/1');
-              amounts.push({
-                accountId: slotKey,
-                periodNum,
-                amount: amountStr,
-              });
-            }
+            const periodNum = parseInt(extractText(innerObj['slot:key']), 10);
+            if (isNaN(periodNum)) continue;
+            const amountStr = extractText(innerObj['slot:value']) || '0/1';
+            amounts.push({
+              accountId: slotKey,
+              periodNum,
+              amount: amountStr,
+            });
           }
         }
       }
