@@ -48,6 +48,35 @@ RUN NODE_TLS_REJECT_UNAUTHORIZED=0 npx prisma generate
 
 RUN npm run build
 
+# Bundle the worker and the db-init entrypoint with esbuild and drop the
+# resulting JS inside .next/standalone so they share the traced node_modules.
+# Native packages (@prisma/client, sharp, bcrypt) stay external — they already
+# live in standalone's traced node_modules and must not be bundled.
+RUN npx esbuild worker.ts \
+      --bundle --platform=node --target=node24 --format=cjs \
+      --external:@prisma/client --external:sharp --external:bcrypt \
+      --outfile=.next/standalone/worker.js \
+ && npx esbuild scripts/db-init-entrypoint.ts \
+      --bundle --platform=node --target=node24 --format=cjs \
+      --external:@prisma/client --external:sharp --external:bcrypt \
+      --outfile=.next/standalone/db-init.js
+
+# Minimal stage that installs ONLY the prisma CLI and its direct runtime
+# inputs. The CLI is not part of next's traced output, so we ship it as a
+# small side-car rather than dragging the whole prod node_modules into the
+# runtime image.
+FROM node:24-alpine AS prisma-cli
+WORKDIR /opt/prisma-cli
+RUN npm config set strict-ssl false && \
+    echo '{"name":"prisma-cli","version":"0.0.0","private":true,"dependencies":{"prisma":"^7.3.0","dotenv":"^17.2.3","@prisma/adapter-pg":"^7.3.0"}}' > package.json && \
+    npm install --omit=peer --omit=optional && \
+    rm -rf node_modules/@next/swc-linux-x64-gnu \
+           node_modules/lightningcss-linux-x64-gnu \
+           node_modules/@napi-rs/canvas-linux-x64-gnu && \
+    find node_modules \( -name "*.md" -o -name "*.map" -o -name "CHANGELOG*" -o -name "README*" \) -delete 2>/dev/null || true && \
+    find node_modules -type d \( -name "test" -o -name "tests" -o -name "__tests__" -o -name "docs" -o -name "example" -o -name "examples" \) -prune -exec rm -rf {} + 2>/dev/null || true && \
+    npm cache clean --force
+
 # Production image, copy all the files and run next
 FROM node:24-alpine AS runner
 WORKDIR /app
@@ -75,18 +104,22 @@ RUN chown nextjs:nodejs .next
 RUN mkdir -p data/receipts
 RUN chown nextjs:nodejs data/receipts
 
-# Automatically leverage output traces to reduce image size
+# Next.js standalone output — server.js, worker.js (esbuild), db-init.js
+# (esbuild), and a traced ~44 MB node_modules with everything the app and
+# the bundled workers need at runtime.
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Worker support: source files and full node_modules for tsx/bullmq
-COPY --from=builder --chown=nextjs:nodejs /app/worker.ts ./
-COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
-COPY --from=builder --chown=nextjs:nodejs /app/src ./src
-COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./
+# Prisma schema + config are read by the CLI during `prisma db push` at
+# container start, so they need to exist at the paths the config expects.
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
-COPY --from=prod-deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./
+
+# Prisma CLI side-car (see prisma-cli stage above). Kept out of /app to
+# avoid any risk of clashing with standalone's traced node_modules.
+COPY --from=prisma-cli --chown=nextjs:nodejs /opt/prisma-cli /opt/prisma-cli
+
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 
