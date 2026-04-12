@@ -137,13 +137,15 @@ export class BookAlreadyExistsError extends Error {
   }
 }
 
+export interface ImportProgress {
+  phase: string;
+  progress: number;
+  detail?: string;
+}
+
 export interface ImportOptions {
-  /**
-   * If true and the book GUID from the XML already exists, delete the book
-   * and every row the incoming XML references before re-importing. If false
-   * and the book exists, throw BookAlreadyExistsError.
-   */
   overwrite?: boolean;
+  onProgress?: (progress: ImportProgress) => void;
 }
 
 export async function importGnuCashData(
@@ -151,6 +153,7 @@ export async function importGnuCashData(
   bookName?: string,
   options: ImportOptions = {},
 ): Promise<ImportSummary> {
+  const emit = options.onProgress ?? (() => {});
   const summary: ImportSummary = {
     commodities: 0,
     accounts: 0,
@@ -176,6 +179,8 @@ export async function importGnuCashData(
     // every row the incoming XML references (in the correct FK order)
     // before re-inserting; otherwise bail with a structured error so
     // the API can surface a confirmation prompt.
+    emit({ phase: 'Preparing', progress: 0 });
+
     const xmlBookGuid = data.book?.id;
     let isOverwrite = false;
     if (xmlBookGuid) {
@@ -185,11 +190,13 @@ export async function importGnuCashData(
           throw new BookAlreadyExistsError(xmlBookGuid);
         }
         isOverwrite = true;
+        emit({ phase: 'Clearing old data', progress: 2 });
         await clearCollisionRows(tx, data);
       }
     }
 
     // 1. Create/find commodities
+    emit({ phase: 'Commodities', progress: 5, detail: `${data.commodities.length} commodities` });
     // Build a map of (space:id) -> database GUID
     const commodityMap = new Map<string, string>();
 
@@ -300,6 +307,7 @@ export async function importGnuCashData(
     }
 
     // 3. Create accounts in topological order (parents before children)
+    emit({ phase: 'Accounts', progress: 15, detail: `${data.accounts.length} accounts` });
     const sortedAccounts = topologicalSortAccounts(data.accounts);
     const accountGuidMap = new Map<string, string>(); // old GUID -> new GUID (preserve originals)
 
@@ -376,6 +384,7 @@ export async function importGnuCashData(
     }
 
     // 4. Create lots referenced by splits.
+    emit({ phase: 'Lots', progress: 30 });
     // GnuCash splits can carry a lot_guid; the schema enforces a FK to lots,
     // so lot rows must exist before their splits are inserted. Collect the
     // distinct (lotId, accountGuid) pairs from all splits and insert them
@@ -402,6 +411,7 @@ export async function importGnuCashData(
     }
 
     // 5. Build transaction + split rows in memory, then createMany them.
+    emit({ phase: 'Transactions', progress: 35, detail: `${data.transactions.length} transactions` });
     // Splits FK-reference transactions, so transactions must be inserted
     // first — but within each table we can batch a single INSERT.
     const transactionRows: Array<{
@@ -478,14 +488,19 @@ export async function importGnuCashData(
     // Chunk very large inserts. Postgres caps parameter count at ~65k,
     // so with ~12 columns per row we cap each batch at ~5000 rows.
     const CHUNK = 2000;
+    emit({ phase: 'Writing transactions', progress: 50, detail: `${transactionRows.length} transactions` });
     for (let i = 0; i < transactionRows.length; i += CHUNK) {
       await tx.transactions.createMany({ data: transactionRows.slice(i, i + CHUNK) });
+      emit({ phase: 'Writing transactions', progress: 50 + Math.round((i / Math.max(transactionRows.length, 1)) * 10), detail: `${Math.min(i + CHUNK, transactionRows.length)}/${transactionRows.length}` });
     }
+    emit({ phase: 'Writing splits', progress: 60, detail: `${splitRows.length} splits` });
     for (let i = 0; i < splitRows.length; i += CHUNK) {
       await tx.splits.createMany({ data: splitRows.slice(i, i + CHUNK) });
+      emit({ phase: 'Writing splits', progress: 60 + Math.round((i / Math.max(splitRows.length, 1)) * 15), detail: `${Math.min(i + CHUNK, splitRows.length)}/${splitRows.length}` });
     }
 
     // 6. Create prices
+    emit({ phase: 'Prices', progress: 78, detail: `${data.pricedb.length} prices` });
     const priceRows: Array<{
       guid: string;
       commodity_guid: string;
@@ -533,6 +548,7 @@ export async function importGnuCashData(
     }
 
     // 7. Create budgets and budget amounts
+    emit({ phase: 'Budgets', progress: 90, detail: `${data.budgets.length} budgets` });
     const budgetAmountRows: Array<{
       budget_guid: string;
       account_guid: string;
@@ -594,6 +610,7 @@ export async function importGnuCashData(
     timeout: 300_000,
   });
 
+  emit({ phase: 'Complete', progress: 100 });
   summary.bookGuid = createdBookGuid;
   return summary;
 }

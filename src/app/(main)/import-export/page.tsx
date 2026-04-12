@@ -37,6 +37,7 @@ export default function ImportExportPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [overwrite, setOverwrite] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ phase: string; progress: number; detail?: string } | null>(null);
 
   // Export state
   const [exporting, setExporting] = useState(false);
@@ -114,10 +115,12 @@ export default function ImportExportPage() {
 
     setImporting(true);
     setImportError(null);
+    setImportProgress(null);
 
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
+      formData.append('stream', 'true');
       if (overwrite) formData.append('overwrite', 'true');
 
       const res = await fetch('/api/import', {
@@ -128,29 +131,52 @@ export default function ImportExportPage() {
       if (!res.ok) {
         const raw = await res.text();
         let parsed: { error?: string; code?: string } | null = null;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          // Server returned HTML or a non-JSON body — fall through.
-        }
+        try { parsed = JSON.parse(raw); } catch { /* non-JSON */ }
         if (res.status === 409 && parsed?.code === 'BOOK_EXISTS' && !overwrite) {
           throw new Error(
             'This book was already imported. Check "Overwrite existing book" and try again to replace its data.',
           );
         }
-        const detail = parsed?.error || raw.slice(0, 200) || `HTTP ${res.status}`;
-        throw new Error(`Import failed (${res.status}): ${detail}`);
+        throw new Error(parsed?.error || raw.slice(0, 200) || `HTTP ${res.status}`);
       }
 
-      const data = await res.json();
-      setImportResult(data.summary);
-      setPreviewData(null);
-      // Refresh book switcher so the newly imported book appears
-      await refreshBooks();
+      // Read the SSE stream
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response body');
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from the buffer
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
+        for (const part of parts) {
+          const eventMatch = part.match(/^event: (\w+)\ndata: (.+)$/s);
+          if (!eventMatch) continue;
+          const [, eventType, dataStr] = eventMatch;
+          const payload = JSON.parse(dataStr);
+
+          if (eventType === 'progress') {
+            setImportProgress(payload);
+          } else if (eventType === 'complete') {
+            setImportResult(payload.summary);
+            setPreviewData(null);
+            setImportProgress(null);
+            await refreshBooks();
+          } else if (eventType === 'error') {
+            throw new Error(payload.error || 'Import failed');
+          }
+        }
+      }
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Import failed');
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   }, [selectedFile, overwrite, refreshBooks]);
 
@@ -266,6 +292,24 @@ export default function ImportExportPage() {
           </div>
         )}
 
+        {/* Progress Bar */}
+        {importing && importProgress && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-foreground-secondary">{importProgress.phase}</span>
+              <span className="text-foreground-muted">
+                {importProgress.detail || `${importProgress.progress}%`}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                style={{ width: `${importProgress.progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Error Display */}
         {importError && (
           <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-sm text-rose-400">
@@ -285,8 +329,8 @@ export default function ImportExportPage() {
               />
               <span>
                 Overwrite existing book if this GnuCash file was already imported.
-                Deletes the existing book&apos;s accounts, transactions, splits, lots,
-                and budgets before re-importing.
+                Updates accounts in place and re-imports transactions, splits,
+                prices, and budgets. SimpleFin data is preserved.
               </span>
             </label>
             <div className="flex gap-3">
