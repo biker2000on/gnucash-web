@@ -32,7 +32,7 @@ export async function handleRegenerateThumbnails(job: Job): Promise<RegenerateRe
 
   // Find all receipts — check for missing thumbnails or PDF placeholders
   const receipts = await query(
-    `SELECT id, storage_key, thumbnail_key, file_type
+    `SELECT id, storage_key, thumbnail_key, mime_type
      FROM gnucash_web_receipts
      ORDER BY id`
   );
@@ -49,7 +49,7 @@ export async function handleRegenerateThumbnails(job: Job): Promise<RegenerateRe
       }
 
       // Case 2: Thumbnail exists — check if it's a placeholder (for PDFs)
-      if (receipt.file_type === 'application/pdf') {
+      if (receipt.mime_type === 'application/pdf') {
         try {
           const thumbBuffer = await storage.get(receipt.thumbnail_key);
           const isPlaceholder = await isPlaceholderThumbnail(thumbBuffer);
@@ -86,13 +86,13 @@ export async function handleRegenerateThumbnails(job: Job): Promise<RegenerateRe
 }
 
 async function regenerateForReceipt(
-  receipt: { id: number; storage_key: string; thumbnail_key: string | null; file_type: string },
+  receipt: { id: number; storage_key: string; thumbnail_key: string | null; mime_type: string },
   storage: Awaited<ReturnType<typeof getStorageBackend>>,
   result: RegenerateResult
 ): Promise<void> {
   try {
     const fileBuffer = await storage.get(receipt.storage_key);
-    const thumbnailBuffer = await generateThumbnail(fileBuffer, receipt.file_type);
+    const thumbnailBuffer = await generateThumbnail(fileBuffer, receipt.mime_type);
     const thumbKey = receipt.thumbnail_key || thumbnailKeyFrom(receipt.storage_key);
 
     await storage.put(thumbKey, thumbnailBuffer, 'image/jpeg');
@@ -106,7 +106,7 @@ async function regenerateForReceipt(
     }
 
     result.regenerated++;
-    console.log(`[regenerate-thumbnails] Regenerated thumbnail for receipt ${receipt.id} (${receipt.file_type})`);
+    console.log(`[regenerate-thumbnails] Regenerated thumbnail for receipt ${receipt.id} (${receipt.mime_type})`);
   } catch (err) {
     const msg = `Receipt ${receipt.id}: ${err instanceof Error ? err.message : String(err)}`;
     result.errors.push(msg);
