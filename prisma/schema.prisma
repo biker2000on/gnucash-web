@@ -413,11 +413,17 @@ model gnucash_web_users {
   last_login       DateTime?
 
   // Relations
-  audit_logs       gnucash_web_audit[]
-  saved_reports    gnucash_web_saved_reports[]
-  preferences      gnucash_web_user_preferences[]
-  tool_configs     gnucash_web_tool_config[]
-  ai_config        gnucash_web_ai_config?
+  audit_logs             gnucash_web_audit[]
+  saved_reports          gnucash_web_saved_reports[]
+  preferences            gnucash_web_user_preferences[]
+  tool_configs           gnucash_web_tool_config[]
+  ai_config              gnucash_web_ai_config?
+  permissions            gnucash_web_book_permissions[]  @relation("permissions_user")
+  granted_permissions    gnucash_web_book_permissions[]  @relation("permissions_granter")
+  simplefin_connections  gnucash_web_simplefin_connections[]
+  created_invitations    gnucash_web_invitations[]       @relation("invitation_creator")
+  used_invitations       gnucash_web_invitations[]       @relation("invitation_user")
+  revoked_invitations    gnucash_web_invitations[]       @relation("invitation_revoker")
 }
 
 model gnucash_web_audit {
@@ -591,4 +597,171 @@ model gnucash_web_ai_config {
   user              gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("gnucash_web_ai_config")
+}
+
+// ============================================
+// Extension Tables — previously raw-SQL-only
+// ============================================
+
+model gnucash_web_roles {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(50)
+  description String    @db.Text
+  created_at  DateTime  @default(now())
+
+  permissions gnucash_web_book_permissions[]
+  invitations gnucash_web_invitations[]
+}
+
+model gnucash_web_book_permissions {
+  id         Int       @id @default(autoincrement())
+  user_id    Int
+  book_guid  String    @db.VarChar(32)
+  role_id    Int
+  granted_by Int?
+  granted_at DateTime  @default(now())
+
+  user       gnucash_web_users  @relation("permissions_user", fields: [user_id], references: [id], onDelete: Cascade)
+  granter    gnucash_web_users? @relation("permissions_granter", fields: [granted_by], references: [id], onDelete: SetNull)
+  role       gnucash_web_roles  @relation(fields: [role_id], references: [id])
+
+  @@unique([user_id, book_guid])
+  @@index([book_guid, role_id], map: "idx_bp_book_role")
+}
+
+model gnucash_web_invitations {
+  id         Int       @id @default(autoincrement())
+  code       String    @unique @db.VarChar(64)
+  book_guid  String    @db.VarChar(32)
+  role_id    Int
+  created_by Int
+  created_at DateTime  @default(now())
+  expires_at DateTime
+  used_by    Int?
+  used_at    DateTime?
+  max_uses   Int       @default(1)
+  use_count  Int       @default(0)
+  is_revoked Boolean   @default(false)
+  revoked_by Int?
+  revoked_at DateTime?
+
+  role       gnucash_web_roles  @relation(fields: [role_id], references: [id])
+  creator    gnucash_web_users  @relation("invitation_creator", fields: [created_by], references: [id], onDelete: Cascade)
+  user       gnucash_web_users? @relation("invitation_user", fields: [used_by], references: [id], onDelete: SetNull)
+  revoker    gnucash_web_users? @relation("invitation_revoker", fields: [revoked_by], references: [id], onDelete: SetNull)
+
+  @@index([book_guid, is_revoked], map: "idx_inv_book")
+}
+
+model gnucash_web_transaction_meta {
+  id                         Int       @id @default(autoincrement())
+  transaction_guid           String?   @unique @db.VarChar(32)
+  source                     String    @default("manual") @db.VarChar(50)
+  reviewed                   Boolean   @default(true)
+  imported_at                DateTime  @default(now())
+  simplefin_transaction_id   String?   @db.VarChar(255)
+  confidence                 String?   @db.VarChar(20)
+  deleted_at                 DateTime?
+  match_type                 String?   @db.VarChar(30)
+  match_confidence           String?   @db.VarChar(10)
+  matched_at                 DateTime?
+  simplefin_transaction_id_2 String?   @db.VarChar(255)
+
+  @@index([source], map: "idx_txn_meta_source")
+}
+
+model gnucash_web_simplefin_connections {
+  id                 Int       @id @default(autoincrement())
+  user_id            Int
+  book_guid          String    @db.VarChar(32)
+  access_url_encrypted String  @db.Text
+  last_sync_at       DateTime?
+  sync_enabled       Boolean   @default(true)
+  created_at         DateTime  @default(now())
+
+  user               gnucash_web_users @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  account_maps       gnucash_web_simplefin_account_map[]
+
+  @@unique([user_id, book_guid])
+}
+
+model gnucash_web_simplefin_account_map {
+  id                      Int       @id @default(autoincrement())
+  connection_id           Int
+  simplefin_account_id    String    @db.VarChar(255)
+  simplefin_account_name  String?   @db.VarChar(255)
+  simplefin_institution   String?   @db.VarChar(255)
+  simplefin_last4         String?   @db.VarChar(4)
+  gnucash_account_guid    String?   @db.VarChar(32)
+  last_sync_at            DateTime?
+  created_at              DateTime  @default(now())
+  is_investment           Boolean   @default(false)
+  last_balance            Decimal?
+  last_balance_date       DateTime?
+
+  connection              gnucash_web_simplefin_connections @relation(fields: [connection_id], references: [id], onDelete: Cascade)
+
+  @@unique([connection_id, simplefin_account_id])
+}
+
+model gnucash_web_category_mappings {
+  id                  Int       @id @default(autoincrement())
+  book_guid           String    @db.VarChar(32)
+  source              String    @default("amazon") @db.VarChar(50)
+  keyword             String    @db.Text
+  keyword_normalized  String    @db.Text
+  account_guid        String    @db.VarChar(32)
+  use_count           Int       @default(1)
+  last_used_at        DateTime  @default(now())
+  created_at          DateTime  @default(now())
+
+  @@unique([book_guid, source, keyword_normalized])
+  @@index([book_guid, source, keyword_normalized], map: "idx_category_mappings_lookup")
+}
+
+model gnucash_web_import_batches {
+  id            Int       @id @default(autoincrement())
+  book_guid     String    @db.VarChar(32)
+  source        String    @default("amazon") @db.VarChar(50)
+  filename      String?   @db.VarChar(500)
+  total_items   Int       @default(0)
+  matched_items Int       @default(0)
+  user_id       Int?
+  status        String    @default("processing") @db.VarChar(20)
+  settings      Json      @default("{}")
+  created_at    DateTime  @default(now())
+  completed_at  DateTime?
+
+  orders        gnucash_web_amazon_orders[]
+}
+
+model gnucash_web_amazon_orders {
+  id               Int       @id @default(autoincrement())
+  book_guid        String    @db.VarChar(32)
+  order_id         String    @db.VarChar(100)
+  order_date       DateTime  @db.Date
+  item_name        String    @db.Text
+  item_price       Decimal   @db.Decimal(15, 4)
+  item_quantity    Int       @default(1)
+  category         String?   @db.VarChar(200)
+  tax_amount       Decimal?  @default(0) @db.Decimal(15, 4)
+  shipping_amount  Decimal?  @default(0) @db.Decimal(15, 4)
+  order_total      Decimal   @db.Decimal(15, 4)
+  charge_amount    Decimal?  @db.Decimal(15, 4)
+  currency         String    @default("USD") @db.VarChar(3)
+  transaction_guid String?   @db.VarChar(32)
+  split_guid       String?   @db.VarChar(32)
+  match_status     String    @default("unmatched") @db.VarChar(20)
+  apply_status     String    @default("pending") @db.VarChar(20)
+  import_batch_id  Int?
+  raw_csv_row      Json?
+  created_at       DateTime  @default(now())
+  csv_row_index    Int?
+
+  import_batch     gnucash_web_import_batches? @relation(fields: [import_batch_id], references: [id])
+
+  @@unique([book_guid, order_id, item_name, item_price, csv_row_index])
+  @@index([book_guid, match_status], map: "idx_amazon_orders_match")
+  @@index([order_date], map: "idx_amazon_orders_date")
+  @@index([transaction_guid], map: "idx_amazon_orders_tx")
 }

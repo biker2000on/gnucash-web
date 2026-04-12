@@ -26,10 +26,10 @@ export async function handleRefreshPrices(job: Job): Promise<void> {
       const prisma = (await import('@/lib/prisma')).default;
 
       // Check if any user with a connection for this book has sync-with-refresh enabled
-      const connections = await prisma.$queryRaw<{ id: number; book_guid: string; user_id: number }[]>`
-        SELECT id, book_guid, user_id FROM gnucash_web_simplefin_connections
-        WHERE book_guid = ${bookGuid} AND sync_enabled = TRUE
-      `;
+      const connections = await prisma.gnucash_web_simplefin_connections.findMany({
+        where: { book_guid: bookGuid, sync_enabled: true },
+        select: { id: true, book_guid: true, user_id: true },
+      });
 
       if (connections.length > 0) {
         // Check if the connection's owner has the sync preference enabled

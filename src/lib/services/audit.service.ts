@@ -30,17 +30,16 @@ export async function logAudit(
     try {
         const user = await getCurrentUser();
 
-        await prisma.$executeRaw`
-            INSERT INTO gnucash_web_audit (user_id, action, entity_type, entity_guid, old_values, new_values)
-            VALUES (
-                ${user?.id ?? null},
-                ${action},
-                ${entityType},
-                ${entityId},
-                ${oldValues ? JSON.stringify(oldValues) : null}::jsonb,
-                ${newValues ? JSON.stringify(newValues) : null}::jsonb
-            )
-        `;
+        await prisma.gnucash_web_audit.create({
+            data: {
+                user_id: user?.id ?? null,
+                action,
+                entity_type: entityType,
+                entity_guid: entityId,
+                old_values: oldValues ?? undefined,
+                new_values: newValues ?? undefined,
+            },
+        });
     } catch (error) {
         // Log but don't throw - audit failure shouldn't break the main operation
         console.error('Failed to log audit:', error);

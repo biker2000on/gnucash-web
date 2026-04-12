@@ -12,35 +12,24 @@ export async function GET() {
     const { user, bookGuid } = roleResult;
 
     // Get connection for this book
-    const connections = await prisma.$queryRaw<{
-      id: number;
-      access_url_encrypted: string;
-    }[]>`
-      SELECT id, access_url_encrypted FROM gnucash_web_simplefin_connections
-      WHERE user_id = ${user.id} AND book_guid = ${bookGuid}
-    `;
+    const connection = await prisma.gnucash_web_simplefin_connections.findFirst({
+      where: { user_id: user.id, book_guid: bookGuid },
+      select: { id: true, access_url_encrypted: true },
+    });
 
-    if (connections.length === 0) {
+    if (!connection) {
       return NextResponse.json({ error: 'No SimpleFin connection found' }, { status: 404 });
     }
-
-    const connection = connections[0];
     const accessUrl = decryptAccessUrl(connection.access_url_encrypted);
 
     // Fetch accounts from SimpleFin (no date range = just accounts, no transactions)
     const accountSet = await fetchAccounts(accessUrl);
 
     // Get existing mappings
-    const mappings = await prisma.$queryRaw<{
-      simplefin_account_id: string;
-      gnucash_account_guid: string | null;
-      last_sync_at: Date | null;
-      is_investment: boolean;
-    }[]>`
-      SELECT simplefin_account_id, gnucash_account_guid, last_sync_at, is_investment
-      FROM gnucash_web_simplefin_account_map
-      WHERE connection_id = ${connection.id}
-    `;
+    const mappings = await prisma.gnucash_web_simplefin_account_map.findMany({
+      where: { connection_id: connection.id },
+      select: { simplefin_account_id: true, gnucash_account_guid: true, last_sync_at: true, is_investment: true },
+    });
     const mappingMap = new Map(mappings.map(m => [m.simplefin_account_id, m]));
 
     // Build response with mapping status

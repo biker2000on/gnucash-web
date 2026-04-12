@@ -6,22 +6,6 @@ export interface TemplateAccount {
   name: string;
 }
 
-export interface SplitRow {
-  account_guid: string;
-  value_num: bigint;
-  value_denom: bigint;
-}
-
-export interface SlotRow {
-  obj_guid: string;
-  guid_val: string;
-}
-
-export interface AccountNameRow {
-  guid: string;
-  name: string;
-}
-
 export interface ResolvedSplit {
   accountGuid: string;
   accountName: string;
@@ -57,47 +41,48 @@ export function formatDate(date: Date | null): string | null {
  */
 export async function resolveTemplateSplits(templateActGuid: string): Promise<ResolvedSplit[]> {
   // Step 1: Find child accounts of the template root
-  const templateAccounts = await prisma.$queryRaw<TemplateAccount[]>`
-    SELECT guid, name FROM accounts WHERE parent_guid = ${templateActGuid}
-  `;
+  const templateAccounts = await prisma.accounts.findMany({
+    where: { parent_guid: templateActGuid },
+    select: { guid: true, name: true },
+  });
 
   if (templateAccounts.length === 0) return [];
 
   const templateGuids = templateAccounts.map(a => a.guid);
 
   // Step 2: Find splits for transactions referencing template accounts
-  const splitsResult = await prisma.$queryRawUnsafe<SplitRow[]>(
-    `SELECT s.account_guid, s.value_num, s.value_denom
-     FROM splits s
-     WHERE s.account_guid IN (${templateGuids.map((_, i) => `$${i + 1}`).join(', ')})`,
-    ...templateGuids
-  );
+  const splits = await prisma.splits.findMany({
+    where: { account_guid: { in: templateGuids } },
+    select: { account_guid: true, value_num: true, value_denom: true },
+  });
 
   // Step 3: Resolve real account GUIDs from slots
-  const slotsResult = await prisma.$queryRawUnsafe<SlotRow[]>(
-    `SELECT obj_guid, guid_val FROM slots
-     WHERE obj_guid IN (${templateGuids.map((_, i) => `$${i + 1}`).join(', ')})
-     AND slot_type = 4 AND name = 'account'`,
-    ...templateGuids
-  );
+  const slots = await prisma.slots.findMany({
+    where: {
+      obj_guid: { in: templateGuids },
+      slot_type: 4,
+      name: 'account',
+    },
+    select: { obj_guid: true, guid_val: true },
+  });
 
-  // Build mapping: template account guid -> real account guid
   const templateToReal = new Map<string, string>();
-  for (const slot of slotsResult) {
-    templateToReal.set(slot.obj_guid, slot.guid_val);
+  for (const slot of slots) {
+    if (slot.guid_val) templateToReal.set(slot.obj_guid, slot.guid_val);
   }
 
   // Step 4: Look up real account names
-  const realGuids = [...new Set(slotsResult.map(s => s.guid_val))];
+  const realGuids = [...new Set(
+    slots.map(s => s.guid_val).filter((g): g is string => g !== null),
+  )];
   const accountNames = new Map<string, string>();
 
   if (realGuids.length > 0) {
-    const accountsResult = await prisma.$queryRawUnsafe<AccountNameRow[]>(
-      `SELECT guid, name FROM accounts
-       WHERE guid IN (${realGuids.map((_, i) => `$${i + 1}`).join(', ')})`,
-      ...realGuids
-    );
-    for (const acc of accountsResult) {
+    const accounts = await prisma.accounts.findMany({
+      where: { guid: { in: realGuids } },
+      select: { guid: true, name: true },
+    });
+    for (const acc of accounts) {
       accountNames.set(acc.guid, acc.name);
     }
   }
@@ -105,7 +90,7 @@ export async function resolveTemplateSplits(templateActGuid: string): Promise<Re
   // Step 5: Combine results
   const result: ResolvedSplit[] = [];
 
-  for (const split of splitsResult) {
+  for (const split of splits) {
     const realGuid = templateToReal.get(split.account_guid);
     if (!realGuid) continue;
 

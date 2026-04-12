@@ -21,16 +21,10 @@ export async function suggestAccount(
 ): Promise<{ accountGuid: string; confidence: number; keyword: string } | null> {
   const normalized = normalizeKeyword(itemName);
 
-  const mappings = await prisma.$queryRaw<
-    Array<{
-      keyword: string;
-      keyword_normalized: string;
-      account_guid: string;
-      use_count: number;
-    }>
-  >`SELECT keyword, keyword_normalized, account_guid, use_count
-    FROM gnucash_web_category_mappings
-    WHERE book_guid = ${bookGuid} AND source = ${source}`;
+  const mappings = await prisma.gnucash_web_category_mappings.findMany({
+    where: { book_guid: bookGuid, source },
+    select: { keyword: true, keyword_normalized: true, account_guid: true, use_count: true },
+  });
 
   let bestScore = 0;
   let bestMatch: { accountGuid: string; confidence: number; keyword: string } | null = null;
@@ -79,14 +73,32 @@ export async function recordMapping(
   const keyword = itemName;
   const keywordNormalized = normalizeKeyword(itemName);
 
-  await prisma.$executeRaw`
-    INSERT INTO gnucash_web_category_mappings (book_guid, source, keyword, keyword_normalized, account_guid, use_count, last_used_at, created_at)
-    VALUES (${bookGuid}, ${source}, ${keyword}, ${keywordNormalized}, ${accountGuid}, 1, NOW(), NOW())
-    ON CONFLICT (book_guid, source, keyword_normalized)
-    DO UPDATE SET use_count = gnucash_web_category_mappings.use_count + 1,
-      last_used_at = NOW(),
-      account_guid = ${accountGuid}
-  `;
+  const now = new Date();
+
+  await prisma.gnucash_web_category_mappings.upsert({
+    where: {
+      book_guid_source_keyword_normalized: {
+        book_guid: bookGuid,
+        source,
+        keyword_normalized: keywordNormalized,
+      },
+    },
+    create: {
+      book_guid: bookGuid,
+      source,
+      keyword,
+      keyword_normalized: keywordNormalized,
+      account_guid: accountGuid,
+      use_count: 1,
+      last_used_at: now,
+      created_at: now,
+    },
+    update: {
+      use_count: { increment: 1 },
+      last_used_at: now,
+      account_guid: accountGuid,
+    },
+  });
 }
 
 /**
@@ -105,33 +117,23 @@ export async function listMappings(
     lastUsedAt: Date;
   }>
 > {
-  const rows = source
-    ? await prisma.$queryRaw<
-        Array<{
-          id: number;
-          keyword: string;
-          keyword_normalized: string;
-          account_guid: string;
-          use_count: number;
-          last_used_at: Date;
-        }>
-      >`SELECT id, keyword, keyword_normalized, account_guid, use_count, last_used_at
-        FROM gnucash_web_category_mappings
-        WHERE book_guid = ${bookGuid} AND source = ${source}
-        ORDER BY last_used_at DESC`
-    : await prisma.$queryRaw<
-        Array<{
-          id: number;
-          keyword: string;
-          keyword_normalized: string;
-          account_guid: string;
-          use_count: number;
-          last_used_at: Date;
-        }>
-      >`SELECT id, keyword, keyword_normalized, account_guid, use_count, last_used_at
-        FROM gnucash_web_category_mappings
-        WHERE book_guid = ${bookGuid}
-        ORDER BY last_used_at DESC`;
+  const where: { book_guid: string; source?: string } = { book_guid: bookGuid };
+  if (source) {
+    where.source = source;
+  }
+
+  const rows = await prisma.gnucash_web_category_mappings.findMany({
+    where,
+    orderBy: { last_used_at: 'desc' },
+    select: {
+      id: true,
+      keyword: true,
+      keyword_normalized: true,
+      account_guid: true,
+      use_count: true,
+      last_used_at: true,
+    },
+  });
 
   return rows.map((row) => ({
     id: row.id,
@@ -147,16 +149,17 @@ export async function listMappings(
  * Delete a mapping
  */
 export async function deleteMapping(id: number): Promise<void> {
-  await prisma.$executeRaw`
-    DELETE FROM gnucash_web_category_mappings WHERE id = ${id}
-  `;
+  await prisma.gnucash_web_category_mappings.deleteMany({
+    where: { id },
+  });
 }
 
 /**
  * Update a mapping's account
  */
 export async function updateMapping(id: number, accountGuid: string): Promise<void> {
-  await prisma.$executeRaw`
-    UPDATE gnucash_web_category_mappings SET account_guid = ${accountGuid} WHERE id = ${id}
-  `;
+  await prisma.gnucash_web_category_mappings.update({
+    where: { id },
+    data: { account_guid: accountGuid },
+  });
 }

@@ -34,6 +34,8 @@ export interface AdjustToTargetValueParams {
  * Get the current balance of an asset account by summing all splits.
  */
 export async function getAssetBalance(accountGuid: string): Promise<number> {
+  // Prisma aggregate can't do per-row arithmetic (num/denom) before
+  // summing, so this stays as raw SQL.
   const result = await prisma.$queryRaw<{ total: string | null }[]>`
     SELECT COALESCE(
       SUM(CAST(value_num AS DOUBLE PRECISION) / CAST(value_denom AS DOUBLE PRECISION)),
