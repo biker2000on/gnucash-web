@@ -27,6 +27,14 @@ const tx = {
   },
   accounts: {
     create: record('accounts.create'),
+    update: vi.fn(async (args: { where: unknown; data: unknown }) => {
+      calls.push({ op: 'accounts.update', data: args });
+      return {};
+    }),
+    upsert: vi.fn(async (args: { where: unknown; create: unknown; update: unknown }) => {
+      calls.push({ op: 'accounts.upsert', data: args });
+      return {};
+    }),
     updateMany: vi.fn(async (args: { where: unknown; data: unknown }) => {
       calls.push({ op: 'accounts.updateMany', data: args });
       return { count: 0 };
@@ -39,6 +47,10 @@ const tx = {
   books: {
     create: record('books.create'),
     findUnique: vi.fn(async () => existingBookRef.current),
+    update: vi.fn(async (args: { where: unknown; data: unknown }) => {
+      calls.push({ op: 'books.update', data: args });
+      return existingBookRef.current;
+    }),
     deleteMany: vi.fn(async (args: { where: unknown }) => {
       calls.push({ op: 'books.deleteMany', data: args });
       return { count: 0 };
@@ -241,36 +253,23 @@ describe('importGnuCashData — re-import handling', () => {
     );
   });
 
-  it('wipes the old book rows before re-inserting when overwrite is true', async () => {
+  it('upserts accounts and preserves non-XML transactions on overwrite', async () => {
     existingBookRef.current = { root_account_guid: 'old-root-guid-000000000000000000' };
 
     await importGnuCashData(minimalData(), 'Test Book', { overwrite: true });
 
     const ops = calls.map((c) => c.op);
-    // Deletes must come before inserts.
-    const firstInsertIdx = ops.findIndex((op) => op.endsWith('.create') || op.endsWith('.createMany'));
-    const lastDeleteIdx = Math.max(
-      ops.lastIndexOf('transactions.deleteMany'),
-      ops.lastIndexOf('lots.deleteMany'),
-      ops.lastIndexOf('accounts.deleteMany'),
-      ops.lastIndexOf('books.deleteMany'),
-    );
-    expect(lastDeleteIdx).toBeGreaterThanOrEqual(0);
-    expect(lastDeleteIdx).toBeLessThan(firstInsertIdx);
 
-    // The previously-generated root account must be deleted too.
-    const oldRootDelete = calls.find(
-      (c) =>
-        c.op === 'accounts.deleteMany' &&
-        JSON.stringify(c.data).includes('old-root-guid-000000000000000000'),
-    );
-    expect(oldRootDelete).toBeDefined();
+    // XML transactions are deleted (splits cascade), but accounts are NOT deleted.
+    expect(ops).toContain('transactions.deleteMany');
+    expect(ops).not.toContain('accounts.deleteMany');
+    expect(ops).not.toContain('books.deleteMany');
 
-    // Accounts must have their parent nulled before being removed to
-    // avoid breaking the self-referential parent_guid FK.
-    const nullParentIdx = ops.indexOf('accounts.updateMany');
-    const accountDeleteIdx = ops.indexOf('accounts.deleteMany');
-    expect(nullParentIdx).toBeGreaterThanOrEqual(0);
-    expect(nullParentIdx).toBeLessThan(accountDeleteIdx);
+    // Accounts are upserted, not created.
+    expect(ops.filter((op) => op === 'accounts.upsert').length).toBeGreaterThan(0);
+
+    // Book and root account are updated, not recreated.
+    expect(ops).toContain('books.update');
+    expect(ops).toContain('accounts.update');
   });
 });

@@ -88,8 +88,7 @@ function topologicalSortAccounts(
  * specific price rows the incoming XML is about to re-insert.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function deleteExistingBookRows(tx: any, data: GnuCashXmlData, oldRootAccountGuid: string | null) {
-  const accountGuids = data.accounts.map((a) => a.id).filter(Boolean);
+async function clearCollisionRows(tx: any, data: GnuCashXmlData) {
   const transactionGuids = data.transactions.map((t) => t.id).filter(Boolean);
   const budgetGuids = data.budgets.map((b) => b.id).filter(Boolean);
   const priceGuids = data.pricedb.map((p) => p.id).filter((g): g is string => Boolean(g));
@@ -99,48 +98,32 @@ async function deleteExistingBookRows(tx: any, data: GnuCashXmlData, oldRootAcco
     for (const s of t.splits) if (s.lotId) lotGuids.add(s.lotId);
   }
 
-  // Prices first — they carry guids that collide on re-import and
-  // have no dependents in the GnuCash schema.
+  // Prices — collide on guid when the same book is re-imported.
   if (priceGuids.length) {
     await tx.prices.deleteMany({ where: { guid: { in: priceGuids } } });
   }
 
-  // Budgets first — budget_amounts cascade via FK onDelete: Cascade.
+  // Budgets — budget_amounts cascade via FK onDelete: Cascade.
   if (budgetGuids.length) {
     await tx.budgets.deleteMany({ where: { guid: { in: budgetGuids } } });
   }
 
-  // Transactions — splits cascade via FK onDelete: Cascade.
+  // Transactions from the XML — splits cascade via FK onDelete: Cascade.
+  // Non-XML transactions (e.g. SimpleFin imports) are NOT touched; their
+  // splits still reference accounts that will be upserted (not deleted),
+  // so the FK stays valid.
   if (transactionGuids.length) {
     await tx.transactions.deleteMany({ where: { guid: { in: transactionGuids } } });
   }
 
-  // Lots referenced by splits we just deleted.
+  // Lots referenced by the splits we just deleted.
   if (lotGuids.size) {
     await tx.lots.deleteMany({ where: { guid: { in: Array.from(lotGuids) } } });
   }
 
-  // Accounts self-reference via parent_guid, so null parents first, then
-  // delete the XML accounts, then the previously-generated root account
-  // (which lives outside the XML account set).
-  if (accountGuids.length) {
-    await tx.accounts.updateMany({
-      where: { guid: { in: accountGuids } },
-      data: { parent_guid: null },
-    });
-    await tx.accounts.deleteMany({ where: { guid: { in: accountGuids } } });
-  }
-  if (oldRootAccountGuid) {
-    await tx.accounts.deleteMany({ where: { guid: oldRootAccountGuid } });
-  }
-
-  // Finally the book row itself. Role grants reference the book guid
-  // in gnucash_web_book_permissions, but grantRole is an upsert on
-  // (user_id, book_guid), so leaving those rows in place is fine —
-  // the API route re-grants after a successful overwrite import.
-  if (data.book?.id) {
-    await tx.books.deleteMany({ where: { guid: data.book.id } });
-  }
+  // Accounts and the book row are NOT deleted — the import path upserts
+  // them instead, so SimpleFin transactions, account mappings, and
+  // permission grants all stay intact.
 }
 
 /**
@@ -194,13 +177,15 @@ export async function importGnuCashData(
     // before re-inserting; otherwise bail with a structured error so
     // the API can surface a confirmation prompt.
     const xmlBookGuid = data.book?.id;
+    let isOverwrite = false;
     if (xmlBookGuid) {
       const existing = await tx.books.findUnique({ where: { guid: xmlBookGuid } });
       if (existing) {
         if (!options.overwrite) {
           throw new BookAlreadyExistsError(xmlBookGuid);
         }
-        await deleteExistingBookRows(tx, data, existing.root_account_guid);
+        isOverwrite = true;
+        await clearCollisionRows(tx, data);
       }
     }
 
@@ -273,32 +258,46 @@ export async function importGnuCashData(
 
     const bookGuid = data.book?.id || generateGuid();
     createdBookGuid = bookGuid;
-    const rootAccountGuid = generateGuid();
 
-    // Create the root account
-    await tx.accounts.create({
-      data: {
-        guid: rootAccountGuid,
-        name: 'Root Account',
-        account_type: 'ROOT',
-        commodity_guid: rootCommodityGuid,
-        commodity_scu: 100,
-        non_std_scu: 0,
-        parent_guid: null,
-        hidden: 0,
-        placeholder: 0,
-      },
-    });
-
-    // Create the book record
-    await tx.books.create({
-      data: {
-        guid: bookGuid,
-        root_account_guid: rootAccountGuid,
-        root_template_guid: rootAccountGuid,
-        name: bookName || 'Imported Book',
-      },
-    });
+    // On overwrite, reuse the existing root account; on fresh import, create one.
+    let rootAccountGuid: string;
+    if (isOverwrite) {
+      const existingBook = await tx.books.findUnique({ where: { guid: bookGuid } });
+      rootAccountGuid = existingBook!.root_account_guid;
+      // Update the root account's commodity in case it changed
+      await tx.accounts.update({
+        where: { guid: rootAccountGuid },
+        data: { commodity_guid: rootCommodityGuid },
+      });
+      // Update the book name
+      await tx.books.update({
+        where: { guid: bookGuid },
+        data: { name: bookName || 'Imported Book' },
+      });
+    } else {
+      rootAccountGuid = generateGuid();
+      await tx.accounts.create({
+        data: {
+          guid: rootAccountGuid,
+          name: 'Root Account',
+          account_type: 'ROOT',
+          commodity_guid: rootCommodityGuid,
+          commodity_scu: 100,
+          non_std_scu: 0,
+          parent_guid: null,
+          hidden: 0,
+          placeholder: 0,
+        },
+      });
+      await tx.books.create({
+        data: {
+          guid: bookGuid,
+          root_account_guid: rootAccountGuid,
+          root_template_guid: rootAccountGuid,
+          name: bookName || 'Imported Book',
+        },
+      });
+    }
 
     // 3. Create accounts in topological order (parents before children)
     const sortedAccounts = topologicalSortAccounts(data.accounts);
@@ -349,21 +348,30 @@ export async function importGnuCashData(
       const accountGuid = account.id;
       accountGuidMap.set(account.id, accountGuid);
 
-      await tx.accounts.create({
-        data: {
-          guid: accountGuid,
-          name: account.name,
-          account_type: account.type,
-          commodity_guid: commodityGuid,
-          commodity_scu: account.commodityScu || 100,
-          non_std_scu: 0,
-          parent_guid: parentGuid,
-          code: account.code || null,
-          description: account.description || null,
-          hidden: account.hidden ? 1 : 0,
-          placeholder: account.placeholder ? 1 : 0,
-        },
-      });
+      const accountData = {
+        name: account.name,
+        account_type: account.type,
+        commodity_guid: commodityGuid,
+        commodity_scu: account.commodityScu || 100,
+        non_std_scu: 0,
+        parent_guid: parentGuid,
+        code: account.code || null,
+        description: account.description || null,
+        hidden: account.hidden ? 1 : 0,
+        placeholder: account.placeholder ? 1 : 0,
+      };
+
+      if (isOverwrite) {
+        await tx.accounts.upsert({
+          where: { guid: accountGuid },
+          create: { guid: accountGuid, ...accountData },
+          update: accountData,
+        });
+      } else {
+        await tx.accounts.create({
+          data: { guid: accountGuid, ...accountData },
+        });
+      }
       summary.accounts++;
     }
 
