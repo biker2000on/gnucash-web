@@ -71,14 +71,20 @@ export async function ensureIndexCommodities(): Promise<Map<string, string>> {
       continue;
     }
 
-    // Create new INDEX commodity using raw SQL
-    // The commodities table has exactly 9 columns:
-    // guid, namespace, mnemonic, fullname, cusip, fraction, quote_flag, quote_source, quote_tz
     const guid = generateGuid();
-    await prisma.$executeRaw`
-      INSERT INTO commodities (guid, namespace, mnemonic, fullname, cusip, fraction, quote_flag, quote_source, quote_tz)
-      VALUES (${guid}, 'INDEX', ${def.mnemonic}, ${def.fullname}, '', 10000, 0, NULL, NULL)
-    `;
+    await prisma.commodities.create({
+      data: {
+        guid,
+        namespace: 'INDEX',
+        mnemonic: def.mnemonic,
+        fullname: def.fullname,
+        cusip: '',
+        fraction: 10000,
+        quote_flag: 0,
+        quote_source: null,
+        quote_tz: null,
+      },
+    });
 
     result.set(def.mnemonic, guid);
     console.log(`Created INDEX commodity: ${def.mnemonic} (${guid})`);

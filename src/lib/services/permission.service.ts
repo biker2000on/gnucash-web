@@ -15,14 +15,11 @@ export async function getUserRoleForBook(
   userId: number,
   bookGuid: string
 ): Promise<Role | null> {
-  const permission = await prisma.$queryRaw<{ name: string }[]>`
-    SELECT r.name
-    FROM gnucash_web_book_permissions bp
-    JOIN gnucash_web_roles r ON r.id = bp.role_id
-    WHERE bp.user_id = ${userId} AND bp.book_guid = ${bookGuid}
-    LIMIT 1
-  `;
-  return (permission[0]?.name as Role) ?? null;
+  const permission = await prisma.gnucash_web_book_permissions.findFirst({
+    where: { user_id: userId, book_guid: bookGuid },
+    include: { role: true },
+  });
+  return (permission?.role.name as Role) ?? null;
 }
 
 /**
@@ -44,15 +41,28 @@ export async function hasMinimumRole(
 export async function getUserBooks(
   userId: number
 ): Promise<{ guid: string; name: string; role: Role }[]> {
-  const rows = await prisma.$queryRaw<{ guid: string; name: string; role: string }[]>`
-    SELECT b.guid, COALESCE(b.name, 'Unnamed Book') as name, r.name as role
-    FROM gnucash_web_book_permissions bp
-    JOIN books b ON b.guid = bp.book_guid
-    JOIN gnucash_web_roles r ON r.id = bp.role_id
-    WHERE bp.user_id = ${userId}
-    ORDER BY b.name
-  `;
-  return rows.map(r => ({ ...r, role: r.role as Role }));
+  const permissions = await prisma.gnucash_web_book_permissions.findMany({
+    where: { user_id: userId },
+    include: { role: true },
+  });
+
+  if (permissions.length === 0) return [];
+
+  const bookGuids = permissions.map(p => p.book_guid);
+  const booksRaw = await prisma.books.findMany({
+    where: { guid: { in: bookGuids } },
+    orderBy: { name: 'asc' },
+  });
+
+  const bookMap = new Map(booksRaw.map(b => [b.guid, b.name ?? 'Unnamed Book']));
+
+  return permissions
+    .map(p => ({
+      guid: p.book_guid,
+      name: bookMap.get(p.book_guid) ?? 'Unnamed Book',
+      role: p.role.name as Role,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -64,18 +74,30 @@ export async function grantRole(
   role: Role,
   grantedBy: number
 ): Promise<void> {
-  await prisma.$executeRaw`
-    INSERT INTO gnucash_web_book_permissions (user_id, book_guid, role_id, granted_by, granted_at)
-    VALUES (
-      ${userId}, ${bookGuid},
-      (SELECT id FROM gnucash_web_roles WHERE name = ${role}),
-      ${grantedBy}, NOW()
-    )
-    ON CONFLICT (user_id, book_guid)
-    DO UPDATE SET role_id = (SELECT id FROM gnucash_web_roles WHERE name = ${role}),
-                  granted_by = ${grantedBy},
-                  granted_at = NOW()
-  `;
+  const roleRecord = await prisma.gnucash_web_roles.findFirst({
+    where: { name: role },
+  });
+  if (!roleRecord) {
+    throw new Error(`Role "${role}" not found`);
+  }
+
+  await prisma.gnucash_web_book_permissions.upsert({
+    where: {
+      user_id_book_guid: { user_id: userId, book_guid: bookGuid },
+    },
+    create: {
+      user_id: userId,
+      book_guid: bookGuid,
+      role_id: roleRecord.id,
+      granted_by: grantedBy,
+      granted_at: new Date(),
+    },
+    update: {
+      role_id: roleRecord.id,
+      granted_by: grantedBy,
+      granted_at: new Date(),
+    },
+  });
 }
 
 /**
@@ -85,18 +107,17 @@ export async function revokeAccess(
   userId: number,
   bookGuid: string
 ): Promise<void> {
-  await prisma.$executeRaw`
-    DELETE FROM gnucash_web_book_permissions
-    WHERE user_id = ${userId} AND book_guid = ${bookGuid}
-  `;
+  await prisma.gnucash_web_book_permissions.deleteMany({
+    where: { user_id: userId, book_guid: bookGuid },
+  });
 }
 
 /**
  * Check if a user has any permissions at all (used for first-run detection).
  */
 export async function userHasAnyPermissions(userId: number): Promise<boolean> {
-  const result = await prisma.$queryRaw<{ count: bigint }[]>`
-    SELECT COUNT(*) as count FROM gnucash_web_book_permissions WHERE user_id = ${userId}
-  `;
-  return Number(result[0]?.count ?? 0) > 0;
+  const count = await prisma.gnucash_web_book_permissions.count({
+    where: { user_id: userId },
+  });
+  return count > 0;
 }

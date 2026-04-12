@@ -39,22 +39,15 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   };
 
   // Get connection
-  const connections = await prisma.$queryRaw<{
-    id: number;
-    access_url_encrypted: string;
-    last_sync_at: Date | null;
-  }[]>`
-    SELECT id, access_url_encrypted, last_sync_at
-    FROM gnucash_web_simplefin_connections
-    WHERE id = ${connectionId}
-  `;
+  const connection = await prisma.gnucash_web_simplefin_connections.findUnique({
+    where: { id: connectionId },
+    select: { id: true, access_url_encrypted: true, last_sync_at: true },
+  });
 
-  if (connections.length === 0) {
+  if (!connection) {
     result.errors.push({ account: 'connection', error: 'Connection not found' });
     return result;
   }
-
-  const connection = connections[0];
   let accessUrl: string;
   try {
     accessUrl = decryptAccessUrl(connection.access_url_encrypted);
@@ -63,27 +56,30 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     return result;
   }
 
-  // Get mapped accounts
-  const mappedAccounts = await prisma.$queryRaw<{
-    id: number;
-    simplefin_account_id: string;
-    simplefin_account_name: string | null;
-    gnucash_account_guid: string;
-    last_sync_at: Date | null;
-    is_investment: boolean;
-  }[]>`
-    SELECT id, simplefin_account_id, simplefin_account_name, gnucash_account_guid, last_sync_at, is_investment
-    FROM gnucash_web_simplefin_account_map
-    WHERE connection_id = ${connectionId} AND gnucash_account_guid IS NOT NULL
-  `;
+  // Get mapped accounts (gnucash_account_guid is guaranteed non-null by the filter)
+  const mappedAccountsRaw = await prisma.gnucash_web_simplefin_account_map.findMany({
+    where: {
+      connection_id: connectionId,
+      gnucash_account_guid: { not: null },
+    },
+    select: {
+      id: true,
+      simplefin_account_id: true,
+      simplefin_account_name: true,
+      gnucash_account_guid: true,
+      last_sync_at: true,
+      is_investment: true,
+    },
+  });
+  const mappedAccounts = mappedAccountsRaw as Array<
+    Omit<(typeof mappedAccountsRaw)[number], 'gnucash_account_guid'> & { gnucash_account_guid: string }
+  >;
 
   if (mappedAccounts.length === 0) {
     return result;
   }
 
-  const allMappedAccountGuids = mappedAccounts
-    .filter(a => a.gnucash_account_guid)
-    .map(a => a.gnucash_account_guid);
+  const allMappedAccountGuids = mappedAccounts.map(a => a.gnucash_account_guid);
 
   // Determine the date range for fetching
   // Use earliest last_sync_at across all mapped accounts, or 90 days ago
@@ -114,15 +110,6 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
 
   // Build a map of SimpleFin account id -> account data
   const sfAccountMap = new Map(accountSet.accounts.map(a => [a.id, a]));
-
-  // Get the transaction currency for the book
-  await prisma.$queryRaw<{ commodity_guid: string; mnemonic: string }[]>`
-    SELECT c.guid as commodity_guid, c.mnemonic
-    FROM books b
-    JOIN commodities c ON c.guid = b.root_template_guid
-    WHERE b.guid = ${bookGuid}
-    LIMIT 1
-  `;
 
   // Process each mapped account
   for (const mappedAccount of mappedAccounts) {
@@ -157,14 +144,18 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
 
     try {
       // Get existing SimpleFin transaction IDs for this account to dedup
-      const existingMeta = await prisma.$queryRaw<{
-        simplefin_transaction_id: string | null;
-        simplefin_transaction_id_2: string | null;
-      }[]>`
-        SELECT meta.simplefin_transaction_id, meta.simplefin_transaction_id_2
-        FROM gnucash_web_transaction_meta meta
-        WHERE (meta.simplefin_transaction_id IS NOT NULL OR meta.simplefin_transaction_id_2 IS NOT NULL)
-      `;
+      const existingMeta = await prisma.gnucash_web_transaction_meta.findMany({
+        where: {
+          OR: [
+            { simplefin_transaction_id: { not: null } },
+            { simplefin_transaction_id_2: { not: null } },
+          ],
+        },
+        select: {
+          simplefin_transaction_id: true,
+          simplefin_transaction_id_2: true,
+        },
+      });
       const existingIds = new Set<string>();
       for (const m of existingMeta) {
         if (m.simplefin_transaction_id) existingIds.add(m.simplefin_transaction_id);
@@ -282,20 +273,21 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
       }
 
       // Update last_sync_at and balance on the account mapping
+      const now = new Date();
       if (sfAccount.balance !== undefined) {
-        await prisma.$executeRaw`
-          UPDATE gnucash_web_simplefin_account_map
-          SET last_balance = ${parseFloat(sfAccount.balance)},
-              last_balance_date = NOW(),
-              last_sync_at = NOW()
-          WHERE id = ${mappedAccount.id}
-        `;
+        await prisma.gnucash_web_simplefin_account_map.update({
+          where: { id: mappedAccount.id },
+          data: {
+            last_balance: parseFloat(sfAccount.balance),
+            last_balance_date: now,
+            last_sync_at: now,
+          },
+        });
       } else {
-        await prisma.$executeRaw`
-          UPDATE gnucash_web_simplefin_account_map
-          SET last_sync_at = NOW()
-          WHERE id = ${mappedAccount.id}
-        `;
+        await prisma.gnucash_web_simplefin_account_map.update({
+          where: { id: mappedAccount.id },
+          data: { last_sync_at: now },
+        });
       }
     } catch (err) {
       result.errors.push({
@@ -306,11 +298,10 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   }
 
   // Update connection last_sync_at
-  await prisma.$executeRaw`
-    UPDATE gnucash_web_simplefin_connections
-    SET last_sync_at = NOW()
-    WHERE id = ${connectionId}
-  `;
+  await prisma.gnucash_web_simplefin_connections.update({
+    where: { id: connectionId },
+    data: { last_sync_at: new Date() },
+  });
 
   return result;
 }
@@ -455,21 +446,27 @@ async function findAndLinkManualMatch(
   // Wrap in transaction for atomicity
   await prisma.$transaction(async (tx) => {
     if (match.has_meta) {
-      await tx.$executeRaw`
-        UPDATE gnucash_web_transaction_meta
-        SET simplefin_transaction_id = ${sfTxn.id},
-            match_type = 'manual_reconciliation',
-            match_confidence = ${match.confidence},
-            matched_at = NOW()
-        WHERE transaction_guid = ${match.transaction_guid}
-      `;
+      await tx.gnucash_web_transaction_meta.update({
+        where: { transaction_guid: match.transaction_guid },
+        data: {
+          simplefin_transaction_id: sfTxn.id,
+          match_type: 'manual_reconciliation',
+          match_confidence: match.confidence,
+          matched_at: new Date(),
+        },
+      });
     } else {
-      await tx.$executeRaw`
-        INSERT INTO gnucash_web_transaction_meta
-          (transaction_guid, source, reviewed, simplefin_transaction_id, match_type, match_confidence, matched_at)
-        VALUES
-          (${match.transaction_guid}, 'manual', TRUE, ${sfTxn.id}, 'manual_reconciliation', ${match.confidence}, NOW())
-      `;
+      await tx.gnucash_web_transaction_meta.create({
+        data: {
+          transaction_guid: match.transaction_guid,
+          source: 'manual',
+          reviewed: true,
+          simplefin_transaction_id: sfTxn.id,
+          match_type: 'manual_reconciliation',
+          match_confidence: match.confidence,
+          matched_at: new Date(),
+        },
+      });
     }
   });
 
@@ -527,14 +524,15 @@ async function findAndLinkTransferDedupMatch(
 
   // Wrap meta update in a transaction for atomicity
   await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`
-      UPDATE gnucash_web_transaction_meta
-      SET simplefin_transaction_id_2 = ${sfTxn.id},
-          match_type = 'transfer_dedup',
-          match_confidence = 'high',
-          matched_at = NOW()
-      WHERE transaction_guid = ${match.transaction_guid}
-    `;
+    await tx.gnucash_web_transaction_meta.update({
+      where: { transaction_guid: match.transaction_guid },
+      data: {
+        simplefin_transaction_id_2: sfTxn.id,
+        match_type: 'transfer_dedup',
+        match_confidence: 'high',
+        matched_at: new Date(),
+      },
+    });
   });
 
   return true;
@@ -624,12 +622,15 @@ async function importTransaction(
     });
 
     // Insert transaction meta (reviewed=false for imports)
-    await prisma.$executeRaw`
-      INSERT INTO gnucash_web_transaction_meta
-        (transaction_guid, source, reviewed, simplefin_transaction_id, confidence)
-      VALUES
-        (${txGuid}, 'simplefin', FALSE, ${sfTxn.id}, ${destAccountGuid.includes('Imbalance') ? 'low' : 'medium'})
-    `;
+    await tx.gnucash_web_transaction_meta.create({
+      data: {
+        transaction_guid: txGuid,
+        source: 'simplefin',
+        reviewed: false,
+        simplefin_transaction_id: sfTxn.id,
+        confidence: destAccountGuid.includes('Imbalance') ? 'low' : 'medium',
+      },
+    });
   });
 }
 
@@ -685,11 +686,12 @@ async function getOrCreateImbalanceAccount(
   }
 
   // Get root account for this book
-  const roots = await prisma.$queryRaw<{ root_account_guid: string }[]>`
-    SELECT root_account_guid FROM books WHERE guid = ${bookGuid} LIMIT 1
-  `;
+  const book = await prisma.books.findUnique({
+    where: { guid: bookGuid },
+    select: { root_account_guid: true },
+  });
 
-  if (roots.length === 0) {
+  if (!book) {
     // Fallback: find any root account
     const root = await prisma.accounts.findFirst({
       where: { account_type: 'ROOT' },
@@ -718,7 +720,7 @@ async function getOrCreateImbalanceAccount(
       commodity_guid: currency.guid,
       commodity_scu: 100,
       non_std_scu: 0,
-      parent_guid: roots[0].root_account_guid,
+      parent_guid: book.root_account_guid,
       code: '',
       description: 'Auto-created for unmatched SimpleFin imports',
       hidden: 0,
@@ -959,12 +961,15 @@ async function importInvestmentTransaction(
     });
 
     // Insert transaction meta (reviewed=false for imports)
-    await prisma.$executeRaw`
-      INSERT INTO gnucash_web_transaction_meta
-        (transaction_guid, source, reviewed, simplefin_transaction_id, confidence)
-      VALUES
-        (${txGuid}, 'simplefin', FALSE, ${sfTxn.id}, ${isSymbolMatched ? 'medium' : (counterAccountGuid.includes('Imbalance') ? 'low' : 'medium')})
-    `;
+    await tx.gnucash_web_transaction_meta.create({
+      data: {
+        transaction_guid: txGuid,
+        source: 'simplefin',
+        reviewed: false,
+        simplefin_transaction_id: sfTxn.id,
+        confidence: isSymbolMatched ? 'medium' : (counterAccountGuid.includes('Imbalance') ? 'low' : 'medium'),
+      },
+    });
   });
 }
 
@@ -972,13 +977,10 @@ async function importInvestmentTransaction(
  * Sync all active connections (used by the worker process).
  */
 export async function syncAllConnections(): Promise<SyncResult[]> {
-  const connections = await prisma.$queryRaw<{
-    id: number;
-    book_guid: string;
-  }[]>`
-    SELECT id, book_guid FROM gnucash_web_simplefin_connections
-    WHERE sync_enabled = TRUE
-  `;
+  const connections = await prisma.gnucash_web_simplefin_connections.findMany({
+    where: { sync_enabled: true },
+    select: { id: true, book_guid: true },
+  });
 
   const results: SyncResult[] = [];
 

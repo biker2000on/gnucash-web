@@ -24,24 +24,17 @@ export async function getEffectiveStartDate(
     return cachedEarliestDate;
   }
 
-  if (bookAccountGuids && bookAccountGuids.length > 0) {
-    // Find earliest transaction that has splits in the active book's accounts
-    const result = await prisma.$queryRaw<{ post_date: Date | null }[]>`
-      SELECT MIN(t.post_date) as post_date
-      FROM transactions t
-      INNER JOIN splits s ON s.tx_guid = t.guid
-      WHERE t.post_date IS NOT NULL
-        AND s.account_guid = ANY(${bookAccountGuids})
-    `;
-    cachedEarliestDate = result[0]?.post_date || new Date('2000-01-01T00:00:00Z');
-  } else {
-    const earliest = await prisma.transactions.findFirst({
-      orderBy: { post_date: 'asc' },
-      where: { post_date: { not: null } },
-      select: { post_date: true },
-    });
-    cachedEarliestDate = earliest?.post_date || new Date('2000-01-01T00:00:00Z');
-  }
+  const earliest = await prisma.transactions.findFirst({
+    where: {
+      post_date: { not: null },
+      ...(bookAccountGuids && bookAccountGuids.length > 0
+        ? { splits: { some: { account_guid: { in: bookAccountGuids } } } }
+        : {}),
+    },
+    orderBy: { post_date: 'asc' },
+    select: { post_date: true },
+  });
+  cachedEarliestDate = earliest?.post_date || new Date('2000-01-01T00:00:00Z');
 
   cachedAt = now;
   cachedBookKey = bookKey;

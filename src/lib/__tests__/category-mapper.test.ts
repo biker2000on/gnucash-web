@@ -1,12 +1,18 @@
-// src/lib/__tests__/category-mapper.test.ts
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock prisma before importing the module under test
+const mockFindMany = vi.fn();
+const mockUpsert = vi.fn();
+const mockDeleteMany = vi.fn();
+const mockUpdate = vi.fn();
+
 vi.mock('@/lib/prisma', () => ({
   default: {
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
+    gnucash_web_category_mappings: {
+      findMany: (...args: unknown[]) => mockFindMany(...args),
+      upsert: (...args: unknown[]) => mockUpsert(...args),
+      deleteMany: (...args: unknown[]) => mockDeleteMany(...args),
+      update: (...args: unknown[]) => mockUpdate(...args),
+    },
   },
 }));
 
@@ -18,12 +24,6 @@ import {
   deleteMapping,
   updateMapping,
 } from '../category-mapper';
-import prisma from '@/lib/prisma';
-
-const mockPrisma = prisma as unknown as {
-  $queryRaw: ReturnType<typeof vi.fn>;
-  $executeRaw: ReturnType<typeof vi.fn>;
-};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -41,7 +41,7 @@ describe('normalizeKeyword', () => {
 
 describe('suggestAccount', () => {
   it('exact match returns confidence 1.0 with use_count weighting', async () => {
-    mockPrisma.$queryRaw.mockResolvedValue([
+    mockFindMany.mockResolvedValue([
       {
         keyword: 'Dog Food',
         keyword_normalized: 'dog food',
@@ -53,13 +53,12 @@ describe('suggestAccount', () => {
     const result = await suggestAccount('book-1', 'Dog Food');
     expect(result).not.toBeNull();
     expect(result!.accountGuid).toBe('acc-123');
-    // confidence = 1.0 * min(1, 10/5) = 1.0
     expect(result!.confidence).toBe(1.0);
     expect(result!.keyword).toBe('Dog Food');
   });
 
   it('substring match returns confidence 0.7', async () => {
-    mockPrisma.$queryRaw.mockResolvedValue([
+    mockFindMany.mockResolvedValue([
       {
         keyword: 'dog food',
         keyword_normalized: 'dog food',
@@ -70,12 +69,11 @@ describe('suggestAccount', () => {
 
     const result = await suggestAccount('book-1', 'Purina Dog Food 30lb');
     expect(result).not.toBeNull();
-    // confidence = 0.7 * min(1, 5/5) = 0.7
     expect(result!.confidence).toBe(0.7);
   });
 
   it('fuzzy match (Levenshtein < 3) returns confidence 0.4', async () => {
-    mockPrisma.$queryRaw.mockResolvedValue([
+    mockFindMany.mockResolvedValue([
       {
         keyword: 'dog fod',
         keyword_normalized: 'dog fod',
@@ -86,12 +84,11 @@ describe('suggestAccount', () => {
 
     const result = await suggestAccount('book-1', 'dog food');
     expect(result).not.toBeNull();
-    // distance("dog food", "dog fod") = 1 < 3 → confidence 0.4 * min(1, 5/5) = 0.4
     expect(result!.confidence).toBe(0.4);
   });
 
   it('no match returns null', async () => {
-    mockPrisma.$queryRaw.mockResolvedValue([
+    mockFindMany.mockResolvedValue([
       {
         keyword: 'electronics',
         keyword_normalized: 'electronics',
@@ -105,7 +102,7 @@ describe('suggestAccount', () => {
   });
 
   it('use_count weighting: higher count produces stronger signal', async () => {
-    mockPrisma.$queryRaw.mockResolvedValue([
+    mockFindMany.mockResolvedValue([
       {
         keyword: 'dog food',
         keyword_normalized: 'dog food',
@@ -120,9 +117,6 @@ describe('suggestAccount', () => {
       },
     ]);
 
-    // Both are exact matches, but the second has higher use_count
-    // First: 1.0 * min(1, 1/5) = 0.2
-    // Second: 1.0 * min(1, 5/5) = 1.0
     const result = await suggestAccount('book-1', 'dog food');
     expect(result).not.toBeNull();
     expect(result!.accountGuid).toBe('acc-high');
@@ -131,34 +125,27 @@ describe('suggestAccount', () => {
 });
 
 describe('recordMapping', () => {
-  it('calls prisma.$executeRaw with correct SQL', async () => {
-    mockPrisma.$executeRaw.mockResolvedValue(1);
+  it('calls prisma upsert with correct compound key', async () => {
+    mockUpsert.mockResolvedValue({});
 
     await recordMapping('book-1', 'Dog Food', 'acc-123');
 
-    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
-    // The tagged template produces a Prisma Sql object; check it was called
-    const callArgs = mockPrisma.$executeRaw.mock.calls[0];
-    expect(callArgs).toBeDefined();
-  });
-
-  it('normalizes keyword before insert', async () => {
-    mockPrisma.$executeRaw.mockResolvedValue(1);
-
-    await recordMapping('book-1', '  Purina Dog Food  ', 'acc-123');
-
-    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
-    // The tagged template literal passes normalized keyword as a parameter
-    // We verify the function was called (normalization is internal)
-    const callArgs = mockPrisma.$executeRaw.mock.calls[0];
-    expect(callArgs).toBeDefined();
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const call = mockUpsert.mock.calls[0][0];
+    expect(call.where.book_guid_source_keyword_normalized).toEqual({
+      book_guid: 'book-1',
+      source: 'amazon',
+      keyword_normalized: 'dog food',
+    });
+    expect(call.create.account_guid).toBe('acc-123');
+    expect(call.update.account_guid).toBe('acc-123');
   });
 });
 
 describe('listMappings', () => {
   it('returns formatted results', async () => {
     const now = new Date('2026-04-01T00:00:00Z');
-    mockPrisma.$queryRaw.mockResolvedValue([
+    mockFindMany.mockResolvedValue([
       {
         id: 1,
         keyword: 'Dog Food',
@@ -184,21 +171,24 @@ describe('listMappings', () => {
 });
 
 describe('deleteMapping', () => {
-  it('calls prisma.$executeRaw', async () => {
-    mockPrisma.$executeRaw.mockResolvedValue(1);
+  it('calls prisma deleteMany', async () => {
+    mockDeleteMany.mockResolvedValue({ count: 1 });
 
     await deleteMapping(42);
 
-    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockDeleteMany).toHaveBeenCalledWith({ where: { id: 42 } });
   });
 });
 
 describe('updateMapping', () => {
-  it('calls prisma.$executeRaw with new account_guid', async () => {
-    mockPrisma.$executeRaw.mockResolvedValue(1);
+  it('calls prisma update with new account_guid', async () => {
+    mockUpdate.mockResolvedValue({});
 
     await updateMapping(42, 'acc-new');
 
-    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: 42 },
+      data: { account_guid: 'acc-new' },
+    });
   });
 });

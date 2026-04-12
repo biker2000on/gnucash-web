@@ -9,16 +9,16 @@ interface ScheduledTransactionRow {
   guid: string;
   name: string;
   enabled: number;
-  start_date: string | null;
-  end_date: string | null;
-  last_occur: string | null;
+  start_date: Date | string | null;
+  end_date: Date | string | null;
+  last_occur: Date | string | null;
   num_occur: number;
   rem_occur: number;
   auto_create: number;
   template_act_guid: string;
   recurrence_mult: number | null;
   recurrence_period_type: string | null;
-  recurrence_period_start: string | null;
+  recurrence_period_start: Date | string | null;
   recurrence_weekend_adjust: string | null;
 }
 
@@ -50,20 +50,35 @@ export interface ScheduledTransaction {
  */
 export async function fetchScheduledTransactions(enabledOnly?: boolean): Promise<ScheduledTransaction[]> {
   // Step 1: Fetch scheduled transactions with recurrence patterns
-  let query = `
-    SELECT s.guid, s.name, s.enabled, s.start_date, s.end_date, s.last_occur,
-           s.num_occur, s.rem_occur, s.auto_create, s.template_act_guid,
-           r.recurrence_mult, r.recurrence_period_type, r.recurrence_period_start,
-           r.recurrence_weekend_adjust
-    FROM schedxactions s
-    LEFT JOIN recurrences r ON r.obj_guid = s.guid
-  `;
+  const sxList = await prisma.schedxactions.findMany({
+    where: enabledOnly ? { enabled: 1 } : undefined,
+  });
 
-  if (enabledOnly) {
-    query += ' WHERE s.enabled = 1';
-  }
+  const sxGuids = sxList.map(s => s.guid);
+  const recurrenceList = sxGuids.length > 0
+    ? await prisma.recurrences.findMany({ where: { obj_guid: { in: sxGuids } } })
+    : [];
+  const recurrenceByGuid = new Map(recurrenceList.map(r => [r.obj_guid, r]));
 
-  const rows = await prisma.$queryRawUnsafe<ScheduledTransactionRow[]>(query);
+  const rows: ScheduledTransactionRow[] = sxList.map(s => {
+    const r = recurrenceByGuid.get(s.guid);
+    return {
+      guid: s.guid,
+      name: s.name ?? '',
+      enabled: s.enabled,
+      start_date: s.start_date,
+      end_date: s.end_date,
+      last_occur: s.last_occur,
+      num_occur: s.num_occur,
+      rem_occur: s.rem_occur,
+      auto_create: s.auto_create,
+      template_act_guid: s.template_act_guid,
+      recurrence_mult: r?.recurrence_mult ?? null,
+      recurrence_period_type: r?.recurrence_period_type ?? null,
+      recurrence_period_start: r?.recurrence_period_start ?? null,
+      recurrence_weekend_adjust: r?.recurrence_weekend_adjust ?? null,
+    };
+  });
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
