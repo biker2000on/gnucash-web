@@ -97,6 +97,26 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
+## P1 - Tax Estimator (Federal + State)
+
+**What:** A tax estimation tool that computes federal and state income tax liability (and quarterly estimated payments) from actual book data. Reads income, deductions, capital gains, retirement contributions, and withholding from GnuCash accounts, applies current tax brackets and rules, and produces: (1) projected annual tax liability, (2) quarterly estimated payment schedule (1040-ES / state equivalent), (3) comparison of withheld vs. owed, (4) marginal and effective tax rate breakdown.
+
+**Why:** Users with investment income, self-employment, or multiple income sources need to make quarterly estimated tax payments. Today this requires exporting data to a spreadsheet or tax software. A tool that reads directly from the book eliminates double-entry and gives real-time visibility into tax exposure as transactions flow in throughout the year.
+
+**Scope:**
+- **Federal:** Ordinary income, long-term/short-term capital gains (from lot data), qualified dividends, standard vs. itemized deductions, AMT screening, retirement contribution deductions (traditional IRA/401k), self-employment tax (Schedule SE), estimated payment safe harbor rules.
+- **State:** Configurable state of residence. Start with a few high-population states (CA, NY, TX, FL, etc.) and a framework for adding more. Handle state-specific treatment of retirement income, capital gains, and deductions.
+- **Data mapping:** Account-to-tax-line mapping (e.g., "this Income:Salary account maps to W-2 wages"). Persisted per-book so it survives re-imports. Pre-populate common mappings from account names/types.
+- **Filing status:** Single, MFJ, MFS, HoH, QSS — affects brackets, standard deduction, phase-outs.
+
+**Effort:** XL (human: ~4-6 weeks) / with CC: L-XL (~3-5 hours)
+
+**Depends on:** Contribution tracking (shipped), lot/capital gains engine (shipped), account hierarchy (shipped). IRS bracket data needs annual updates (2024-2026 already in `irs-limits.ts` pattern).
+
+**Context:** Added 2026-04-12. This is a large feature but high-value for the target user (self-directed investors managing their own finances). Start with a read-only estimation report, not actual form generation. Could later extend to produce draft 1040-ES worksheets or integrate with tax-prep APIs. Key risk: tax law complexity and state variation — scope the MVP to federal + 1 state, with a pluggable state-tax module pattern.
+
+---
+
 ## P2 - FIRE Calculator: Expose Assumptions & Monte Carlo Analysis
 
 **What:** Enhance the FIRE calculator with two improvements: (1) Surface and make configurable the underlying assumptions (inflation rate, withdrawal strategy, Social Security estimates, tax rates, healthcare costs, asset allocation glide path, etc.). (2) Add Monte Carlo simulation using historical return distributions to show probability-weighted outcome ranges instead of a single deterministic projection.
