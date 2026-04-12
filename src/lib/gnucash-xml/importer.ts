@@ -358,9 +358,10 @@ export async function importGnuCashData(
           commodity_scu: account.commodityScu || 100,
           non_std_scu: 0,
           parent_guid: parentGuid,
+          code: account.code || null,
           description: account.description || null,
-          hidden: 0,
-          placeholder: 0,
+          hidden: account.hidden ? 1 : 0,
+          placeholder: account.placeholder ? 1 : 0,
         },
       });
       summary.accounts++;

@@ -172,8 +172,25 @@ function buildAccount(account: GnuCashXmlData['accounts'][0]): Record<string, un
   if (account.commodityScu !== undefined) {
     result['act:commodity-scu'] = String(account.commodityScu);
   }
+  if (account.code) {
+    result['act:code'] = account.code;
+  }
   if (account.description) {
     result['act:description'] = account.description;
+  }
+  // hidden, placeholder, and notes go into act:slots
+  const slots: Array<Record<string, unknown>> = [];
+  if (account.hidden) {
+    slots.push({ 'slot:key': 'hidden', 'slot:value': { '@_type': 'string', '#text': 'true' } });
+  }
+  if (account.placeholder) {
+    slots.push({ 'slot:key': 'placeholder', 'slot:value': { '@_type': 'string', '#text': 'true' } });
+  }
+  if (account.notes) {
+    slots.push({ 'slot:key': 'notes', 'slot:value': { '@_type': 'string', '#text': account.notes } });
+  }
+  if (slots.length > 0) {
+    result['act:slots'] = { slot: slots };
   }
   if (account.parentId) {
     result['act:parent'] = { '@_type': 'guid', '#text': account.parentId };

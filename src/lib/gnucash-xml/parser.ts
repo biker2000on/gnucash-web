@@ -263,6 +263,26 @@ function parseAccounts(bookElement: Record<string, unknown>): GnuCashAccount[] {
       ? parseInt(String(obj['act:commodity-scu']), 10)
       : undefined;
 
+    // Parse account code
+    const code = obj['act:code'] ? String(obj['act:code']) : undefined;
+
+    // Parse act:slots for hidden, placeholder, notes
+    let hidden: boolean | undefined;
+    let placeholder: boolean | undefined;
+    let notes: string | undefined;
+    const slotsContainer = obj['act:slots'] as Record<string, unknown> | undefined;
+    if (slotsContainer) {
+      const slotList = ensureArray(slotsContainer['slot'] as unknown);
+      for (const slot of slotList) {
+        const slotObj = slot as Record<string, unknown>;
+        const key = extractText(slotObj['slot:key']);
+        const val = extractText(slotObj['slot:value']);
+        if (key === 'hidden') hidden = val === 'true';
+        else if (key === 'placeholder') placeholder = val === 'true';
+        else if (key === 'notes') notes = val || undefined;
+      }
+    }
+
     return {
       name: String(obj['act:name'] || ''),
       id: accountId,
@@ -271,6 +291,10 @@ function parseAccounts(bookElement: Record<string, unknown>): GnuCashAccount[] {
       commodityScu: commodityScu,
       description: obj['act:description'] ? String(obj['act:description']) : undefined,
       parentId: parentId,
+      hidden,
+      placeholder,
+      notes,
+      code,
     };
   });
 }

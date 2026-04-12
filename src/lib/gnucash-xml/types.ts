@@ -46,6 +46,10 @@ export interface GnuCashAccount {
   commodityScu?: number;
   description?: string;
   parentId?: string;
+  hidden?: boolean;
+  placeholder?: boolean;
+  notes?: string;
+  code?: string;
 }
 
 export interface GnuCashTransaction {
