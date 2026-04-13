@@ -147,7 +147,7 @@ export async function extractPayslipData(
   const response = await fetch(url, {
     method: 'POST',
     headers,
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(300000), // 5 minutes for local LLMs
     body: JSON.stringify({
       model: aiConfig.model,
       messages: [
@@ -155,7 +155,7 @@ export async function extractPayslipData(
         { role: 'user', content: user },
       ],
       temperature: 0,
-      max_tokens: 1500,
+      max_tokens: 4000,
     }),
   });
 
