@@ -93,8 +93,8 @@ export async function POST(request: Request) {
       if (!jobId) {
         // Redis unavailable — run extraction inline (synchronously)
         try {
-          const { handleExtractPayslip } = await import('@/lib/queue/jobs/extract-payslip');
-          await handleExtractPayslip({ id: `inline-${payslip.id}`, data: { payslipId: payslip.id, bookGuid } } as never);
+          const { runPayslipExtraction } = await import('@/lib/payslip-extract-core');
+          await runPayslipExtraction(payslip.id, bookGuid, `[inline-${payslip.id}]`);
         } catch (extractErr) {
           console.error(`Inline extraction failed for payslip ${payslip.id}:`, extractErr);
         }
