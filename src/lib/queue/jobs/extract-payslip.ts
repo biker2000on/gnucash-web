@@ -62,14 +62,28 @@ export async function handleExtractPayslip(job: Job): Promise<void> {
     const { getAiConfig } = await import('@/lib/ai-config');
     const aiConfig = await getAiConfig(payslip.created_by ?? 0);
 
-    // ── Tier 1: AI extraction ──────────────────────────────────────────────
+    // ── Tier 1: AI extraction (vision first, then OCR text) ─────────────
     if (aiConfig?.enabled && aiConfig.base_url && aiConfig.model) {
       try {
-        const { extractPayslipData } = await import('@/lib/payslip-extraction');
-        const extractedData = await extractPayslipData(ocrText, aiConfig);
+        const { extractPayslipWithVision, extractPayslipData } = await import('@/lib/payslip-extraction');
+
+        let extractedData;
+        let tier = 'ai_vision';
+
+        // Try vision-based extraction first (sends rendered PDF image)
+        try {
+          console.log(`[Job ${job.id}] Trying vision extraction...`);
+          extractedData = await extractPayslipWithVision(buffer, aiConfig);
+          console.log(`[Job ${job.id}] Vision extraction succeeded`);
+        } catch (visionErr) {
+          // Fall back to OCR text extraction (for models without vision support)
+          console.log(`[Job ${job.id}] Vision failed, trying OCR text extraction:`, visionErr instanceof Error ? visionErr.message : visionErr);
+          extractedData = await extractPayslipData(ocrText, aiConfig);
+          tier = 'ai_text';
+        }
 
         // Update line items with AI results
-        await updatePayslipLineItems(payslipId, extractedData.line_items, { ocrText, tier: 'ai' });
+        await updatePayslipLineItems(payslipId, extractedData.line_items, { ocrText, tier });
 
         // Update status with extracted metadata
         await updatePayslipStatus(payslipId, 'needs_mapping', {
@@ -83,7 +97,8 @@ export async function handleExtractPayslip(job: Job): Promise<void> {
 
         // Auto-save template (strip amounts from line items)
         const { upsertTemplate } = await import('@/lib/payslips');
-        const templateLineItems = extractedData.line_items.map(({ normalized_label, category }) => ({
+        const templateLineItems = extractedData.line_items.map(({ label, normalized_label, category }) => ({
+          label,
           normalized_label,
           category,
         }));

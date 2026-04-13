@@ -126,7 +126,89 @@ export function parsePayslipAiResponse(raw: string): PayslipExtractedData {
   return result;
 }
 
-/** Extract payslip data from OCR text using AI. */
+const VISION_PROMPT = `Extract structured data from this payslip image. Return ONLY valid JSON.
+
+Fields: employer_name (string), pay_date (YYYY-MM-DD), pay_period_start (YYYY-MM-DD, optional), pay_period_end (YYYY-MM-DD, optional), gross_pay (number, CURRENT period NOT YTD), net_pay (number, CURRENT period NOT YTD), line_items (array) with: category (earnings/tax/deduction/employer_contribution/reimbursement), label (original text), normalized_label (snake_case), amount (positive for earnings, negative for taxes/deductions, use CURRENT column NOT YTD), hours (optional), rate (optional).
+
+CRITICAL: Use the CURRENT period column values, NOT YTD (year-to-date) values. Return ONLY valid JSON, no markdown.`;
+
+/**
+ * Render a PDF buffer to a PNG image for vision extraction.
+ * Uses pdftoppm (poppler-utils) for high-quality rendering.
+ * Returns base64-encoded PNG string, or null if rendering fails.
+ */
+async function renderPdfToBase64(pdfBuffer: Buffer): Promise<string | null> {
+  try {
+    const { writeFileSync, readFileSync, readdirSync, unlinkSync } = await import('fs');
+    const { execSync } = await import('child_process');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+
+    const tmpDir = tmpdir();
+    const inputPath = join(tmpDir, `payslip-input-${Date.now()}.pdf`);
+    const outPrefix = join(tmpDir, `payslip-render-${Date.now()}`);
+
+    writeFileSync(inputPath, pdfBuffer);
+    execSync(`pdftoppm -f 1 -l 1 -png -r 300 ${inputPath} ${outPrefix}`, { timeout: 30000 });
+
+    const files = readdirSync(tmpDir).filter(f => f.startsWith(`payslip-render-${Date.now().toString().slice(0, -3)}`));
+    if (files.length === 0) return null;
+
+    const imgBuffer = readFileSync(join(tmpDir, files[0]));
+
+    // Cleanup
+    try { unlinkSync(inputPath); } catch { /* ignore */ }
+    try { unlinkSync(join(tmpDir, files[0])); } catch { /* ignore */ }
+
+    return imgBuffer.toString('base64');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract payslip data using vision (image-based) AI.
+ * Renders the PDF to an image and sends it to a vision-capable model.
+ */
+export async function extractPayslipWithVision(
+  pdfBuffer: Buffer,
+  aiConfig: AiConfig
+): Promise<PayslipExtractedData> {
+  const base64 = await renderPdfToBase64(pdfBuffer);
+  if (!base64) throw new Error('Failed to render PDF to image');
+
+  const url = `${aiConfig.base_url!.replace(/\/+$/, '')}/chat/completions`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (aiConfig.api_key) headers['Authorization'] = `Bearer ${aiConfig.api_key}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    signal: AbortSignal.timeout(300000),
+    body: JSON.stringify({
+      model: aiConfig.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: VISION_PROMPT },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+        ],
+      }],
+      temperature: 0,
+      max_tokens: 4000,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`Vision API error: ${response.status}`);
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error('Empty vision response');
+
+  return parsePayslipAiResponse(content);
+}
+
+/** Extract payslip data from OCR text using AI (text-only fallback). */
 export async function extractPayslipData(
   ocrText: string,
   aiConfig: AiConfig
@@ -147,7 +229,7 @@ export async function extractPayslipData(
   const response = await fetch(url, {
     method: 'POST',
     headers,
-    signal: AbortSignal.timeout(300000), // 5 minutes for local LLMs
+    signal: AbortSignal.timeout(300000),
     body: JSON.stringify({
       model: aiConfig.model,
       messages: [
