@@ -1,7 +1,7 @@
 'use client';
 
 import { formatCurrency } from '@/lib/format';
-import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/services/payslip-post.service';
+import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 import type { PayslipLineItem } from '@/lib/types';
 
 interface TransactionPreviewProps {

@@ -10,77 +10,9 @@
 import { generateGuid, fromDecimal } from '@/lib/gnucash';
 import prisma from '@/lib/prisma';
 import type { PayslipLineItem } from '@/lib/types';
-
-export interface PayslipSplit {
-  accountGuid: string;
-  amount: number;
-  memo: string;
-}
-
-/**
- * Validate that payslip line items balance against net pay.
- *
- * Sums all non-employer-contribution line items and subtracts netPay.
- * A balanced payslip returns 0.
- *
- * @param lineItems - Payslip line items
- * @param netPay - Expected net pay (deposit amount)
- * @returns Imbalance amount (0 = balanced)
- */
-export function validatePayslipBalance(lineItems: PayslipLineItem[], netPay: number): number {
-  const total = lineItems
-    .filter(item => item.category !== 'employer_contribution')
-    .reduce((sum, item) => sum + item.amount, 0);
-
-  const imbalance = total - netPay;
-  return Math.round(imbalance * 100) / 100;
-}
-
-/**
- * Build GnuCash splits from payslip line items.
- *
- * GnuCash sign convention:
- * - Earnings credit income accounts (negative)
- * - Taxes/deductions debit expense accounts (positive, negated from payslip)
- * - Net pay debits bank account (positive)
- *
- * @param lineItems - Payslip line items
- * @param mappings - Map from "category:normalized_label" to account GUID
- * @param depositAccountGuid - Bank/deposit account GUID for net pay
- * @param netPay - Net pay amount (positive debit to bank)
- * @returns Array of splits ready for transaction insertion
- */
-export function buildSplitsFromLineItems(
-  lineItems: PayslipLineItem[],
-  mappings: Record<string, string>,
-  depositAccountGuid: string,
-  netPay: number
-): PayslipSplit[] {
-  const splits: PayslipSplit[] = [];
-
-  for (const item of lineItems) {
-    if (item.category === 'employer_contribution') continue;
-
-    const key = `${item.category}:${item.normalized_label}`;
-    const accountGuid = mappings[key];
-    if (!accountGuid) continue;
-
-    splits.push({
-      accountGuid,
-      amount: -item.amount,
-      memo: item.label,
-    });
-  }
-
-  // Add deposit split (debit bank account)
-  splits.push({
-    accountGuid: depositAccountGuid,
-    amount: netPay,
-    memo: 'Net Pay',
-  });
-
-  return splits;
-}
+import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
+export type { PayslipSplit } from '@/lib/payslip-splits';
+export { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 
 /**
  * Post a payslip as a GnuCash transaction atomically.
