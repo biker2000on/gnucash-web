@@ -297,7 +297,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
       />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 bottom-0 w-full sm:w-[600px] bg-background border-l border-border z-50 overflow-y-auto flex flex-col">
+      <div className="fixed right-0 top-0 bottom-0 w-full sm:w-[90vw] lg:w-[75vw] xl:w-[60vw] max-w-[1200px] bg-background border-l border-border z-50 overflow-y-auto flex flex-col">
         {/* Sticky header */}
         <div className="sticky top-0 bg-background border-b border-border px-6 py-4 flex items-start justify-between gap-4 z-10">
           <div className="flex flex-col gap-1 min-w-0">
