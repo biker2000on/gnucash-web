@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getPayslip } from '@/lib/payslips';
+import { getPayslip, getMappingsForEmployer } from '@/lib/payslips';
+import { buildSplitsFromLineItems } from '@/lib/payslip-splits';
+import { findMatchingTransaction } from '@/lib/services/payslip-post.service';
 import prisma from '@/lib/prisma';
+import type { PayslipLineItem } from '@/lib/types';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -24,11 +27,32 @@ export async function GET(request: Request, { params }: RouteParams) {
 
     const netPay = payslip.net_pay ? Number(payslip.net_pay) : 0;
     const payDate = payslip.pay_date;
-    const tolerance = 0.02;
+    const lineItems = (payslip.line_items ?? []) as unknown as PayslipLineItem[];
 
-    // Match transactions where a split amount matches net_pay within $0.02
-    // Date range: +/- 3 days from pay_date
-    // Joins splits on bank accounts, left joins transaction meta for simplefin_transaction_id
+    // --- Full-split dedup check ---
+    // If line items exist and are mapped, check for an existing transaction
+    // with all the same splits (same accounts, amounts within $0.01)
+    let exactMatch: string | null = null;
+    if (lineItems.length > 0) {
+      const mappingRows = await getMappingsForEmployer(bookGuid, payslip.employer_name);
+      const mappings: Record<string, string> = {};
+      for (const row of mappingRows) {
+        mappings[`${row.line_item_category}:${row.normalized_label}`] = row.account_guid;
+      }
+
+      // Check if we have a deposit account to build full splits
+      const url = new URL(request.url);
+      const depositAccountGuid = url.searchParams.get('deposit_account_guid');
+
+      if (depositAccountGuid) {
+        const splits = buildSplitsFromLineItems(lineItems, mappings, depositAccountGuid, netPay);
+        const payDateStr = payDate.toISOString().slice(0, 10);
+        exactMatch = await findMatchingTransaction(splits, payDateStr);
+      }
+    }
+
+    // --- Net-pay lump-sum match (SimpleFin deposits) ---
+    const tolerance = 0.02;
     const candidates = await prisma.$queryRaw<
       Array<{
         transaction_guid: string;
@@ -61,7 +85,10 @@ export async function GET(request: Request, { params }: RouteParams) {
       LIMIT 10
     `;
 
-    return NextResponse.json({ candidates });
+    return NextResponse.json({
+      exact_match: exactMatch,
+      candidates,
+    });
   } catch (error) {
     console.error('Payslip match error:', error);
     return NextResponse.json({ error: 'Failed to find matching transactions' }, { status: 500 });
