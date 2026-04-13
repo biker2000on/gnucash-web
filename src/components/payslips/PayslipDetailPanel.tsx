@@ -76,6 +76,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [editableEmployerName, setEditableEmployerName] = useState('');
+  const [accountNames, setAccountNames] = useState<Record<string, string>>({});
 
   // Close on Escape
   useEffect(() => {
@@ -108,6 +109,17 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
         );
         if (!mappingsRes.ok) throw new Error('Failed to fetch mappings');
         const mappingsData: MappingEntry[] = await mappingsRes.json();
+
+        // Fetch account names for the transaction preview
+        const accRes = await fetch('/api/accounts?flat=true&noBalances=true');
+        if (accRes.ok) {
+          const accounts: Array<{ guid: string; name: string; fullname?: string }> = await accRes.json();
+          const names: Record<string, string> = {};
+          for (const a of accounts) {
+            names[a.guid] = a.fullname || a.name;
+          }
+          if (!cancelled) setAccountNames(names);
+        }
 
         if (!cancelled) {
           setMappings(mappingsData);
@@ -226,7 +238,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
   }
 
   // Build account names dict for TransactionPreview
-  const accountNamesDict: Record<string, string> = {};
+  const accountNamesDict: Record<string, string> = { ...accountNames };
   if (depositAccountGuid && depositAccountName) {
     accountNamesDict[depositAccountGuid] = depositAccountName;
   }
