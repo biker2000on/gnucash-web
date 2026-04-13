@@ -1,6 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  getFilteredRowModel,
+  flexRender,
+  createColumnHelper,
+  type SortingState,
+  type RowSelectionState,
+  type ColumnFiltersState,
+} from '@tanstack/react-table';
 import PayslipUploadZone from '@/components/payslips/PayslipUploadZone';
 import PayslipDetailPanel from '@/components/payslips/PayslipDetailPanel';
 
@@ -16,8 +27,6 @@ interface Payslip {
   net_pay: number | null;
   status: string;
 }
-
-type StatusFilter = 'all' | 'processing' | 'needs_mapping' | 'ready' | 'posted' | 'error';
 
 // ---------------------------------------------------------------------------
 // Status badge
@@ -48,6 +57,104 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatAmount(amount: number | null | undefined): string {
+  if (amount == null) return '—';
+  return '$' + Number(amount).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-US', { timeZone: 'UTC' });
+}
+
+// ---------------------------------------------------------------------------
+// Sort icon
+// ---------------------------------------------------------------------------
+
+function SortIcon({ direction }: { direction: 'asc' | 'desc' | false }) {
+  if (!direction) {
+    return (
+      <svg className="w-3 h-3 ml-1 inline opacity-30" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" d="M7 8l5-5 5 5M7 16l5 5 5-5" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="w-3 h-3 ml-1 inline text-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      {direction === 'asc'
+        ? <path strokeLinecap="round" d="M7 14l5-5 5 5" />
+        : <path strokeLinecap="round" d="M7 10l5 5 5-5" />
+      }
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Column definitions
+// ---------------------------------------------------------------------------
+
+const columnHelper = createColumnHelper<Payslip>();
+
+const columns = [
+  columnHelper.display({
+    id: 'select',
+    header: ({ table }) => (
+      <input
+        type="checkbox"
+        checked={table.getIsAllPageRowsSelected()}
+        onChange={table.getToggleAllPageRowsSelectedHandler()}
+        className="rounded border-border"
+      />
+    ),
+    cell: ({ row }) => {
+      if (row.original.status === 'posted') return null;
+      return (
+        <input
+          type="checkbox"
+          checked={row.getIsSelected()}
+          onChange={row.getToggleSelectedHandler()}
+          onClick={e => e.stopPropagation()}
+          className="rounded border-border"
+        />
+      );
+    },
+    size: 40,
+    enableSorting: false,
+  }),
+  columnHelper.accessor('pay_date', {
+    header: 'Pay Date',
+    cell: info => formatDate(info.getValue()),
+    sortingFn: 'datetime',
+  }),
+  columnHelper.accessor('employer_name', {
+    header: 'Employer',
+    filterFn: 'includesString',
+  }),
+  columnHelper.accessor('gross_pay', {
+    header: 'Gross',
+    cell: info => formatAmount(info.getValue()),
+    sortingFn: 'basic',
+    meta: { align: 'right' },
+  }),
+  columnHelper.accessor('net_pay', {
+    header: 'Net',
+    cell: info => formatAmount(info.getValue()),
+    sortingFn: 'basic',
+    meta: { align: 'right' },
+  }),
+  columnHelper.accessor('status', {
+    header: 'Status',
+    cell: info => <StatusBadge status={info.getValue()} />,
+    filterFn: 'equals',
+  }),
+];
+
+// ---------------------------------------------------------------------------
 // Page component
 // ---------------------------------------------------------------------------
 
@@ -55,10 +162,14 @@ export default function PayslipsPage() {
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [deleting, setDeleting] = useState(false);
+
+  // Table state
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'pay_date', desc: true }]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [globalFilter, setGlobalFilter] = useState('');
 
   const fetchPayslips = useCallback(async () => {
     try {
@@ -73,64 +184,64 @@ export default function PayslipsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchPayslips();
-  }, [fetchPayslips]);
+  useEffect(() => { fetchPayslips(); }, [fetchPayslips]);
 
   const handleUploadComplete = useCallback(() => {
     fetchPayslips();
     setShowUpload(false);
   }, [fetchPayslips]);
 
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  const table = useReactTable({
+    data: payslips,
+    columns,
+    state: { sorting, rowSelection, columnFilters, globalFilter },
+    onSortingChange: setSorting,
+    onRowSelectionChange: setRowSelection,
+    onColumnFiltersChange: setColumnFilters,
+    onGlobalFilterChange: setGlobalFilter,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getRowId: row => String(row.id),
+    enableRowSelection: row => row.original.status !== 'posted',
+  });
 
-  const toggleSelectAll = useCallback(() => {
-    const deletable = filtered.filter(p => p.status !== 'posted').map(p => p.id);
-    if (deletable.every(id => selectedIds.has(id))) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(deletable));
-    }
-  }, [filtered, selectedIds]);
+  const selectedCount = Object.keys(rowSelection).length;
 
   const handleBulkDelete = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    if (!confirm(`Delete ${selectedIds.size} payslip${selectedIds.size > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    const ids = Object.keys(rowSelection).map(Number);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} payslip${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      await Promise.all(
-        Array.from(selectedIds).map(id =>
-          fetch(`/api/payslips/${id}`, { method: 'DELETE' })
-        )
-      );
-      setSelectedIds(new Set());
+      await Promise.all(ids.map(id => fetch(`/api/payslips/${id}`, { method: 'DELETE' })));
+      setRowSelection({});
       fetchPayslips();
     } catch (err) {
       console.error('Bulk delete failed:', err);
     } finally {
       setDeleting(false);
     }
-  }, [selectedIds, fetchPayslips]);
+  }, [rowSelection, fetchPayslips]);
 
-  const filtered =
-    statusFilter === 'all'
-      ? payslips
-      : payslips.filter(p => p.status === statusFilter);
+  // Status filter as a column filter
+  const statusFilter = useMemo(() => {
+    const f = columnFilters.find(f => f.id === 'status');
+    return (f?.value as string) || 'all';
+  }, [columnFilters]);
 
-  function formatAmount(amount: number | null | undefined): string {
-    if (amount == null) return '—';
-    return '$' + Number(amount).toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  }
+  const setStatusFilter = useCallback((value: string) => {
+    if (value === 'all') {
+      setColumnFilters(prev => prev.filter(f => f.id !== 'status'));
+    } else {
+      setColumnFilters(prev => [
+        ...prev.filter(f => f.id !== 'status'),
+        { id: 'status', value },
+      ]);
+    }
+  }, []);
+
+  const filteredCount = table.getFilteredRowModel().rows.length;
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
@@ -156,7 +267,7 @@ export default function PayslipsPage() {
       <div className="flex items-center gap-4">
         <select
           value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as StatusFilter)}
+          onChange={e => setStatusFilter(e.target.value)}
           className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:ring-2 focus:ring-primary/40 focus:outline-none"
         >
           <option value="all">All</option>
@@ -167,19 +278,27 @@ export default function PayslipsPage() {
           <option value="error">Error</option>
         </select>
 
+        <input
+          type="text"
+          value={globalFilter}
+          onChange={e => setGlobalFilter(e.target.value)}
+          placeholder="Search..."
+          className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:ring-2 focus:ring-primary/40 focus:outline-none w-48"
+        />
+
         {!loading && (
           <span className="text-sm text-foreground-muted">
-            {filtered.length} {filtered.length === 1 ? 'payslip' : 'payslips'}
+            {filteredCount} {filteredCount === 1 ? 'payslip' : 'payslips'}
           </span>
         )}
 
-        {selectedIds.size > 0 && (
+        {selectedCount > 0 && (
           <button
             onClick={handleBulkDelete}
             disabled={deleting}
             className="ml-auto px-3 py-1.5 text-xs font-medium rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
           >
-            {deleting ? 'Deleting...' : `Delete ${selectedIds.size} selected`}
+            {deleting ? 'Deleting...' : `Delete ${selectedCount} selected`}
           </button>
         )}
       </div>
@@ -190,75 +309,66 @@ export default function PayslipsPage() {
           <div className="flex items-center justify-center py-16">
             <span className="text-sm text-foreground-muted">Loading...</span>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : table.getFilteredRowModel().rows.length === 0 ? (
           <div className="flex items-center justify-center py-16">
             <span className="text-sm text-foreground-muted">
-              {statusFilter === 'all'
+              {payslips.length === 0
                 ? 'No payslips yet. Upload one to get started.'
-                : `No payslips with status "${STATUS_LABELS[statusFilter] ?? statusFilter}".`}
+                : 'No payslips match your filters.'}
             </span>
           </div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="text-left">
-                <th className="border-b border-border py-3 px-4 w-10">
-                  <input
-                    type="checkbox"
-                    checked={filtered.filter(p => p.status !== 'posted').length > 0 && filtered.filter(p => p.status !== 'posted').every(p => selectedIds.has(p.id))}
-                    onChange={toggleSelectAll}
-                    className="rounded border-border"
-                  />
-                </th>
-                <th className="text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium">
-                  Pay Date
-                </th>
-                <th className="text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium">
-                  Employer
-                </th>
-                <th className="text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium text-right">
-                  Gross
-                </th>
-                <th className="text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium text-right">
-                  Net
-                </th>
-                <th className="text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium">
-                  Status
-                </th>
-              </tr>
+              {table.getHeaderGroups().map(headerGroup => (
+                <tr key={headerGroup.id} className="text-left">
+                  {headerGroup.headers.map(header => {
+                    const align = (header.column.columnDef.meta as { align?: string })?.align;
+                    return (
+                      <th
+                        key={header.id}
+                        className={`text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium ${
+                          align === 'right' ? 'text-right' : ''
+                        } ${header.column.getCanSort() ? 'cursor-pointer select-none hover:text-foreground transition-colors' : ''}`}
+                        style={{ width: header.column.getSize() !== 150 ? header.column.getSize() : undefined }}
+                        onClick={header.column.getCanSort() ? header.column.getToggleSortingHandler() : undefined}
+                      >
+                        {header.isPlaceholder ? null : (
+                          <span className="inline-flex items-center">
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {header.column.getCanSort() && (
+                              <SortIcon direction={header.column.getIsSorted()} />
+                            )}
+                          </span>
+                        )}
+                      </th>
+                    );
+                  })}
+                </tr>
+              ))}
             </thead>
             <tbody>
-              {filtered.map(payslip => (
+              {table.getRowModel().rows.map(row => (
                 <tr
-                  key={payslip.id}
-                  onClick={() => setSelectedId(payslip.id)}
-                  className={`border-b border-border/50 cursor-pointer transition-colors hover:bg-surface-hover/50 ${selectedIds.has(payslip.id) ? 'bg-primary/5' : ''}`}
+                  key={row.id}
+                  onClick={() => setSelectedId(row.original.id)}
+                  className={`border-b border-border/50 cursor-pointer transition-colors hover:bg-surface-hover/50 ${
+                    row.getIsSelected() ? 'bg-primary/5' : ''
+                  }`}
                 >
-                  <td className="py-3 px-4" onClick={e => e.stopPropagation()}>
-                    {payslip.status !== 'posted' && (
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(payslip.id)}
-                        onChange={() => toggleSelect(payslip.id)}
-                        className="rounded border-border"
-                      />
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-foreground">
-                    {new Date(payslip.pay_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-foreground">
-                    {payslip.employer_name}
-                  </td>
-                  <td className="py-3 px-4 text-sm font-mono tabular-nums text-foreground text-right">
-                    {formatAmount(payslip.gross_pay)}
-                  </td>
-                  <td className="py-3 px-4 text-sm font-mono tabular-nums text-foreground text-right">
-                    {formatAmount(payslip.net_pay)}
-                  </td>
-                  <td className="py-3 px-4">
-                    <StatusBadge status={payslip.status} />
-                  </td>
+                  {row.getVisibleCells().map(cell => {
+                    const align = (cell.column.columnDef.meta as { align?: string })?.align;
+                    return (
+                      <td
+                        key={cell.id}
+                        className={`py-3 px-4 text-sm text-foreground ${
+                          align === 'right' ? 'text-right font-mono tabular-nums' : ''
+                        }`}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
