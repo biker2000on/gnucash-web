@@ -91,9 +91,13 @@ export async function POST(request: Request) {
       });
 
       if (!jobId) {
-        await updatePayslipStatus(payslip.id, 'error', {
-          raw_response: 'Redis unavailable; extraction job could not be enqueued',
-        });
+        // Redis unavailable — run extraction inline (synchronously)
+        try {
+          const { handleExtractPayslip } = await import('@/lib/queue/jobs/extract-payslip');
+          await handleExtractPayslip({ id: `inline-${payslip.id}`, data: { payslipId: payslip.id, bookGuid } } as never);
+        } catch (extractErr) {
+          console.error(`Inline extraction failed for payslip ${payslip.id}:`, extractErr);
+        }
       }
 
       results.push({ id: payslip.id, filename: sanitizedName, status: 'uploaded' });
