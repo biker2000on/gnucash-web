@@ -138,3 +138,44 @@ export async function deletePayslip(id: number, bookGuid: string) {
     where: { id, book_guid: bookGuid },
   });
 }
+
+export interface TemplateLineItem {
+  category: string;
+  label: string;
+  normalized_label: string;
+}
+
+/**
+ * Get the saved template for an employer within a book.
+ */
+export async function getTemplate(bookGuid: string, employerName: string) {
+  return prisma.gnucash_web_payslip_templates.findUnique({
+    where: {
+      book_guid_employer_name: { book_guid: bookGuid, employer_name: employerName },
+    },
+  });
+}
+
+/**
+ * Upsert a template for an employer. Stores line item structure (labels + categories, no amounts).
+ */
+export async function upsertTemplate(
+  bookGuid: string,
+  employerName: string,
+  lineItems: TemplateLineItem[]
+) {
+  return prisma.gnucash_web_payslip_templates.upsert({
+    where: {
+      book_guid_employer_name: { book_guid: bookGuid, employer_name: employerName },
+    },
+    create: {
+      book_guid: bookGuid,
+      employer_name: employerName,
+      line_items: lineItems,
+    },
+    update: {
+      line_items: lineItems,
+      updated_at: new Date(),
+    },
+  });
+}

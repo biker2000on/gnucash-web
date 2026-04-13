@@ -17,6 +17,10 @@ const mockPrisma = vi.hoisted(() => ({
     upsert: vi.fn(),
     deleteMany: vi.fn(),
   },
+  gnucash_web_payslip_templates: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+  },
 }));
 
 vi.mock('@/lib/prisma', () => ({ default: mockPrisma }));
@@ -30,6 +34,8 @@ import {
   getMappingsForEmployer,
   upsertMapping,
   deletePayslip,
+  getTemplate,
+  upsertTemplate,
 } from '@/lib/payslips';
 
 beforeEach(() => {
@@ -261,5 +267,45 @@ describe('deletePayslip', () => {
       where: { id: 1, book_guid: 'book1' },
     });
     expect(result).toEqual(deleted);
+  });
+});
+
+describe('getTemplate', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns template for employer', async () => {
+    const template = {
+      id: 1, book_guid: 'book123', employer_name: 'Acme',
+      line_items: [{ category: 'earnings', label: 'Regular Pay', normalized_label: 'regular_pay' }],
+    };
+    mockPrisma.gnucash_web_payslip_templates.findUnique.mockResolvedValue(template);
+    const result = await getTemplate('book123', 'Acme');
+    expect(mockPrisma.gnucash_web_payslip_templates.findUnique).toHaveBeenCalledWith({
+      where: { book_guid_employer_name: { book_guid: 'book123', employer_name: 'Acme' } },
+    });
+    expect(result?.employer_name).toBe('Acme');
+  });
+
+  it('returns null when no template exists', async () => {
+    mockPrisma.gnucash_web_payslip_templates.findUnique.mockResolvedValue(null);
+    const result = await getTemplate('book123', 'Unknown');
+    expect(result).toBeNull();
+  });
+});
+
+describe('upsertTemplate', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('upserts template by composite key', async () => {
+    mockPrisma.gnucash_web_payslip_templates.upsert.mockResolvedValue({ id: 1 });
+    const lineItems = [
+      { category: 'earnings' as const, label: 'Regular Pay', normalized_label: 'regular_pay' },
+    ];
+    await upsertTemplate('book123', 'Acme', lineItems);
+    expect(mockPrisma.gnucash_web_payslip_templates.upsert).toHaveBeenCalledWith({
+      where: { book_guid_employer_name: { book_guid: 'book123', employer_name: 'Acme' } },
+      create: { book_guid: 'book123', employer_name: 'Acme', line_items: lineItems },
+      update: { line_items: lineItems, updated_at: expect.any(Date) },
+    });
   });
 });
