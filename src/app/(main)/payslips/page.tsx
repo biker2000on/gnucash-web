@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-table';
 import PayslipUploadZone from '@/components/payslips/PayslipUploadZone';
 import PayslipDetailPanel from '@/components/payslips/PayslipDetailPanel';
+import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -164,6 +165,7 @@ export default function PayslipsPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
 
   // Table state
   const [sorting, setSorting] = useState<SortingState>([{ id: 'pay_date', desc: true }]);
@@ -211,7 +213,6 @@ export default function PayslipsPage() {
   const handleBulkDelete = useCallback(async () => {
     const ids = Object.keys(rowSelection).map(Number);
     if (ids.length === 0) return;
-    if (!confirm(`Delete ${ids.length} payslip${ids.length > 1 ? 's' : ''}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       await Promise.all(ids.map(id => fetch(`/api/payslips/${id}`, { method: 'DELETE' })));
@@ -221,6 +222,7 @@ export default function PayslipsPage() {
       console.error('Bulk delete failed:', err);
     } finally {
       setDeleting(false);
+      setShowBulkDeleteConfirm(false);
     }
   }, [rowSelection, fetchPayslips]);
 
@@ -294,7 +296,7 @@ export default function PayslipsPage() {
 
         {selectedCount > 0 && (
           <button
-            onClick={handleBulkDelete}
+            onClick={() => setShowBulkDeleteConfirm(true)}
             disabled={deleting}
             className="ml-auto px-3 py-1.5 text-xs font-medium rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
           >
@@ -384,6 +386,17 @@ export default function PayslipsPage() {
           onUpdated={fetchPayslips}
         />
       )}
+
+      <ConfirmationDialog
+        isOpen={showBulkDeleteConfirm}
+        onConfirm={handleBulkDelete}
+        onCancel={() => setShowBulkDeleteConfirm(false)}
+        title="Delete Payslips"
+        message={`Are you sure you want to delete ${selectedCount} payslip${selectedCount > 1 ? 's' : ''}? Uploaded PDFs and extracted data will be permanently removed. This cannot be undone.`}
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        isLoading={deleting}
+      />
     </div>
   );
 }

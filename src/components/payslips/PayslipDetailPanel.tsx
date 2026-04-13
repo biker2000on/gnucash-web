@@ -6,6 +6,7 @@ import { PayslipLineItemTable } from './PayslipLineItemTable';
 import { TransactionPreview } from './TransactionPreview';
 import type { PayslipLineItem } from '@/lib/types';
 import { formatDisplayAccountPath } from '@/lib/account-path';
+import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,6 +79,8 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [editableEmployerName, setEditableEmployerName] = useState('');
   const [accountNames, setAccountNames] = useState<Record<string, string>>({});
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -220,9 +223,9 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
     }
   }, [payslip, payslipId, editableEmployerName]);
 
-  const handleDelete = useCallback(async () => {
+  const handleDeleteConfirm = useCallback(async () => {
     if (!payslip || payslip.status === 'posted') return;
-    if (!confirm('Delete this payslip? This cannot be undone.')) return;
+    setDeleteLoading(true);
     try {
       const res = await fetch(`/api/payslips/${payslipId}`, { method: 'DELETE' });
       if (!res.ok) {
@@ -234,6 +237,9 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
       onClose();
     } catch (err) {
       setPostError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeleteLoading(false);
+      setShowDeleteConfirm(false);
     }
   }, [payslip, payslipId, onUpdated, onClose]);
 
@@ -367,7 +373,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
           <div className="flex items-center gap-1 flex-shrink-0">
             {payslip && payslip.status !== 'posted' && (
               <button
-                onClick={handleDelete}
+                onClick={() => setShowDeleteConfirm(true)}
                 className="p-1.5 rounded-lg text-foreground-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
                 aria-label="Delete payslip"
                 title="Delete payslip"
@@ -547,6 +553,16 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
           )}
         </div>
       </div>
+      <ConfirmationDialog
+        isOpen={showDeleteConfirm}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+        title="Delete Payslip"
+        message="Are you sure you want to delete this payslip? The uploaded PDF and extracted data will be permanently removed. This cannot be undone."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        isLoading={deleteLoading}
+      />
     </>
   );
 }
