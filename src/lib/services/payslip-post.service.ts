@@ -118,6 +118,32 @@ export async function postPayslipTransaction(
       },
     });
 
+    // Mark the existing transaction as payslip-verified
+    const existingMeta = await prisma.gnucash_web_transaction_meta.findUnique({
+      where: { transaction_guid: existingGuid },
+    });
+    if (existingMeta) {
+      await prisma.gnucash_web_transaction_meta.update({
+        where: { transaction_guid: existingGuid },
+        data: {
+          match_type: 'payslip_verified',
+          match_confidence: 'high',
+          matched_at: new Date(),
+        },
+      });
+    } else {
+      await prisma.gnucash_web_transaction_meta.create({
+        data: {
+          transaction_guid: existingGuid,
+          source: 'payslip',
+          reviewed: true,
+          match_type: 'payslip_verified',
+          match_confidence: 'high',
+          matched_at: new Date(),
+        },
+      });
+    }
+
     const templateItems = lineItems.map(item => ({
       category: item.category,
       label: item.label,
@@ -157,6 +183,15 @@ export async function postPayslipTransaction(
         transaction_guid: transactionGuid,
         deposit_account_guid: depositAccountGuid,
         updated_at: new Date(),
+      },
+    });
+
+    // Record transaction meta (source: payslip)
+    await tx.gnucash_web_transaction_meta.create({
+      data: {
+        transaction_guid: transactionGuid,
+        source: 'payslip',
+        reviewed: true,
       },
     });
 
