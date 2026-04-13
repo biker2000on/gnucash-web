@@ -151,3 +151,20 @@ export interface CreateTransactionRequest {
 export interface UpdateTransactionRequest extends CreateTransactionRequest {
     guid: string;
 }
+
+// ---------------------------------------------------------------------------
+// Payslips
+// ---------------------------------------------------------------------------
+
+export type PayslipStatus = 'processing' | 'needs_mapping' | 'ready' | 'posted' | 'error';
+
+export type PayslipLineItemCategory = 'earnings' | 'tax' | 'deduction' | 'employer_contribution' | 'reimbursement';
+
+export interface PayslipLineItem {
+  category: PayslipLineItemCategory;
+  label: string;
+  normalized_label: string;
+  amount: number;
+  hours?: number;
+  rate?: number;
+}

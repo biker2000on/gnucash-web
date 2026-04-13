@@ -520,6 +520,61 @@ async function createExtensionTables() {
       ON gnucash_web_receipts USING GIN (ocr_tsvector);
 `;
 
+    const payslipsTableDDL = `
+    CREATE TABLE IF NOT EXISTS gnucash_web_payslips (
+        id SERIAL PRIMARY KEY,
+        book_guid VARCHAR(32) NOT NULL,
+        pay_date DATE NOT NULL,
+        pay_period_start DATE,
+        pay_period_end DATE,
+        employer_name VARCHAR(255) NOT NULL,
+        gross_pay DECIMAL(12,2),
+        net_pay DECIMAL(12,2),
+        currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+        source VARCHAR(20) NOT NULL DEFAULT 'pdf_upload',
+        source_id VARCHAR(255),
+        transaction_guid VARCHAR(32),
+        storage_key VARCHAR(500),
+        thumbnail_key VARCHAR(500),
+        line_items JSONB,
+        raw_response JSONB,
+        status VARCHAR(20) NOT NULL DEFAULT 'processing',
+        error_message TEXT,
+        deposit_account_guid VARCHAR(32),
+        created_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_payslips_book ON gnucash_web_payslips(book_guid);
+    CREATE INDEX IF NOT EXISTS idx_payslips_pay_date ON gnucash_web_payslips(pay_date);
+    CREATE INDEX IF NOT EXISTS idx_payslips_status ON gnucash_web_payslips(status);
+    CREATE INDEX IF NOT EXISTS idx_payslips_employer ON gnucash_web_payslips(employer_name);
+
+    CREATE TABLE IF NOT EXISTS gnucash_web_payslip_mappings (
+        id SERIAL PRIMARY KEY,
+        book_guid VARCHAR(32) NOT NULL,
+        employer_name VARCHAR(255) NOT NULL,
+        normalized_label VARCHAR(255) NOT NULL,
+        line_item_category VARCHAR(30) NOT NULL,
+        account_guid VARCHAR(32) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(book_guid, employer_name, normalized_label, line_item_category)
+    );
+    CREATE INDEX IF NOT EXISTS idx_payslip_mappings_employer ON gnucash_web_payslip_mappings(book_guid, employer_name);
+
+    CREATE TABLE IF NOT EXISTS gnucash_web_payslip_templates (
+        id SERIAL PRIMARY KEY,
+        book_guid VARCHAR(32) NOT NULL,
+        employer_name VARCHAR(255) NOT NULL,
+        line_items JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(book_guid, employer_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_payslip_templates_book ON gnucash_web_payslip_templates(book_guid);
+`;
+
     const aiConfigTableDDL = `
     CREATE TABLE IF NOT EXISTS gnucash_web_ai_config (
         id SERIAL PRIMARY KEY,
@@ -650,6 +705,7 @@ async function createExtensionTables() {
         await query(receiptsTableDDL);
         await query(receiptsExtractedDataDDL);
         await query(receiptsFtsDDL);
+        await query(payslipsTableDDL);
         await query(aiConfigTableDDL);
         await query(amazonOrdersTableDDL);
         await query(categoryMappingsTableDDL);

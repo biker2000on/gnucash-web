@@ -269,6 +269,11 @@ async function main() {
           console.log(`Thumbnail regeneration: ${thumbResult.regenerated} regenerated, ${thumbResult.skipped} skipped, ${thumbResult.failed} failed`);
           break;
         }
+        case 'extract-payslip': {
+          const { handleExtractPayslip } = await import('./src/lib/queue/jobs/extract-payslip');
+          await handleExtractPayslip(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }

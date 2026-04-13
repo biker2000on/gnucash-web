@@ -13,33 +13,47 @@ Import payroll stubs into GnuCash Web, store PDFs alongside receipts, and auto-g
 - Reconcile with SimpleFin lump-sum deposit imports
 - Phase 2: Pull structured payslip data directly from QuickBooks Online API
 
+## Implementation Approach
+
+### Prisma-First Data Access
+
+All new tables are defined as Prisma models in `prisma/schema.prisma` and synced via `prisma db push`. Standard CRUD uses the Prisma ORM client from `src/lib/prisma.ts`. Raw SQL (`$queryRaw`) is reserved for complex JOINs like the SimpleFin fuzzy deposit matching query.
+
+### Numeric Handling
+
+Payslip amounts (`gross_pay`, `net_pay`, line item amounts) are stored as `Decimal` columns — they come from external sources (PDFs, APIs), not GnuCash fraction pairs. When generating GnuCash split transactions, use `fromDecimal()` from `src/lib/gnucash.ts` to convert to the BigInt numerator/denominator pairs that GnuCash requires.
+
+### TypeScript Typing
+
+Line item interfaces are defined in `src/lib/types.ts`. When reading JSONB columns from Prisma, type assertions are used (matching the pattern for other JSONB columns in the codebase).
+
 ## Data Model
 
-### `gnucash_web_payslips`
+### `gnucash_web_payslips` (Prisma model)
 
 | Column | Type | Description |
 |--------|------|-------------|
-| id | UUID | Primary key |
+| id | UUID | Primary key (`@default(uuid())`) |
 | book_guid | TEXT (FK) | Book this payslip belongs to |
 | pay_date | DATE | Date of payment |
 | pay_period_start | DATE | Pay period start |
 | pay_period_end | DATE | Pay period end |
 | employer_name | TEXT | Employer name |
-| gross_pay | NUMERIC | Gross pay amount |
-| net_pay | NUMERIC | Net pay amount |
+| gross_pay | Decimal | Gross pay amount |
+| net_pay | Decimal | Net pay amount |
 | currency | TEXT | Currency code |
 | source | TEXT | `'pdf_upload'`, `'qbo_api'`, or `'manual'` |
 | source_id | TEXT (nullable) | QBO paycheck ID or SimpleFin txn ID for dedup |
 | transaction_guid | TEXT (FK, nullable) | Linked GnuCash transaction once posted |
 | storage_key | TEXT (nullable) | PDF in S3/filesystem (reuses receipt storage) |
 | thumbnail_key | TEXT (nullable) | Thumbnail for list view |
-| line_items | JSONB | Array of extracted line items |
-| raw_response | JSONB (nullable) | Raw AI extraction or QBO API response (for debugging) |
+| line_items | Json | Array of extracted line items (typed via `PayslipLineItem[]` assertion) |
+| raw_response | Json (nullable) | Raw AI extraction or QBO API response (for debugging) |
 | status | TEXT | `'processing'`, `'needs_mapping'`, `'ready'`, `'posted'`, `'error'` |
 | error_message | TEXT (nullable) | Extraction failure reason |
 | created_by | INTEGER (FK) | User who uploaded (FK to `gnucash_web_users.id`) |
-| created_at | TIMESTAMP | |
-| updated_at | TIMESTAMP | |
+| created_at | TIMESTAMP | `@default(now())` |
+| updated_at | TIMESTAMP | `@updatedAt` |
 
 ### Line items JSONB structure
 
@@ -58,20 +72,20 @@ Categories: `earnings`, `tax`, `deduction`, `employer_contribution`, `reimbursem
 
 **Label normalization:** Each line item has a `label` (display name from the PDF) and a `normalized_label` (lowercase, stripped of whitespace/punctuation, used for mapping lookups). The AI extraction prompt instructs the model to produce both. This prevents "Fed Income Tax" and "Federal Income Tax" from creating separate mappings. Users can edit the normalized label in the detail view if the AI gets it wrong.
 
-### `gnucash_web_payslip_mappings`
+### `gnucash_web_payslip_mappings` (Prisma model)
 
 | Column | Type | Description |
 |--------|------|-------------|
-| id | UUID | Primary key |
+| id | UUID | Primary key (`@default(uuid())`) |
 | book_guid | TEXT (FK) | |
 | employer_name | TEXT | Employer name |
 | normalized_label | TEXT | Normalized key, e.g. "federal_income_tax" |
 | line_item_category | TEXT | e.g. "tax" |
 | account_guid | TEXT (FK) | Target GnuCash account |
-| created_at | TIMESTAMP | |
-| updated_at | TIMESTAMP | |
+| created_at | TIMESTAMP | `@default(now())` |
+| updated_at | TIMESTAMP | `@updatedAt` |
 
-Unique constraint: `(book_guid, employer_name, normalized_label, line_item_category)`
+Unique constraint: `@@unique([book_guid, employer_name, normalized_label, line_item_category])`
 
 ## Account Mapping
 
@@ -86,12 +100,14 @@ Each payslip produces one GnuCash transaction with N splits:
 - One split per line item mapped to its account
 - Net pay split mapped to bank account
 - All splits sum to zero (double-entry)
+- Transaction and split GUIDs generated via `generateGuid()` from `src/lib/gnucash.ts`
+- Dollar amounts converted to GnuCash fraction pairs via `fromDecimal()` from `src/lib/gnucash.ts`
 
 **Employer contributions** (e.g., 401(k) match) are excluded from the main payslip transaction — they don't flow through the employee's bank account. They are stored as line items for informational display on the payslip detail view but do not generate splits. If the user wants to track employer contributions as GnuCash transactions (e.g., debit 401k asset, credit employer-match income), they can optionally post them as a separate transaction.
 
 **Balance validation:** Before posting, the system verifies that `sum(earnings) + sum(taxes) + sum(deductions) + sum(reimbursements) - net_pay == 0`. If there is a discrepancy (common with AI extraction rounding), the difference is shown to the user. They can either: (a) edit line item amounts to fix, or (b) post with the remainder assigned to a configurable imbalance account (matching the SimpleFin import pattern).
 
-If a SimpleFin lump-sum deposit already exists for this paycheck, the user can replace it with the detailed split transaction.
+**SimpleFin deposit replacement:** If a SimpleFin lump-sum deposit already exists for this paycheck, the user can replace it with the detailed split transaction. Use `SELECT FOR UPDATE` locking (matching the pattern in `scheduled-tx-execute.ts`) to avoid race conditions when replacing deposits.
 
 ## PDF Upload + AI Extraction Pipeline (Phase 1)
 
@@ -100,11 +116,11 @@ If a SimpleFin lump-sum deposit already exists for this paycheck, the user can r
 1. User uploads payslip PDF via `POST /api/payslips/upload`
 2. PDF stored via existing S3/filesystem storage backend
 3. Thumbnail generated via existing `regenerate-thumbnails` BullMQ job
-4. New `extract-payslip` BullMQ job enqueued
+4. New `extract-payslip` BullMQ job enqueued (follows `refresh-prices.ts` pattern: dynamic imports of Prisma and service functions inside handler)
 5. Job sends PDF to user's configured AI provider with structured extraction prompt
-6. AI returns JSON — validated against line item schema
-7. Payslip record created with extracted line items
-8. System checks mappings for this employer:
+6. AI returns JSON — validated against `PayslipLineItem` TypeScript interface
+7. Payslip record created via `prisma.gnucash_web_payslips.create()` with extracted line items
+8. System checks mappings via `prisma.gnucash_web_payslip_mappings.findMany()` for this employer:
    - All line items mapped → status `ready`, auto-generates draft transaction
    - Some unmapped → status `needs_mapping`
 
@@ -124,6 +140,7 @@ User can review and edit extracted data before posting. Batch upload supported (
 ### Matching existing deposits
 
 When a payslip is posted:
+- Use `$queryRaw` for the fuzzy date/amount matching query (complex JOIN with date arithmetic and tolerance — not suitable for Prisma ORM)
 - Look for SimpleFin-imported transactions within +/- 3 days of pay date where deposit amount matches net pay (exact or within $0.01)
 - If exactly one match, offer to replace the lump-sum transaction with the detailed split transaction
 - If multiple matches (e.g., two deposits of the same amount in the same week), present the candidates and ask the user to confirm which one

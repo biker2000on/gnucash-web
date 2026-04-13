@@ -215,6 +215,20 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
+## P3 - Accounts API: Strip Book Name from Fullname
+
+**What:** Update the `/api/accounts` endpoint to strip the book name (first segment) from the `fullname` field in responses. Return the book name as a separate `book_name` field instead. Currently `fullname` returns `Crawford Personal Finances:Assets:Checking` — it should return `Assets:Checking` with `book_name: "Crawford Personal Finances"` as a secondary key.
+
+**Why:** Every consumer that displays account paths has to strip the book name manually. The ledger uses `formatDisplayAccountPath()`, the payslip detail panel strips the first segment inline, and the AccountSelector shows full paths. A single fix at the API level eliminates all the client-side stripping.
+
+**Effort:** XS (human: ~1 hour) / with CC: XS (~5 min)
+
+**Depends on:** Nothing. Standalone change on main.
+
+**Context:** Discovered during payslip integration QA (2026-04-13). The `account_hierarchy` view includes the book name as the root. The `buildAccountPathMap()` util in reports already handles this. The fix should update the flat accounts query and the account_hierarchy view response to strip the first segment, and add `book_name` as a top-level field.
+
+---
+
 ## Completed
 
 ### SimpleFin Import: Manual Transaction Reconciliation & Transfer Dedup

@@ -202,7 +202,13 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     </td>
                     <td className="px-4 py-2 text-sm text-foreground leading-tight">
                         <span className="font-medium">{transaction.description}</span>
-                        {transaction.source && transaction.source !== 'manual' && (
+                        {transaction.source === 'payslip' && transaction.match_type === 'payslip_verified' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">Payslip Verified</span>
+                        )}
+                        {transaction.source === 'payslip' && transaction.match_type !== 'payslip_verified' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">Payslip</span>
+                        )}
+                        {transaction.source && transaction.source !== 'manual' && transaction.source !== 'payslip' && (
                             <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
                         )}
                     </td>
@@ -230,7 +236,15 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
-                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
+                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">
+                        {transaction.description}
+                        {transaction.source === 'payslip' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">{transaction.match_type === 'payslip_verified' ? 'Payslip Verified' : 'Payslip'}</span>
+                        )}
+                        {transaction.source && transaction.source !== 'manual' && transaction.source !== 'payslip' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                        )}
+                    </td>
                     <td className="px-4 py-2"></td>
                     <td className="px-4 py-2"></td>
                     <td className="px-4 py-2"></td>
@@ -251,7 +265,15 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
                         {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                     </td>
-                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
+                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">
+                        {transaction.description}
+                        {transaction.source === 'payslip' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">{transaction.match_type === 'payslip_verified' ? 'Payslip Verified' : 'Payslip'}</span>
+                        )}
+                        {transaction.source && transaction.source !== 'manual' && transaction.source !== 'payslip' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                        )}
+                    </td>
                     <td className="px-4 py-2 text-sm text-foreground-secondary leading-tight">
                         {formatDisplayAccountPath(otherSplit?.account_fullname, otherSplit?.account_name)}
                     </td>
