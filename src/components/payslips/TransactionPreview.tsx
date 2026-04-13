@@ -70,7 +70,9 @@ export function TransactionPreview({
           {/* Table body */}
           <tbody>
             {splits.map((split, idx) => {
-              const accountName = accountNames[split.accountGuid] || `Unknown Account`;
+              const accountName = split.accountGuid === depositAccountGuid
+                ? depositAccountName
+                : (accountNames[split.accountGuid] || `Unknown Account`);
               const isDebit = split.amount > 0;
 
               return (

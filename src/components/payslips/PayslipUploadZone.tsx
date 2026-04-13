@@ -12,7 +12,7 @@ interface UploadProgress {
   message?: string;
 }
 
-export function PayslipUploadZone({ onUploadComplete }: PayslipUploadZoneProps) {
+export default function PayslipUploadZone({ onUploadComplete }: PayslipUploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploads, setUploads] = useState<UploadProgress[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);

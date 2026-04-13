@@ -177,7 +177,7 @@ describe('updatePayslipStatus', () => {
 
 describe('updatePayslipLineItems', () => {
   it('updates line_items JSONB field', async () => {
-    const lineItems = [{ category: 'earnings', label: 'Base Salary', normalized_label: 'base_salary', amount: 5000 }];
+    const lineItems = [{ category: 'earnings' as const, label: 'Base Salary', normalized_label: 'base_salary', amount: 5000 }];
     const updated = { id: 1, line_items: lineItems };
     mockPrisma.gnucash_web_payslips.update.mockResolvedValue(updated);
 
@@ -191,7 +191,7 @@ describe('updatePayslipLineItems', () => {
   });
 
   it('also sets raw_response when provided', async () => {
-    const lineItems = [{ category: 'tax', label: 'Federal Tax', normalized_label: 'federal_tax', amount: 800 }];
+    const lineItems = [{ category: 'tax' as const, label: 'Federal Tax', normalized_label: 'federal_tax', amount: 800 }];
     const rawResponse = { model: 'gpt-4', choices: [] };
     mockPrisma.gnucash_web_payslips.update.mockResolvedValue({ id: 1 });
 
