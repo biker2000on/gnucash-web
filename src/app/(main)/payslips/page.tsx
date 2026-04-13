@@ -57,6 +57,8 @@ export default function PayslipsPage() {
   const [showUpload, setShowUpload] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const fetchPayslips = useCallback(async () => {
     try {
@@ -79,6 +81,43 @@ export default function PayslipsPage() {
     fetchPayslips();
     setShowUpload(false);
   }, [fetchPayslips]);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    const deletable = filtered.filter(p => p.status !== 'posted').map(p => p.id);
+    if (deletable.every(id => selectedIds.has(id))) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(deletable));
+    }
+  }, [filtered, selectedIds]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Delete ${selectedIds.size} payslip${selectedIds.size > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map(id =>
+          fetch(`/api/payslips/${id}`, { method: 'DELETE' })
+        )
+      );
+      setSelectedIds(new Set());
+      fetchPayslips();
+    } catch (err) {
+      console.error('Bulk delete failed:', err);
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedIds, fetchPayslips]);
 
   const filtered =
     statusFilter === 'all'
@@ -133,6 +172,16 @@ export default function PayslipsPage() {
             {filtered.length} {filtered.length === 1 ? 'payslip' : 'payslips'}
           </span>
         )}
+
+        {selectedIds.size > 0 && (
+          <button
+            onClick={handleBulkDelete}
+            disabled={deleting}
+            className="ml-auto px-3 py-1.5 text-xs font-medium rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
+          >
+            {deleting ? 'Deleting...' : `Delete ${selectedIds.size} selected`}
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -153,6 +202,14 @@ export default function PayslipsPage() {
           <table className="w-full">
             <thead>
               <tr className="text-left">
+                <th className="border-b border-border py-3 px-4 w-10">
+                  <input
+                    type="checkbox"
+                    checked={filtered.filter(p => p.status !== 'posted').length > 0 && filtered.filter(p => p.status !== 'posted').every(p => selectedIds.has(p.id))}
+                    onChange={toggleSelectAll}
+                    className="rounded border-border"
+                  />
+                </th>
                 <th className="text-xs text-foreground-muted border-b border-border py-3 px-4 font-medium">
                   Pay Date
                 </th>
@@ -175,8 +232,18 @@ export default function PayslipsPage() {
                 <tr
                   key={payslip.id}
                   onClick={() => setSelectedId(payslip.id)}
-                  className="border-b border-border/50 cursor-pointer transition-colors hover:bg-surface-hover/50"
+                  className={`border-b border-border/50 cursor-pointer transition-colors hover:bg-surface-hover/50 ${selectedIds.has(payslip.id) ? 'bg-primary/5' : ''}`}
                 >
+                  <td className="py-3 px-4" onClick={e => e.stopPropagation()}>
+                    {payslip.status !== 'posted' && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(payslip.id)}
+                        onChange={() => toggleSelect(payslip.id)}
+                        className="rounded border-border"
+                      />
+                    )}
+                  </td>
                   <td className="py-3 px-4 text-sm text-foreground">
                     {new Date(payslip.pay_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                   </td>

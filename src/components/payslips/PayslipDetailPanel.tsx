@@ -220,6 +220,23 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
     }
   }, [payslip, payslipId, editableEmployerName]);
 
+  const handleDelete = useCallback(async () => {
+    if (!payslip || payslip.status === 'posted') return;
+    if (!confirm('Delete this payslip? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`/api/payslips/${payslipId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json();
+        setPostError(data.error || 'Delete failed');
+        return;
+      }
+      onUpdated?.();
+      onClose();
+    } catch (err) {
+      setPostError(err instanceof Error ? err.message : 'Delete failed');
+    }
+  }, [payslip, payslipId, onUpdated, onClose]);
+
   // Derived state
   const lineItems: PayslipLineItem[] = payslip?.line_items ?? [];
 
@@ -347,15 +364,29 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
             )}
           </div>
 
-          <button
-            onClick={onClose}
-            className="flex-shrink-0 p-1.5 rounded-lg text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors"
-            aria-label="Close panel"
-          >
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {payslip && payslip.status !== 'posted' && (
+              <button
+                onClick={handleDelete}
+                className="p-1.5 rounded-lg text-foreground-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                aria-label="Delete payslip"
+                title="Delete payslip"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors"
+              aria-label="Close panel"
+            >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </button>
+            </button>
+          </div>
         </div>
 
         {/* Content */}
