@@ -75,6 +75,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
   const [postError, setPostError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [editableEmployerName, setEditableEmployerName] = useState('');
 
   // Close on Escape
   useEffect(() => {
@@ -100,6 +101,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
 
         if (cancelled) return;
         setPayslip(payslipData);
+        setEditableEmployerName(payslipData.employer_name || '');
 
         const mappingsRes = await fetch(
           `/api/payslips/mappings?employer=${encodeURIComponent(payslipData.employer_name)}`
@@ -159,6 +161,47 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
     },
     [payslip]
   );
+
+  const handleAddLineItem = useCallback(() => {
+    if (!payslip) return;
+    const newItem: PayslipLineItem = {
+      category: 'earnings',
+      label: '',
+      normalized_label: '',
+      amount: 0,
+    };
+    const updated = [...(payslip.line_items ?? []), newItem];
+    setPayslip(prev => prev ? { ...prev, line_items: updated } : null);
+  }, [payslip]);
+
+  const handleRemoveLineItem = useCallback((index: number) => {
+    if (!payslip) return;
+    const updated = (payslip.line_items ?? []).filter((_, i) => i !== index);
+    setPayslip(prev => prev ? { ...prev, line_items: updated } : null);
+  }, [payslip]);
+
+  const handleLineItemEdit = useCallback((index: number, field: string, value: unknown) => {
+    if (!payslip) return;
+    const items = [...(payslip.line_items ?? [])];
+    items[index] = { ...items[index], [field]: value };
+    setPayslip(prev => prev ? { ...prev, line_items: items } : null);
+  }, [payslip]);
+
+  const handleSaveLineItems = useCallback(async () => {
+    if (!payslip) return;
+    try {
+      await fetch(`/api/payslips/${payslipId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          line_items: payslip.line_items,
+          employer_name: editableEmployerName,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to save line items:', err);
+    }
+  }, [payslip, payslipId, editableEmployerName]);
 
   // Derived state
   const lineItems: PayslipLineItem[] = payslip?.line_items ?? [];
@@ -263,9 +306,20 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
             ) : (
               <>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-base font-semibold text-foreground truncate">
-                    {payslip?.employer_name ?? 'Payslip'}
-                  </h2>
+                  {payslip && payslip.status !== 'posted' ? (
+                    <input
+                      type="text"
+                      value={editableEmployerName}
+                      onChange={e => setEditableEmployerName(e.target.value)}
+                      onBlur={handleSaveLineItems}
+                      className="text-lg font-semibold text-foreground bg-transparent border-b border-border focus:border-primary focus:outline-none"
+                      placeholder="Employer name"
+                    />
+                  ) : (
+                    <span className="text-lg font-semibold text-foreground">
+                      {payslip?.employer_name ?? 'Payslip'}
+                    </span>
+                  )}
                   {payslip && <StatusBadge status={payslip.status} />}
                 </div>
                 {formattedPayDate && (
@@ -346,7 +400,10 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
                     employerName={payslip.employer_name}
                     mappings={mappings}
                     onMappingChange={handleMappingChange}
-                    editable={false}
+                    editable={payslip.status !== 'posted'}
+                    onLineItemEdit={handleLineItemEdit}
+                    onAddLineItem={handleAddLineItem}
+                    onRemoveLineItem={handleRemoveLineItem}
                   />
                 </div>
               )}
@@ -355,6 +412,16 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
                 <div className="text-sm text-foreground-muted italic">
                   No line items available for this payslip.
                 </div>
+              )}
+
+              {/* Save changes button */}
+              {payslip.status !== 'posted' && lineItems.length > 0 && (
+                <button
+                  onClick={handleSaveLineItems}
+                  className="text-xs text-primary hover:text-primary-hover transition-colors"
+                >
+                  Save changes
+                </button>
               )}
 
               {/* Deposit account selector */}

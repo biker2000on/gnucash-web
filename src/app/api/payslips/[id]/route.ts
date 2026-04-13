@@ -67,9 +67,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
 
     const body = await request.json();
-    const { line_items, status } = body as {
+    const { line_items, status, employer_name } = body as {
       line_items?: PayslipLineItem[];
       status?: PayslipStatus;
+      employer_name?: string;
     };
 
     if (line_items !== undefined) {
@@ -78,6 +79,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
     if (status !== undefined) {
       await updatePayslipStatus(payslipId, status);
+    }
+
+    if (employer_name) {
+      await updatePayslipStatus(payslipId, payslip.status as PayslipStatus, {
+        employer_name: employer_name,
+      });
     }
 
     const updated = await getPayslip(payslipId, bookGuid);
