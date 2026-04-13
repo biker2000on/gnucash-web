@@ -178,7 +178,7 @@ export default function PayslipsPage() {
                   className="border-b border-border/50 cursor-pointer transition-colors hover:bg-surface-hover/50"
                 >
                   <td className="py-3 px-4 text-sm text-foreground">
-                    {new Date(payslip.pay_date).toLocaleDateString()}
+                    {new Date(payslip.pay_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                   </td>
                   <td className="py-3 px-4 text-sm text-foreground">
                     {payslip.employer_name}

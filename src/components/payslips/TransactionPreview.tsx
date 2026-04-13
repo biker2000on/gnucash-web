@@ -34,6 +34,7 @@ export function TransactionPreview({
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+    timeZone: 'UTC',
   });
 
   return (

@@ -117,7 +117,11 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
           const accounts: Array<{ guid: string; name: string; fullname?: string }> = await accRes.json();
           const names: Record<string, string> = {};
           for (const a of accounts) {
-            names[a.guid] = formatDisplayAccountPath(a.fullname, a.name);
+            // Strip book name (first segment) from fullname path
+            const fullname = a.fullname || '';
+            const segments = fullname.split(':');
+            const stripped = segments.length > 1 ? segments.slice(1).join(':') : fullname;
+            names[a.guid] = stripped || a.name;
           }
           if (!cancelled) setAccountNames(names);
         }
@@ -250,6 +254,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
         month: 'short',
         day: 'numeric',
         year: 'numeric',
+        timeZone: 'UTC',
       })
     : '';
 
