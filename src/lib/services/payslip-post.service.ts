@@ -11,6 +11,7 @@ import { generateGuid, fromDecimal } from '@/lib/gnucash';
 import prisma from '@/lib/prisma';
 import type { PayslipLineItem } from '@/lib/types';
 import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
+import { upsertTemplate } from '@/lib/payslips';
 export type { PayslipSplit } from '@/lib/payslip-splits';
 export { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 
@@ -90,6 +91,14 @@ export async function postPayslipTransaction(
         updated_at: new Date(),
       },
     });
+
+    // Auto-save employer template from posted line items
+    const templateItems = lineItems.map(item => ({
+      category: item.category,
+      label: item.label,
+      normalized_label: item.normalized_label,
+    }));
+    await upsertTemplate(bookGuid, employerName, templateItems);
 
     return transactionGuid;
   });
