@@ -16,9 +16,6 @@
 #   POSTGRES_DATA_DIR=./postgres-data  # Local folder for PostgreSQL data
 #   MINIO_DATA_DIR=./minio-data       # Local folder for MinIO storage
 #
-# Optional services (enable via profiles):
-#   docker compose -f docker-compose.prod.yml --profile storage up -d   # + MinIO
-#
 # Usage:
 #   docker compose -f docker-compose.prod.yml up -d
 #   docker compose -f docker-compose.prod.yml logs -f
@@ -97,12 +94,9 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
 
-  # ---- Optional: S3-compatible storage via MinIO ----
-  # Enable with: --profile storage
-  # Set RECEIPT_STORAGE=s3, RECEIPT_S3_ENDPOINT=http://minio:9000 in .env
+  # ---- S3-compatible storage via MinIO ----
   minio:
     image: minio/minio
-    profiles: ["storage"]
     ports:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
