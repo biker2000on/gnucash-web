@@ -45,6 +45,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      createbuckets:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   worker:
@@ -68,6 +70,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      createbuckets:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   postgres:
@@ -107,6 +111,26 @@ services:
       - ${MINIO_DATA_DIR:-./minio-data}:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin} >/dev/null 2>&1 && mc ls local >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Create default buckets on first run
+  createbuckets:
+    image: minio/minio
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command: >
+      -c "
+      mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc mb --ignore-existing myminio/${RECEIPT_S3_BUCKET:-gnucash-receipts};
+      echo 'Bucket ready';
+      "
+    restart: "no"
 
 
 volumes:
