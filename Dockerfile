@@ -89,8 +89,10 @@ ENV NODE_ENV production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 ENV NEXT_TELEMETRY_DISABLED 1
 
-# Install tesseract-ocr for receipt OCR and poppler-utils for PDF thumbnail rendering
-RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng poppler-utils
+# Install tesseract-ocr for receipt OCR, poppler-utils for PDF rendering,
+# and fonts so pdftoppm can render standard PDF fonts (Helvetica, Times, etc.)
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng poppler-utils \
+    font-noto font-noto-cjk poppler-data
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
