@@ -628,6 +628,19 @@ model gnucash_web_payslip_mappings {
   @@map("gnucash_web_payslip_mappings")
 }
 
+model gnucash_web_payslip_templates {
+  id            Int      @id @default(autoincrement())
+  book_guid     String   @db.VarChar(32)
+  employer_name String   @db.VarChar(255)
+  line_items    Json     @db.JsonB
+  created_at    DateTime @default(now())
+  updated_at    DateTime @default(now())
+
+  @@unique([book_guid, employer_name])
+  @@index([book_guid])
+  @@map("gnucash_web_payslip_templates")
+}
+
 model gnucash_web_ai_config {
   id                Int       @id @default(autoincrement())
   user_id           Int?      @unique

@@ -562,6 +562,17 @@ async function createExtensionTables() {
         UNIQUE(book_guid, employer_name, normalized_label, line_item_category)
     );
     CREATE INDEX IF NOT EXISTS idx_payslip_mappings_employer ON gnucash_web_payslip_mappings(book_guid, employer_name);
+
+    CREATE TABLE IF NOT EXISTS gnucash_web_payslip_templates (
+        id SERIAL PRIMARY KEY,
+        book_guid VARCHAR(32) NOT NULL,
+        employer_name VARCHAR(255) NOT NULL,
+        line_items JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(book_guid, employer_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_payslip_templates_book ON gnucash_web_payslip_templates(book_guid);
 `;
 
     const aiConfigTableDDL = `
