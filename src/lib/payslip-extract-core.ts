@@ -125,7 +125,11 @@ export async function runPayslipExtraction(
     }
 
     if (template) {
-      const templateLineItems = (template.line_items as Array<{ normalized_label: string; category: string }>) ?? [];
+      const rawLineItems = (template.line_items as Array<{ normalized_label: string; category: string; label?: string }>) ?? [];
+      const templateLineItems = rawLineItems.map(item => ({
+        ...item,
+        label: item.label || item.normalized_label,
+      }));
       const appliedLineItems = applyTemplateWithRegex(templateLineItems, ocrText);
 
       await updatePayslipLineItems(payslipId, appliedLineItems, { ocrText, tier: 'template_regex' });
