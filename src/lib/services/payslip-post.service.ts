@@ -69,8 +69,41 @@ export async function findMatchingTransaction(
 }
 
 /**
+ * Find a SimpleFin-imported lump-sum deposit that matches this payslip.
+ * Looks for transactions within +/- 3 days where:
+ * - A split on the deposit account matches net pay within $0.02
+ * - The transaction has SimpleFin metadata
+ */
+export async function findSimpleFinDeposit(
+  depositAccountGuid: string,
+  netPay: number,
+  payDate: string
+): Promise<string | null> {
+  const postDate = new Date(payDate + 'T12:00:00Z');
+  const dateStart = new Date(postDate.getTime() - 3 * 24 * 60 * 60 * 1000);
+  const dateEnd = new Date(postDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+
+  const matches = await prisma.$queryRaw<Array<{ guid: string }>>`
+    SELECT t.guid
+    FROM transactions t
+    JOIN splits s ON s.tx_guid = t.guid
+    JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
+    WHERE s.account_guid = ${depositAccountGuid}
+      AND ABS((s.value_num::float / s.value_denom::float) - ${netPay}) < 0.02
+      AND t.post_date BETWEEN ${dateStart} AND ${dateEnd}
+      AND m.source = 'simplefin'
+    ORDER BY ABS(EXTRACT(EPOCH FROM (t.post_date - ${postDate}::timestamptz)))
+    LIMIT 1
+  `;
+
+  return matches.length > 0 ? matches[0].guid : null;
+}
+
+/**
  * Post a payslip as a GnuCash transaction atomically.
- * If an existing transaction with matching splits is found, links to it instead of creating a duplicate.
+ * If a SimpleFin deposit matches, replaces its splits with the detailed payslip breakdown.
+ * If an existing transaction with full matching splits is found, links to it (dedup).
+ * Otherwise creates a new transaction.
  *
  * @returns Transaction GUID (existing or newly created)
  */
@@ -104,7 +137,10 @@ export async function postPayslipTransaction(
     throw new Error(`Transaction splits do not sum to zero: ${splitsSum}`);
   }
 
-  // Check for existing transaction with matching splits (dedup)
+  // Check for SimpleFin lump-sum deposit to replace
+  const simpleFinMatch = await findSimpleFinDeposit(depositAccountGuid, netPay, payDate);
+
+  // Check for existing transaction with matching splits (full dedup)
   const existingGuid = await findMatchingTransaction(splits, payDate);
   if (existingGuid) {
     // Link payslip to existing transaction instead of creating a duplicate
@@ -154,6 +190,62 @@ export async function postPayslipTransaction(
     return existingGuid;
   }
 
+  // Replace SimpleFin lump-sum deposit with detailed payslip splits
+  if (simpleFinMatch) {
+    return await prisma.$transaction(async (tx) => {
+      // Delete the old lump-sum splits
+      await tx.$executeRaw`DELETE FROM splits WHERE tx_guid = ${simpleFinMatch}`;
+
+      // Update the transaction description
+      await tx.$executeRaw`
+        UPDATE transactions SET description = ${`Payslip: ${employerName}`}
+        WHERE guid = ${simpleFinMatch}
+      `;
+
+      // Insert detailed payslip splits
+      for (const split of splits) {
+        const splitGuid = generateGuid();
+        const { num, denom } = fromDecimal(split.amount);
+        await tx.$executeRaw`
+          INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state, reconcile_date, value_num, value_denom, quantity_num, quantity_denom, lot_guid)
+          VALUES (${splitGuid}, ${simpleFinMatch}, ${split.accountGuid}, ${split.memo}, '', 'n', NULL, ${num}, ${denom}, ${num}, ${denom}, NULL)
+        `;
+      }
+
+      // Link payslip to the existing transaction
+      await tx.gnucash_web_payslips.update({
+        where: { id: payslipId },
+        data: {
+          status: 'posted',
+          transaction_guid: simpleFinMatch,
+          deposit_account_guid: depositAccountGuid,
+          updated_at: new Date(),
+        },
+      });
+
+      // Update meta to payslip_verified
+      await tx.gnucash_web_transaction_meta.update({
+        where: { transaction_guid: simpleFinMatch },
+        data: {
+          match_type: 'payslip_verified',
+          match_confidence: 'high',
+          matched_at: new Date(),
+        },
+      });
+
+      // Auto-save template
+      const templateItems = lineItems.map(item => ({
+        category: item.category,
+        label: item.label,
+        normalized_label: item.normalized_label,
+      }));
+      await upsertTemplate(bookGuid, employerName, templateItems);
+
+      return simpleFinMatch;
+    });
+  }
+
+  // No match — create new transaction
   return await prisma.$transaction(async (tx) => {
     const transactionGuid = generateGuid();
     const postDate = new Date(payDate + 'T12:00:00Z');
