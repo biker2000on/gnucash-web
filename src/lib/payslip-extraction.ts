@@ -145,13 +145,15 @@ async function renderPdfToBase64(pdfBuffer: Buffer): Promise<string | null> {
     const { join } = await import('path');
 
     const tmpDir = tmpdir();
-    const inputPath = join(tmpDir, `payslip-input-${Date.now()}.pdf`);
-    const outPrefix = join(tmpDir, `payslip-render-${Date.now()}`);
+    const ts = Date.now();
+    const inputPath = join(tmpDir, `payslip-input-${ts}.pdf`);
+    const outPrefix = join(tmpDir, `payslip-render-${ts}`);
+    const outBasename = `payslip-render-${ts}`;
 
     writeFileSync(inputPath, pdfBuffer);
     execSync(`pdftoppm -f 1 -l 1 -png -r 300 ${inputPath} ${outPrefix}`, { timeout: 30000 });
 
-    const files = readdirSync(tmpDir).filter(f => f.startsWith(`payslip-render-${Date.now().toString().slice(0, -3)}`));
+    const files = readdirSync(tmpDir).filter(f => f.startsWith(outBasename));
     if (files.length === 0) return null;
 
     const imgBuffer = readFileSync(join(tmpDir, files[0]));
