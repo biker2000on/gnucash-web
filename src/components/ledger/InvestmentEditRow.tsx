@@ -1,5 +1,5 @@
 'use client';
-import { useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import React, { useState, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { AccountTransaction } from '@/components/AccountLedger';
 import { DateCell } from './cells/DateCell';
 import { DescriptionCell } from './cells/DescriptionCell';
@@ -45,6 +45,7 @@ interface InvestmentEditRowProps {
     onArrowDown?: () => void;
     onColumnFocus?: (columnIndex: number) => void;
     onTabFromActions?: (direction: 'next' | 'previous') => void;
+    columnIds?: string[];
 }
 
 export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentEditRowProps>(
@@ -65,6 +66,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         onArrowDown,
         onColumnFocus,
         onTabFromActions,
+        columnIds,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -172,7 +174,19 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
 
         const rowClass = `transition-colors ${isActive ? 'ring-2 ring-primary/30 ring-inset bg-primary/5' : 'hover:bg-white/[0.02]'} ${saveError ? 'ring-2 ring-rose-500/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-amber-500' : ''}`;
 
-        const checkboxCell = showCheckbox && (
+        const renderCells = (cellMap: Record<string, React.ReactNode>) => {
+            if (!columnIds) {
+                return Object.entries(cellMap).map(([id, cell]) => (
+                    <React.Fragment key={id}>{cell}</React.Fragment>
+                ));
+            }
+            return columnIds.map(id => {
+                if (id in cellMap) return <React.Fragment key={id}>{cellMap[id]}</React.Fragment>;
+                return <td key={id} className="px-2 py-2"></td>;
+            });
+        };
+
+        const selectCell = showCheckbox ? (
             <td className="px-3 py-2 align-middle">
                 <input
                     type="checkbox"
@@ -182,7 +196,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary focus:ring-primary/50 cursor-pointer"
                 />
             </td>
-        );
+        ) : <td className="px-3 py-2"></td>;
 
         const reconcileCell = (
             <td className="px-3 py-1 align-middle">
@@ -192,7 +206,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             </td>
         );
 
-        const actionsCell = (
+        const actionsCellWithTab = (
             <td className="px-2 py-1 align-middle">
                 <div className="flex items-center gap-1">
                     {onDuplicate && (
@@ -229,59 +243,81 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         if (isMultiSplit) {
             return (
                 <tr className={rowClass} onClick={handleRowClick}>
-                    {checkboxCell}
-                    {reconcileCell}
-                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
-                        {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                    </td>
-                    <td className="px-4 py-2 text-sm text-foreground leading-tight">
-                        <span className="font-medium">{transaction.description}</span>
-                    </td>
-                    <td className="px-4 py-2 text-xs text-foreground-muted italic">
-                        {invRow.transferAccount || '\u2014'}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right">
-                        {invRow.shares != null ? invRow.shares.toFixed(4) : '\u2014'}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right">
-                        {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : '\u2014'}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
-                        {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : ''}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
-                        {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : ''}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                        {invRow.shareBalance.toFixed(4)}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                        {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
-                    </td>
-                    <td className="px-2 py-2 align-middle">
-                        <div className="flex items-center gap-1">
-                            {onDuplicate && (
-                                <button
-                                    onClick={() => onDuplicate(transaction.guid)}
-                                    className="text-foreground-muted hover:text-primary transition-colors"
-                                    title="Duplicate (d)"
-                                >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    </svg>
-                                </button>
-                            )}
-                            <button
-                                onClick={() => onEditModal(transaction.guid)}
-                                className="text-amber-400 hover:text-amber-300 transition-colors text-xs italic"
-                                title="Multi-split: edit in modal"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
-                            </button>
-                        </div>
-                    </td>
+                    {renderCells({
+                        select: selectCell,
+                        reconcile: reconcileCell,
+                        date: (
+                            <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
+                                {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                            </td>
+                        ),
+                        description: (
+                            <td className="px-4 py-2 text-sm text-foreground leading-tight">
+                                <span className="font-medium">{transaction.description}</span>
+                            </td>
+                        ),
+                        transfer: (
+                            <td className="px-4 py-2 text-xs text-foreground-muted italic">
+                                {invRow.transferAccount || '\u2014'}
+                            </td>
+                        ),
+                        shares: (
+                            <td className="px-4 py-2 text-sm font-mono text-right">
+                                {invRow.shares != null ? invRow.shares.toFixed(4) : '\u2014'}
+                            </td>
+                        ),
+                        price: (
+                            <td className="px-4 py-2 text-sm font-mono text-right">
+                                {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : '\u2014'}
+                            </td>
+                        ),
+                        buy: (
+                            <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
+                                {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : ''}
+                            </td>
+                        ),
+                        sell: (
+                            <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
+                                {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : ''}
+                            </td>
+                        ),
+                        shareBalance: (
+                            <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
+                                {invRow.shareBalance.toFixed(4)}
+                            </td>
+                        ),
+                        costBasis: (
+                            <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
+                                {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
+                            </td>
+                        ),
+                        actions: (
+                            <td className="px-2 py-2 align-middle">
+                                <div className="flex items-center gap-1">
+                                    {onDuplicate && (
+                                        <button
+                                            onClick={() => onDuplicate(transaction.guid)}
+                                            className="text-foreground-muted hover:text-primary transition-colors"
+                                            title="Duplicate (d)"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => onEditModal(transaction.guid)}
+                                        className="text-amber-400 hover:text-amber-300 transition-colors text-xs italic"
+                                        title="Multi-split: edit in modal"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </td>
+                        ),
+                    })}
                 </tr>
             );
         }
@@ -290,38 +326,58 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         if (!isActive) {
             return (
                 <tr className={rowClass} onClick={handleRowClick}>
-                    {checkboxCell}
-                    {reconcileCell}
-                    <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
-                        {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                    </td>
-                    <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
-                    <td className="px-4 py-2 text-sm text-foreground-secondary leading-tight">
-                        {formatDisplayAccountPath(invRow.transferAccount, invRow.transferAccount)}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right">
-                        {invRow.shares != null ? (
-                            <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                                {invRow.shares.toFixed(4)}
-                            </span>
-                        ) : <span className="opacity-30">&mdash;</span>}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right text-foreground">
-                        {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
-                        {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
-                        {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                        {invRow.shareBalance.toFixed(4)}
-                    </td>
-                    <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                        {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
-                    </td>
-                    {actionsCell}
+                    {renderCells({
+                        select: selectCell,
+                        reconcile: reconcileCell,
+                        date: (
+                            <td className="px-4 py-2 text-[11px] text-foreground-secondary font-mono">
+                                {new Date(transaction.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                            </td>
+                        ),
+                        description: (
+                            <td className="px-4 py-2 text-sm text-foreground font-medium leading-tight">{transaction.description}</td>
+                        ),
+                        transfer: (
+                            <td className="px-4 py-2 text-sm text-foreground-secondary leading-tight">
+                                {formatDisplayAccountPath(invRow.transferAccount, invRow.transferAccount)}
+                            </td>
+                        ),
+                        shares: (
+                            <td className="px-4 py-2 text-sm font-mono text-right">
+                                {invRow.shares != null ? (
+                                    <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                        {invRow.shares.toFixed(4)}
+                                    </span>
+                                ) : <span className="opacity-30">&mdash;</span>}
+                            </td>
+                        ),
+                        price: (
+                            <td className="px-4 py-2 text-sm font-mono text-right text-foreground">
+                                {invRow.price != null ? formatCurrency(invRow.price, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
+                            </td>
+                        ),
+                        buy: (
+                            <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
+                                {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
+                            </td>
+                        ),
+                        sell: (
+                            <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
+                                {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
+                            </td>
+                        ),
+                        shareBalance: (
+                            <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
+                                {invRow.shareBalance.toFixed(4)}
+                            </td>
+                        ),
+                        costBasis: (
+                            <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
+                                {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
+                            </td>
+                        ),
+                        actions: actionsCellWithTab,
+                    })}
                 </tr>
             );
         }
@@ -329,178 +385,186 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         // Active editable row with auto-calc triangle
         return (
             <tr className={rowClass}>
-                {checkboxCell}
-                {reconcileCell}
-                {/* Date */}
-                <td className="px-2 py-1 align-middle">
-                    <DateCell
-                        value={postDate}
-                        onChange={setPostDate}
-                        autoFocus={focusedColumn === 0}
-                        onEnter={onEnter}
-                        onArrowUp={onArrowUp}
-                        onArrowDown={onArrowDown}
-                        onFocus={() => onColumnFocus?.(0)}
-                    />
-                </td>
-                {/* Description */}
-                <td className="px-2 py-1 align-middle">
-                    <DescriptionCell
-                        value={description}
-                        onChange={setDescription}
-                        autoFocus={focusedColumn === 1}
-                        onEnter={onEnter}
-                        onArrowUp={onArrowUp}
-                        onArrowDown={onArrowDown}
-                        onFocus={() => onColumnFocus?.(1)}
-                    />
-                </td>
-                {/* Transfer Account */}
-                <td className="px-2 py-1 align-middle">
-                    <AccountCell
-                        value={transferAccountGuid}
-                        onChange={(guid, name) => { setTransferAccountGuid(guid); setTransferAccountName(name); }}
-                        autoFocus={focusedColumn === 2}
-                        onEnter={onEnter}
-                        onArrowUp={onArrowUp}
-                        onArrowDown={onArrowDown}
-                        onFocus={() => onColumnFocus?.(2)}
-                    />
-                </td>
-                {/* Shares */}
-                <td className="px-2 py-1 align-middle">
-                    <AmountCell
-                        value={userSharesStr}
-                        onChange={setUserSharesStr}
-                        autoFocus={focusedColumn === 3}
-                        onEnter={onEnter}
-                        onArrowUp={onArrowUp}
-                        onArrowDown={onArrowDown}
-                        onFocus={() => onColumnFocus?.(3)}
-                    />
-                </td>
-                {/* Price (may be auto-calculated) */}
-                <td className="px-2 py-1 align-middle">
-                    <div className="relative">
-                        <input
-                            type="text"
-                            inputMode="decimal"
-                            value={displayPrice}
-                            onChange={(e) => {
-                                setUserPriceStr(e.target.value);
-                                setAutoCalcField('total');
-                            }}
-                            onFocus={() => {
-                                onColumnFocus?.(4);
-                                // If user focuses price, switch to calc total
-                                if (autoCalcField === 'price') {
-                                    // Keep current displayed price as user value
-                                    setUserPriceStr(displayPrice);
-                                    setAutoCalcField('total');
-                                }
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') { e.preventDefault(); onEnter?.(); }
-                                else if (e.key === 'ArrowUp') { e.preventDefault(); onArrowUp?.(); }
-                                else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
-                            }}
-                            placeholder="0.0000"
-                            className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'price' ? 'italic text-foreground-muted' : 'text-foreground'}`}
-                        />
-                    </div>
-                </td>
-                {/* Buy total */}
-                <td className="px-2 py-1 align-middle">
-                    {isBuy ? (
-                        <div className="relative">
-                            <input
-                                type="text"
-                                inputMode="decimal"
-                                value={autoCalcField === 'total' ? displayTotal : userTotalStr}
-                                onChange={(e) => {
-                                    setUserTotalStr(e.target.value);
-                                    setAutoCalcField('price');
-                                }}
-                                onFocus={() => {
-                                    onColumnFocus?.(5);
-                                    if (autoCalcField === 'total') {
-                                        setUserTotalStr(displayTotal);
-                                        setAutoCalcField('price');
-                                    }
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') { e.preventDefault(); onEnter?.(); }
-                                    else if (e.key === 'ArrowUp') { e.preventDefault(); onArrowUp?.(); }
-                                    else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
-                                }}
-                                placeholder="0.00"
-                                className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-emerald-400'}`}
+                {renderCells({
+                    select: selectCell,
+                    reconcile: reconcileCell,
+                    date: (
+                        <td className="px-2 py-1 align-middle">
+                            <DateCell
+                                value={postDate}
+                                onChange={setPostDate}
+                                autoFocus={focusedColumn === 0}
+                                onEnter={onEnter}
+                                onArrowUp={onArrowUp}
+                                onArrowDown={onArrowDown}
+                                onFocus={() => onColumnFocus?.(0)}
                             />
-                        </div>
-                    ) : (
-                        <button
-                            onClick={() => {
-                                setIsBuy(true);
-                                // Move total value to buy
-                                setAutoCalcField('price');
-                            }}
-                            className="w-full text-center text-foreground-muted hover:text-primary transition-colors text-xs py-0.5"
-                            tabIndex={-1}
-                        >
-                            &mdash;
-                        </button>
-                    )}
-                </td>
-                {/* Sell total */}
-                <td className="px-2 py-1 align-middle">
-                    {!isBuy ? (
-                        <div className="relative">
-                            <input
-                                type="text"
-                                inputMode="decimal"
-                                value={autoCalcField === 'total' ? displayTotal : userTotalStr}
-                                onChange={(e) => {
-                                    setUserTotalStr(e.target.value);
-                                    setAutoCalcField('price');
-                                }}
-                                onFocus={() => {
-                                    onColumnFocus?.(6);
-                                    if (autoCalcField === 'total') {
-                                        setUserTotalStr(displayTotal);
-                                        setAutoCalcField('price');
-                                    }
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') { e.preventDefault(); onEnter?.(); }
-                                    else if (e.key === 'ArrowUp') { e.preventDefault(); onArrowUp?.(); }
-                                    else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
-                                }}
-                                placeholder="0.00"
-                                className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-rose-400'}`}
+                        </td>
+                    ),
+                    description: (
+                        <td className="px-2 py-1 align-middle">
+                            <DescriptionCell
+                                value={description}
+                                onChange={setDescription}
+                                autoFocus={focusedColumn === 1}
+                                onEnter={onEnter}
+                                onArrowUp={onArrowUp}
+                                onArrowDown={onArrowDown}
+                                onFocus={() => onColumnFocus?.(1)}
                             />
-                        </div>
-                    ) : (
-                        <button
-                            onClick={() => {
-                                setIsBuy(false);
-                                setAutoCalcField('price');
-                            }}
-                            className="w-full text-center text-foreground-muted hover:text-rose-400 transition-colors text-xs py-0.5"
-                            tabIndex={-1}
-                        >
-                            &mdash;
-                        </button>
-                    )}
-                </td>
-                {/* Share Balance (read-only) */}
-                <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
-                    {invRow.shareBalance.toFixed(4)}
-                </td>
-                {/* Cost Basis (read-only) */}
-                <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
-                    {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
-                </td>
-                {actionsCell}
+                        </td>
+                    ),
+                    transfer: (
+                        <td className="px-2 py-1 align-middle">
+                            <AccountCell
+                                value={transferAccountGuid}
+                                onChange={(guid, name) => { setTransferAccountGuid(guid); setTransferAccountName(name); }}
+                                autoFocus={focusedColumn === 2}
+                                onEnter={onEnter}
+                                onArrowUp={onArrowUp}
+                                onArrowDown={onArrowDown}
+                                onFocus={() => onColumnFocus?.(2)}
+                            />
+                        </td>
+                    ),
+                    shares: (
+                        <td className="px-2 py-1 align-middle">
+                            <AmountCell
+                                value={userSharesStr}
+                                onChange={setUserSharesStr}
+                                autoFocus={focusedColumn === 3}
+                                onEnter={onEnter}
+                                onArrowUp={onArrowUp}
+                                onArrowDown={onArrowDown}
+                                onFocus={() => onColumnFocus?.(3)}
+                            />
+                        </td>
+                    ),
+                    price: (
+                        <td className="px-2 py-1 align-middle">
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={displayPrice}
+                                    onChange={(e) => {
+                                        setUserPriceStr(e.target.value);
+                                        setAutoCalcField('total');
+                                    }}
+                                    onFocus={() => {
+                                        onColumnFocus?.(4);
+                                        if (autoCalcField === 'price') {
+                                            setUserPriceStr(displayPrice);
+                                            setAutoCalcField('total');
+                                        }
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') { e.preventDefault(); onEnter?.(); }
+                                        else if (e.key === 'ArrowUp') { e.preventDefault(); onArrowUp?.(); }
+                                        else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
+                                    }}
+                                    placeholder="0.0000"
+                                    className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'price' ? 'italic text-foreground-muted' : 'text-foreground'}`}
+                                />
+                            </div>
+                        </td>
+                    ),
+                    buy: (
+                        <td className="px-2 py-1 align-middle">
+                            {isBuy ? (
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={autoCalcField === 'total' ? displayTotal : userTotalStr}
+                                        onChange={(e) => {
+                                            setUserTotalStr(e.target.value);
+                                            setAutoCalcField('price');
+                                        }}
+                                        onFocus={() => {
+                                            onColumnFocus?.(5);
+                                            if (autoCalcField === 'total') {
+                                                setUserTotalStr(displayTotal);
+                                                setAutoCalcField('price');
+                                            }
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') { e.preventDefault(); onEnter?.(); }
+                                            else if (e.key === 'ArrowUp') { e.preventDefault(); onArrowUp?.(); }
+                                            else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
+                                        }}
+                                        placeholder="0.00"
+                                        className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-emerald-400'}`}
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => {
+                                        setIsBuy(true);
+                                        setAutoCalcField('price');
+                                    }}
+                                    className="w-full text-center text-foreground-muted hover:text-primary transition-colors text-xs py-0.5"
+                                    tabIndex={-1}
+                                >
+                                    &mdash;
+                                </button>
+                            )}
+                        </td>
+                    ),
+                    sell: (
+                        <td className="px-2 py-1 align-middle">
+                            {!isBuy ? (
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={autoCalcField === 'total' ? displayTotal : userTotalStr}
+                                        onChange={(e) => {
+                                            setUserTotalStr(e.target.value);
+                                            setAutoCalcField('price');
+                                        }}
+                                        onFocus={() => {
+                                            onColumnFocus?.(6);
+                                            if (autoCalcField === 'total') {
+                                                setUserTotalStr(displayTotal);
+                                                setAutoCalcField('price');
+                                            }
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') { e.preventDefault(); onEnter?.(); }
+                                            else if (e.key === 'ArrowUp') { e.preventDefault(); onArrowUp?.(); }
+                                            else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
+                                        }}
+                                        placeholder="0.00"
+                                        className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-rose-400'}`}
+                                    />
+                                </div>
+                            ) : (
+                                <button
+                                    onClick={() => {
+                                        setIsBuy(false);
+                                        setAutoCalcField('price');
+                                    }}
+                                    className="w-full text-center text-foreground-muted hover:text-rose-400 transition-colors text-xs py-0.5"
+                                    tabIndex={-1}
+                                >
+                                    &mdash;
+                                </button>
+                            )}
+                        </td>
+                    ),
+                    shareBalance: (
+                        <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
+                            {invRow.shareBalance.toFixed(4)}
+                        </td>
+                    ),
+                    costBasis: (
+                        <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
+                            {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}
+                        </td>
+                    ),
+                    actions: actionsCellWithTab,
+                })}
             </tr>
         );
     }

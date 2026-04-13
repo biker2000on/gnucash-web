@@ -556,36 +556,46 @@ export default function AccountLedger({
         }
 
         const txData = (rowHandle as EditableRowHandle).getTransactionData();
-        const body = {
-            currency_guid: txData.currency_guid,
+        const isNewTransaction = !tx.currency_guid;
+        const body: Record<string, unknown> = {
+            currency_guid: txData.currency_guid || accountCommodityGuid || '',
             post_date: txData.post_date,
             description: txData.description,
-            original_enter_date: tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : undefined,
             splits: splitPayload,
         };
 
         try {
-            const res = await fetch(`/api/transactions/${txGuid}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
+            let res: Response;
+            if (isNewTransaction) {
+                res = await fetch('/api/transactions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } else {
+                body.original_enter_date = tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : undefined;
+                res = await fetch(`/api/transactions/${txGuid}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
 
-            if (res.status === 409) {
-                error('Transaction was modified by another user. Refreshing...');
-                await fetchTransactions();
-                return false;
+                if (res.status === 409) {
+                    error('Transaction was modified by another user. Refreshing...');
+                    await fetchTransactions();
+                    return false;
+                }
             }
-            if (!res.ok) throw new Error('Failed to update');
+            if (!res.ok) throw new Error('Failed to save');
 
-            success('Transaction updated');
+            success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             await fetchTransactions();
             return true;
         } catch {
             error('Failed to save transaction');
             return false;
         }
-    }, [transactions, fetchTransactions, success, error]);
+    }, [transactions, accountCommodityGuid, fetchTransactions, success, error]);
 
     // Investment inline edit save handler
     const handleInvestmentInlineSave = useCallback(async (guid: string, data: InvestmentSaveData) => {
@@ -610,7 +620,7 @@ export default function AccountLedger({
             const { num: transferValueNum, denom: transferValueDenom } = toNumDenom(transferValue);
 
             const body: Record<string, unknown> = {
-                currency_guid: tx.currency_guid,
+                currency_guid: tx.currency_guid || accountCommodityGuid || '',
                 post_date: data.post_date,
                 description: data.description,
                 splits: [
@@ -633,35 +643,46 @@ export default function AccountLedger({
                 ],
             };
 
-            if (data.original_enter_date) {
-                body.original_enter_date = data.original_enter_date;
-            }
+            const isNewTransaction = !tx.currency_guid;
 
-            const res = await fetch(`/api/transactions/${guid}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
+            let res: Response;
+            if (isNewTransaction) {
+                res = await fetch('/api/transactions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } else {
+                if (data.original_enter_date) {
+                    body.original_enter_date = data.original_enter_date;
+                }
 
-            if (res.status === 409) {
-                error('Transaction was modified by another user. Refreshing...');
-                await fetchTransactions();
-                return;
+                res = await fetch(`/api/transactions/${guid}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                if (res.status === 409) {
+                    error('Transaction was modified by another user. Refreshing...');
+                    await fetchTransactions();
+                    return;
+                }
             }
 
             if (!res.ok) {
                 const errData = await res.json().catch(() => null);
-                throw new Error(errData?.error || errData?.errors?.map((e: { message: string }) => e.message).join(', ') || 'Failed to update');
+                throw new Error(errData?.error || errData?.errors?.map((e: { message: string }) => e.message).join(', ') || 'Failed to save');
             }
 
-            success('Transaction updated');
+            success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             await fetchTransactions();
         } catch (err) {
             console.error('Investment inline save failed:', err);
             error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
-    }, [transactions, accountGuid, fetchTransactions, success, error]);
+    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error]);
 
     // Toggle reviewed status
     const toggleReviewed = useCallback(async (transactionGuid: string) => {
@@ -948,6 +969,12 @@ export default function AccountLedger({
         columns,
         getCoreRowModel: getCoreRowModel(),
     });
+
+    const visibleColumnIds = useMemo(
+        () => table.getVisibleFlatColumns().map(c => c.id),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [columns],
+    );
 
     // Helper to create a blank new transaction at the top of the list
     const createNewTransaction = useCallback(() => {
@@ -1909,6 +1936,7 @@ export default function AccountLedger({
                                             onEditModal={handleEditDirect}
                                             onDuplicate={handleDuplicate}
                                             columnCount={table.getVisibleFlatColumns().length}
+                                            columnIds={visibleColumnIds}
                                             onClick={() => setFocusedRowIndex(index)}
                                             focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
                                             onEnter={async () => {
@@ -1965,6 +1993,7 @@ export default function AccountLedger({
                                                 transaction={tx}
                                                 accountGuid={accountGuid}
                                                 columns={table.getVisibleFlatColumns().length}
+                                                columnIds={visibleColumnIds}
                                                 trailingColumns={3}
                                                 isInvestmentAccount={true}
                                                 isActive={index === focusedRowIndex}
@@ -2013,6 +2042,7 @@ export default function AccountLedger({
                                             onEditModal={handleEditDirect}
                                             onDuplicate={handleDuplicate}
                                             columnCount={table.getVisibleFlatColumns().length}
+                                            columnIds={visibleColumnIds}
                                             onClick={() => { setFocusedRowIndex(index); setFocusedSplitIndex(-1); }}
                                             focusedColumn={index === focusedRowIndex && focusedSplitIndex === -1 ? focusedColumnIndex : undefined}
                                             onEnter={async () => {
@@ -2058,6 +2088,7 @@ export default function AccountLedger({
                                                 transaction={tx}
                                                 accountGuid={accountGuid}
                                                 columns={table.getVisibleFlatColumns().length}
+                                                columnIds={visibleColumnIds}
                                                 isActive={index === focusedRowIndex}
                                                 focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
                                                 focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
@@ -2104,6 +2135,7 @@ export default function AccountLedger({
                                         onEditModal={handleEditDirect}
                                         onDuplicate={handleDuplicate}
                                         columnCount={table.getVisibleFlatColumns().length}
+                                            columnIds={visibleColumnIds}
                                         onClick={() => setFocusedRowIndex(index)}
                                         focusedColumn={index === focusedRowIndex ? focusedColumnIndex : undefined}
                                         onEnter={async () => {

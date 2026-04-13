@@ -53,6 +53,8 @@ interface EditableSplitRowsProps {
     trailingColumns?: number;
     /** If true, render investment-style columns: memo, account, shares, price, buy, sell */
     isInvestmentAccount?: boolean;
+    /** Column IDs from TanStack Table — drives alignment automatically */
+    columnIds?: string[];
 }
 
 function initSplitsFromTransaction(transaction: AccountTransaction, includeTrading = false): SplitState[] {
@@ -107,6 +109,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         onShiftTabToTransaction,
         trailingColumns: trailingColumnsProp,
         isInvestmentAccount,
+        columnIds,
     },
     ref
 ) {
@@ -255,13 +258,37 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         },
     }), [splits, transaction]);
 
-    // Column alignment:
-    // Standard: memo(description), account(transfer), debit, credit = 4 content cols
-    // Investment: memo(description), account(transfer), shares, price, buy, sell = 6 content cols
-    const contentCols = isInvestmentAccount ? 6 : 4;
+    // Column alignment: map split content to header column IDs
+    // Standard splits: memo → description, account → transfer, debit → debit, credit → credit
+    // Investment splits: memo → description, account → transfer, shares → shares, price → price, buy → buy, sell → sell
+    const splitContentColumns = isInvestmentAccount
+        ? ['description', 'transfer', 'shares', 'price', 'buy', 'sell']
+        : ['description', 'transfer', 'debit', 'credit'];
+    const splitContentSet = new Set(splitContentColumns);
+
+    // Compute leading/trailing from columnIds when available, fall back to arithmetic
+    let leadingIds: string[] = [];
+    let trailingIds: string[] = [];
+    if (columnIds) {
+        let foundFirst = false;
+        let lastContentIdx = -1;
+        for (let i = 0; i < columnIds.length; i++) {
+            if (splitContentSet.has(columnIds[i])) {
+                if (!foundFirst) foundFirst = true;
+                lastContentIdx = i;
+            } else if (!foundFirst) {
+                leadingIds.push(columnIds[i]);
+            }
+        }
+        if (lastContentIdx >= 0) {
+            trailingIds = columnIds.slice(lastContentIdx + 1);
+        }
+    }
+    // Fallback for when columnIds is not provided
+    const contentCols = splitContentColumns.length;
     const trailingEmpty = trailingColumnsProp ?? 2;
-    const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
-    const actualTrailing = columns - leadingEmpty - contentCols;
+    const leadingEmpty = columnIds ? leadingIds.length : Math.max(0, columns - contentCols - trailingEmpty);
+    const actualTrailing = columnIds ? trailingIds.length : columns - leadingEmpty - contentCols;
 
     const realSplitCount = splits.filter(s => !s.isPlaceholder).length;
     const lastSplitIndex = splitsWithImbalance.length - 1;
@@ -289,9 +316,12 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                         onClick={() => onFocusedSplitChange?.(index)}
                     >
                         {/* Leading empty columns */}
-                        {Array.from({ length: leadingEmpty }, (_, i) => (
-                            <td key={`lead-${i}`} className="px-3 py-1.5" />
-                        ))}
+                        {columnIds
+                            ? leadingIds.map(id => <td key={id} className="px-3 py-1.5" />)
+                            : Array.from({ length: leadingEmpty }, (_, i) => (
+                                <td key={`lead-${i}`} className="px-3 py-1.5" />
+                            ))
+                        }
 
                         {/* Memo column */}
                         <td className="px-3 py-1.5 pl-8">
@@ -497,24 +527,43 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                             )}
                         </td>
 
-                        {/* Trailing columns (balance, actions, etc.) */}
-                        {Array.from({ length: actualTrailing }, (_, i) => (
-                            <td key={`trail-${i}`} className="px-3 py-1.5">
-                                {i === 0 && !isPlaceholder && realSplitCount > 2 && (
-                                    <button
-                                        tabIndex={-1}
-                                        onClick={e => {
-                                            e.stopPropagation();
-                                            deleteSplit(index);
-                                        }}
-                                        className="text-xs text-foreground-muted hover:text-red-400 transition-colors"
-                                        title="Delete split"
-                                    >
-                                        &times;
-                                    </button>
-                                )}
-                            </td>
-                        ))}
+                        {/* Trailing columns (balance, receipt, actions, etc.) */}
+                        {columnIds
+                            ? trailingIds.map((id, i) => (
+                                <td key={id} className="px-3 py-1.5">
+                                    {i === 0 && !isPlaceholder && realSplitCount > 2 && (
+                                        <button
+                                            tabIndex={-1}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                deleteSplit(index);
+                                            }}
+                                            className="text-xs text-foreground-muted hover:text-red-400 transition-colors"
+                                            title="Delete split"
+                                        >
+                                            &times;
+                                        </button>
+                                    )}
+                                </td>
+                            ))
+                            : Array.from({ length: actualTrailing }, (_, i) => (
+                                <td key={`trail-${i}`} className="px-3 py-1.5">
+                                    {i === 0 && !isPlaceholder && realSplitCount > 2 && (
+                                        <button
+                                            tabIndex={-1}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                deleteSplit(index);
+                                            }}
+                                            className="text-xs text-foreground-muted hover:text-red-400 transition-colors"
+                                            title="Delete split"
+                                        >
+                                            &times;
+                                        </button>
+                                    )}
+                                </td>
+                            ))
+                        }
                     </tr>
                 );
             })}
