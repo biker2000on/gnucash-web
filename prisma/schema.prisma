@@ -582,6 +582,52 @@ model gnucash_web_receipts {
   @@map("gnucash_web_receipts")
 }
 
+model gnucash_web_payslips {
+  id               Int       @id @default(autoincrement())
+  book_guid        String    @db.VarChar(32)
+  pay_date         DateTime  @db.Date
+  pay_period_start DateTime? @db.Date
+  pay_period_end   DateTime? @db.Date
+  employer_name    String    @db.VarChar(255)
+  gross_pay        Decimal?  @db.Decimal(12, 2)
+  net_pay          Decimal?  @db.Decimal(12, 2)
+  currency         String    @default("USD") @db.VarChar(10)
+  source           String    @default("pdf_upload") @db.VarChar(20)
+  source_id        String?   @db.VarChar(255)
+  transaction_guid String?   @db.VarChar(32)
+  storage_key      String?   @db.VarChar(500)
+  thumbnail_key    String?   @db.VarChar(500)
+  line_items       Json?     @db.JsonB
+  raw_response     Json?     @db.JsonB
+  status           String    @default("processing") @db.VarChar(20)
+  error_message    String?   @db.Text
+  deposit_account_guid String? @db.VarChar(32)
+  created_by       Int?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @default(now())
+
+  @@index([book_guid])
+  @@index([pay_date])
+  @@index([status])
+  @@index([employer_name])
+  @@map("gnucash_web_payslips")
+}
+
+model gnucash_web_payslip_mappings {
+  id                 Int      @id @default(autoincrement())
+  book_guid          String   @db.VarChar(32)
+  employer_name      String   @db.VarChar(255)
+  normalized_label   String   @db.VarChar(255)
+  line_item_category String   @db.VarChar(30)
+  account_guid       String   @db.VarChar(32)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @default(now())
+
+  @@unique([book_guid, employer_name, normalized_label, line_item_category])
+  @@index([book_guid, employer_name])
+  @@map("gnucash_web_payslip_mappings")
+}
+
 model gnucash_web_ai_config {
   id                Int       @id @default(autoincrement())
   user_id           Int?      @unique
