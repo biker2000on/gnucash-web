@@ -53,37 +53,20 @@ export async function runPayslipExtraction(
     const storage = await getStorageBackend();
     const buffer = await storage.get(payslip.storage_key);
 
-    // Extract OCR text from PDF
-    const { extractTextFromPdf } = await import('@/lib/pdf-text-extract');
-    const ocrText = await extractTextFromPdf(buffer);
-
-    // Run regex extraction for top-level fields
-    const { extractPayslipFields, applyTemplateWithRegex } = await import('@/lib/payslip-regex');
-    const regexFields = extractPayslipFields(ocrText);
-
     // Get AI config
     const { getAiConfig } = await import('@/lib/ai-config');
     const aiConfig = await getAiConfig(payslip.created_by ?? 0);
 
-    // ── Tier 1: AI extraction (vision first, then OCR text) ─────────────
+    // ── Tier 1: AI extraction (vision — sends rendered PDF image) ───────
     if (aiConfig?.enabled && aiConfig.base_url && aiConfig.model) {
       try {
-        const { extractPayslipWithVision, extractPayslipData } = await import('@/lib/payslip-extraction');
+        const { extractPayslipWithVision } = await import('@/lib/payslip-extraction');
 
-        let extractedData;
-        let tier = 'ai_vision';
+        console.log(`${logPrefix} Trying vision extraction...`);
+        const extractedData = await extractPayslipWithVision(buffer, aiConfig);
+        console.log(`${logPrefix} Vision extraction succeeded`);
 
-        try {
-          console.log(`${logPrefix} Trying vision extraction...`);
-          extractedData = await extractPayslipWithVision(buffer, aiConfig);
-          console.log(`${logPrefix} Vision extraction succeeded`);
-        } catch (visionErr) {
-          console.log(`${logPrefix} Vision failed, trying OCR text:`, visionErr instanceof Error ? visionErr.message : visionErr);
-          extractedData = await extractPayslipData(ocrText, aiConfig);
-          tier = 'ai_text';
-        }
-
-        await updatePayslipLineItems(payslipId, extractedData.line_items, { ocrText, tier });
+        await updatePayslipLineItems(payslipId, extractedData.line_items, { tier: 'ai_vision' });
 
         await updatePayslipStatus(payslipId, 'needs_mapping', {
           employer_name: extractedData.employer_name,
@@ -108,6 +91,18 @@ export async function runPayslipExtraction(
         console.warn(`${logPrefix} Tier 1 (AI) failed, falling through to Tier 2:`, aiErr);
       }
     }
+
+    // ── Tiers 2 & 3 need OCR text for regex extraction ───────────────────
+    let ocrText = '';
+    try {
+      const { extractTextFromPdf } = await import('@/lib/pdf-text-extract');
+      ocrText = await extractTextFromPdf(buffer);
+    } catch (ocrErr) {
+      console.warn(`${logPrefix} OCR text extraction failed:`, ocrErr instanceof Error ? ocrErr.message : ocrErr);
+    }
+
+    const { extractPayslipFields, applyTemplateWithRegex } = await import('@/lib/payslip-regex');
+    const regexFields = extractPayslipFields(ocrText);
 
     // ── Tier 2: Template + regex ───────────────────────────────────────────
     const employerName = regexFields.employer_name ?? 'Unknown';
