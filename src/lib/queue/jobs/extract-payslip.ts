@@ -104,13 +104,21 @@ export async function handleExtractPayslip(job: Job): Promise<void> {
 
     let template = await getTemplate(resolvedBookGuid, employerName);
 
-    // If no exact match and employer is unknown, try the only template in the book
-    if (!template && employerName === 'Unknown') {
+    // If no exact match, try fuzzy lookup across all book templates
+    if (!template) {
       const allTemplates = await prisma.gnucash_web_payslip_templates.findMany({
         where: { book_guid: resolvedBookGuid },
       });
-      if (allTemplates.length === 1) {
+
+      // Case-insensitive match first
+      const lowerName = employerName.toLowerCase();
+      template = allTemplates.find(t => t.employer_name.toLowerCase() === lowerName) ?? null;
+
+      // If still no match and only one template exists, use it
+      // (covers renamed employers and "Unknown" employer name)
+      if (!template && allTemplates.length === 1) {
         template = allTemplates[0];
+        console.log(`[Job ${job.id}] Using sole template for book: "${template.employer_name}"`);
       }
     }
 
@@ -120,8 +128,10 @@ export async function handleExtractPayslip(job: Job): Promise<void> {
 
       await updatePayslipLineItems(payslipId, appliedLineItems, { ocrText, tier: 'template_regex' });
 
+      // Use the template's employer name (not OCR) for consistency with mappings
+      const resolvedEmployer = template.employer_name;
       await updatePayslipStatus(payslipId, 'needs_mapping', {
-        employer_name: regexFields.employer_name ?? undefined,
+        employer_name: resolvedEmployer,
         pay_date: regexFields.pay_date ? new Date(regexFields.pay_date) : undefined,
         pay_period_start: regexFields.pay_period_start ? new Date(regexFields.pay_period_start) : undefined,
         pay_period_end: regexFields.pay_period_end ? new Date(regexFields.pay_period_end) : undefined,
@@ -129,9 +139,9 @@ export async function handleExtractPayslip(job: Job): Promise<void> {
         net_pay: regexFields.net_pay,
       });
 
-      console.log(`[Job ${job.id}] Tier 2 (template+regex) complete: ${appliedLineItems.length} line items, employer: ${employerName}`);
+      console.log(`[Job ${job.id}] Tier 2 (template+regex) complete: ${appliedLineItems.length} line items, employer: ${resolvedEmployer}`);
 
-      await checkMappingsAndSetReady(payslipId, resolvedBookGuid, employerName, appliedLineItems);
+      await checkMappingsAndSetReady(payslipId, resolvedBookGuid, resolvedEmployer, appliedLineItems);
       return;
     }
 
