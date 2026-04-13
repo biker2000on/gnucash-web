@@ -44,7 +44,7 @@ async function extractTextFromImage(buffer: Buffer): Promise<string> {
   return result.data.text.trim();
 }
 
-async function extractTextFromPdf(buffer: Buffer): Promise<string> {
+export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
   const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
 
