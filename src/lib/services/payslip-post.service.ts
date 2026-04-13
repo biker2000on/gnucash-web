@@ -149,11 +149,15 @@ export async function postPayslipTransaction(
     }
 
     // Mark payslip as posted
-    await tx.$executeRaw`
-      UPDATE payslips
-      SET status = 'posted', transaction_guid = ${transactionGuid}
-      WHERE id = ${payslipId}
-    `;
+    await tx.gnucash_web_payslips.update({
+      where: { id: payslipId },
+      data: {
+        status: 'posted',
+        transaction_guid: transactionGuid,
+        deposit_account_guid: depositAccountGuid,
+        updated_at: new Date(),
+      },
+    });
 
     return transactionGuid;
   });

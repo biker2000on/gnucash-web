@@ -28,6 +28,20 @@ export async function GET(request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: 'Payslip not found' }, { status: 404 });
     }
 
+    // Serve the PDF file if ?view=pdf
+    const url = new URL(request.url);
+    if (url.searchParams.get('view') === 'pdf' && payslip.storage_key) {
+      const storage = await getStorageBackend();
+      const buffer = await storage.get(payslip.storage_key);
+      return new Response(new Uint8Array(buffer), {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="payslip-${payslipId}.pdf"`,
+          'Cache-Control': 'private, max-age=86400',
+        },
+      });
+    }
+
     return NextResponse.json(payslip);
   } catch (error) {
     console.error('Payslip fetch error:', error);

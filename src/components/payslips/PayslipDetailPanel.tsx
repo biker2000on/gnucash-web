@@ -166,7 +166,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
   const allNonEmployerMapped = lineItems
     .filter(item => item.category !== 'employer_contribution')
     .every(item => {
-      const mapping = mappings.find(m => m.normalized_label === item.normalized_label);
+      const mapping = mappings.find(m => m.normalized_label === item.normalized_label && m.line_item_category === item.category);
       return mapping && mapping.account_guid;
     });
 
@@ -176,10 +176,10 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
     !!depositAccountGuid &&
     lineItems.length > 0;
 
-  // Build mappings dict for TransactionPreview: normalized_label -> account_guid
+  // Build mappings dict for TransactionPreview: "category:normalized_label" -> account_guid
   const mappingsDict: Record<string, string> = {};
   for (const m of mappings) {
-    mappingsDict[m.normalized_label] = m.account_guid;
+    mappingsDict[`${m.line_item_category}:${m.normalized_label}`] = m.account_guid;
   }
 
   // Build account names dict for TransactionPreview
