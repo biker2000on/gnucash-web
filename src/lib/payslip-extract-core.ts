@@ -54,7 +54,7 @@ export async function runPayslipExtraction(
     const buffer = await storage.get(payslip.storage_key);
 
     // Extract OCR text from PDF
-    const { extractTextFromPdf } = await import('@/lib/queue/jobs/ocr-receipt');
+    const { extractTextFromPdf } = await import('@/lib/pdf-text-extract');
     const ocrText = await extractTextFromPdf(buffer);
 
     // Run regex extraction for top-level fields
