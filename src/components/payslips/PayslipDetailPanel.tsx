@@ -5,6 +5,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { PayslipLineItemTable } from './PayslipLineItemTable';
 import { TransactionPreview } from './TransactionPreview';
 import type { PayslipLineItem } from '@/lib/types';
+import { formatDisplayAccountPath } from '@/lib/account-path';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,7 +117,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
           const accounts: Array<{ guid: string; name: string; fullname?: string }> = await accRes.json();
           const names: Record<string, string> = {};
           for (const a of accounts) {
-            names[a.guid] = a.fullname || a.name;
+            names[a.guid] = formatDisplayAccountPath(a.fullname, a.name);
           }
           if (!cancelled) setAccountNames(names);
         }
