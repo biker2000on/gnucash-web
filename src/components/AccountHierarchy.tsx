@@ -19,6 +19,7 @@ import { formatCurrency, applyBalanceReversal, BalanceReversal } from '@/lib/for
 import { formatDateForDisplay } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useInvalidateAccounts } from '@/lib/hooks/useAccounts';
+import { useToast } from '@/contexts/ToastContext';
 import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
 import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
@@ -305,6 +306,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const isMobile = useIsMobile();
     const { balanceReversal, dateFormat } = useUserPreferences();
     const invalidateAccounts = useInvalidateAccounts();
+    const { success: toastSuccess, error: toastError } = useToast();
     const { data: reviewStatusData } = useReviewStatus();
     const statusMap = useMemo<ReviewStatusMap>(() => reviewStatusData ?? {}, [reviewStatusData]);
 
@@ -580,15 +582,17 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 throw new Error(data.error || 'Failed to delete account');
             }
 
+            const deletedName = deleteConfirm.name;
             setDeleteConfirm(null);
             invalidateAccounts();
             onRefresh?.();
+            toastSuccess(`Deleted account "${deletedName}"`);
         } catch (err) {
             setDeleteError(err instanceof Error ? err.message : 'Failed to delete account');
         } finally {
             setDeleting(false);
         }
-    }, [deleteConfirm, invalidateAccounts, onRefresh]);
+    }, [deleteConfirm, invalidateAccounts, onRefresh, toastSuccess]);
 
     const handleSave = useCallback(async (data: {
         name: string;
@@ -609,21 +613,27 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             : `/api/accounts/${selectedAccount?.guid}`;
         const method = modalMode === 'create' ? 'POST' : 'PUT';
 
-        const res = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
-        });
+        try {
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            });
 
-        if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(errorData.error || errorData.errors?.[0]?.message || 'Failed to save account');
+            if (!res.ok) {
+                const errorData = await res.json();
+                throw new Error(errorData.error || errorData.errors?.[0]?.message || 'Failed to save account');
+            }
+
+            setModalOpen(false);
+            invalidateAccounts();
+            onRefresh?.();
+            toastSuccess(modalMode === 'create' ? `Created account "${data.name}"` : `Updated account "${data.name}"`);
+        } catch (err) {
+            toastError(err instanceof Error ? err.message : 'Failed to save account');
+            throw err; // let AccountForm show inline error too
         }
-
-        setModalOpen(false);
-        invalidateAccounts();
-        onRefresh?.();
-    }, [modalMode, selectedAccount, invalidateAccounts, onRefresh]);
+    }, [modalMode, selectedAccount, invalidateAccounts, onRefresh, toastSuccess, toastError]);
 
     const columns = useMemo<ColumnDef<DerivedAccount>[]>(() => [
         {
