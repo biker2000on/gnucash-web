@@ -8,8 +8,9 @@ import { AmountCell } from './cells/AmountCell';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDisplayAccountPath } from '@/lib/account-path';
-import { toLocalDateString } from '@/lib/datePresets';
+import { toLocalDateString, toUTCDateString } from '@/lib/datePresets';
 import { isMultiSplitTransaction } from './investment-utils';
+import { TransactionSuggestion } from '@/app/api/transactions/descriptions/route';
 
 export interface EditableRowHandle {
     save: () => Promise<boolean>;
@@ -47,6 +48,7 @@ interface EditableRowProps {
     onTabToSplits?: () => void;
     onShiftTabFromDate?: () => void;
     columnIds?: string[];
+    onDescriptionSuggestion?: (suggestion: TransactionSuggestion) => void;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -72,6 +74,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onTabToSplits,
         onShiftTabFromDate,
         columnIds,
+        onDescriptionSuggestion,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -84,7 +87,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
 
         const [postDate, setPostDate] = useState(
-            transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : ''
+            transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : ''
         );
         const [description, setDescription] = useState(transaction.description || '');
         const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');
@@ -98,8 +101,37 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             ? new Date(transaction.enter_date).toISOString()
             : undefined;
 
+        const handleDescriptionSuggestion = useCallback((suggestion: TransactionSuggestion) => {
+            if (isSlimMode) {
+                // In slim mode, forward to parent so it can update EditableSplitRows
+                onDescriptionSuggestion?.(suggestion);
+                return;
+            }
+            // Basic mode: autofill account + amount from suggestion splits
+            if (suggestion.splits.length >= 2) {
+                // Find the split for the current account vs the "other" split
+                const ourSplit = suggestion.splits.find(s => s.accountGuid === accountGuid);
+                const otherSplitData = suggestion.splits.find(s => s.accountGuid !== accountGuid);
+
+                if (otherSplitData) {
+                    setOtherAccountGuid(otherSplitData.accountGuid);
+                    setOtherAccountName(otherSplitData.accountName);
+                }
+
+                // Set amount from our split (the amount in this account), falling back to negated other split
+                const amount = ourSplit ? ourSplit.amount : (otherSplitData ? -otherSplitData.amount : 0);
+                if (amount >= 0) {
+                    setDebit(Math.abs(amount).toFixed(2));
+                    setCredit('');
+                } else {
+                    setCredit(Math.abs(amount).toFixed(2));
+                    setDebit('');
+                }
+            }
+        }, [accountGuid, isSlimMode, onDescriptionSuggestion]);
+
         const isDirty = useCallback(() => {
-            const origDate = transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : '';
+            const origDate = transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : '';
             const origDebit = splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '';
             const origCredit = splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '';
             return postDate !== origDate
@@ -370,7 +402,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         ),
                         transfer: (
                             <td className="px-4 py-2 text-sm text-foreground-secondary leading-tight">
-                                {formatDisplayAccountPath(otherSplit?.account_fullname, otherSplit?.account_name)}
+                                {otherAccountName || formatDisplayAccountPath(otherSplit?.account_fullname, otherSplit?.account_name)}
                             </td>
                         ),
                         debit: (
@@ -420,6 +452,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                                 <DescriptionCell
                                     value={description}
                                     onChange={setDescription}
+                                    onSelectSuggestion={handleDescriptionSuggestion}
                                     autoFocus={focusedColumn === 1}
                                     onEnter={onEnter}
                                     onTab={() => onTabToSplits?.()}
@@ -468,6 +501,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                             <DescriptionCell
                                 value={description}
                                 onChange={setDescription}
+                                onSelectSuggestion={handleDescriptionSuggestion}
                                 autoFocus={focusedColumn === 1}
                                 onEnter={onEnter}
                                 onArrowUp={onArrowUp}

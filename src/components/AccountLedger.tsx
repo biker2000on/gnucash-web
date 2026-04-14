@@ -139,6 +139,7 @@ export default function AccountLedger({
     const [focusedSplitIndex, setFocusedSplitIndex] = useState<number>(-1); // -1 = transaction line
     const [imbalanceDialogTx, setImbalanceDialogTx] = useState<string | null>(null);
     const [imbalanceAmount, setImbalanceAmount] = useState<number>(0);
+    const [lastEditedDate, setLastEditedDate] = useState<string | null>(null);
 
     // Lots view state
     const [showLotsView, setShowLotsView] = useState(false);
@@ -503,6 +504,7 @@ export default function AccountLedger({
             }
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            setLastEditedDate(data.post_date);
             if (isEditMode) {
                 if (isNewTransaction) {
                     // Refetch to get the server-assigned guid and proper data
@@ -513,7 +515,7 @@ export default function AccountLedger({
                         if (t.guid !== guid) return t;
                         const updatedSplits = t.splits?.map(s => {
                             if (s.account_guid === accountGuid) return s;
-                            return { ...s, account_guid: data.accountGuid, account_name: data.accountName };
+                            return { ...s, account_guid: data.accountGuid, account_name: data.accountName, account_fullname: data.accountName };
                         });
                         return {
                             ...t,
@@ -589,6 +591,7 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to save');
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            setLastEditedDate(txData.post_date);
             await fetchTransactions();
             return true;
         } catch {
@@ -978,7 +981,7 @@ export default function AccountLedger({
 
     // Helper to create a blank new transaction at the top of the list
     const createNewTransaction = useCallback(() => {
-        const today = toLocalDateString(new Date());
+        const today = lastEditedDate || toLocalDateString(new Date());
         const txGuid = crypto.randomUUID().replace(/-/g, '');
         const splitGuid1 = crypto.randomUUID().replace(/-/g, '');
         const splitGuid2 = crypto.randomUUID().replace(/-/g, '');
@@ -1028,7 +1031,7 @@ export default function AccountLedger({
         setTransactions(prev => [blankTx, ...prev]);
         setFocusedRowIndex(0);
         setFocusedColumnIndex(0);
-    }, [accountGuid]);
+    }, [accountGuid, lastEditedDate]);
 
     // Keyboard navigation handler
     const handleTableKeyDown = useCallback(async (e: KeyboardEvent) => {
@@ -1091,6 +1094,18 @@ export default function AccountLedger({
                         const tx = displayTransactions[focusedRowIndex];
                         handleDeleteClick(tx.guid);
                     }
+                    return;
+                }
+                if (e.key === 'n' && e.altKey) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    if (focusedRowIndex >= 0) {
+                        const currentTx = displayTransactions[focusedRowIndex];
+                        const handle = editableRowRefs.current.get(currentTx.guid);
+                        if (handle?.isDirty()) await handle.save();
+                    }
+                    createNewTransaction();
+                    if (isSlimEditMode) setFocusedSplitIndex(-1);
                     return;
                 }
                 if (e.key === 'Escape') {
@@ -2059,6 +2074,12 @@ export default function AccountLedger({
                                             onColumnFocus={(col) => setFocusedColumnIndex(col)}
                                             ledgerViewStyle={ledgerViewStyle}
                                             onTabToSplits={() => { setFocusedSplitIndex(0); setFocusedColumnIndex(0); }}
+                                            onDescriptionSuggestion={(suggestion) => {
+                                                const splitHandle = editableSplitRowRefs.current.get(tx.guid);
+                                                if (splitHandle) {
+                                                    splitHandle.applySuggestionSplits(suggestion.splits);
+                                                }
+                                            }}
                                             onShiftTabFromDate={async () => {
                                                 if (index > 0) {
                                                     const saved = await handleJournalSave(tx.guid);

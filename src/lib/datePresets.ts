@@ -16,6 +16,14 @@ export function toLocalDateString(date: Date): string {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * Format a Date to YYYY-MM-DD using UTC timezone.
+ * Use for database dates (stored as midnight UTC) to avoid timezone shift.
+ */
+export function toUTCDateString(date: Date): string {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
 function formatDate(date: Date): string {
     return toLocalDateString(date);
 }

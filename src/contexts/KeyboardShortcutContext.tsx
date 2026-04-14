@@ -59,6 +59,12 @@ function matchShortcutKey(event: KeyboardEvent, key: string): boolean {
     return primaryModifier && event.key.toLowerCase() === targetKey && !event.shiftKey && !event.altKey
   }
 
+  // Handle Alt+<key> shortcuts (e.g., Alt+n)
+  if (key.startsWith('Alt+')) {
+    const targetKey = key.slice(4).toLowerCase()
+    return event.altKey && event.key.toLowerCase() === targetKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+  }
+
   // Handle plain single keys
   return event.key === key && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
 }
@@ -127,12 +133,12 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
       // Note: date-field and amount-field shortcuts are handled by their own onKeyDown handlers
       // We only handle global and transaction-form shortcuts here
       if (inInputField) {
-        // Allow transaction-form scoped shortcuts
+        // Allow transaction-form scoped shortcuts and Alt+ global shortcuts (safe in inputs)
         for (const shortcut of shortcuts.values()) {
           if (
-            shortcut.scope === 'transaction-form' &&
             shortcut.enabled &&
-            matchShortcutKey(event, shortcut.key)
+            matchShortcutKey(event, shortcut.key) &&
+            (shortcut.scope === 'transaction-form' || shortcut.key.startsWith('Alt+'))
           ) {
             event.preventDefault()
             shortcut.handler()

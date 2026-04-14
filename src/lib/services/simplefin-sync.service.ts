@@ -334,16 +334,27 @@ export function selectManualReconciliationMatch(
       if (dayOffset > 3) return null;
 
       const cDesc = (c.description || '').trim().toLowerCase();
+      // Use word overlap scoring for better fuzzy matching
+      // (e.g., "Chase Card Serv Online Payment" matches "Chase Amazon Prime Card Payment Cara")
+      const sfWords = new Set(sfDesc.split(/\s+/).filter(w => w.length > 1));
+      const cWords = new Set(cDesc.split(/\s+/).filter(w => w.length > 1));
+      let commonWords = 0;
+      for (const w of sfWords) {
+        if (cWords.has(w)) commonWords++;
+      }
+      // Also compute prefix match as secondary signal
       let commonPrefix = 0;
       for (let i = 0; i < Math.min(sfDesc.length, cDesc.length); i++) {
         if (sfDesc[i] === cDesc[i]) commonPrefix++;
         else break;
       }
+      // Combined score: word overlap (weighted higher) + prefix
+      const descScore = commonWords * 100 + commonPrefix;
 
       return {
         ...c,
         dayOffset,
-        commonPrefix,
+        descScore,
         confidence: (dayOffset <= 1 ? 'high' : 'medium') as 'high' | 'medium',
       };
     })
@@ -353,7 +364,7 @@ export function selectManualReconciliationMatch(
 
   scored.sort((a, b) => {
     if (a.dayOffset !== b.dayOffset) return a.dayOffset - b.dayOffset;
-    if (a.commonPrefix !== b.commonPrefix) return b.commonPrefix - a.commonPrefix;
+    if (a.descScore !== b.descScore) return b.descScore - a.descScore;
     return 0;
   });
 

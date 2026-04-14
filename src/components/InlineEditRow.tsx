@@ -8,7 +8,7 @@ import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
 import { useTaxShortcut } from '@/lib/hooks/useTaxShortcut';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
-import { toLocalDateString } from '@/lib/datePresets';
+import { toLocalDateString, toUTCDateString } from '@/lib/datePresets';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
@@ -43,10 +43,10 @@ export function InlineEditRow({
     // Find the account split and the "other" split for a 2-split transaction
     const otherSplit = transaction.splits?.find(s => s.account_guid !== accountGuid);
     const [postDate, setPostDate] = useState(
-        transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : toLocalDateString(new Date())
+        transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : toLocalDateString(new Date())
     );
     const [dateDisplay, setDateDisplay] = useState(() =>
-        formatDateForDisplay(transaction.post_date ? toLocalDateString(new Date(transaction.post_date)) : toLocalDateString(new Date()), dateFormat)
+        formatDateForDisplay(transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : toLocalDateString(new Date()), dateFormat)
     );
     const [description, setDescription] = useState(transaction.description || '');
     const [otherAccountGuid, setOtherAccountGuid] = useState(otherSplit?.account_guid || '');

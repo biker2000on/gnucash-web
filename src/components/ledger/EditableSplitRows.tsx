@@ -34,6 +34,7 @@ export interface EditableSplitRowsHandle {
         reconcile_state: string;
     }[];
     revert: () => void;
+    applySuggestionSplits: (splits: Array<{ accountGuid: string; accountName: string; amount: number }>) => void;
 }
 
 interface EditableSplitRowsProps {
@@ -256,7 +257,23 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
             const reverted = initSplitsFromTransaction(transaction, isInvestmentAccount);
             setSplits(reverted);
         },
-    }), [splits, transaction]);
+        applySuggestionSplits(suggestionSplits) {
+            const newSplits: SplitState[] = suggestionSplits.map(s => ({
+                guid: crypto.randomUUID().replace(/-/g, ''),
+                account_guid: s.accountGuid,
+                account_name: s.accountName,
+                memo: '',
+                debit: s.amount > 0 ? Math.abs(s.amount).toFixed(2) : '',
+                credit: s.amount < 0 ? Math.abs(s.amount).toFixed(2) : '',
+                reconcile_state: 'n',
+                shares: '',
+                price: '',
+            }));
+            // Add placeholder
+            newSplits.push(createBlankSplit());
+            setSplits(newSplits);
+        },
+    }), [splits, transaction, createBlankSplit]);
 
     // Column alignment: map split content to header column IDs
     // Standard splits: memo → description, account → transfer, debit → debit, credit → credit

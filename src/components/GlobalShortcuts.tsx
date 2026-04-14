@@ -30,6 +30,9 @@ export function GlobalShortcuts() {
   useKeyboardShortcut('new-transaction', 'n', 'New Transaction', () => {
     window.dispatchEvent(new CustomEvent('open-new-transaction'))
   })
+  useKeyboardShortcut('new-transaction-alt', 'Alt+n', 'New Transaction (from input)', () => {
+    window.dispatchEvent(new CustomEvent('open-new-transaction'))
+  })
 
   // Edit mode shortcuts
   useKeyboardShortcut('enter-edit-mode', 'e', 'Enter edit mode', () => {

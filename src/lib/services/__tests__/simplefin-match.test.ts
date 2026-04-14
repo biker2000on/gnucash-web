@@ -105,6 +105,32 @@ describe('selectManualReconciliationMatch', () => {
     expect(result).not.toBeNull();
     expect(result!.transaction_guid).toBe('h'.repeat(32));
   });
+
+  it('should prefer word overlap over prefix match for tiebreaking', () => {
+    const sfTxn = {
+      posted: new Date('2026-03-20T12:00:00Z').getTime() / 1000,
+      amount: '-100.00',
+      description: 'Chase Card Serv Online Payment',
+    };
+    const candidates: ReconciliationCandidate[] = [
+      {
+        transaction_guid: 'i'.repeat(32),
+        post_date: new Date('2026-03-20T10:00:00Z'),
+        description: 'Chase Amazon Prime Card Payment Cara',
+        has_meta: false,
+      },
+      {
+        transaction_guid: 'j'.repeat(32),
+        post_date: new Date('2026-03-20T10:00:00Z'),
+        description: 'Charming Boutique Store',
+        has_meta: false,
+      },
+    ];
+    const result = selectManualReconciliationMatch(sfTxn, candidates);
+    expect(result).not.toBeNull();
+    // Chase/Card/Payment are shared words, so first candidate should win
+    expect(result!.transaction_guid).toBe('i'.repeat(32));
+  });
 });
 
 describe('selectTransferDedupMatch', () => {
