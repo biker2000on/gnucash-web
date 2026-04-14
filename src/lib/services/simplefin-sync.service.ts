@@ -10,6 +10,28 @@ import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFin
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 
+/**
+ * Normalize a SimpleFIN `posted` Unix timestamp to a date-only value.
+ * SimpleFIN sends the actual posting time in the bank's local zone (Eastern
+ * for US banks). Storing the raw timestamp and displaying in UTC can roll
+ * late-PM Eastern transactions forward a day. Extract the calendar date in
+ * Eastern time and return midnight UTC of that date.
+ */
+function normalizePostDate(postedUnixSeconds: number): Date {
+  const raw = new Date(postedUnixSeconds * 1000);
+  // Format the date in America/New_York → "MM/DD/YYYY"
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: process.env.SIMPLEFIN_TZ || 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(raw);
+  const year = parts.find(p => p.type === 'year')!.value;
+  const month = parts.find(p => p.type === 'month')!.value;
+  const day = parts.find(p => p.type === 'day')!.value;
+  return new Date(`${year}-${month}-${day}T00:00:00.000Z`);
+}
+
 export interface SyncResult {
   accountsProcessed: number;
   transactionsImported: number;
@@ -570,7 +592,7 @@ async function importTransaction(
     bookGuid
   );
 
-  const postDate = new Date(sfTxn.posted * 1000);
+  const postDate = normalizePostDate(sfTxn.posted);
   const description = sfTxn.description || sfTxn.payee || 'SimpleFin Import';
   const memo = sfTxn.pending ? '(Pending) ' + (sfTxn.memo || '') : (sfTxn.memo || '');
 
@@ -906,7 +928,7 @@ async function importInvestmentTransaction(
     );
   }
 
-  const postDate = new Date(sfTxn.posted * 1000);
+  const postDate = normalizePostDate(sfTxn.posted);
   const description = sfTxn.description || sfTxn.payee || 'SimpleFin Import';
   const memo = sfTxn.pending ? '(Pending) ' + (sfTxn.memo || '') : (sfTxn.memo || '');
 
