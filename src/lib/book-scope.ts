@@ -101,6 +101,15 @@ export async function getBookAccountGuids(): Promise<string[]> {
 }
 
 /**
+ * Invalidate the book account GUIDs cache. Call this after account creation,
+ * deletion, or reparenting so subsequent requests see the fresh tree.
+ */
+export function invalidateBookAccountGuidsCache(): void {
+    _cachedRootGuid = null;
+    _cachedAccountGuids = null;
+}
+
+/**
  * Check if a specific account belongs to the active book.
  * Returns true if the account is in the book's account tree.
  */

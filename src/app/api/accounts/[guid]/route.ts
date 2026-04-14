@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { AccountService, UpdateAccountSchema } from '@/lib/services/account.service';
-import { isAccountInActiveBook } from '@/lib/book-scope';
+import { isAccountInActiveBook, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
 /**
@@ -136,6 +136,7 @@ export async function PUT(
         }
 
         const account = await AccountService.update(guid, parseResult.data);
+        invalidateBookAccountGuidsCache();
         return NextResponse.json(account);
     } catch (error) {
         console.error('Error updating account:', error);
@@ -184,6 +185,7 @@ export async function DELETE(
         }
 
         const result = await AccountService.delete(guid);
+        invalidateBookAccountGuidsCache();
         return NextResponse.json(result);
     } catch (error) {
         console.error('Error deleting account:', error);

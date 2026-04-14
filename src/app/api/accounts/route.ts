@@ -5,7 +5,7 @@ import { getLatestPrice } from '@/lib/commodities';
 import { Account, AccountWithChildren } from '@/lib/types';
 import { Prisma } from '@prisma/client';
 import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
-import { getBookAccountGuids, getActiveBookRootGuid } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookRootGuid, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
 type AccountWithCommodityAndSplits = Prisma.accountsGetPayload<{
@@ -303,7 +303,24 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const account = await AccountService.create(parseResult.data);
+        // Default parent to the active book's root account so top-level creates
+        // land inside the book hierarchy instead of becoming orphaned accounts.
+        const data = { ...parseResult.data };
+        if (!data.parent_guid) {
+            data.parent_guid = await getActiveBookRootGuid();
+        } else {
+            // Also verify the provided parent is within the active book
+            const bookGuids = await getBookAccountGuids();
+            if (!bookGuids.includes(data.parent_guid)) {
+                return NextResponse.json(
+                    { error: 'Parent account does not belong to the active book' },
+                    { status: 400 }
+                );
+            }
+        }
+
+        const account = await AccountService.create(data);
+        invalidateBookAccountGuidsCache();
         return NextResponse.json(account, { status: 201 });
     } catch (error) {
         console.error('Error creating account:', error);
