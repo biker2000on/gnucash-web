@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useUserPreferences, type LedgerViewStyle } from '@/contexts/UserPreferencesContext';
 
 interface ViewMenuProps {
@@ -25,22 +26,38 @@ export default function ViewMenu({
   hasSubaccounts,
 }: ViewMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   const { ledgerViewStyle, setLedgerViewStyle } = useUserPreferences();
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
+      const target = e.target as Node;
+      if (buttonRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setIsOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        right: window.innerWidth - rect.right,
+        zIndex: 99999,
+      });
+    }
+  }, [isOpen]);
+
   return (
-    <div ref={menuRef} className="relative">
+    <div>
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center gap-1"
@@ -49,8 +66,8 @@ export default function ViewMenu({
         <span className="text-foreground-muted text-xs">&#9662;</span>
       </button>
 
-      {isOpen && (
-        <div className="absolute right-0 z-50 mt-1 w-56 bg-surface border border-border rounded-lg shadow-xl overflow-hidden">
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div ref={dropdownRef} style={dropdownStyle} className="w-56 bg-surface border border-border rounded-lg shadow-xl overflow-hidden">
           {/* View Mode Section */}
           <div className="py-1 border-b border-border">
             <div className="px-3 py-1 text-xs text-foreground-muted uppercase tracking-wider">View Mode</div>
@@ -99,7 +116,8 @@ export default function ViewMenu({
               Unreviewed Only
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
