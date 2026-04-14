@@ -2597,6 +2597,7 @@ export default function AccountLedger({
                                             }))}
                                             currencyMnemonic={tx.commodity_mnemonic || 'USD'}
                                             columns={row.getVisibleCells().length}
+                                            columnIds={visibleColumnIds}
                                             trailingColumns={isInvestmentAccount ? 2 : undefined}
                                             isInvestmentAccount={isInvestmentAccount}
                                             accountCurrency={accountCurrency}

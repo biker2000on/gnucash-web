@@ -19,6 +19,8 @@ interface SplitRowsProps {
   columns: number;
   /** Number of trailing columns after the debit/credit content (balance, shareBalance, costBasis, actions, etc.) */
   trailingColumns?: number;
+  /** Column IDs from TanStack Table — preferred over arithmetic counting for alignment */
+  columnIds?: string[];
   /** If true, render investment-style columns: memo, account, shares, price, buy, sell */
   isInvestmentAccount?: boolean;
   /** The account currency for investment accounts (e.g. 'USD') */
@@ -28,15 +30,37 @@ interface SplitRowsProps {
 // IMPORTANT: Pass ALL splits including the account's own split.
 // Do NOT filter out splits where account_guid === current account.
 
-export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, isInvestmentAccount, accountCurrency }: SplitRowsProps) {
+export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, accountCurrency }: SplitRowsProps) {
+  // Compute leading/trailing from columnIds when provided, falling back to arithmetic.
+  // Content columns are what the split row renders body cells for.
+  const splitContentColumns = isInvestmentAccount
+    ? ['description', 'transfer', 'shares', 'price', 'buy', 'sell']
+    : ['description', 'transfer', 'debit', 'credit'];
+  const splitContentSet = new Set(splitContentColumns);
+  let leadingIds: string[] = [];
+  let trailingIds: string[] = [];
+  if (columnIds) {
+    let foundFirst = false;
+    let lastContentIdx = -1;
+    for (let i = 0; i < columnIds.length; i++) {
+      if (splitContentSet.has(columnIds[i])) {
+        if (!foundFirst) foundFirst = true;
+        lastContentIdx = i;
+      } else if (!foundFirst) {
+        leadingIds.push(columnIds[i]);
+      }
+    }
+    if (lastContentIdx >= 0) trailingIds = columnIds.slice(lastContentIdx + 1);
+  }
+
   if (isInvestmentAccount) {
     // Investment layout: memo (description), account (transfer), shares, price, buy, sell
     // Leading: columns before description (select/expand, reconcile, date)
     // Trailing: shareBalance, costBasis, [actions]
     const contentCols = 6; // memo, account, shares, price, buy, sell
     const trailingEmpty = trailingColumns ?? 2; // shareBalance + costBasis
-    const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
-    const actualTrailing = columns - leadingEmpty - contentCols;
+    const leadingEmpty = columnIds ? leadingIds.length : Math.max(0, columns - contentCols - trailingEmpty);
+    const actualTrailing = columnIds ? trailingIds.length : columns - leadingEmpty - contentCols;
     const currency = accountCurrency || 'USD';
 
     return (
@@ -99,9 +123,9 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
 
   // Standard (non-investment) layout: memo, account, debit, credit
   const contentCols = 4;
-  const trailingEmpty = trailingColumns ?? 1;
-  const leadingEmpty = Math.max(0, columns - contentCols - trailingEmpty);
-  const actualTrailing = columns - leadingEmpty - contentCols;
+  const trailingEmpty = trailingColumns ?? 2; // balance + receipt (default for non-edit, non-reconcile ledger)
+  const leadingEmpty = columnIds ? leadingIds.length : Math.max(0, columns - contentCols - trailingEmpty);
+  const actualTrailing = columnIds ? trailingIds.length : columns - leadingEmpty - contentCols;
 
   return (
     <>
