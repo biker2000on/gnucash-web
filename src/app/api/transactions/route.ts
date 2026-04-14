@@ -290,18 +290,18 @@ export async function POST(request: Request) {
             return NextResponse.json({ errors: validation.errors }, { status: 400 });
         }
 
-        // Verify all account GUIDs exist
-        const accountGuids = body.splits.map(s => s.account_guid);
+        // Verify all account GUIDs exist (deduplicate since multiple splits can reference the same account)
+        const uniqueAccountGuids = [...new Set(body.splits.map(s => s.account_guid))];
         const accounts = await prisma.accounts.findMany({
             where: {
-                guid: { in: accountGuids },
+                guid: { in: uniqueAccountGuids },
             },
             select: { guid: true },
         });
 
-        if (accounts.length !== accountGuids.length) {
+        if (accounts.length !== uniqueAccountGuids.length) {
             const foundGuids = new Set(accounts.map(a => a.guid));
-            const missingGuids = accountGuids.filter(g => !foundGuids.has(g));
+            const missingGuids = uniqueAccountGuids.filter(g => !foundGuids.has(g));
             return NextResponse.json({
                 errors: [{ field: 'splits', message: `Invalid account GUIDs: ${missingGuids.join(', ')}` }]
             }, { status: 400 });
