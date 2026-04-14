@@ -720,17 +720,22 @@ export default function AccountLedger({
         // Generate split GUIDs upfront so client and server match
         const splitGuids = nonTradingSplits.map(() => crypto.randomUUID().replace(/-/g, ''));
 
-        const splits = nonTradingSplits.map((s, i) => ({
-            guid: splitGuids[i],
-            account_guid: s.account_guid,
-            value_num: Number(s.value_num),
-            value_denom: Number(s.value_denom),
-            quantity_num: Number(s.quantity_num),
-            quantity_denom: Number(s.quantity_denom),
-            memo: s.memo || '',
-            action: s.action || '',
-            reconcile_state: 'n' as const,
-        }));
+        const toNum = (v: unknown, fallback: number) => { const n = Number(v); return Number.isFinite(n) ? n : fallback; };
+        const splits = nonTradingSplits.map((s, i) => {
+            const vn = toNum(s.value_num, 0);
+            const vd = toNum(s.value_denom, 100);
+            return {
+                guid: splitGuids[i],
+                account_guid: s.account_guid,
+                value_num: vn,
+                value_denom: vd,
+                quantity_num: toNum(s.quantity_num, vn),
+                quantity_denom: toNum(s.quantity_denom, vd),
+                memo: s.memo || '',
+                action: s.action || '',
+                reconcile_state: 'n' as const,
+            };
+        });
 
         // Find which split index corresponds to this account for account_split_guid
         const accountSplitIndex = nonTradingSplits.findIndex(s => s.account_guid === accountGuid);
@@ -770,7 +775,11 @@ export default function AccountLedger({
                 }),
             });
 
-            if (!res.ok) throw new Error('Failed to duplicate transaction');
+            if (!res.ok) {
+                const errData = await res.json().catch(() => null);
+                const msg = errData?.errors?.map((e: { message: string }) => e.message).join(', ') || errData?.error || 'Failed to duplicate';
+                throw new Error(msg);
+            }
 
             success('Transaction duplicated');
             // In edit mode, skip refetch since optimistic GUIDs match server GUIDs
@@ -779,7 +788,7 @@ export default function AccountLedger({
             }
         } catch (err) {
             console.error('Duplicate failed:', err);
-            error('Failed to duplicate transaction');
+            error(err instanceof Error ? err.message : 'Failed to duplicate transaction');
             // Rollback on failure
             setTransactions(prevTransactions);
         }

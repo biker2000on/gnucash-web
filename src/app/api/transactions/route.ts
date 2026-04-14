@@ -286,6 +286,7 @@ export async function POST(request: Request) {
         // Validate the transaction
         const validation = validateTransaction(body);
         if (!validation.valid) {
+            console.error('[POST /api/transactions] Validation failed:', JSON.stringify(validation.errors), 'body:', JSON.stringify({ currency_guid: body.currency_guid, post_date: body.post_date, description: body.description, splits_count: body.splits?.length, splits_sample: body.splits?.slice(0, 2).map(s => ({ account_guid: s.account_guid, value_num: s.value_num, value_denom: s.value_denom })) }));
             return NextResponse.json({ errors: validation.errors }, { status: 400 });
         }
 
