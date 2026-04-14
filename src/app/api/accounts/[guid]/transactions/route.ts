@@ -378,11 +378,16 @@ export async function GET(
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
             }));
 
-            // Find the split corresponding to the current account (or any target account in subaccounts mode)
-            const accountSplit = enrichedSplits.find(s => targetAccountGuids.includes(s.account_guid));
-            const splitValue = accountSplit
-                ? Number(accountSplit.quantity_num) / Number(accountSplit.quantity_denom)
-                : 0;
+            // Find ALL splits for the current account — a transaction can post multiple times to
+            // the same account (e.g., mortgage principal + additional principal both on PNC Mortgage).
+            // Sum them for the running-balance delta; use the first for per-row UI fields like
+            // account_split_guid / reconcile_state.
+            const accountSplits = enrichedSplits.filter(s => targetAccountGuids.includes(s.account_guid));
+            const accountSplit = accountSplits[0];
+            const splitValue = accountSplits.reduce(
+                (sum, s) => sum + Number(s.quantity_num) / Number(s.quantity_denom),
+                0,
+            );
 
             const meta = metaMap.get(tx.guid);
             const row = {
