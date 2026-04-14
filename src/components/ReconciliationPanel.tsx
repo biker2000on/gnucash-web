@@ -116,7 +116,8 @@ export function ReconciliationPanel({
     }, []);
 
     const parsedStatementBalance = parseFloat(statementBalance) || 0;
-    const difference = parsedStatementBalance - selectedBalance;
+    // Reconciliation math: previously-reconciled (current) + newly-selected = statement balance
+    const difference = parsedStatementBalance - (currentBalance + selectedBalance);
 
     if (!isReconciling) {
         return (

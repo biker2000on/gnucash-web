@@ -92,6 +92,7 @@ export default function AccountLedger({
     const [isReconciling, setIsReconciling] = useState(false);
     const [selectedSplits, setSelectedSplits] = useState<Set<string>>(new Set());
     const [simpleFinBalance, setSimpleFinBalance] = useState<{ balance: number; balanceDate: string } | null>(null);
+    const [reconciledBalance, setReconciledBalance] = useState<number>(currentBalance);
 
     // Modal state
     const [selectedTxGuid, setSelectedTxGuid] = useState<string | null>(null);
@@ -268,6 +269,18 @@ export default function AccountLedger({
             })
             .catch(() => {}); // silently ignore - not all accounts have SimpleFin mapping
     }, [accountGuid]);
+
+    // Fetch reconciled balance (sum of splits with reconcile_state = 'y') for reconciliation "Current" value
+    useEffect(() => {
+        fetch('/api/accounts/reconcile-summary')
+            .then(res => res.ok ? res.json() : null)
+            .then((data: Array<{ guid: string; reconciled_usd: string }> | null) => {
+                if (!data) return;
+                const summary = data.find(s => s.guid === accountGuid);
+                if (summary) setReconciledBalance(parseFloat(summary.reconciled_usd) || 0);
+            })
+            .catch(() => {});
+    }, [accountGuid, isReconciling]);
 
     // Listen for global 'n' key shortcut to open new transaction (skip in edit mode)
     const isEditModeRef = useRef(isEditMode);
@@ -1719,7 +1732,7 @@ export default function AccountLedger({
                         <ReconciliationPanel
                             accountGuid={accountGuid}
                             accountCurrency={accountCurrency}
-                            currentBalance={currentBalance}
+                            currentBalance={reconciledBalance}
                             selectedBalance={selectedBalance}
                             onReconcileComplete={handleReconcileComplete}
                             selectedSplits={selectedSplits}
@@ -1914,6 +1927,19 @@ export default function AccountLedger({
                                                         else setEditSelectedGuids(new Set());
                                                     }}
                                                     tabIndex={-1}
+                                                    className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
+                                                />
+                                            )}
+                                            {isReconciling && (
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedSplits.size > 0 && displayTransactions.every(tx => tx.account_split_reconcile_state === 'y' || selectedSplits.has(tx.account_split_guid))}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) selectAllUnreconciled();
+                                                        else clearSelection();
+                                                    }}
+                                                    tabIndex={-1}
+                                                    title="Select all unreconciled"
                                                     className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-primary cursor-pointer"
                                                 />
                                             )}
@@ -2723,7 +2749,7 @@ export default function AccountLedger({
             <ReconciliationPanel
                 accountGuid={accountGuid}
                 accountCurrency={accountCurrency}
-                currentBalance={currentBalance}
+                currentBalance={reconciledBalance}
                 selectedBalance={selectedBalance}
                 onReconcileComplete={handleReconcileComplete}
                 selectedSplits={selectedSplits}
