@@ -52,15 +52,32 @@ export async function findMatchingTransaction(
       WHERE tx_guid = ${candidate.guid}
     `;
 
-    // Check if every expected split has a match (same account, amount within $0.01)
-    const allMatch = splits.every(expected => {
+    // Exact match: every split matches on both account GUID and amount
+    const exactMatch = splits.every(expected => {
       return txSplits.some(actual =>
         actual.account_guid === expected.accountGuid &&
         Math.abs(actual.amount - expected.amount) < 0.015
       );
     });
 
-    if (allMatch) {
+    if (exactMatch) {
+      return candidate.guid;
+    }
+
+    // Amount-only match: every expected split amount pairs 1:1 with an actual
+    // split amount, even if account GUIDs differ (handles account remapping).
+    // Use greedy 1:1 matching to avoid double-counting.
+    const remainingActual = [...txSplits];
+    const amountMatch = splits.every(expected => {
+      const idx = remainingActual.findIndex(actual =>
+        Math.abs(actual.amount - expected.amount) < 0.015
+      );
+      if (idx === -1) return false;
+      remainingActual.splice(idx, 1);
+      return true;
+    });
+
+    if (amountMatch) {
       return candidate.guid;
     }
   }
