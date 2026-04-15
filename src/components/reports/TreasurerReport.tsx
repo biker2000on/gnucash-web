@@ -227,47 +227,51 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                 </table>
             </section>
 
-            {/* Verification Line */}
+            {/* Balance Verification — rendered as a table so print CSS can
+                align the dollar amounts on the right (flex utilities don't
+                apply in the print window since Tailwind isn't loaded there). */}
             <section className="bg-background-tertiary/50 rounded-xl p-4 border border-border">
                 <h3 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
                     Balance Verification
                 </h3>
-                <div className="space-y-1 font-mono text-sm">
-                    <div className="flex justify-between">
-                        <span className="text-foreground-secondary">Opening Balance</span>
-                        <span className="text-foreground">{fmtCurrency(openingBalance.total)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-foreground-secondary">+ Total Income</span>
-                        <span className="text-emerald-400">{fmtCurrency(incomeSummary.total)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-foreground-secondary">- Total Expenses</span>
-                        <span className="text-rose-400">{fmtCurrency(expenseSummary.total)}</span>
-                    </div>
-                    <div className="flex justify-between border-t border-border pt-1 mt-1">
-                        <span className="text-foreground font-semibold">= Expected Closing Balance</span>
-                        <span className="text-foreground font-bold">{fmtCurrency(expectedClosing)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span className="text-foreground-secondary">Actual Closing Balance</span>
-                        <span className="text-foreground">{fmtCurrency(closingBalance.total)}</span>
-                    </div>
-                    {!balancesMatch && (
-                        <div className="flex justify-between text-amber-400 mt-1">
-                            <span>Difference</span>
-                            <span>{fmtCurrency(closingBalance.total - expectedClosing)}</span>
-                        </div>
-                    )}
-                    <div className="mt-2 text-xs">
-                        {balancesMatch ? (
-                            <span className="text-emerald-400">Balances match - report verified</span>
-                        ) : (
-                            <span className="text-amber-400">
-                                Note: Difference may be due to transfers between asset accounts or currency conversions
-                            </span>
+                <table className="w-full font-mono text-sm">
+                    <tbody>
+                        <tr>
+                            <td className="py-1 text-foreground-secondary">Opening Balance</td>
+                            <td className="py-1 text-right text-foreground">{fmtCurrency(openingBalance.total)}</td>
+                        </tr>
+                        <tr>
+                            <td className="py-1 text-foreground-secondary">+ Total Income</td>
+                            <td className="py-1 text-right text-emerald-400">{fmtCurrency(incomeSummary.total)}</td>
+                        </tr>
+                        <tr>
+                            <td className="py-1 text-foreground-secondary">- Total Expenses</td>
+                            <td className="py-1 text-right text-rose-400">{fmtCurrency(expenseSummary.total)}</td>
+                        </tr>
+                        <tr className="border-t border-border">
+                            <td className="py-1 text-foreground font-semibold">= Expected Closing Balance</td>
+                            <td className="py-1 text-right text-foreground font-bold">{fmtCurrency(expectedClosing)}</td>
+                        </tr>
+                        <tr>
+                            <td className="py-1 text-foreground-secondary">Actual Closing Balance</td>
+                            <td className="py-1 text-right text-foreground">{fmtCurrency(closingBalance.total)}</td>
+                        </tr>
+                        {!balancesMatch && (
+                            <tr className="text-amber-400">
+                                <td className="py-1">Difference</td>
+                                <td className="py-1 text-right">{fmtCurrency(closingBalance.total - expectedClosing)}</td>
+                            </tr>
                         )}
-                    </div>
+                    </tbody>
+                </table>
+                <div className="mt-2 text-xs">
+                    {balancesMatch ? (
+                        <span className="text-emerald-400">Balances match - report verified</span>
+                    ) : (
+                        <span className="text-amber-400">
+                            Note: Difference may be due to transfers between asset accounts or currency conversions
+                        </span>
+                    )}
                 </div>
             </section>
         </div>
