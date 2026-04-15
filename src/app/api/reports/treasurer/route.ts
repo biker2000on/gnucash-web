@@ -247,6 +247,18 @@ export async function GET(request: NextRequest) {
             ? new Date(searchParams.get('endDate')! + 'T23:59:59Z')
             : new Date();
 
+        // Diagnostic: log the scope the report is operating on
+        console.log('[treasurer report]', JSON.stringify({
+            bookAccountCount: bookAccountGuids.length,
+            firstFewGuids: bookAccountGuids.slice(0, 3),
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            startDateParam: searchParams.get('startDate'),
+            endDateParam: searchParams.get('endDate'),
+            accountGuidsParam: searchParams.get('accountGuids'),
+            baseCurrencyGuid,
+        }));
+
         const accountGuidsParam = searchParams.get('accountGuids');
         const customAccountGuids = accountGuidsParam
             ? accountGuidsParam.split(',').filter(g => g.trim())
