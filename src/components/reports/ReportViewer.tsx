@@ -43,7 +43,9 @@ export function ReportViewer({
             <!DOCTYPE html>
             <html>
             <head>
-                <title>${escapeHtml(title)}</title>
+                <!-- Blank <title> so the browser's print header doesn't -->
+                <!-- show the page name above the report content. -->
+                <title></title>
                 <style>
                     body {
                         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -96,8 +98,11 @@ export function ReportViewer({
                         border-color: #ccc !important;
                     }
                     @media print {
-                        body { margin: 0; }
-                        @page { margin: 1cm; }
+                        /* margin:0 on @page + body padding pushes the browser's
+                           auto-generated header/footer (URL + date + page #)
+                           off the printable area on most browsers. */
+                        @page { margin: 0; size: auto; }
+                        body { margin: 0; padding: 1cm; }
                         h2, h3 { page-break-after: avoid; }
                     }
                 </style>
