@@ -49,45 +49,56 @@ export function ReportViewer({
                         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                         color: #000;
                         background: #fff;
-                        margin: 20px;
-                        line-height: 1.5;
+                        margin: 12px;
+                        line-height: 1.25;
+                        font-size: 10px;
                     }
-                    h1, h2, h3 { margin: 0.5em 0; }
-                    h1 { font-size: 24px; border-bottom: 2px solid #333; padding-bottom: 8px; }
-                    h2 { font-size: 18px; color: #444; }
-                    h3 { font-size: 14px; color: #666; }
+                    h1, h2, h3 { margin: 0.25em 0; line-height: 1.2; }
+                    h1 { font-size: 16px; border-bottom: 1px solid #333; padding-bottom: 3px; margin-bottom: 8px; }
+                    h2 { font-size: 13px; color: #333; margin-top: 10px; }
+                    h3 { font-size: 11px; color: #444; margin-top: 8px; margin-bottom: 4px; padding-bottom: 2px; border-bottom: 1px solid #888; }
+                    p { margin: 2px 0; }
+                    /* Collapse the oversized Tailwind spacing utilities in the cloned markup */
+                    [class*="space-y-8"] > * + *, [class*="space-y-6"] > * + * { margin-top: 10px !important; }
+                    [class*="space-y-4"] > * + * { margin-top: 6px !important; }
+                    [class*="space-y-2"] > * + *, [class*="space-y-1"] > * + * { margin-top: 2px !important; }
+                    [class*="p-6"], [class*="p-4"] { padding: 6px !important; }
+                    [class*="py-"] { padding-top: 2px !important; padding-bottom: 2px !important; }
+                    [class*="px-"] { padding-left: 4px !important; padding-right: 4px !important; }
+                    [class*="mb-3"], [class*="mb-2"] { margin-bottom: 3px !important; }
+                    [class*="pb-2"], [class*="pb-1"] { padding-bottom: 2px !important; }
                     table {
                         width: 100%;
                         border-collapse: collapse;
-                        margin: 12px 0;
-                        font-size: 12px;
+                        margin: 4px 0;
+                        font-size: 10px;
                     }
                     th, td {
-                        border: 1px solid #ddd;
-                        padding: 6px 10px;
+                        border-bottom: 1px solid #ddd;
+                        padding: 2px 6px;
                         text-align: left;
+                        line-height: 1.25;
                     }
-                    th {
-                        background: #f5f5f5;
-                        font-weight: 600;
-                    }
-                    tr:nth-child(even) { background: #fafafa; }
+                    th { background: #eee; font-weight: 600; }
+                    tr { page-break-inside: avoid; }
+                    section { page-break-inside: avoid; }
                     .text-right, [class*="text-right"] { text-align: right; }
                     .font-bold, [class*="font-bold"] { font-weight: 700; }
                     .font-semibold, [class*="font-semibold"] { font-weight: 600; }
-                    .font-mono, [class*="font-mono"] { font-family: 'Courier New', Courier, monospace; }
+                    .font-mono, [class*="font-mono"] { font-family: 'Courier New', Courier, monospace; font-size: 10px; }
                     td[class*="text-right"], th[class*="text-right"] { text-align: right; }
-                    tfoot td, tfoot th { font-weight: 600; border-top: 2px solid #333; }
+                    tfoot td, tfoot th { font-weight: 700; border-top: 1px solid #333; }
                     .text-center, [class*="text-center"] { text-align: center; }
                     button, [role="button"], .no-print { display: none !important; }
                     * {
                         color: #000 !important;
                         background-color: transparent !important;
-                        border-color: #ddd !important;
+                        border-color: #ccc !important;
                     }
                     @media print {
                         body { margin: 0; }
-                        @page { margin: 1.5cm; }
+                        @page { margin: 1cm; }
+                        h2, h3 { page-break-after: avoid; }
                     }
                 </style>
             </head>
