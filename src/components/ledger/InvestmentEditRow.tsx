@@ -106,6 +106,16 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             ? new Date(transaction.enter_date).toISOString()
             : undefined;
 
+        const handleSharesChange = (val: string) => {
+            const trimmed = val.trim();
+            if (trimmed.startsWith('-')) {
+                if (isBuy) setIsBuy(false);
+                setUserSharesStr(trimmed.slice(1));
+            } else {
+                setUserSharesStr(val);
+            }
+        };
+
         // Derived auto-calc values (computed during render, no useEffect)
         const sharesNum = parseFloat(userSharesStr);
         const userPrice = parseFloat(userPriceStr);
@@ -431,7 +441,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         <td className="px-2 py-1 align-middle">
                             <AmountCell
                                 value={userSharesStr}
-                                onChange={setUserSharesStr}
+                                onChange={handleSharesChange}
                                 autoFocus={focusedColumn === 3}
                                 onEnter={onEnter}
                                 onArrowUp={onArrowUp}
