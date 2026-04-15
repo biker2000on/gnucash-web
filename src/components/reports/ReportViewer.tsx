@@ -103,7 +103,6 @@ export function ReportViewer({
                 </style>
             </head>
             <body>
-                <h1>${escapeHtml(title)}</h1>
                 ${content}
             </body>
             </html>

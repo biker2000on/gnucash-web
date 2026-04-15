@@ -46,9 +46,6 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                 <p className="text-foreground-secondary">
                     Period: {header.periodStart} to {header.periodEnd}
                 </p>
-                <p className="text-sm text-foreground-secondary">
-                    Report Date: {header.reportDate}
-                </p>
             </div>
 
             {/* Opening Balance */}
