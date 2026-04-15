@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useToast } from '@/contexts/ToastContext';
+import { useTaxShortcut } from '@/lib/hooks/useTaxShortcut';
 
 interface SplitRowProps {
     split: SplitFormData;
@@ -103,21 +104,26 @@ export function SplitRow({
         }
     };
 
-    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, field: 'debit' | 'credit') => {
-        if ((e.ctrlKey || e.metaKey) && (e.key === 't' || e.key === 'T')) {
-            e.preventDefault();
-            if (defaultTaxRate <= 0) {
-                success('No tax rate configured. Set it in Profile settings.');
-                return;
-            }
-            const currentStr = split[field];
-            if (!currentStr) return;
-            const currentValue = parseFloat(currentStr);
-            if (isNaN(currentValue) || currentValue === 0) return;
+    // Tax shortcut for debit/credit: plain 't' evaluates any pending math
+    // expression then multiplies by (1 + taxRate). Uses useTaxShortcut so the
+    // behaviour matches the inline ledger AmountCell.
+    const { applyTax: applyTaxDebit } = useTaxShortcut(
+        split.debit,
+        defaultTaxRate,
+        (newAmount) => onChange(index, 'debit', newAmount),
+        (msg) => success(msg),
+    );
+    const { applyTax: applyTaxCredit } = useTaxShortcut(
+        split.credit,
+        defaultTaxRate,
+        (newAmount) => onChange(index, 'credit', newAmount),
+        (msg) => success(msg),
+    );
 
-            const withTax = Math.round(currentValue * (1 + defaultTaxRate) * 100) / 100;
-            onChange(index, field, withTax.toFixed(2));
-            success(`Tax applied: ${currentValue.toFixed(2)} + ${(defaultTaxRate * 100).toFixed(2)}% = ${withTax.toFixed(2)}`);
+    const handleAmountKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, field: 'debit' | 'credit') => {
+        if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            (field === 'debit' ? applyTaxDebit : applyTaxCredit)();
         }
     };
 
