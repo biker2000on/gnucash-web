@@ -702,6 +702,7 @@ export default function AccountLedger({
             }
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            setLastEditedDate(data.post_date);
             await fetchTransactions();
         } catch (err) {
             console.error('Investment inline save failed:', err);
