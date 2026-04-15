@@ -142,7 +142,9 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         }
     }, [transaction]);
 
-    // Imbalance calculation
+    // Imbalance calculation — the placeholder row mirrors the imbalance so it
+    // represents "the amount still needed to balance". When splits balance,
+    // the placeholder's amounts are blank so it can be hidden from render.
     const splitsWithImbalance = useMemo(() => {
         const realSplits = splits.filter(s => !s.isPlaceholder);
         const sum = realSplits.reduce((acc, s) => {
@@ -153,7 +155,6 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
 
         return splits.map(s => {
             if (!s.isPlaceholder) return s;
-            // Placeholder shows the negation of the sum to balance
             const balanceNeeded = -sum;
             return {
                 ...s,
@@ -162,6 +163,16 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
             };
         });
     }, [splits]);
+
+    // Flags that drive which indices are rendered. Returned null from the
+    // render loop rather than filtering so the parent's focusedSplitIndex still
+    // lines up with the state array.
+    const isIndexVisible = useCallback((s: SplitState, index: number): boolean => {
+        if (!s.isPlaceholder) return true;
+        const hasImbalance = Boolean(s.debit || s.credit);
+        const isFocusedPlaceholder = isActive && focusedSplitIndex === index;
+        return hasImbalance || isFocusedPlaceholder;
+    }, [isActive, focusedSplitIndex]);
 
     const createBlankSplit = useCallback((): SplitState => ({
         guid: crypto.randomUUID().replace(/-/g, ''),
@@ -308,7 +319,14 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
     const actualTrailing = columnIds ? trailingIds.length : columns - leadingEmpty - contentCols;
 
     const realSplitCount = splits.filter(s => !s.isPlaceholder).length;
-    const lastSplitIndex = splitsWithImbalance.length - 1;
+    // lastSplitIndex reflects the last *visible* row. Used by cell handlers to
+    // decide when Enter/ArrowDown should advance out of the splits area.
+    const lastSplitIndex = (() => {
+        for (let i = splitsWithImbalance.length - 1; i >= 0; i--) {
+            if (isIndexVisible(splitsWithImbalance[i], i)) return i;
+        }
+        return splitsWithImbalance.length - 1;
+    })();
     // Column indices: standard = 0:memo,1:account,2:debit,3:credit
     // Investment = 0:memo,1:account,2:shares,3:price,4:buy,5:sell
     const lastColIndex = isInvestmentAccount ? 5 : 3;
@@ -318,6 +336,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
     return (
         <>
             {splitsWithImbalance.map((split, index) => {
+                if (!isIndexVisible(split, index)) return null;
                 const isFocused = isActive && focusedSplitIndex === index;
                 const isPlaceholder = split.isPlaceholder;
 
@@ -347,11 +366,11 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     type="text"
                                     value={split.memo}
                                     onChange={e => updateSplit(index, 'memo', e.target.value)}
-                                    onFocus={() => onColumnFocus?.(0)}
                                     autoFocus={focusedColumnIndex === 0}
                                     placeholder="Memo..."
                                     className="w-full bg-transparent text-xs outline-none border-b border-transparent focus:border-primary/50"
                                     onKeyDown={e => {
+                                        // Enter and ArrowDown: stay in the same column, move down
                                         if (e.key === 'ArrowUp') {
                                             e.preventDefault();
                                             if (index === 0) {
@@ -359,7 +378,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                             } else {
                                                 onFocusedSplitChange?.(index - 1);
                                             }
-                                        } else if (e.key === 'ArrowDown') {
+                                        } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
                                             e.preventDefault();
                                             if (index === lastSplitIndex) {
                                                 onArrowDownPastEnd?.();
@@ -379,6 +398,11 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                             }
                                         }
                                     }}
+                                    onFocus={(e) => {
+                                        onColumnFocus?.(0);
+                                        // Select-all so typing overwrites existing memo
+                                        requestAnimationFrame(() => e.target?.select());
+                                    }}
                                 />
                             ) : (
                                 <span className="text-xs text-foreground-muted">{split.memo || ''}</span>
@@ -393,7 +417,12 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onChange={(guid, name) => updateSplitAccount(index, guid, name)}
                                     autoFocus={focusedColumnIndex === 1}
                                     onFocus={() => onColumnFocus?.(1)}
-                                    onEnter={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(isInvestmentAccount ? 2 : debitColIndex)}
+                                    // Enter: go down the column (next row, same column)
+                                    onEnter={() => {
+                                        if (index === lastSplitIndex) onArrowDownPastEnd?.();
+                                        else onFocusedSplitChange?.(index + 1);
+                                    }}
+                                    // Tab: traverse across the row to the next column
                                     onTab={() => isPlaceholder ? onTabToNextTransaction?.() : onColumnFocus?.(isInvestmentAccount ? 2 : debitColIndex)}
                                     onShiftTab={() => onColumnFocus?.(0)}
                                     onArrowUp={() => {
@@ -427,7 +456,8 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                         onChange={v => updateSplit(index, 'shares' as keyof SplitState, v)}
                                         autoFocus={focusedColumnIndex === 2}
                                         onFocus={() => onColumnFocus?.(2)}
-                                        onEnter={() => onColumnFocus?.(3)}
+                                        // Enter: next row, same column. Tab: next column.
+                                        onEnter={() => { if (index === lastSplitIndex) onArrowDownPastEnd?.(); else onFocusedSplitChange?.(index + 1); }}
                                         onTab={() => onColumnFocus?.(3)}
                                         onShiftTab={() => onColumnFocus?.(1)}
                                         onArrowUp={() => { if (index === 0) onArrowUp?.(); else onFocusedSplitChange?.(index - 1); }}
@@ -449,7 +479,8 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                         onChange={v => updateSplit(index, 'price' as keyof SplitState, v)}
                                         autoFocus={focusedColumnIndex === 3}
                                         onFocus={() => onColumnFocus?.(3)}
-                                        onEnter={() => onColumnFocus?.(4)}
+                                        // Enter: next row, same column. Tab: next column.
+                                        onEnter={() => { if (index === lastSplitIndex) onArrowDownPastEnd?.(); else onFocusedSplitChange?.(index + 1); }}
                                         onTab={() => onColumnFocus?.(4)}
                                         onShiftTab={() => onColumnFocus?.(2)}
                                         onArrowUp={() => { if (index === 0) onArrowUp?.(); else onFocusedSplitChange?.(index - 1); }}
@@ -470,7 +501,8 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     onChange={v => updateSplit(index, 'debit', v)}
                                     autoFocus={focusedColumnIndex === debitColIndex}
                                     onFocus={() => onColumnFocus?.(debitColIndex)}
-                                    onEnter={() => onColumnFocus?.(creditColIndex)}
+                                    // Enter: down the column. Tab: across to credit.
+                                    onEnter={() => { if (index === lastSplitIndex) onArrowDownPastEnd?.(); else onFocusedSplitChange?.(index + 1); }}
                                     onTab={() => onColumnFocus?.(creditColIndex)}
                                     onShiftTab={() => onColumnFocus?.(debitColIndex - 1)}
                                     onArrowUp={() => {
@@ -504,17 +536,13 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                     autoFocus={focusedColumnIndex === creditColIndex}
                                     onFocus={() => onColumnFocus?.(creditColIndex)}
                                     onShiftTab={() => onColumnFocus?.(debitColIndex)}
+                                    // Enter: down the column (stay on credit, next row / past-end).
                                     onEnter={() => {
-                                        // Enter from credit: move to next split's memo, or next transaction
-                                        if (index === lastSplitIndex) {
-                                            onTabToNextTransaction?.();
-                                        } else {
-                                            onFocusedSplitChange?.(index + 1);
-                                            onColumnFocus?.(0);
-                                        }
+                                        if (index === lastSplitIndex) onArrowDownPastEnd?.();
+                                        else onFocusedSplitChange?.(index + 1);
                                     }}
+                                    // Tab: move to next split's memo, or next transaction.
                                     onTab={() => {
-                                        // Tab from credit: move to next split's memo, or next transaction
                                         if (index === lastSplitIndex) {
                                             onTabToNextTransaction?.();
                                         } else {

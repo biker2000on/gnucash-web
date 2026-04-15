@@ -24,8 +24,19 @@ export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onA
     const { applyTax } = useTaxShortcut(value, defaultTaxRate, onChange, (msg) => success(msg));
 
     useEffect(() => {
-        if (autoFocus) ref.current?.focus();
+        if (autoFocus && ref.current) {
+            ref.current.focus();
+            // Select the whole value so typing overwrites rather than appends.
+            // Wrapped in RAF so it runs after the focus paint.
+            requestAnimationFrame(() => ref.current?.select());
+        }
     }, [autoFocus]);
+
+    const handleFocus = () => {
+        // Also select on plain focus (mouse click or Tab from another cell).
+        ref.current?.select();
+        onFocus?.();
+    };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if ((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -70,7 +81,7 @@ export function AmountCell({ value, onChange, autoFocus, onEnter, onArrowUp, onA
                 inputMode="decimal"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
-                onFocus={onFocus}
+                onFocus={handleFocus}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
                 placeholder="0.00"
