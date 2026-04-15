@@ -47,6 +47,7 @@ function AccountPageContent() {
 
     const [account, setAccount] = useState<AccountData | null>(null);
     const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
+    const [currentBalanceOverride, setCurrentBalanceOverride] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     useEffect(() => {
@@ -77,6 +78,7 @@ function AccountPageContent() {
                 if (!txRes.ok) throw new Error('Failed to fetch transactions');
                 const txData = await txRes.json();
                 setTransactions(parseTransactionsResponse(txData));
+                setCurrentBalanceOverride(null);
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'An error occurred');
             } finally {
@@ -99,7 +101,7 @@ function AccountPageContent() {
         }
     }
 
-    const currentBalance = transactions[0]?.running_balance;
+    const currentBalance = currentBalanceOverride ?? transactions[0]?.running_balance;
     const commodityMnemonic = transactions[0]?.commodity_mnemonic;
 
     // Check if this is an investment account (non-currency commodity)
@@ -184,6 +186,7 @@ function AccountPageContent() {
                     accountCommodityGuid={account?.commodity_guid}
                     hasChildren={(account?.child_count ?? 0) > 0}
                     onEscape={handleEscapeBack}
+                    onCurrentBalanceChange={setCurrentBalanceOverride}
                 />
             )}
         </div>

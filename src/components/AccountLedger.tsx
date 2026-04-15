@@ -61,6 +61,9 @@ interface AccountLedgerProps {
     accountCommodityGuid?: string;
     hasChildren?: boolean;
     onEscape?: () => void;
+    /** Called with the latest running_balance of the newest transaction after any
+     *  refetch, so the parent page can update its "Current Balance" header. */
+    onCurrentBalanceChange?: (runningBalance: string | null) => void;
 }
 
 export default function AccountLedger({
@@ -75,6 +78,7 @@ export default function AccountLedger({
     accountCommodityGuid,
     hasChildren = false,
     onEscape,
+    onCurrentBalanceChange,
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode, ledgerViewStyle, setLedgerViewStyle, costBasisCarryOver, costBasisMethod } = useUserPreferences();
     const { success, error } = useToast();
@@ -375,10 +379,11 @@ export default function AccountLedger({
             setTransactions(data);
             setOffset(data.length);
             setHasMore(data.length >= 100);
+            onCurrentBalanceChange?.(data[0]?.running_balance ?? null);
         } catch (error) {
             console.error('Error fetching transactions:', error);
         }
-    }, [accountGuid, buildUrlParams]);
+    }, [accountGuid, buildUrlParams, onCurrentBalanceChange]);
 
     // Transaction row click handler
     const handleRowClick = useCallback((txGuid: string) => {
