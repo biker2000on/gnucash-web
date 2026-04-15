@@ -22,12 +22,22 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds: number =
   if (!redis) return;
   try {
     await redis.setex(key, ttlSeconds, JSON.stringify(value));
-    // Track date-keyed entries in sorted sets for range invalidation
-    const dateMatch = key.match(/:(\d{4}-\d{2}-\d{2})$/);
-    if (dateMatch) {
-      const dateScore = new Date(dateMatch[1]).getTime();
-      const prefix = key.substring(0, key.length - dateMatch[1].length - 1);
-      await redis.zadd(`idx:${prefix}`, dateScore, key);
+    // Index the key in a sorted set scored by the LATEST date the cache covers,
+    // so cacheInvalidateFrom(fromDate) can range-delete anything whose coverage
+    // extends through or past fromDate.
+    // Supported key shapes (the trailing date portion after the final ":"):
+    //   cache:BOOK:metric:YYYY-MM-DD                      (single-date)
+    //   cache:BOOK:metric:YYYY-MM-DD-YYYY-MM-DD           (date range, score = end date)
+    const range = key.match(/:(\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})$/);
+    const single = !range ? key.match(/:(\d{4}-\d{2}-\d{2})$/) : null;
+    if (range || single) {
+      const endDate = range ? range[2] : single![1];
+      const dateScore = new Date(endDate).getTime();
+      // Index groups all keys of a given metric+book together.
+      // Strip the trailing ":DATE" or ":DATE-DATE" from the key to form the prefix.
+      const tail = range ? `:${range[1]}-${range[2]}` : `:${single![1]}`;
+      const indexKey = `idx:${key.slice(0, -tail.length)}`;
+      await redis.zadd(indexKey, dateScore, key);
     }
   } catch (err) {
     console.warn('Cache set failed:', err);

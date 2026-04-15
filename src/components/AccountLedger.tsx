@@ -428,13 +428,15 @@ export default function AccountLedger({
             const res = await fetch(`/api/transactions/${deletedGuid}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Failed to delete');
             success('Transaction deleted successfully');
+            // Refetch so running_balance column reflects the removed transaction
+            fetchTransactions();
         } catch (err) {
             console.error('Delete failed:', err);
             error('Failed to delete transaction');
             // Rollback on failure
             setTransactions(prevTransactions);
         }
-    }, [deletingGuid, transactions, success, error]);
+    }, [deletingGuid, transactions, success, error, fetchTransactions]);
 
     // Inline edit save handler
     const handleInlineSave = useCallback(async (guid: string, data: {
@@ -523,7 +525,9 @@ export default function AccountLedger({
                     // Refetch to get the server-assigned guid and proper data
                     await fetchTransactions();
                 } else {
-                    // Update local state without refetching to preserve row order
+                    // Optimistically update local state so the UI stays responsive
+                    // and row order is preserved, then refetch in the background
+                    // so the running_balance column reflects the new split amounts.
                     setTransactions(prev => prev.map(t => {
                         if (t.guid !== guid) return t;
                         const updatedSplits = t.splits?.map(s => {
@@ -538,6 +542,7 @@ export default function AccountLedger({
                             splits: updatedSplits,
                         };
                     }));
+                    fetchTransactions();
                 }
             } else {
                 setEditingGuid(null);
@@ -795,10 +800,10 @@ export default function AccountLedger({
             }
 
             success('Transaction duplicated');
-            // In edit mode, skip refetch since optimistic GUIDs match server GUIDs
-            if (!isEditMode) {
-                fetchTransactions();
-            }
+            // Refetch so running_balance column reflects the new transaction.
+            // In edit mode this also corrects any balance drift from the optimistic
+            // insert above.
+            fetchTransactions();
         } catch (err) {
             console.error('Duplicate failed:', err);
             error(err instanceof Error ? err.message : 'Failed to duplicate transaction');
