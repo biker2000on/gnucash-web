@@ -104,6 +104,9 @@ function TreasurerReportContent() {
     const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
     const [currentSavedReport, setCurrentSavedReport] = useState<SavedReport | null>(null);
     const [migrationBanner, setMigrationBanner] = useState(false);
+    // Treasurer's Note — free-form text the user types before printing/exporting.
+    // Not persisted — resets on reload. Rendered at the end of the report.
+    const [treasurerNote, setTreasurerNote] = useState('');
 
     // Load saved config from DB when savedId is present
     useEffect(() => {
@@ -201,7 +204,10 @@ function TreasurerReportContent() {
 
     const handleExportCSV = () => {
         if (displayData) {
-            const csv = treasurerReportToCSV(displayData);
+            let csv = treasurerReportToCSV(displayData);
+            if (treasurerNote.trim()) {
+                csv += `\n\nTREASURER'S NOTE\n${treasurerNote.split(/\r?\n/).map(l => escapeCSVField(l)).join('\n')}\n`;
+            }
             downloadCSV(csv, 'Treasurers_Report.csv');
         }
     };
@@ -332,6 +338,38 @@ function TreasurerReportContent() {
                 {displayData && (
                     <>
                         <TreasurerReport data={displayData} />
+
+                        {/* Treasurer's Note — editor (screen only) */}
+                        <section className="px-6 pb-6 no-print">
+                            <h3 className="text-lg font-semibold text-foreground mb-3 border-b border-border pb-2">
+                                Treasurer&apos;s Note
+                            </h3>
+                            <p className="text-xs text-foreground-muted mb-2">
+                                Optional free-form note appended to the printed report. Not saved.
+                            </p>
+                            <textarea
+                                value={treasurerNote}
+                                onChange={(e) => setTreasurerNote(e.target.value)}
+                                placeholder="Notes, motions passed, meeting attendees, upcoming initiatives, etc."
+                                rows={4}
+                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50"
+                            />
+                        </section>
+
+                        {/* Treasurer's Note — print mirror (hidden on screen,
+                            shown in the print window because the print stylesheet
+                            doesn't define .hidden). Wrapped in whitespace-pre-wrap
+                            so newlines survive. */}
+                        {treasurerNote.trim() && (
+                            <section className="hidden p-6 pt-0">
+                                <h3 className="text-lg font-semibold text-foreground mb-3 border-b border-border pb-2">
+                                    Treasurer&apos;s Note
+                                </h3>
+                                <div className="text-sm text-foreground whitespace-pre-wrap">
+                                    {treasurerNote}
+                                </div>
+                            </section>
+                        )}
 
                         {/* Custom CSV export button */}
                         <div className="border-t border-border p-4 flex justify-end no-print">
