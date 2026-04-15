@@ -32,6 +32,9 @@ function buildPeriodicHierarchy(
   periodCount: number
 ): PeriodicLineItem[] {
   const children = accounts.filter(a => a.parent_guid === parentGuid);
+  // Sort siblings alphabetically by name (case-insensitive) so every level
+  // renders in a predictable order; the hierarchy itself is preserved.
+  children.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   return children.map(acc => {
     const childItems = buildPeriodicHierarchy(accounts, acc.guid, depth + 1, periodCount);
     const amounts = Array.from({ length: periodCount }, (_, i) =>

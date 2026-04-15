@@ -39,6 +39,28 @@ function collectAllGuidsWithChildren(items: PeriodicLineItem[], out: Set<string>
     return out;
 }
 
+/** Collect guids of rows that should be expanded to show all children up to depth `level`. */
+function collectGuidsToLevel(items: PeriodicLineItem[], level: number, currentDepth = 0, out: Set<string> = new Set()): Set<string> {
+    for (const item of items) {
+        if (currentDepth < level && item.children && item.children.length > 0) {
+            out.add(item.guid);
+            collectGuidsToLevel(item.children, level, currentDepth + 1, out);
+        }
+    }
+    return out;
+}
+
+/** Find the deepest depth in the hierarchy (0 = top-level items, 1 = their children, etc.). */
+function computeMaxDepth(items: PeriodicLineItem[], currentDepth = 0): number {
+    let max = currentDepth;
+    for (const item of items) {
+        if (item.children && item.children.length > 0) {
+            max = Math.max(max, computeMaxDepth(item.children, currentDepth + 1));
+        }
+    }
+    return max;
+}
+
 export default function IncomeStatementByPeriodPage() {
     const [filters, setFilters] = useState<ReportFilters>(getDefaultFilters);
     const [grouping, setGrouping] = useState<PeriodGrouping>('month');
@@ -61,8 +83,8 @@ export default function IncomeStatementByPeriodPage() {
             if (!res.ok) throw new Error('Failed to fetch report');
             const data: PeriodicReportData = await res.json();
             setReportData(data);
-            // Default: expand top-level so users see section contents
-            setExpanded(collectAllGuidsWithChildren(data.sections.flatMap(s => s.items)));
+            // Default: expand to level 1 (top-level accounts show, their children are collapsed)
+            setExpanded(collectGuidsToLevel(data.sections.flatMap(s => s.items), 1));
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
         } finally {
@@ -88,6 +110,15 @@ export default function IncomeStatementByPeriodPage() {
         setExpanded(collectAllGuidsWithChildren(reportData.sections.flatMap(s => s.items)));
     };
     const collapseAll = () => setExpanded(new Set());
+    const expandToLevel = (level: number) => {
+        if (!reportData) return;
+        setExpanded(collectGuidsToLevel(reportData.sections.flatMap(s => s.items), level));
+    };
+
+    const maxDepth = useMemo(() => {
+        if (!reportData) return 0;
+        return computeMaxDepth(reportData.sections.flatMap(s => s.items));
+    }, [reportData]);
 
     const visibleItemsBySection = useMemo(() => {
         if (!reportData) return [];
@@ -144,6 +175,27 @@ export default function IncomeStatementByPeriodPage() {
                 </div>
 
                 <div className="flex items-center gap-2 ml-auto">
+                    {maxDepth > 0 && (
+                        <div className="flex items-center gap-1">
+                            <label className="text-xs text-foreground-muted">Level:</label>
+                            <select
+                                onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === 'all') expandAll();
+                                    else expandToLevel(Number(val));
+                                }}
+                                defaultValue="1"
+                                className="bg-background-tertiary border border-border-hover text-foreground-secondary text-xs rounded px-1.5 py-0.5 focus:outline-none focus:border-foreground-muted"
+                            >
+                                {Array.from({ length: maxDepth + 1 }, (_, i) => (
+                                    <option key={i} value={i}>
+                                        {i === 0 ? 'None' : i}
+                                    </option>
+                                ))}
+                                <option value="all">All</option>
+                            </select>
+                        </div>
+                    )}
                     <button
                         onClick={expandAll}
                         className="text-xs px-2 py-1 rounded border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover"
