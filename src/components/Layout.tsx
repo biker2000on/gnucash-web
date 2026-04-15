@@ -255,7 +255,8 @@ export default function Layout({ children }: { children: ReactNode }) {
         (pathname?.startsWith('/budgets/') && pathname !== '/budgets/') ||
         pathname === '/ledger' ||
         pathname === '/settings/commodities' ||
-        (pathname?.startsWith('/accounts/') && pathname !== '/accounts/');
+        (pathname?.startsWith('/accounts/') && pathname !== '/accounts/') ||
+        pathname === '/reports/income_statement_by_period';
 
     // Desktop collapsed state -- initialised to false, hydrated from localStorage
     const hydrated = useSyncExternalStore(subscribe, () => true, () => false);
