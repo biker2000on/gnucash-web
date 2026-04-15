@@ -28,30 +28,81 @@ function formatDate(date: Date): string {
     return toLocalDateString(date);
 }
 
-function startOfMonth(date: Date): Date {
+export function startOfMonth(date: Date): Date {
     return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-function endOfMonth(date: Date): Date {
+export function endOfMonth(date: Date): Date {
     return new Date(date.getFullYear(), date.getMonth() + 1, 0);
 }
 
-function startOfQuarter(date: Date): Date {
+export function startOfQuarter(date: Date): Date {
     const quarter = Math.floor(date.getMonth() / 3);
     return new Date(date.getFullYear(), quarter * 3, 1);
 }
 
-function endOfQuarter(date: Date): Date {
+export function endOfQuarter(date: Date): Date {
     const quarter = Math.floor(date.getMonth() / 3);
     return new Date(date.getFullYear(), quarter * 3 + 3, 0);
 }
 
-function startOfYear(date: Date): Date {
+export function startOfYear(date: Date): Date {
     return new Date(date.getFullYear(), 0, 1);
 }
 
-function endOfYear(date: Date): Date {
+export function endOfYear(date: Date): Date {
     return new Date(date.getFullYear(), 11, 31);
+}
+
+/**
+ * Generate a sequence of period windows covering [startDate, endDate], aligned
+ * to calendar boundaries for the chosen grouping. The first period starts at or
+ * before startDate, the last period ends at or after endDate.
+ */
+export function generatePeriods(
+    startDate: Date,
+    endDate: Date,
+    grouping: 'month' | 'quarter' | 'year'
+): Array<{ label: string; startDate: string; endDate: string }> {
+    const periods: Array<{ label: string; startDate: string; endDate: string }> = [];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    let cursor: Date;
+    if (grouping === 'month') cursor = startOfMonth(startDate);
+    else if (grouping === 'quarter') cursor = startOfQuarter(startDate);
+    else cursor = startOfYear(startDate);
+
+    const hardStop = endDate.getTime();
+    let safety = 0;
+    while (cursor.getTime() <= hardStop && safety++ < 500) {
+        let periodEnd: Date;
+        let label: string;
+        if (grouping === 'month') {
+            periodEnd = endOfMonth(cursor);
+            label = `${monthNames[cursor.getMonth()]} ${cursor.getFullYear()}`;
+        } else if (grouping === 'quarter') {
+            periodEnd = endOfQuarter(cursor);
+            const q = Math.floor(cursor.getMonth() / 3) + 1;
+            label = `Q${q} ${cursor.getFullYear()}`;
+        } else {
+            periodEnd = endOfYear(cursor);
+            label = String(cursor.getFullYear());
+        }
+        periods.push({
+            label,
+            startDate: toLocalDateString(cursor),
+            endDate: toLocalDateString(periodEnd),
+        });
+        // Advance cursor to the start of the next period
+        if (grouping === 'month') {
+            cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+        } else if (grouping === 'quarter') {
+            cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 3, 1);
+        } else {
+            cursor = new Date(cursor.getFullYear() + 1, 0, 1);
+        }
+    }
+    return periods;
 }
 
 function subYears(date: Date, years: number): Date {

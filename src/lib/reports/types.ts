@@ -20,6 +20,7 @@ export enum ReportType {
   INCOME_EXPENSE_CHART = 'income_expense_chart',
   TAX_HARVESTING = 'tax_harvesting',
   CONTRIBUTION_SUMMARY = 'contribution_summary',
+  INCOME_STATEMENT_BY_PERIOD = 'income_statement_by_period',
 }
 
 export interface ReportConfig {
@@ -170,6 +171,47 @@ export interface ReportData {
   previousGrandTotal?: number;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Period-based income statement (Income / Expense columns per period)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PeriodGrouping = 'month' | 'quarter' | 'year';
+
+export interface PeriodColumn {
+  label: string;     // e.g. "Jan 2026", "Q1 2026", "2026"
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+}
+
+export interface PeriodicLineItem {
+  guid: string;
+  name: string;
+  /** Amount for each period column, same index as ReportData.periods */
+  amounts: number[];
+  /** Sum of amounts[] — cached on the server for convenience */
+  total: number;
+  children?: PeriodicLineItem[];
+  depth?: number;
+}
+
+export interface PeriodicReportSection {
+  title: string;
+  items: PeriodicLineItem[];
+  totals: number[];      // per-period section totals
+  grandTotal: number;    // sum of totals across periods
+}
+
+export interface PeriodicReportData extends ReportDataBase {
+  type: ReportType.INCOME_STATEMENT_BY_PERIOD;
+  grouping: PeriodGrouping;
+  periods: PeriodColumn[];
+  sections: PeriodicReportSection[];
+  /** Net income per period (income - expenses) */
+  netByPeriod: number[];
+  /** Sum of net income across all periods */
+  netTotal: number;
+}
+
 // Available reports configuration
 export const REPORTS: ReportConfig[] = [
   {
@@ -183,6 +225,13 @@ export const REPORTS: ReportConfig[] = [
     type: ReportType.INCOME_STATEMENT,
     name: 'Income Statement',
     description: 'Revenue and expenses over a period (Profit & Loss)',
+    icon: 'trending',
+    category: 'financial',
+  },
+  {
+    type: ReportType.INCOME_STATEMENT_BY_PERIOD,
+    name: 'Income Statement by Period',
+    description: 'Income & expenses broken out by month, quarter, or year for side-by-side comparison',
     icon: 'trending',
     category: 'financial',
   },
