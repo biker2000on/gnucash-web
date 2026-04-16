@@ -1862,7 +1862,7 @@ export default function AccountLedger({
                                     <div className="text-right">
                                         {invRow.shares !== null && (
                                             <div className={`text-sm font-mono ${invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                {invRow.shares > 0 ? '+' : ''}{invRow.shares.toFixed(4)} shares
+                                                {invRow.shares > 0 ? '+' : ''}{invRow.shares.toFixed(sharePrecision)} shares
                                             </div>
                                         )}
                                         {invRow.price !== null && (
@@ -1891,7 +1891,7 @@ export default function AccountLedger({
                                     {invRow.transactionType === 'return_of_capital' && (
                                         <span className="text-amber-400">Return of Capital</span>
                                     )}
-                                    <span>Bal: {invRow.shareBalance.toFixed(4)}</span>
+                                    <span>Bal: {invRow.shareBalance.toFixed(sharePrecision)}</span>
                                     <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
                                 </div>
                             </div>
@@ -2526,7 +2526,7 @@ export default function AccountLedger({
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.shares != null ? (
                                                                 <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                                                                    {invRow.shares.toFixed(4)}
+                                                                    {invRow.shares.toFixed(sharePrecision)}
                                                                 </span>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
@@ -2580,7 +2580,7 @@ export default function AccountLedger({
                                                 if (colId === 'shareBalance') {
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle font-bold text-foreground">
-                                                            {invRow ? invRow.shareBalance.toFixed(4) : '\u2014'}
+                                                            {invRow ? invRow.shareBalance.toFixed(sharePrecision) : '\u2014'}
                                                         </td>
                                                     );
                                                 }
