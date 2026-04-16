@@ -1773,7 +1773,7 @@ export default function AccountLedger({
             </div>
 
             {showLotsView && isInvestmentAccount ? (
-                <LotViewer accountGuid={accountGuid} currencyMnemonic={accountCurrency} />
+                <LotViewer accountGuid={accountGuid} currencyMnemonic={accountCurrency} sharePrecision={sharePrecision} />
             ) : isMobile && isEditMode ? (
                 <div className="p-8 text-center">
                     <p className="text-foreground-muted mb-4">Edit mode is not available on mobile. Use the + button to add transactions.</p>
@@ -1828,6 +1828,7 @@ export default function AccountLedger({
                                                                 lotGuid={mLotSplit.lot_guid}
                                                                 lotIndex={mLotInfo.index}
                                                                 isClosed={mLotInfo.isClosed}
+                                                                sharePrecision={sharePrecision}
                                                                 tooltip={{
                                                                     title: mLotInfo.title,
                                                                     shares: mLotInfo.totalShares,
@@ -2068,6 +2069,7 @@ export default function AccountLedger({
                                                 columnIds={visibleColumnIds}
                                                 trailingColumns={3}
                                                 isInvestmentAccount={true}
+                                                sharePrecision={sharePrecision}
                                                 isActive={index === focusedRowIndex}
                                                 focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
                                                 focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
@@ -2167,6 +2169,7 @@ export default function AccountLedger({
                                                 accountGuid={accountGuid}
                                                 columns={table.getVisibleFlatColumns().length}
                                                 columnIds={visibleColumnIds}
+                                                sharePrecision={sharePrecision}
                                                 isActive={index === focusedRowIndex}
                                                 focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
                                                 focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
@@ -2387,6 +2390,7 @@ export default function AccountLedger({
                                                                     lotGuid={lotSplit.lot_guid}
                                                                     lotIndex={lotInfo.index}
                                                                     isClosed={lotInfo.isClosed}
+                                                                    sharePrecision={sharePrecision}
                                                                     tooltip={{
                                                                         title: lotInfo.title,
                                                                         shares: lotInfo.totalShares,
@@ -2623,6 +2627,7 @@ export default function AccountLedger({
                                             trailingColumns={isInvestmentAccount ? 2 : undefined}
                                             isInvestmentAccount={isInvestmentAccount}
                                             accountCurrency={accountCurrency}
+                                            sharePrecision={sharePrecision}
                                         />
                                     )}
                                     </React.Fragment>

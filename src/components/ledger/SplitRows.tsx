@@ -25,12 +25,13 @@ interface SplitRowsProps {
   isInvestmentAccount?: boolean;
   /** The account currency for investment accounts (e.g. 'USD') */
   accountCurrency?: string;
+  sharePrecision?: number;
 }
 
 // IMPORTANT: Pass ALL splits including the account's own split.
 // Do NOT filter out splits where account_guid === current account.
 
-export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, accountCurrency }: SplitRowsProps) {
+export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, accountCurrency, sharePrecision: sp = 4 }: SplitRowsProps) {
   // Compute leading/trailing from columnIds when provided, falling back to arithmetic.
   // Content columns are what the split row renders body cells for.
   const splitContentColumns = isInvestmentAccount
@@ -93,7 +94,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
               <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
                 {absQty > 0.0001 && qty !== val ? (
                   <span className={qty < 0 ? 'text-rose-400' : ''}>
-                    {qty < 0 ? `(${absQty.toFixed(4)})` : absQty.toFixed(4)}
+                    {qty < 0 ? `(${absQty.toFixed(sp)})` : absQty.toFixed(sp)}
                   </span>
                 ) : ''}
               </td>

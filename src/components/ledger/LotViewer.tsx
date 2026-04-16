@@ -35,9 +35,10 @@ interface LotSummary {
 interface LotViewerProps {
     accountGuid: string;
     currencyMnemonic: string;
+    sharePrecision?: number;
 }
 
-export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerProps) {
+export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecision: sp = 4 }: LotViewerProps) {
     const [lots, setLots] = useState<LotSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -212,7 +213,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                 </div>
                                 <div className="flex items-center justify-between text-xs">
                                     <span className="text-foreground-muted font-mono">
-                                        {lot.totalShares.toFixed(4)} shares
+                                        {lot.totalShares.toFixed(sp)} shares
                                     </span>
                                     {gainValue !== null && (
                                         <span className={`font-mono ${gainValue >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -322,7 +323,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             <div className="bg-background-secondary/30 rounded-lg p-3">
                                 <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Shares</div>
-                                <div className="text-sm font-bold font-mono text-foreground">{selectedLot.totalShares.toFixed(4)}</div>
+                                <div className="text-sm font-bold font-mono text-foreground">{selectedLot.totalShares.toFixed(sp)}</div>
                             </div>
                             <div className="bg-background-secondary/30 rounded-lg p-3">
                                 <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Cost Basis</div>
@@ -376,13 +377,13 @@ export default function LotViewer({ accountGuid, currencyMnemonic }: LotViewerPr
                                                     {split.description}
                                                 </td>
                                                 <td className={`px-3 py-2 text-right font-mono ${split.shares > 0 ? 'text-emerald-400' : split.shares < 0 ? 'text-rose-400' : 'text-foreground-muted'}`}>
-                                                    {split.shares > 0 ? '+' : ''}{split.shares.toFixed(4)}
+                                                    {split.shares > 0 ? '+' : ''}{split.shares.toFixed(sp)}
                                                 </td>
                                                 <td className={`px-3 py-2 text-right font-mono ${split.value < 0 ? 'text-rose-400' : split.value > 0 ? 'text-emerald-400' : 'text-foreground-muted'}`}>
                                                     {formatCurrency(split.value, currencyMnemonic)}
                                                 </td>
                                                 <td className="px-3 py-2 text-right font-mono font-bold text-foreground">
-                                                    {split.shareBalance.toFixed(4)}
+                                                    {split.shareBalance.toFixed(sp)}
                                                 </td>
                                             </tr>
                                         ))}

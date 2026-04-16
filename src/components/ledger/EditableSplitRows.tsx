@@ -56,9 +56,10 @@ interface EditableSplitRowsProps {
     isInvestmentAccount?: boolean;
     /** Column IDs from TanStack Table — drives alignment automatically */
     columnIds?: string[];
+    sharePrecision?: number;
 }
 
-function initSplitsFromTransaction(transaction: AccountTransaction, includeTrading = false): SplitState[] {
+function initSplitsFromTransaction(transaction: AccountTransaction, includeTrading = false, sp = 4): SplitState[] {
     const splits: SplitState[] = (transaction.splits || [])
         .filter(s => includeTrading || !(s.account_fullname || s.account_name || '').startsWith('Trading:'))
         .map(s => {
@@ -73,7 +74,7 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
                 debit: val > 0 ? Math.abs(val).toFixed(2) : '',
                 credit: val < 0 ? Math.abs(val).toFixed(2) : '',
                 reconcile_state: s.reconcile_state || 'n',
-                shares: hasQty ? Math.abs(qty).toFixed(4) : '',
+                shares: hasQty ? Math.abs(qty).toFixed(sp) : '',
                 price: hasQty && Math.abs(qty) > 0.0001 ? Math.abs(val / qty).toFixed(2) : '',
                 commodity_mnemonic: s.commodity_mnemonic || transaction.commodity_mnemonic || '',
             };
@@ -111,10 +112,11 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         trailingColumns: trailingColumnsProp,
         isInvestmentAccount,
         columnIds,
+        sharePrecision: sp = 4,
     },
     ref
 ) {
-    const [splits, setSplits] = useState<SplitState[]>(() => initSplitsFromTransaction(transaction, isInvestmentAccount));
+    const [splits, setSplits] = useState<SplitState[]>(() => initSplitsFromTransaction(transaction, isInvestmentAccount, sp));
     const originalRef = useRef<string>(JSON.stringify(splits.filter(s => !s.isPlaceholder)));
 
     // Re-init when transaction changes externally (after save)
@@ -122,7 +124,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
     useEffect(() => {
         if (transaction.guid !== txGuidRef.current) {
             txGuidRef.current = transaction.guid;
-            const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount);
+            const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount, sp);
             setSplits(newSplits);
             originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
         }
@@ -136,7 +138,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         const newKey = (transaction.splits || []).map(s => `${s.guid}:${s.value_num}/${s.value_denom}`).join(',');
         if (newKey !== txSplitsKeyRef.current) {
             txSplitsKeyRef.current = newKey;
-            const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount);
+            const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount, sp);
             setSplits(newSplits);
             originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
         }
@@ -265,7 +267,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                 });
         },
         revert() {
-            const reverted = initSplitsFromTransaction(transaction, isInvestmentAccount);
+            const reverted = initSplitsFromTransaction(transaction, isInvestmentAccount, sp);
             setSplits(reverted);
         },
         applySuggestionSplits(suggestionSplits) {

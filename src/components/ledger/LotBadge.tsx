@@ -18,6 +18,7 @@ interface LotBadgeProps {
     isClosed: boolean;
     tooltip?: LotTooltipData;
     className?: string;
+    sharePrecision?: number;
 }
 
 // Consistent color palette for lot badges (up to 12 distinct colors, then cycle)
@@ -36,7 +37,7 @@ const LOT_COLORS = [
     'bg-sky-500/20 text-sky-400 border-sky-500/30',
 ];
 
-export default function LotBadge({ lotIndex, isClosed, tooltip, className = '' }: LotBadgeProps) {
+export default function LotBadge({ lotIndex, isClosed, tooltip, className = '', sharePrecision: sp = 4 }: LotBadgeProps) {
     const [showTooltip, setShowTooltip] = useState(false);
     const colorIndex = (lotIndex - 1) % LOT_COLORS.length;
     const colorClass = isClosed
@@ -60,7 +61,7 @@ export default function LotBadge({ lotIndex, isClosed, tooltip, className = '' }
                     <div className="bg-surface border border-border rounded-lg shadow-xl px-3 py-2 text-xs whitespace-nowrap">
                         <div className="font-semibold text-foreground mb-1">{tooltip.title}</div>
                         <div className="space-y-0.5 text-foreground-secondary">
-                            <div>Shares: <span className="font-mono">{tooltip.shares.toFixed(4)}</span></div>
+                            <div>Shares: <span className="font-mono">{tooltip.shares.toFixed(sp)}</span></div>
                             <div>Cost: <span className="font-mono">{formatCurrency(tooltip.costBasis, tooltip.currencyMnemonic)}</span></div>
                             {tooltip.unrealizedGain !== null && (
                                 <div>
