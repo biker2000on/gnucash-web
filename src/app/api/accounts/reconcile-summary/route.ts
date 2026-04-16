@@ -17,6 +17,8 @@ interface AccountReconcileSummary {
     guid: string;
     last_reconcile_date: string | null;
     reconciled_usd: string;
+    reconciled_quantity: string;
+    is_investment: boolean;
 }
 
 export async function GET() {
@@ -86,6 +88,8 @@ export async function GET() {
                     ? result.last_reconcile_date.toISOString().slice(0, 10)
                     : null,
                 reconciled_usd: reconciledUsd.toFixed(2),
+                reconciled_quantity: reconciledBalance.toFixed(4),
+                is_investment: Boolean(isInvestment),
             };
         });
 

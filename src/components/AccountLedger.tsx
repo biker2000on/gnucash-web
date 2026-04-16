@@ -278,10 +278,15 @@ export default function AccountLedger({
     useEffect(() => {
         fetch('/api/accounts/reconcile-summary')
             .then(res => res.ok ? res.json() : null)
-            .then((data: Array<{ guid: string; reconciled_usd: string }> | null) => {
+            .then((data: Array<{ guid: string; reconciled_usd: string; reconciled_quantity?: string; is_investment?: boolean }> | null) => {
                 if (!data) return;
                 const summary = data.find(s => s.guid === accountGuid);
-                if (summary) setReconciledBalance(parseFloat(summary.reconciled_usd) || 0);
+                if (summary) {
+                    const raw = summary.is_investment && summary.reconciled_quantity != null
+                        ? parseFloat(summary.reconciled_quantity)
+                        : parseFloat(summary.reconciled_usd);
+                    setReconciledBalance(raw || 0);
+                }
             })
             .catch(() => {});
     }, [accountGuid, isReconciling]);
@@ -1743,6 +1748,7 @@ export default function AccountLedger({
                         <ReconciliationPanel
                             accountGuid={accountGuid}
                             accountCurrency={accountCurrency}
+                            isInvestment={isInvestmentAccount}
                             currentBalance={reconciledBalance}
                             selectedBalance={selectedBalance}
                             onReconcileComplete={handleReconcileComplete}
@@ -2761,6 +2767,7 @@ export default function AccountLedger({
             <ReconciliationPanel
                 accountGuid={accountGuid}
                 accountCurrency={accountCurrency}
+                isInvestment={isInvestmentAccount}
                 currentBalance={reconciledBalance}
                 selectedBalance={selectedBalance}
                 onReconcileComplete={handleReconcileComplete}

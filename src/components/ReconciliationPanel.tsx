@@ -9,6 +9,7 @@ import { toLocalDateString } from '@/lib/datePresets';
 interface ReconciliationPanelProps {
     accountGuid: string;
     accountCurrency: string;
+    isInvestment?: boolean;
     currentBalance: number;
     selectedBalance: number;
     onReconcileComplete?: () => void;
@@ -24,6 +25,7 @@ interface ReconciliationPanelProps {
 
 export function ReconciliationPanel({
     accountCurrency,
+    isInvestment = false,
     currentBalance,
     selectedBalance,
     onReconcileComplete,
@@ -48,10 +50,10 @@ export function ReconciliationPanel({
 
     // Auto-fill statement balance from SimpleFin when reconciliation starts
     useEffect(() => {
-        if (isReconciling && simpleFinBalance && !statementBalance) {
+        if (isReconciling && simpleFinBalance && !statementBalance && !isInvestment) {
             setStatementBalance(simpleFinBalance.balance.toFixed(2));
         }
-    }, [isReconciling, simpleFinBalance, statementBalance]);
+    }, [isReconciling, simpleFinBalance, statementBalance, isInvestment]);
 
     const handleFinish = useCallback(async () => {
         if (selectedSplits.size === 0) {
@@ -118,6 +120,14 @@ export function ReconciliationPanel({
     const parsedStatementBalance = parseFloat(statementBalance) || 0;
     // Reconciliation math: previously-reconciled (current) + newly-selected = statement balance
     const difference = parsedStatementBalance - (currentBalance + selectedBalance);
+
+    const displayAmount = (n: number) => {
+        if (isInvestment) {
+            return `${n.toFixed(4)} ${accountCurrency}`;
+        }
+        return formatCurrency(n.toFixed(2), accountCurrency);
+    };
+    const balanceTolerance = isInvestment ? 0.00005 : 0.01;
 
     if (!isReconciling) {
         return (
@@ -192,14 +202,14 @@ export function ReconciliationPanel({
                 </div>
                 <div>
                     <label className="block text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
-                        Statement Balance
+                        {isInvestment ? 'Share Balance' : 'Statement Balance'}
                     </label>
                     <input
                         type="number"
-                        step="0.01"
+                        step={isInvestment ? '0.0001' : '0.01'}
                         value={statementBalance}
                         onChange={(e) => setStatementBalance(e.target.value)}
-                        placeholder="0.00"
+                        placeholder={isInvestment ? '0.0000' : '0.00'}
                         className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />
                     {simpleFinBalance && (
@@ -216,7 +226,7 @@ export function ReconciliationPanel({
                         Current
                     </div>
                     <div className="font-mono text-foreground text-xs">
-                        {formatCurrency(currentBalance.toFixed(2), accountCurrency)}
+                        {displayAmount(currentBalance)}
                     </div>
                 </div>
                 <div className="bg-background/30 rounded-lg p-2">
@@ -224,15 +234,15 @@ export function ReconciliationPanel({
                         Selected ({selectedSplits.size})
                     </div>
                     <div className="font-mono text-primary text-xs">
-                        {formatCurrency(selectedBalance.toFixed(2), accountCurrency)}
+                        {displayAmount(selectedBalance)}
                     </div>
                 </div>
                 <div className="bg-background/30 rounded-lg p-2">
                     <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Difference
                     </div>
-                    <div className={`font-mono text-xs ${Math.abs(difference) < 0.01 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                        {formatCurrency(difference.toFixed(2), accountCurrency)}
+                    <div className={`font-mono text-xs ${Math.abs(difference) < balanceTolerance ? 'text-emerald-400' : 'text-amber-400'}`}>
+                        {displayAmount(difference)}
                     </div>
                 </div>
             </div>
