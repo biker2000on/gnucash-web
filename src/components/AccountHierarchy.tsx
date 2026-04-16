@@ -599,6 +599,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         account_type: string;
         parent_guid: string | null;
         commodity_guid: string;
+        commodity_scu?: number;
         code: string;
         description: string;
         hidden: number;
@@ -1249,6 +1250,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             description: selectedAccount.description,
                             hidden: selectedAccount.hidden,
                             placeholder: selectedAccount.placeholder,
+                            commodity_scu: selectedAccount.commodity_scu,
                             notes: (selectedAccount as unknown as { notes?: string }).notes ?? '',
                             tax_related: (selectedAccount as unknown as { tax_related?: boolean }).tax_related ?? false,
                             is_retirement: (selectedAccount as unknown as { is_retirement?: boolean }).is_retirement ?? false,

@@ -10,6 +10,7 @@ interface ReconciliationPanelProps {
     accountGuid: string;
     accountCurrency: string;
     isInvestment?: boolean;
+    sharePrecision?: number;
     currentBalance: number;
     selectedBalance: number;
     onReconcileComplete?: () => void;
@@ -26,6 +27,7 @@ interface ReconciliationPanelProps {
 export function ReconciliationPanel({
     accountCurrency,
     isInvestment = false,
+    sharePrecision = 4,
     currentBalance,
     selectedBalance,
     onReconcileComplete,
@@ -123,11 +125,11 @@ export function ReconciliationPanel({
 
     const displayAmount = (n: number) => {
         if (isInvestment) {
-            return `${n.toFixed(4)} ${accountCurrency}`;
+            return `${n.toFixed(sharePrecision)} ${accountCurrency}`;
         }
         return formatCurrency(n.toFixed(2), accountCurrency);
     };
-    const balanceTolerance = isInvestment ? 0.00005 : 0.01;
+    const balanceTolerance = isInvestment ? Math.pow(10, -(sharePrecision + 1)) : 0.01;
 
     if (!isReconciling) {
         return (
@@ -206,10 +208,10 @@ export function ReconciliationPanel({
                     </label>
                     <input
                         type="number"
-                        step={isInvestment ? '0.0001' : '0.01'}
+                        step={isInvestment ? String(Math.pow(10, -sharePrecision)) : '0.01'}
                         value={statementBalance}
                         onChange={(e) => setStatementBalance(e.target.value)}
-                        placeholder={isInvestment ? '0.0000' : '0.00'}
+                        placeholder={isInvestment ? (0).toFixed(sharePrecision) : '0.00'}
                         className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />
                     {simpleFinBalance && (

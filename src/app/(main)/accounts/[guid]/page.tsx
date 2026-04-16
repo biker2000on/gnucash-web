@@ -19,6 +19,7 @@ interface AccountData {
     account_type?: string;
     commodity_namespace?: string;
     commodity_guid?: string;
+    commodity_scu?: number;
     child_count?: number;
     guid1?: string;
     guid2?: string;
@@ -184,6 +185,7 @@ function AccountPageContent() {
                     accountType={account?.account_type}
                     commodityNamespace={account?.commodity_namespace}
                     accountCommodityGuid={account?.commodity_guid}
+                    commodityScu={account?.commodity_scu}
                     hasChildren={(account?.child_count ?? 0) > 0}
                     onEscape={handleEscapeBack}
                     onCurrentBalanceChange={setCurrentBalanceOverride}

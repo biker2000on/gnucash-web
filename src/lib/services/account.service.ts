@@ -54,6 +54,7 @@ export const UpdateAccountSchema = z.object({
   hidden: z.number().int().min(0).max(1).optional(),
   placeholder: z.number().int().min(0).max(1).optional(),
   parent_guid: z.string().length(32).nullable().optional(),
+  commodity_scu: z.number().int().min(1).optional(),
   notes: z.string().max(4096).optional(),
   tax_related: z.boolean().optional(),
   is_retirement: z.boolean().optional(),
@@ -202,6 +203,7 @@ export class AccountService {
           ...(data.hidden !== undefined && { hidden: data.hidden }),
           ...(data.placeholder !== undefined && { placeholder: data.placeholder }),
           ...(data.parent_guid !== undefined && { parent_guid: data.parent_guid }),
+          ...(data.commodity_scu !== undefined && { commodity_scu: data.commodity_scu }),
         },
         include: {
           commodity: true,

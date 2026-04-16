@@ -30,6 +30,7 @@ export interface InvestmentSaveData {
 interface InvestmentEditRowProps {
     transaction: AccountTransaction;
     accountGuid: string;
+    sharePrecision?: number;
     isActive: boolean;
     showCheckbox: boolean;
     isChecked: boolean;
@@ -52,6 +53,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
     function InvestmentEditRow({
         transaction,
         accountGuid,
+        sharePrecision: sp = 4,
         isActive,
         showCheckbox,
         isChecked,
@@ -81,8 +83,8 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         );
 
         // Initial values from existing transaction
-        const initShares = invRow.shares != null ? Math.abs(invRow.shares).toFixed(4) : '';
-        const initPrice = invRow.price != null ? invRow.price.toFixed(4) : '';
+        const initShares = invRow.shares != null ? Math.abs(invRow.shares).toFixed(sp) : '';
+        const initPrice = invRow.price != null ? invRow.price.toFixed(sp) : '';
         const initTotal = (invRow.buyAmount ?? invRow.sellAmount ?? 0);
         const initTotalStr = initTotal > 0 ? initTotal.toFixed(2) : '';
         const initIsBuy = invRow.transactionType !== 'sell';
@@ -127,7 +129,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         if (autoCalcField === 'price') {
             displayTotal = userTotalStr;
             displayPrice = (!isNaN(sharesNum) && sharesNum > 0 && !isNaN(userTotal) && userTotal > 0)
-                ? (userTotal / sharesNum).toFixed(4)
+                ? (userTotal / sharesNum).toFixed(sp)
                 : userPriceStr;
         } else {
             displayPrice = userPriceStr;
@@ -162,8 +164,8 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     description: description.trim(),
                     transferAccountGuid,
                     transferAccountName,
-                    shares: shares.toFixed(4),
-                    price: (isNaN(finalPrice) ? 0 : finalPrice).toFixed(4),
+                    shares: shares.toFixed(sp),
+                    price: (isNaN(finalPrice) ? 0 : finalPrice).toFixed(sp),
                     total: finalTotal.toFixed(2),
                     isBuy,
                     original_enter_date: originalEnterDate,
@@ -273,7 +275,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         ),
                         shares: (
                             <td className="px-4 py-2 text-sm font-mono text-right">
-                                {invRow.shares != null ? invRow.shares.toFixed(4) : '\u2014'}
+                                {invRow.shares != null ? invRow.shares.toFixed(sp) : '\u2014'}
                             </td>
                         ),
                         price: (
@@ -293,7 +295,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         ),
                         shareBalance: (
                             <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                                {invRow.shareBalance.toFixed(4)}
+                                {invRow.shareBalance.toFixed(sp)}
                             </td>
                         ),
                         costBasis: (
@@ -356,7 +358,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                             <td className="px-4 py-2 text-sm font-mono text-right">
                                 {invRow.shares != null ? (
                                     <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                                        {invRow.shares.toFixed(4)}
+                                        {invRow.shares.toFixed(sp)}
                                     </span>
                                 ) : <span className="opacity-30">&mdash;</span>}
                             </td>
@@ -378,7 +380,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         ),
                         shareBalance: (
                             <td className="px-4 py-2 text-sm font-mono text-right font-bold text-foreground">
-                                {invRow.shareBalance.toFixed(4)}
+                                {invRow.shareBalance.toFixed(sp)}
                             </td>
                         ),
                         costBasis: (
@@ -565,7 +567,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     ),
                     shareBalance: (
                         <td className="px-4 py-1 text-xs font-mono text-right align-middle opacity-40 font-bold">
-                            {invRow.shareBalance.toFixed(4)}
+                            {invRow.shareBalance.toFixed(sp)}
                         </td>
                     ),
                     costBasis: (

@@ -88,7 +88,7 @@ export async function GET() {
                     ? result.last_reconcile_date.toISOString().slice(0, 10)
                     : null,
                 reconciled_usd: reconciledUsd.toFixed(2),
-                reconciled_quantity: reconciledBalance.toFixed(4),
+                reconciled_quantity: reconciledBalance.toString(),
                 is_investment: Boolean(isInvestment),
             };
         });

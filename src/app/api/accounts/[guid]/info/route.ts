@@ -48,6 +48,7 @@ export async function GET(
                 ah.fullname,
                 a.account_type,
                 a.commodity_guid,
+                a.commodity_scu,
                 c.namespace as commodity_namespace,
                 c.mnemonic as commodity_mnemonic,
                 ah.guid1, ah.guid2, ah.guid3, ah.guid4, ah.guid5, ah.guid6,

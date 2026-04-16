@@ -59,6 +59,7 @@ interface AccountLedgerProps {
     accountType?: string;
     commodityNamespace?: string;
     accountCommodityGuid?: string;
+    commodityScu?: number;
     hasChildren?: boolean;
     onEscape?: () => void;
     /** Called with the latest running_balance of the newest transaction after any
@@ -76,6 +77,7 @@ export default function AccountLedger({
     accountType = 'ASSET',
     commodityNamespace,
     accountCommodityGuid,
+    commodityScu,
     hasChildren = false,
     onEscape,
     onCurrentBalanceChange,
@@ -84,6 +86,7 @@ export default function AccountLedger({
     const { success, error } = useToast();
     const isMobile = useIsMobile();
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
+    const sharePrecision = commodityScu ? Math.max(0, Math.round(Math.log10(commodityScu))) : 4;
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
@@ -1749,6 +1752,7 @@ export default function AccountLedger({
                             accountGuid={accountGuid}
                             accountCurrency={accountCurrency}
                             isInvestment={isInvestmentAccount}
+                            sharePrecision={sharePrecision}
                             currentBalance={reconciledBalance}
                             selectedBalance={selectedBalance}
                             onReconcileComplete={handleReconcileComplete}
@@ -1995,6 +1999,7 @@ export default function AccountLedger({
                                             }}
                                             transaction={tx}
                                             accountGuid={accountGuid}
+                                            sharePrecision={sharePrecision}
                                             isActive={index === focusedRowIndex}
                                             showCheckbox={true}
                                             isChecked={editSelectedGuids.has(tx.guid)}
@@ -2768,6 +2773,7 @@ export default function AccountLedger({
                 accountGuid={accountGuid}
                 accountCurrency={accountCurrency}
                 isInvestment={isInvestmentAccount}
+                sharePrecision={sharePrecision}
                 currentBalance={reconciledBalance}
                 selectedBalance={selectedBalance}
                 onReconcileComplete={handleReconcileComplete}

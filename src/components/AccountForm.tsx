@@ -24,6 +24,7 @@ interface AccountFormData {
     account_type: string;
     parent_guid: string | null;
     commodity_guid: string;
+    commodity_scu?: number;
     code: string;
     description: string;
     hidden: number;
@@ -64,6 +65,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
         account_type: initialData?.account_type || 'ASSET',
         parent_guid: parentGuid ?? initialData?.parent_guid ?? null,
         commodity_guid: initialData?.commodity_guid || '',
+        commodity_scu: initialData?.commodity_scu,
         code: initialData?.code || '',
         description: initialData?.description || '',
         hidden: initialData?.hidden ?? 0,
@@ -307,6 +309,31 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     {fieldErrors.commodity_guid && (
                         <p className="mt-1 text-xs text-rose-400">{fieldErrors.commodity_guid}</p>
                     )}
+                </div>
+            )}
+
+            {/* Smallest Currency Unit (share precision) — shown for investment types */}
+            {['STOCK', 'MUTUAL'].includes(formData.account_type) && (
+                <div>
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                        Share Decimal Places
+                    </label>
+                    <select
+                        value={formData.commodity_scu ?? 10000}
+                        onChange={e => setFormData(prev => ({ ...prev, commodity_scu: Number(e.target.value) }))}
+                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
+                    >
+                        <option value={1}>0 (whole shares)</option>
+                        <option value={10}>1</option>
+                        <option value={100}>2</option>
+                        <option value={1000}>3</option>
+                        <option value={10000}>4</option>
+                        <option value={100000}>5</option>
+                        <option value={1000000}>6</option>
+                    </select>
+                    <p className="mt-1 text-xs text-foreground-muted">
+                        Number of decimal places for share quantities (GnuCash smallest currency unit).
+                    </p>
                 </div>
             )}
 
