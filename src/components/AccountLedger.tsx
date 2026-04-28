@@ -459,6 +459,7 @@ export default function AccountLedger({
         accountName: string;
         amount: string;
         original_enter_date?: string;
+        splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
     }) => {
         try {
             const tx = transactions.find(t => t.guid === guid);
@@ -468,17 +469,31 @@ export default function AccountLedger({
             const isNewTransaction = !tx.currency_guid;
             const currencyGuid = tx.currency_guid || accountCommodityGuid || '';
 
-            const signedAmount = parseFloat(data.amount);
-            const absAmount = Math.abs(signedAmount);
-            const isDebit = signedAmount >= 0;
-            const { num: valueNum, denom: valueDenom } = toNumDenom(absAmount);
-            const { num: negValueNum, denom: negValueDenom } = toNumDenom(-absAmount);
+            const isMultiSplitSave = !!(data.splits && data.splits.length > 0);
+            let bodySplits: Array<Record<string, unknown>>;
 
-            const body: Record<string, unknown> = {
-                currency_guid: currencyGuid,
-                post_date: data.post_date,
-                description: data.description,
-                splits: [
+            if (isMultiSplitSave) {
+                bodySplits = data.splits!.map(s => {
+                    const { num, denom } = toNumDenom(s.amount);
+                    return {
+                        account_guid: s.accountGuid,
+                        value_num: num,
+                        value_denom: denom,
+                        quantity_num: num,
+                        quantity_denom: denom,
+                        reconcile_state: s.accountGuid === accountGuid
+                            ? (tx.account_split_reconcile_state || 'n')
+                            : 'n',
+                    };
+                });
+            } else {
+                const signedAmount = parseFloat(data.amount);
+                const absAmount = Math.abs(signedAmount);
+                const isDebit = signedAmount >= 0;
+                const { num: valueNum, denom: valueDenom } = toNumDenom(absAmount);
+                const { num: negValueNum, denom: negValueDenom } = toNumDenom(-absAmount);
+
+                bodySplits = [
                     {
                         account_guid: accountGuid,
                         value_num: isDebit ? valueNum : negValueNum,
@@ -495,7 +510,14 @@ export default function AccountLedger({
                         quantity_denom: negValueDenom,
                         reconcile_state: 'n',
                     },
-                ],
+                ];
+            }
+
+            const body: Record<string, unknown> = {
+                currency_guid: currencyGuid,
+                post_date: data.post_date,
+                description: data.description,
+                splits: bodySplits,
             };
 
             let res: Response;
@@ -534,8 +556,9 @@ export default function AccountLedger({
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
             setLastEditedDate(data.post_date);
             if (isEditMode) {
-                if (isNewTransaction) {
-                    // Refetch to get the server-assigned guid and proper data
+                if (isNewTransaction || isMultiSplitSave) {
+                    // Refetch to get the server-assigned guid and proper data,
+                    // or to pick up the new multi-split structure
                     await fetchTransactions();
                 } else {
                     // Optimistically update local state so the UI stays responsive

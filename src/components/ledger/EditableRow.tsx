@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import React, { useState, useCallback, useImperativeHandle, useRef, forwardRef } from 'react';
 import { AccountTransaction } from '@/components/AccountLedger';
 import { DateCell } from './cells/DateCell';
 import { DescriptionCell } from './cells/DescriptionCell';
@@ -33,6 +33,7 @@ interface EditableRowProps {
         accountName: string;
         amount: string;
         original_enter_date?: string;
+        splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
     }) => Promise<void>;
     onEditModal: (guid: string) => void;
     onDuplicate?: (guid: string) => void;
@@ -101,15 +102,68 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             ? new Date(transaction.enter_date).toISOString()
             : undefined;
 
-        const handleDescriptionSuggestion = useCallback((suggestion: TransactionSuggestion) => {
+        // Set when a multi-split suggestion triggers its own save, so the next
+        // state-based save() call from the parent (Enter/Tab/Arrow) becomes a no-op
+        // and doesn't overwrite the multi-split transaction with stale 2-split state.
+        const skipSaveRef = useRef(false);
+
+        const handleDescriptionSuggestion = useCallback(async (suggestion: TransactionSuggestion) => {
             if (isSlimMode) {
                 // In slim mode, forward to parent so it can update EditableSplitRows
                 onDescriptionSuggestion?.(suggestion);
                 return;
             }
-            // Basic mode: autofill account + amount from suggestion splits
+
+            const hasExistingAmount = !!debit || !!credit;
+
+            // Multi-split suggestion: save transaction with all splits, preserving structure
+            if (suggestion.splits.length > 2) {
+                let splitsToUse = suggestion.splits;
+
+                // Scale all splits proportionally so user's existing amount is preserved
+                if (hasExistingAmount) {
+                    const userExisting = debit ? parseFloat(debit) : -parseFloat(credit);
+                    const ourSplit = suggestion.splits.find(s => s.accountGuid === accountGuid);
+                    if (ourSplit && ourSplit.amount !== 0) {
+                        const scale = userExisting / ourSplit.amount;
+                        const scaled = suggestion.splits.map(s =>
+                            s.accountGuid === accountGuid
+                                ? { ...s, amount: userExisting }
+                                : { ...s, amount: Math.round(s.amount * scale * 100) / 100 }
+                        );
+                        // Absorb rounding residue into the first non-user split so totals balance
+                        const sum = scaled.reduce((acc, s) => acc + s.amount, 0);
+                        if (Math.abs(sum) > 0.001) {
+                            const idx = scaled.findIndex(s => s.accountGuid !== accountGuid);
+                            if (idx >= 0) {
+                                scaled[idx] = { ...scaled[idx], amount: Math.round((scaled[idx].amount - sum) * 100) / 100 };
+                            }
+                        }
+                        splitsToUse = scaled;
+                    }
+                }
+
+                skipSaveRef.current = true;
+                try {
+                    setSaveError(false);
+                    await onSave(transaction.guid, {
+                        post_date: postDate,
+                        description: suggestion.description,
+                        accountGuid: '',
+                        accountName: '',
+                        amount: '0',
+                        original_enter_date: originalEnterDate,
+                        splits: splitsToUse,
+                    });
+                } catch {
+                    setSaveError(true);
+                    skipSaveRef.current = false;
+                }
+                return;
+            }
+
+            // 2-split suggestion: autofill account, and amount only if not already set
             if (suggestion.splits.length >= 2) {
-                // Find the split for the current account vs the "other" split
                 const ourSplit = suggestion.splits.find(s => s.accountGuid === accountGuid);
                 const otherSplitData = suggestion.splits.find(s => s.accountGuid !== accountGuid);
 
@@ -118,17 +172,18 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     setOtherAccountName(otherSplitData.accountName);
                 }
 
-                // Set amount from our split (the amount in this account), falling back to negated other split
-                const amount = ourSplit ? ourSplit.amount : (otherSplitData ? -otherSplitData.amount : 0);
-                if (amount >= 0) {
-                    setDebit(Math.abs(amount).toFixed(2));
-                    setCredit('');
-                } else {
-                    setCredit(Math.abs(amount).toFixed(2));
-                    setDebit('');
+                if (!hasExistingAmount) {
+                    const amount = ourSplit ? ourSplit.amount : (otherSplitData ? -otherSplitData.amount : 0);
+                    if (amount >= 0) {
+                        setDebit(Math.abs(amount).toFixed(2));
+                        setCredit('');
+                    } else {
+                        setCredit(Math.abs(amount).toFixed(2));
+                        setDebit('');
+                    }
                 }
             }
-        }, [accountGuid, isSlimMode, onDescriptionSuggestion]);
+        }, [accountGuid, isSlimMode, onDescriptionSuggestion, debit, credit, postDate, transaction.guid, originalEnterDate, onSave]);
 
         const isDirty = useCallback(() => {
             const origDate = transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : '';
@@ -143,6 +198,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
 
         const save = useCallback(async (): Promise<boolean> => {
             if (isSlimMode) return true; // Parent handles save in journal/autosplit
+            if (skipSaveRef.current) return true; // Multi-split suggestion already saved
             if (!isDirty()) return true;
             const hasAmount = (debit && parseFloat(debit) > 0) || (credit && parseFloat(credit) > 0);
             if (!description.trim() || !otherAccountGuid || !hasAmount) return false;
