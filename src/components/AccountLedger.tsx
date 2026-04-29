@@ -1832,98 +1832,98 @@ export default function AccountLedger({
                                 onCommit={() => toggleReviewed(tx.guid)}
                             >
                                 <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-xl ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <div className="text-xs text-foreground-muted">
-                                            {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
-                                        </div>
-                                        <div className="text-sm font-medium flex items-center gap-2">
-                                            <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
-                                            {tx.description}
-                                            {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
-                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
-                                            )}
-                                            {tx.match_type === 'manual_reconciliation' && (
-                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>
-                                            )}
-                                            {(() => {
-                                                const mLotSplit = tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid);
-                                                const mAccountSplit = tx.splits?.find(s => s.account_guid === accountGuid);
-                                                const mLotInfo = mLotSplit?.lot_guid ? lotMap.get(mLotSplit.lot_guid) : null;
-                                                return (
-                                                    <>
-                                                        {mLotInfo && mLotSplit?.lot_guid && (
-                                                            <LotBadge
-                                                                lotGuid={mLotSplit.lot_guid}
-                                                                lotIndex={mLotInfo.index}
-                                                                isClosed={mLotInfo.isClosed}
-                                                                sharePrecision={sharePrecision}
-                                                                tooltip={{
-                                                                    title: mLotInfo.title,
-                                                                    shares: mLotInfo.totalShares,
-                                                                    costBasis: mLotInfo.totalCost,
-                                                                    unrealizedGain: mLotInfo.unrealizedGain,
-                                                                    holdingPeriod: mLotInfo.holdingPeriod as any,
-                                                                    currencyMnemonic: accountCurrency,
-                                                                }}
-                                                            />
-                                                        )}
-                                                        <LotAssignmentPopover
-                                                            splitGuid={mLotSplit?.guid || mAccountSplit?.guid || ''}
-                                                            currentLotGuid={mLotSplit?.lot_guid || null}
-                                                            accountGuid={accountGuid}
-                                                            lots={Array.from(lotMap.entries()).map(([guid, info]) => ({
-                                                                guid,
-                                                                title: info.title,
-                                                                totalShares: info.totalShares,
-                                                                isClosed: info.isClosed,
-                                                            }))}
-                                                            currencyMnemonic={accountCurrency}
-                                                            onAssign={handleSplitLotAssign}
-                                                            onCreateAndAssign={handleSplitCreateAndAssign}
-                                                        />
-                                                    </>
-                                                );
-                                            })()}
-                                        </div>
-                                        <div className="text-xs text-foreground-muted">{invRow.transferAccount}</div>
-                                    </div>
-                                    <div className="text-right">
-                                        {invRow.shares !== null && (
-                                            <div className={`text-sm font-mono ${invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                {invRow.shares > 0 ? '+' : ''}{invRow.shares.toFixed(sharePrecision)} shares
-                                            </div>
-                                        )}
-                                        {invRow.price !== null && (
+                                    <div className="flex justify-between items-start">
+                                        <div>
                                             <div className="text-xs text-foreground-muted">
-                                                @ {formatCurrency(invRow.price, invRow.currencyMnemonic)}
+                                                {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                             </div>
+                                            <div className="text-sm font-medium flex items-center gap-2">
+                                                <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
+                                                {tx.description}
+                                                {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
+                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                                                )}
+                                                {tx.match_type === 'manual_reconciliation' && (
+                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>
+                                                )}
+                                                {(() => {
+                                                    const mLotSplit = tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid);
+                                                    const mAccountSplit = tx.splits?.find(s => s.account_guid === accountGuid);
+                                                    const mLotInfo = mLotSplit?.lot_guid ? lotMap.get(mLotSplit.lot_guid) : null;
+                                                    return (
+                                                        <>
+                                                            {mLotInfo && mLotSplit?.lot_guid && (
+                                                                <LotBadge
+                                                                    lotGuid={mLotSplit.lot_guid}
+                                                                    lotIndex={mLotInfo.index}
+                                                                    isClosed={mLotInfo.isClosed}
+                                                                    sharePrecision={sharePrecision}
+                                                                    tooltip={{
+                                                                        title: mLotInfo.title,
+                                                                        shares: mLotInfo.totalShares,
+                                                                        costBasis: mLotInfo.totalCost,
+                                                                        unrealizedGain: mLotInfo.unrealizedGain,
+                                                                        holdingPeriod: mLotInfo.holdingPeriod as any,
+                                                                        currencyMnemonic: accountCurrency,
+                                                                    }}
+                                                                />
+                                                            )}
+                                                            <LotAssignmentPopover
+                                                                splitGuid={mLotSplit?.guid || mAccountSplit?.guid || ''}
+                                                                currentLotGuid={mLotSplit?.lot_guid || null}
+                                                                accountGuid={accountGuid}
+                                                                lots={Array.from(lotMap.entries()).map(([guid, info]) => ({
+                                                                    guid,
+                                                                    title: info.title,
+                                                                    totalShares: info.totalShares,
+                                                                    isClosed: info.isClosed,
+                                                                }))}
+                                                                currencyMnemonic={accountCurrency}
+                                                                onAssign={handleSplitLotAssign}
+                                                                onCreateAndAssign={handleSplitCreateAndAssign}
+                                                            />
+                                                        </>
+                                                    );
+                                                })()}
+                                            </div>
+                                            <div className="text-xs text-foreground-muted">{invRow.transferAccount}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            {invRow.shares !== null && (
+                                                <div className={`text-sm font-mono ${invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {invRow.shares > 0 ? '+' : ''}{invRow.shares.toFixed(sharePrecision)} shares
+                                                </div>
+                                            )}
+                                            {invRow.price !== null && (
+                                                <div className="text-xs text-foreground-muted">
+                                                    @ {formatCurrency(invRow.price, invRow.currencyMnemonic)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between text-xs border-t border-border/30 pt-1.5">
+                                        {invRow.buyAmount !== null && (
+                                            <span className="text-emerald-400">Buy: {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}</span>
                                         )}
+                                        {invRow.sellAmount !== null && (
+                                            <span className="text-rose-400">Sell: {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}</span>
+                                        )}
+                                        {invRow.transactionType === 'dividend' && (
+                                            <span className="text-foreground-muted">Dividend</span>
+                                        )}
+                                        {invRow.transactionType === 'stock_split' && (
+                                            <span className="text-blue-400">Stock Split</span>
+                                        )}
+                                        {invRow.transactionType === 'reinvested_dividend' && (
+                                            <span className="text-primary">DRIP</span>
+                                        )}
+                                        {invRow.transactionType === 'return_of_capital' && (
+                                            <span className="text-amber-400">Return of Capital</span>
+                                        )}
+                                        <span>Bal: {invRow.shareBalance.toFixed(sharePrecision)}</span>
+                                        <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
                                     </div>
                                 </div>
-                                <div className="flex justify-between text-xs border-t border-border/30 pt-1.5">
-                                    {invRow.buyAmount !== null && (
-                                        <span className="text-emerald-400">Buy: {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}</span>
-                                    )}
-                                    {invRow.sellAmount !== null && (
-                                        <span className="text-rose-400">Sell: {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}</span>
-                                    )}
-                                    {invRow.transactionType === 'dividend' && (
-                                        <span className="text-foreground-muted">Dividend</span>
-                                    )}
-                                    {invRow.transactionType === 'stock_split' && (
-                                        <span className="text-blue-400">Stock Split</span>
-                                    )}
-                                    {invRow.transactionType === 'reinvested_dividend' && (
-                                        <span className="text-primary">DRIP</span>
-                                    )}
-                                    {invRow.transactionType === 'return_of_capital' && (
-                                        <span className="text-amber-400">Return of Capital</span>
-                                    )}
-                                    <span>Bal: {invRow.shareBalance.toFixed(sharePrecision)}</span>
-                                    <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
-                                </div>
-                            </div>
                             </SwipeableTransactionCard>
                         ) : (
                             <SwipeableTransactionCard
