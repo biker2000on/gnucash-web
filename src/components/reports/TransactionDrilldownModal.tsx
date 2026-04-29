@@ -40,11 +40,7 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
 
     // Fetch on target change
     useEffect(() => {
-        if (!target) {
-            setData(null);
-            setError(null);
-            return;
-        }
+        if (!target) return;
         let cancelled = false;
         setIsLoading(true);
         setError(null);
