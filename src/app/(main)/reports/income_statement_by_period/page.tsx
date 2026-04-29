@@ -9,6 +9,7 @@ import {
     PeriodicLineItem,
 } from '@/lib/reports/types';
 import { formatCurrency } from '@/lib/format';
+import { TransactionDrilldownModal, DrilldownTarget } from '@/components/reports/TransactionDrilldownModal';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -69,6 +70,7 @@ export default function IncomeStatementByPeriodPage() {
     const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
     const [hideZero, setHideZero] = useState(true);
+    const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
 
     const fetchReport = useCallback(async () => {
         setIsLoading(true);
@@ -243,6 +245,8 @@ export default function IncomeStatementByPeriodPage() {
                                     grandTotal={section.grandTotal}
                                     expanded={expanded}
                                     onToggle={toggleRow}
+                                    onCellClick={setDrilldown}
+                                    periods={reportData.periods}
                                     isLast={sectionIdx === visibleItemsBySection.length - 1}
                                 />
                             ))}
@@ -271,6 +275,10 @@ export default function IncomeStatementByPeriodPage() {
                     </table>
                 </div>
             )}
+            <TransactionDrilldownModal
+                target={drilldown}
+                onClose={() => setDrilldown(null)}
+            />
         </ReportViewer>
     );
 }
@@ -284,6 +292,8 @@ interface PeriodicSectionRowsProps {
     grandTotal: number;
     expanded: Set<string>;
     onToggle: (guid: string) => void;
+    onCellClick: (target: DrilldownTarget) => void;
+    periods: { label: string; startDate: string; endDate: string }[];
     isLast: boolean;
 }
 
@@ -294,7 +304,16 @@ function PeriodicSectionRows({
     grandTotal,
     expanded,
     onToggle,
+    onCellClick,
+    periods,
 }: PeriodicSectionRowsProps) {
+    const totalLabel =
+        periods.length > 0
+            ? `${periods[0].label} – ${periods[periods.length - 1].label}`
+            : 'Total';
+    const totalStartDate = periods[0]?.startDate ?? '';
+    const totalEndDate = periods[periods.length - 1]?.endDate ?? '';
+
     return (
         <>
             <tr className="bg-background-tertiary/40">
@@ -327,23 +346,73 @@ function PeriodicSectionRows({
                                 <span className="text-foreground">{row.name}</span>
                             </div>
                         </td>
-                        {row.amounts.map((v, i) => (
-                            <td
-                                key={i}
-                                className={`text-right px-3 py-1.5 font-mono text-xs ${
-                                    Math.abs(v) < 0.005
-                                        ? 'text-foreground-muted'
-                                        : v >= 0
-                                            ? 'text-foreground-secondary'
-                                            : 'text-rose-400'
-                                }`}
-                            >
-                                {formatCurrency(v, 'USD')}
-                            </td>
-                        ))}
-                        <td className="text-right px-3 py-1.5 font-mono text-xs text-foreground font-medium border-l border-border">
-                            {formatCurrency(row.total, 'USD')}
-                        </td>
+                        {row.amounts.map((v, i) => {
+                            const isZero = Math.abs(v) < 0.005;
+                            const className = `text-right px-3 py-1.5 font-mono text-xs ${
+                                isZero
+                                    ? 'text-foreground-muted'
+                                    : v >= 0
+                                        ? 'text-foreground-secondary'
+                                        : 'text-rose-400'
+                            }`;
+                            if (isZero) {
+                                return (
+                                    <td key={i} className={className}>
+                                        {formatCurrency(v, 'USD')}
+                                    </td>
+                                );
+                            }
+                            return (
+                                <td key={i} className={`${className} cursor-pointer hover:underline`}>
+                                    <button
+                                        type="button"
+                                        className="w-full text-right hover:underline focus:outline-none focus:underline"
+                                        onClick={() =>
+                                            onCellClick({
+                                                accountGuid: row.guid,
+                                                accountName: row.name,
+                                                periodLabel: periods[i].label,
+                                                startDate: periods[i].startDate,
+                                                endDate: periods[i].endDate,
+                                            })
+                                        }
+                                    >
+                                        {formatCurrency(v, 'USD')}
+                                    </button>
+                                </td>
+                            );
+                        })}
+                        {(() => {
+                            const v = row.total;
+                            const isZero = Math.abs(v) < 0.005;
+                            const cls = `text-right px-3 py-1.5 font-mono text-xs text-foreground font-medium border-l border-border`;
+                            if (isZero) {
+                                return (
+                                    <td className={cls}>
+                                        {formatCurrency(v, 'USD')}
+                                    </td>
+                                );
+                            }
+                            return (
+                                <td className={`${cls} cursor-pointer`}>
+                                    <button
+                                        type="button"
+                                        className="w-full text-right hover:underline focus:outline-none focus:underline"
+                                        onClick={() =>
+                                            onCellClick({
+                                                accountGuid: row.guid,
+                                                accountName: row.name,
+                                                periodLabel: totalLabel,
+                                                startDate: totalStartDate,
+                                                endDate: totalEndDate,
+                                            })
+                                        }
+                                    >
+                                        {formatCurrency(v, 'USD')}
+                                    </button>
+                                </td>
+                            );
+                        })()}
                     </tr>
                 );
             })}
