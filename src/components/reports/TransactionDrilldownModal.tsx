@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 
@@ -83,9 +84,9 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
         return () => window.removeEventListener('keydown', onKey);
     }, [target, onClose]);
 
-    if (!target) return null;
+    if (!target || typeof document === 'undefined') return null;
 
-    return (
+    return createPortal(
         <div
             className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50"
             onClick={onClose}
@@ -149,7 +150,8 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 }
 
