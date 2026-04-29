@@ -21,6 +21,7 @@ import {
 } from '@tanstack/react-table';
 import { getColumns, getInvestmentColumns } from './ledger/columns';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { SwipeableTransactionCard } from '@/components/ledger/SwipeableTransactionCard';
 import { MobileCard } from './ui/MobileCard';
 import { parseTransactionsResponse, transformToInvestmentRow, isMultiSplitTransaction, InvestmentRowData } from './ledger/investment-utils';
 import { toLocalDateString } from '@/lib/datePresets';
@@ -1825,7 +1826,12 @@ export default function AccountLedger({
                         const isUnreviewed = tx.reviewed === false;
 
                         return isInvestmentAccount && invRow ? (
-                            <div key={tx.guid} className={`bg-surface/30 backdrop-blur border border-border rounded-xl p-3 space-y-2 ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
+                            <SwipeableTransactionCard
+                                key={tx.guid}
+                                disabled={!isUnreviewed}
+                                onCommit={() => toggleReviewed(tx.guid)}
+                            >
+                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-xl ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <div className="text-xs text-foreground-muted">
@@ -1918,26 +1924,32 @@ export default function AccountLedger({
                                     <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
                                 </div>
                             </div>
+                            </SwipeableTransactionCard>
                         ) : (
-                            <MobileCard
+                            <SwipeableTransactionCard
                                 key={tx.guid}
-                                onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}
-                                className={isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}
-                                fields={[
-                                    { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
-                                    { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
-                                    { label: 'Transfer', value: transferName },
-                                    ...(amount >= 0
-                                        ? [{ label: 'Debit', value: <span className="text-primary font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
-                                        : [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
-                                    ),
-                                    { label: 'Balance', value: balanceValue !== null
-                                        ? <span className={`font-mono font-bold ${balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{formatCurrency(balanceValue, tx.commodity_mnemonic)}</span>
-                                        : <span className="text-foreground-muted">{'\u2014'}</span>
-                                    },
-                                    { label: 'Reconcile', value: <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}>{reconcileInfo.icon}</span> },
-                                ]}
-                            />
+                                disabled={!isUnreviewed}
+                                onCommit={() => toggleReviewed(tx.guid)}
+                            >
+                                <MobileCard
+                                    onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}
+                                    className={isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}
+                                    fields={[
+                                        { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
+                                        { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
+                                        { label: 'Transfer', value: transferName },
+                                        ...(amount >= 0
+                                            ? [{ label: 'Debit', value: <span className="text-primary font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
+                                            : [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
+                                        ),
+                                        { label: 'Balance', value: balanceValue !== null
+                                            ? <span className={`font-mono font-bold ${balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{formatCurrency(balanceValue, tx.commodity_mnemonic)}</span>
+                                            : <span className="text-foreground-muted">{'\u2014'}</span>
+                                        },
+                                        { label: 'Reconcile', value: <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}>{reconcileInfo.icon}</span> },
+                                    ]}
+                                />
+                            </SwipeableTransactionCard>
                         );
                     })}
                     <div ref={loader} className="p-8 flex justify-center border-t border-border/50">
