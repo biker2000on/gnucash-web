@@ -17,6 +17,7 @@ export interface SplitWithCommodity {
   accountGuid: string;
   commodityGuid: string;
   commodityMnemonic: string;
+  commodityNamespace: string; // e.g. 'CURRENCY' for fiat, 'NYSE'/'NASDAQ' for stocks
   value: number;      // in transaction currency
   quantity: number;   // in account's native currency
 }
@@ -36,12 +37,13 @@ export function needsTradingAccounts(splits: SplitWithCommodity[]): boolean {
  */
 export function calculateQuantityImbalances(
   splits: SplitWithCommodity[]
-): Map<string, { mnemonic: string; imbalance: number }> {
-  const imbalances = new Map<string, { mnemonic: string; imbalance: number }>();
+): Map<string, { mnemonic: string; namespace: string; imbalance: number }> {
+  const imbalances = new Map<string, { mnemonic: string; namespace: string; imbalance: number }>();
 
   for (const split of splits) {
     const existing = imbalances.get(split.commodityGuid) || {
       mnemonic: split.commodityMnemonic,
+      namespace: split.commodityNamespace,
       imbalance: 0,
     };
     existing.imbalance += split.quantity;
@@ -59,12 +61,20 @@ export function calculateQuantityImbalances(
 }
 
 /**
- * Get or create Trading:CURRENCY:XXX account hierarchy.
+ * Get or create Trading:{NAMESPACE}:{MNEMONIC} account hierarchy.
  * Creates the full hierarchy if any part is missing.
+ *
+ * The middle level matches the commodity's namespace from the commodities table:
+ *   - 'CURRENCY' for fiat (USD, EUR, etc.)  → Trading:CURRENCY:USD
+ *   - 'NYSE'/'NASDAQ'/etc. for stocks        → Trading:NYSE:VTI
+ *
+ * Matches GnuCash desktop's behavior. Previously this hardcoded 'CURRENCY'
+ * for every commodity, which corrupted security trading splits.
  */
 export async function getOrCreateTradingAccount(
   commodityGuid: string,
   commodityMnemonic: string,
+  commodityNamespace: string,
   tx?: Parameters<typeof prisma.$transaction>[0] extends (prisma: infer P) => unknown ? P : never
 ): Promise<string> {
   // Use provided transaction context or default prisma
@@ -109,16 +119,16 @@ export async function getOrCreateTradingAccount(
     });
   }
 
-  // 2. Find or create CURRENCY group under Trading
-  let currencyGroup = await db.accounts.findFirst({
-    where: { name: 'CURRENCY', parent_guid: tradingRoot.guid },
+  // 2. Find or create namespace group under Trading (CURRENCY, NYSE, NASDAQ, etc.)
+  let namespaceGroup = await db.accounts.findFirst({
+    where: { name: commodityNamespace, parent_guid: tradingRoot.guid },
   });
 
-  if (!currencyGroup) {
-    currencyGroup = await db.accounts.create({
+  if (!namespaceGroup) {
+    namespaceGroup = await db.accounts.create({
       data: {
         guid: generateGuid(),
-        name: 'CURRENCY',
+        name: commodityNamespace,
         account_type: 'TRADING',
         commodity_guid: tradingRoot.commodity_guid,
         commodity_scu: 100,
@@ -130,13 +140,13 @@ export async function getOrCreateTradingAccount(
     });
   }
 
-  // 3. Find or create specific currency account (e.g., Trading:CURRENCY:EUR)
-  let currencyAccount = await db.accounts.findFirst({
-    where: { name: commodityMnemonic, parent_guid: currencyGroup.guid },
+  // 3. Find or create specific commodity account (e.g., Trading:NYSE:VTI or Trading:CURRENCY:EUR)
+  let commodityAccount = await db.accounts.findFirst({
+    where: { name: commodityMnemonic, parent_guid: namespaceGroup.guid },
   });
 
-  if (!currencyAccount) {
-    currencyAccount = await db.accounts.create({
+  if (!commodityAccount) {
+    commodityAccount = await db.accounts.create({
       data: {
         guid: generateGuid(),
         name: commodityMnemonic,
@@ -144,14 +154,14 @@ export async function getOrCreateTradingAccount(
         commodity_guid: commodityGuid,
         commodity_scu: 100,
         non_std_scu: 0,
-        parent_guid: currencyGroup.guid,
+        parent_guid: namespaceGroup.guid,
         hidden: 0,
         placeholder: 0,
       },
     });
   }
 
-  return currencyAccount.guid;
+  return commodityAccount.guid;
 }
 
 /**
@@ -249,6 +259,7 @@ export async function processMultiCurrencySplits(
       accountGuid: split.account_guid,
       commodityGuid: account?.commodity_guid || '',
       commodityMnemonic: account?.commodity?.mnemonic || '',
+      commodityNamespace: account?.commodity?.namespace || 'CURRENCY',
       value: split.value_num / split.value_denom,
       quantity,
     };
@@ -272,8 +283,8 @@ export async function processMultiCurrencySplits(
 
   // Get or create trading accounts for each imbalanced commodity
   const tradingAccountGuids = new Map<string, string>();
-  for (const [commodityGuid, { mnemonic }] of imbalances) {
-    const tradingGuid = await getOrCreateTradingAccount(commodityGuid, mnemonic, tx);
+  for (const [commodityGuid, { mnemonic, namespace }] of imbalances) {
+    const tradingGuid = await getOrCreateTradingAccount(commodityGuid, mnemonic, namespace, tx);
     tradingAccountGuids.set(commodityGuid, tradingGuid);
   }
 
