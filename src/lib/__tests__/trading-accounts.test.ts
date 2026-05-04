@@ -19,7 +19,12 @@ vi.mock('@/lib/prisma', () => ({
   generateGuid: () => 'test-guid-' + Math.random().toString(36).slice(2),
 }));
 
-import { getOrCreateTradingAccount } from '../trading-accounts';
+import {
+  getOrCreateTradingAccount,
+  generateTradingSplits,
+  calculateImbalances,
+  type CommodityImbalance,
+} from '../trading-accounts';
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -137,5 +142,126 @@ describe('getOrCreateTradingAccount', () => {
     );
     const groupNames = namespaceGroups.map(g => g.name).sort();
     expect(groupNames).toEqual(['CURRENCY', 'NYSE']);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Trading-split generation: VALUE and quantity precision (regression for
+// "trading splits show in SHARES column instead of BUY/SELL" bug)
+// ----------------------------------------------------------------------------
+
+describe('generateTradingSplits', () => {
+  it('writes non-zero VALUE on trading splits so they render in BUY/SELL columns', () => {
+    // Simulate a dividend-with-reinvestment: $704.65 dividend → 2.2228 VTI shares.
+    // Asset (VTI) split: value=-704.65 (web-app sign convention for buy), quantity=+2.2228 VTI
+    // Income (USD) split: value=+704.65, quantity=+704.65 USD
+    // Trading splits should negate each commodity's value AND quantity.
+    const imbalances: Map<string, CommodityImbalance> = new Map([
+      ['vti-guid', {
+        mnemonic: 'VTI', namespace: 'NYSE', fraction: 10000,
+        valueImbalance: -704.65, quantityImbalance: 2.2228,
+      }],
+      ['usd-guid', {
+        mnemonic: 'USD', namespace: 'CURRENCY', fraction: 100,
+        valueImbalance: 704.65, quantityImbalance: 704.65,
+      }],
+    ]);
+
+    const tradingGuids = new Map([
+      ['vti-guid', 'trading-vti-guid'],
+      ['usd-guid', 'trading-usd-guid'],
+    ]);
+
+    const splits = generateTradingSplits(imbalances, tradingGuids);
+
+    const vtiSplit = splits.find(s => s.accountGuid === 'trading-vti-guid')!;
+    const usdSplit = splits.find(s => s.accountGuid === 'trading-usd-guid')!;
+
+    // VTI trading: value should be +704.65 (negation of -704.65), in transaction currency
+    expect(vtiSplit.valueNum).toBe(70465);
+    expect(vtiSplit.valueDenom).toBe(100);
+    // VTI trading: quantity should be -2.2228 with denom matching VTI's fraction (10000)
+    expect(vtiSplit.quantityNum).toBe(-22228);
+    expect(vtiSplit.quantityDenom).toBe(10000);
+
+    // USD trading: value should be -704.65 (negation of +704.65)
+    expect(usdSplit.valueNum).toBe(-70465);
+    expect(usdSplit.valueDenom).toBe(100);
+    // USD trading: quantity should be -704.65 USD with denom 100
+    expect(usdSplit.quantityNum).toBe(-70465);
+    expect(usdSplit.quantityDenom).toBe(100);
+  });
+
+  it('preserves stock-share precision (regression: 2.2228 was being truncated to 2.22)', () => {
+    const imbalances: Map<string, CommodityImbalance> = new Map([
+      ['vti-guid', {
+        mnemonic: 'VTI', namespace: 'NYSE', fraction: 10000,
+        valueImbalance: -704.65, quantityImbalance: 2.2228,
+      }],
+    ]);
+    const tradingGuids = new Map([['vti-guid', 'trading-vti-guid']]);
+
+    const [split] = generateTradingSplits(imbalances, tradingGuids);
+
+    // 2.2228 with denom 10000 → 22228 (full 4-decimal precision retained).
+    // The old code used denom=100, giving round(2.2228*100)=222, i.e. 2.22.
+    expect(split.quantityNum / split.quantityDenom).toBeCloseTo(-2.2228, 4);
+    expect(split.quantityDenom).toBe(10000);
+  });
+
+  it('still works for currency-to-currency exchange (USD→EUR)', () => {
+    // USD account: value=-100, quantity=-100 USD
+    // EUR account: value=+100, quantity=+85 EUR
+    const imbalances: Map<string, CommodityImbalance> = new Map([
+      ['usd-guid', {
+        mnemonic: 'USD', namespace: 'CURRENCY', fraction: 100,
+        valueImbalance: -100, quantityImbalance: -100,
+      }],
+      ['eur-guid', {
+        mnemonic: 'EUR', namespace: 'CURRENCY', fraction: 100,
+        valueImbalance: 100, quantityImbalance: 85,
+      }],
+    ]);
+    const tradingGuids = new Map([
+      ['usd-guid', 'trading-usd-guid'],
+      ['eur-guid', 'trading-eur-guid'],
+    ]);
+
+    const splits = generateTradingSplits(imbalances, tradingGuids);
+    const usdSplit = splits.find(s => s.accountGuid === 'trading-usd-guid')!;
+    const eurSplit = splits.find(s => s.accountGuid === 'trading-eur-guid')!;
+
+    // Trading USD: value=+100, quantity=+100 USD (negates the -100 imbalances)
+    expect(usdSplit.valueNum).toBe(10000);
+    expect(usdSplit.quantityNum).toBe(10000);
+    // Trading EUR: value=-100, quantity=-85
+    expect(eurSplit.valueNum).toBe(-10000);
+    expect(eurSplit.quantityNum).toBe(-8500);
+  });
+});
+
+describe('calculateImbalances', () => {
+  it('sums both quantity AND value imbalances per commodity', () => {
+    const imbalances = calculateImbalances([
+      {
+        accountGuid: 'asset-vti-guid',
+        commodityGuid: 'vti-guid', commodityMnemonic: 'VTI',
+        commodityNamespace: 'NYSE', commodityFraction: 10000,
+        value: -704.65, quantity: 2.2228,
+      },
+      {
+        accountGuid: 'income-guid',
+        commodityGuid: 'usd-guid', commodityMnemonic: 'USD',
+        commodityNamespace: 'CURRENCY', commodityFraction: 100,
+        value: 704.65, quantity: 704.65,
+      },
+    ]);
+
+    expect(imbalances.get('vti-guid')).toMatchObject({
+      quantityImbalance: 2.2228, valueImbalance: -704.65, fraction: 10000,
+    });
+    expect(imbalances.get('usd-guid')).toMatchObject({
+      quantityImbalance: 704.65, valueImbalance: 704.65, fraction: 100,
+    });
   });
 });

@@ -18,8 +18,9 @@ export interface SplitWithCommodity {
   commodityGuid: string;
   commodityMnemonic: string;
   commodityNamespace: string; // e.g. 'CURRENCY' for fiat, 'NYSE'/'NASDAQ' for stocks
+  commodityFraction: number;  // e.g. 100 for USD, 10000 for stocks — used for quantity precision
   value: number;      // in transaction currency
-  quantity: number;   // in account's native currency
+  quantity: number;   // in account's native commodity
 }
 
 /**
@@ -31,33 +32,70 @@ export function needsTradingAccounts(splits: SplitWithCommodity[]): boolean {
   return commodities.size > 1;
 }
 
+export interface CommodityImbalance {
+  mnemonic: string;
+  namespace: string;
+  fraction: number;
+  /** Sum of split quantities (in commodity's native units) for this commodity. */
+  quantityImbalance: number;
+  /** Sum of split values (in transaction currency) for splits whose account is in this commodity. */
+  valueImbalance: number;
+}
+
 /**
- * Calculate quantity imbalances by commodity.
- * Returns a map of commodityGuid -> { mnemonic, imbalance } for non-zero imbalances.
+ * Calculate quantity AND value imbalances by commodity.
+ *
+ * The trading split for a commodity needs to negate BOTH the quantity (to
+ * balance commodity totals) AND the value (so the trading account shows the
+ * trade in the BUY/SELL columns of the ledger, matching desktop GnuCash).
+ *
+ * Returns a map of commodityGuid -> CommodityImbalance for non-zero imbalances.
  */
-export function calculateQuantityImbalances(
+export function calculateImbalances(
   splits: SplitWithCommodity[]
-): Map<string, { mnemonic: string; namespace: string; imbalance: number }> {
-  const imbalances = new Map<string, { mnemonic: string; namespace: string; imbalance: number }>();
+): Map<string, CommodityImbalance> {
+  const imbalances = new Map<string, CommodityImbalance>();
 
   for (const split of splits) {
     const existing = imbalances.get(split.commodityGuid) || {
       mnemonic: split.commodityMnemonic,
       namespace: split.commodityNamespace,
-      imbalance: 0,
+      fraction: split.commodityFraction,
+      quantityImbalance: 0,
+      valueImbalance: 0,
     };
-    existing.imbalance += split.quantity;
+    existing.quantityImbalance += split.quantity;
+    existing.valueImbalance += split.value;
     imbalances.set(split.commodityGuid, existing);
   }
 
-  // Filter to only non-zero imbalances (use small epsilon for floating point)
+  // Filter to only non-zero quantity imbalances (use small epsilon for floating point).
+  // Value imbalance can legitimately be zero on a multi-currency split that already balances.
   for (const [guid, data] of imbalances) {
-    if (Math.abs(data.imbalance) < 0.0001) {
+    if (Math.abs(data.quantityImbalance) < 0.0001) {
       imbalances.delete(guid);
     }
   }
 
   return imbalances;
+}
+
+/**
+ * @deprecated kept for backwards compatibility — use calculateImbalances instead.
+ */
+export function calculateQuantityImbalances(
+  splits: SplitWithCommodity[]
+): Map<string, { mnemonic: string; namespace: string; imbalance: number }> {
+  const full = calculateImbalances(splits);
+  const out = new Map<string, { mnemonic: string; namespace: string; imbalance: number }>();
+  for (const [guid, data] of full) {
+    out.set(guid, {
+      mnemonic: data.mnemonic,
+      namespace: data.namespace,
+      imbalance: data.quantityImbalance,
+    });
+  }
+  return out;
 }
 
 /**
@@ -165,12 +203,24 @@ export async function getOrCreateTradingAccount(
 }
 
 /**
- * Generate trading splits to balance the transaction by commodity quantity.
- * Trading splits have value=0 (don't affect value balance) but non-zero quantity.
+ * Generate trading splits to balance the transaction by commodity quantity AND value.
+ *
+ * For each imbalanced commodity, the trading split has:
+ *   - value    = -(sum of values of original splits in that commodity)
+ *   - quantity = -(sum of quantities of original splits in that commodity)
+ *
+ * This matches GnuCash desktop's behavior: trading splits show in the BUY/SELL
+ * columns of the ledger (because they have non-zero values), and balance the
+ * commodity totals (because they negate the imbalanced quantity).
+ *
+ * Quantity precision uses the commodity's `fraction` from the commodities table
+ * (100 for USD, 10000 for typical stocks) so we don't truncate share quantities.
+ *
+ * Value precision uses denom=100 (matches the transaction currency, typically USD).
  */
 export function generateTradingSplits(
-  imbalances: Map<string, { mnemonic: string; imbalance: number }>,
-  tradingAccountGuids: Map<string, string> // commodityGuid -> tradingAccountGuid
+  imbalances: Map<string, CommodityImbalance>,
+  tradingAccountGuids: Map<string, string>, // commodityGuid -> tradingAccountGuid
 ): Array<{
   accountGuid: string;
   valueNum: number;
@@ -186,22 +236,22 @@ export function generateTradingSplits(
     quantityDenom: number;
   }> = [];
 
-  for (const [commodityGuid, { imbalance }] of imbalances) {
+  const VALUE_DENOM = 100; // Transaction currency precision (USD)
+
+  for (const [commodityGuid, { quantityImbalance, valueImbalance, fraction }] of imbalances) {
     const tradingAccountGuid = tradingAccountGuids.get(commodityGuid);
     if (!tradingAccountGuid) continue;
 
-    // Trading split has value=0 (doesn't affect transaction value balance)
-    // but quantity = -imbalance (balances the commodity quantities)
-    // Use standard denom of 100 for currency precision
-    const denom = 100;
-    const quantityValue = -imbalance; // Negate to balance
+    const quantityDenom = fraction > 0 ? fraction : 100;
+    const quantityValue = -quantityImbalance;
+    const valueValue = -valueImbalance;
 
     tradingSplits.push({
       accountGuid: tradingAccountGuid,
-      valueNum: 0,
-      valueDenom: denom,
-      quantityNum: Math.round(quantityValue * denom),
-      quantityDenom: denom,
+      valueNum: Math.round(valueValue * VALUE_DENOM),
+      valueDenom: VALUE_DENOM,
+      quantityNum: Math.round(quantityValue * quantityDenom),
+      quantityDenom,
     });
   }
 
@@ -260,6 +310,7 @@ export async function processMultiCurrencySplits(
       commodityGuid: account?.commodity_guid || '',
       commodityMnemonic: account?.commodity?.mnemonic || '',
       commodityNamespace: account?.commodity?.namespace || 'CURRENCY',
+      commodityFraction: account?.commodity?.fraction || 100,
       value: split.value_num / split.value_denom,
       quantity,
     };
@@ -278,8 +329,8 @@ export async function processMultiCurrencySplits(
     };
   }
 
-  // Calculate quantity imbalances
-  const imbalances = calculateQuantityImbalances(splitsWithCommodity);
+  // Calculate quantity AND value imbalances
+  const imbalances = calculateImbalances(splitsWithCommodity);
 
   // Get or create trading accounts for each imbalanced commodity
   const tradingAccountGuids = new Map<string, string>();
