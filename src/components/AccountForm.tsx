@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
+import { AccountSelector } from '@/components/ui/AccountSelector';
 
 const ACCOUNT_TYPES = [
     { value: 'ASSET', label: 'Asset', group: 'Assets' },
@@ -264,23 +265,27 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {/* Parent Account - only for create mode */}
             {mode === 'create' && (
                 <div>
-                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Parent Account
-                    </label>
-                    <select
+                    <div className="flex items-baseline justify-between mb-2">
+                        <label className="block text-sm font-medium text-foreground-secondary">
+                            Parent Account
+                        </label>
+                        {formData.parent_guid && (
+                            <button
+                                type="button"
+                                onClick={() => setFormData(prev => ({ ...prev, parent_guid: null }))}
+                                className="text-xs text-foreground-muted hover:text-foreground underline-offset-2 hover:underline"
+                            >
+                                Use top level
+                            </button>
+                        )}
+                    </div>
+                    <AccountSelector
                         value={formData.parent_guid || ''}
-                        onChange={e => setFormData(prev => ({ ...prev, parent_guid: e.target.value || null }))}
-                        className="w-full bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer"
-                    >
-                        <option value="">(Top Level)</option>
-                        {accounts.map(acc => (
-                            <option key={acc.guid} value={acc.guid}>
-                                {acc.fullname}
-                            </option>
-                        ))}
-                    </select>
+                        onChange={(guid) => setFormData(prev => ({ ...prev, parent_guid: guid || null }))}
+                        placeholder="(Top Level)"
+                    />
                     <p className="mt-1 text-xs text-foreground-muted">
-                        Select a parent to create a sub-account, or leave empty for top-level.
+                        Select a parent to create a sub-account, or leave as top level.
                     </p>
                 </div>
             )}
