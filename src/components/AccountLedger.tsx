@@ -664,11 +664,14 @@ export default function AccountLedger({
             const shares = parseFloat(data.shares);
             const total = parseFloat(data.total);
 
-            // GnuCash sign convention for stock account split:
-            // Buy: positive quantity (shares in), negative value (money out)
-            // Sell: negative quantity (shares out), positive value (money in)
+            // GnuCash sign convention for the stock account split (matches
+            // GnuCash desktop). The stock account is debited on a buy and
+            // credited on a sell, so its value follows accounting signs:
+            //   Buy:  positive quantity (shares in), positive value (debit)
+            //   Sell: negative quantity (shares out), negative value (credit)
+            // The other side (cash, income, etc.) gets the opposite sign.
             const stockQuantity = data.isBuy ? shares : -shares;
-            const stockValue = data.isBuy ? -total : total;
+            const stockValue = data.isBuy ? total : -total;
 
             // Transfer split is the opposite of stock value
             const transferValue = -stockValue;

@@ -80,9 +80,9 @@ function findTransferSplit(splits: Split[], accountGuid: string): Split | undefi
 /**
  * Determine the transaction type from the share quantity (simple fallback).
  *
- * GnuCash sign convention for the stock account split:
- *  - Buy:  positive quantity (shares in), negative value (money out)
- *  - Sell: negative quantity (shares out), positive value (money in)
+ * GnuCash sign convention for the stock account split (matches desktop):
+ *  - Buy:  positive quantity (shares in), positive value (debit)
+ *  - Sell: negative quantity (shares out), negative value (credit)
  *  - Dividend / other: zero quantity
  */
 function classifyTransaction(shares: number): 'buy' | 'sell' | 'dividend' | 'other' {
@@ -229,8 +229,8 @@ export function transformToInvestmentRow(
     // Derive per-share price when there are shares
     const price = absShares !== 0 ? absValue / absShares : null;
 
-    // Buy: shares > 0 (value is negative in GnuCash, we show absolute)
-    // Sell: shares < 0 (value is positive in GnuCash, we show absolute)
+    // Buy: shares > 0 (asset value positive in GnuCash, we show absolute)
+    // Sell: shares < 0 (asset value negative in GnuCash, we show absolute)
     const buyAmount = shares > 0 ? absValue : null;
     const sellAmount = shares < 0 ? absValue : null;
 
