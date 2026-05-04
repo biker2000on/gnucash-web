@@ -186,6 +186,7 @@ export function InlineEditRow({
                 <DescriptionAutocomplete
                     value={description}
                     onChange={setDescription}
+                    accountGuid={accountGuid}
                     placeholder="Description..."
                     className="text-xs"
                     compact

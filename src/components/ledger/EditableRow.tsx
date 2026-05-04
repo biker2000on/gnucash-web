@@ -509,6 +509,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                                     value={description}
                                     onChange={setDescription}
                                     onSelectSuggestion={handleDescriptionSuggestion}
+                                    accountGuid={accountGuid}
                                     autoFocus={focusedColumn === 1}
                                     onEnter={onEnter}
                                     onTab={() => onTabToSplits?.()}
@@ -558,6 +559,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                                 value={description}
                                 onChange={setDescription}
                                 onSelectSuggestion={handleDescriptionSuggestion}
+                                accountGuid={accountGuid}
                                 autoFocus={focusedColumn === 1}
                                 onEnter={onEnter}
                                 onArrowUp={onArrowUp}

@@ -13,14 +13,17 @@ interface DescriptionCellProps {
     onArrowDown?: () => void;
     autoFocus?: boolean;
     onFocus?: () => void;
+    /** Scope description suggestions to transactions touching this account. */
+    accountGuid?: string;
 }
 
-export function DescriptionCell({ value, onChange, onSelectSuggestion, onEnter, onTab, onShiftTab, onArrowUp, onArrowDown, autoFocus, onFocus }: DescriptionCellProps) {
+export function DescriptionCell({ value, onChange, onSelectSuggestion, onEnter, onTab, onShiftTab, onArrowUp, onArrowDown, autoFocus, onFocus, accountGuid }: DescriptionCellProps) {
     return (
         <DescriptionAutocomplete
             value={value}
             onChange={onChange}
             onSelectSuggestion={onSelectSuggestion}
+            accountGuid={accountGuid}
             placeholder="Description..."
             className="text-xs"
             compact

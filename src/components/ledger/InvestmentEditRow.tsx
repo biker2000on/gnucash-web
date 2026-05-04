@@ -418,6 +418,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                             <DescriptionCell
                                 value={description}
                                 onChange={setDescription}
+                                accountGuid={accountGuid}
                                 autoFocus={focusedColumn === 1}
                                 onEnter={onEnter}
                                 onArrowUp={onArrowUp}
