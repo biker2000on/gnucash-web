@@ -16,6 +16,7 @@ interface InvestmentTransactionFormProps {
     accountName: string;
     accountCommodityGuid: string;
     commoditySymbol: string;
+    commodityFraction?: number;
     onSave: () => void;
     onCancel: () => void;
 }
@@ -68,9 +69,13 @@ export function InvestmentTransactionForm({
     accountGuid,
     accountName,
     commoditySymbol,
+    commodityFraction = 10000,
     onSave,
     onCancel,
 }: InvestmentTransactionFormProps) {
+    const sharePrecision = commodityFraction > 0
+        ? Math.max(0, Math.round(Math.log10(commodityFraction)))
+        : 4;
     const { dateFormat } = useUserPreferences();
     const [form, setForm] = useState<FormState>(INITIAL_FORM_STATE);
     const [dateDisplay, setDateDisplay] = useState(() => formatDateForDisplay(INITIAL_FORM_STATE.date, dateFormat));
@@ -196,7 +201,7 @@ export function InvestmentTransactionForm({
         }
 
         if (newValue !== null && targetField) {
-            const decimals = targetField === 'shares' ? 4 : 2;
+            const decimals = targetField === 'shares' ? sharePrecision : 2;
             const formatted = newValue > 0 ? newValue.toFixed(decimals) : '';
             const currentValue = form[targetField as keyof typeof form];
             if (currentValue !== formatted) {
@@ -326,9 +331,9 @@ export function InvestmentTransactionForm({
                 splits.push({
                     account_guid: accountGuid,
                     action: 'Buy',
-                    // Shares as quantity with denom 1 for whole shares, or higher for fractional
-                    quantity_num: Math.round(shares * 10000),
-                    quantity_denom: 10000,
+                    // Shares stored at the commodity's native fraction precision
+                    quantity_num: Math.round(shares * commodityFraction),
+                    quantity_denom: commodityFraction,
                     value_num: -valueNum, // Negative because money flows out
                     value_denom: valueDenom,
                     memo: form.memo || undefined,
@@ -371,8 +376,8 @@ export function InvestmentTransactionForm({
                 splits.push({
                     account_guid: accountGuid,
                     action: 'Sell',
-                    quantity_num: -Math.round(shares * 10000), // Negative for selling
-                    quantity_denom: 10000,
+                    quantity_num: -Math.round(shares * commodityFraction), // Negative for selling
+                    quantity_denom: commodityFraction,
                     value_num: valueNum, // Positive because money flows in
                     value_denom: valueDenom,
                     memo: form.memo || undefined,
@@ -465,8 +470,8 @@ export function InvestmentTransactionForm({
                 splits.push({
                     account_guid: accountGuid,
                     action: 'Split',
-                    quantity_num: Math.round(newShares * 10000),
-                    quantity_denom: 10000,
+                    quantity_num: Math.round(newShares * commodityFraction),
+                    quantity_denom: commodityFraction,
                     value_num: 0,
                     value_denom: 100,
                     memo: form.memo || `Stock split: +${newShares} shares`,

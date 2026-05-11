@@ -30,6 +30,7 @@ interface ValuationData {
         namespace: string;
         mnemonic: string;
         fullname: string | null;
+        fraction: number;
     };
     holdings?: {
         shares: number;
@@ -656,6 +657,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                             accountName={data.account.name}
                             accountCommodityGuid={commodity.guid}
                             commoditySymbol={commodity.mnemonic}
+                            commodityFraction={commodity.fraction}
                             onSave={() => {
                                 setShowTransactionModal(false);
                                 fetchData();

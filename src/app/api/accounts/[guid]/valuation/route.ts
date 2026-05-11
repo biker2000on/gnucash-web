@@ -103,6 +103,7 @@ export async function GET(
                 namespace: account.commodity.namespace,
                 mnemonic: account.commodity.mnemonic,
                 fullname: account.commodity.fullname,
+                fraction: account.commodity.fraction,
             } : null,
             holdings: {
                 shares: holdings.shares,
