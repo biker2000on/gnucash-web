@@ -49,6 +49,13 @@ interface Commodity {
     mnemonic: string;
     fullname: string | null;
     namespace: string;
+    fraction?: number;
+}
+
+const SECURITY_ACCOUNT_TYPES = new Set(['STOCK', 'MUTUAL']);
+
+function isCurrencyCommodity(c: Commodity): boolean {
+    return c.namespace === 'CURRENCY' || c.namespace === 'ISO4217';
 }
 
 interface AccountFormProps {
@@ -79,11 +86,29 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
 
     const [accounts, setAccounts] = useState<FlatAccount[]>([]);
     const [commodities, setCommodities] = useState<Commodity[]>([]);
+    const [splitsCount, setSplitsCount] = useState<number | null>(mode === 'create' ? 0 : null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const formRef = useRef<HTMLFormElement>(null);
+
+    const isSecurityAccount = SECURITY_ACCOUNT_TYPES.has(formData.account_type);
+
+    // Partition commodities into currencies vs securities so we can show the
+    // correct list based on account type.
+    const { currencies, securities } = (() => {
+        const currencies: Commodity[] = [];
+        const securities: Commodity[] = [];
+        for (const c of commodities) {
+            if (isCurrencyCommodity(c)) currencies.push(c);
+            else securities.push(c);
+        }
+        return { currencies, securities };
+    })();
+    const commodityOptions = isSecurityAccount ? securities : currencies;
+
+    const commodityLocked = mode === 'edit' && (splitsCount ?? 0) > 0;
 
     // Fetch accounts and commodities for dropdowns
     useEffect(() => {
@@ -101,22 +126,23 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                 }
 
                 if (commoditiesRes.ok) {
-                    const allComms = await commoditiesRes.json();
-                    // Filter to currencies only for the selector
-                    const comms = allComms.filter((c: Commodity) =>
-                        c.namespace === 'CURRENCY' || c.namespace === 'ISO4217'
-                    );
+                    const comms: Commodity[] = await commoditiesRes.json();
                     setCommodities(comms);
-                    // Set default commodity if not set
+                    // Default to USD only for non-security accounts on create.
+                    // Security accounts (STOCK/MUTUAL) start blank so the user
+                    // explicitly picks the security.
                     setFormData(prev => {
                         if (prev.commodity_guid || comms.length === 0) {
                             return prev;
                         }
-
-                        const usd = comms.find((c: Commodity) => c.mnemonic === 'USD');
+                        if (SECURITY_ACCOUNT_TYPES.has(prev.account_type)) {
+                            return prev;
+                        }
+                        const usd = comms.find(c => c.mnemonic === 'USD' && isCurrencyCommodity(c));
+                        const firstCurrency = comms.find(isCurrencyCommodity);
                         return {
                             ...prev,
-                            commodity_guid: usd?.guid || comms[0].guid,
+                            commodity_guid: usd?.guid || firstCurrency?.guid || '',
                         };
                     });
                 }
@@ -129,6 +155,39 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
 
         fetchData();
     }, []);
+
+    // In edit mode, fetch the splits count to decide whether the commodity
+    // selector is locked. Server enforces this too, but we want to surface it
+    // in the UI so the user understands why before they try to save.
+    useEffect(() => {
+        if (mode !== 'edit' || !accountGuid) return;
+        let cancelled = false;
+        fetch(`/api/accounts/${accountGuid}/info`)
+            .then(res => res.ok ? res.json() : null)
+            .then(info => {
+                if (cancelled || !info) return;
+                const count = typeof info.splits_count === 'number'
+                    ? info.splits_count
+                    : Number(info.splits_count ?? 0);
+                setSplitsCount(Number.isFinite(count) ? count : 0);
+            })
+            .catch(() => { if (!cancelled) setSplitsCount(0); });
+        return () => { cancelled = true; };
+    }, [mode, accountGuid]);
+
+    // When the account type flips between security and currency in create
+    // mode, clear any selected commodity from the other partition so we don't
+    // submit (e.g.) USD on a STOCK account.
+    useEffect(() => {
+        if (mode !== 'create') return;
+        if (!formData.commodity_guid) return;
+        const selected = commodities.find(c => c.guid === formData.commodity_guid);
+        if (!selected) return;
+        const selectedIsSecurity = !isCurrencyCommodity(selected);
+        if (selectedIsSecurity !== isSecurityAccount) {
+            setFormData(prev => ({ ...prev, commodity_guid: '' }));
+        }
+    }, [formData.account_type, isSecurityAccount, formData.commodity_guid, commodities, mode]);
 
     // Update commodity when parent changes (inherit from parent)
     useEffect(() => {
@@ -149,7 +208,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
         if (!formData.name?.trim()) {
             fieldErrors.name = 'Required';
         }
-        if (mode === 'create' && !formData.commodity_guid) {
+        if (!commodityLocked && !formData.commodity_guid) {
             fieldErrors.commodity_guid = 'Required';
         }
 
@@ -290,32 +349,58 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                 </div>
             )}
 
-            {/* Currency/Commodity - only for create mode */}
-            {mode === 'create' && (
-                <div>
-                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Currency <span className="text-rose-400">*</span>
-                    </label>
-                    <select
-                        required
-                        data-field="commodity_guid"
-                        value={formData.commodity_guid}
-                        onChange={e => setFormData(prev => ({ ...prev, commodity_guid: e.target.value }))}
-                        className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all cursor-pointer ${
-                            fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
-                        }`}
-                    >
-                        {commodities.map(comm => (
-                            <option key={comm.guid} value={comm.guid}>
-                                {comm.mnemonic} - {comm.fullname || comm.mnemonic}
-                            </option>
-                        ))}
-                    </select>
-                    {fieldErrors.commodity_guid && (
-                        <p className="mt-1 text-xs text-rose-400">{fieldErrors.commodity_guid}</p>
-                    )}
-                </div>
-            )}
+            {/* Commodity (currency or security depending on account type) */}
+            <div>
+                <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                    {isSecurityAccount ? 'Security' : 'Currency'} <span className="text-rose-400">*</span>
+                </label>
+                <select
+                    required
+                    data-field="commodity_guid"
+                    value={formData.commodity_guid}
+                    disabled={commodityLocked}
+                    onChange={e => {
+                        const newGuid = e.target.value;
+                        const picked = commodities.find(c => c.guid === newGuid);
+                        setFormData(prev => ({
+                            ...prev,
+                            commodity_guid: newGuid,
+                            // For securities, default the SCU to the commodity's
+                            // native fraction so finer precisions (e.g. FSMDX = 1e6)
+                            // aren't truncated by a stale default.
+                            ...(picked && !isCurrencyCommodity(picked) && picked.fraction
+                                ? { commodity_scu: picked.fraction }
+                                : {}),
+                        }));
+                    }}
+                    className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all ${
+                        commodityLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                    } ${
+                        fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
+                    }`}
+                >
+                    <option value="">
+                        {isSecurityAccount ? '(Select a security...)' : '(Select a currency...)'}
+                    </option>
+                    {commodityOptions.map(comm => (
+                        <option key={comm.guid} value={comm.guid}>
+                            {comm.mnemonic} - {comm.fullname || comm.mnemonic}
+                        </option>
+                    ))}
+                </select>
+                {commodityLocked ? (
+                    <p className="mt-1 text-xs text-foreground-muted">
+                        Locked: this account has {splitsCount} transaction split{splitsCount === 1 ? '' : 's'}. Remove all transactions to change the {isSecurityAccount ? 'security' : 'currency'}.
+                    </p>
+                ) : isSecurityAccount && commodityOptions.length === 0 ? (
+                    <p className="mt-1 text-xs text-amber-400">
+                        No securities defined yet. Add one in the Commodities editor first.
+                    </p>
+                ) : null}
+                {fieldErrors.commodity_guid && (
+                    <p className="mt-1 text-xs text-rose-400">{fieldErrors.commodity_guid}</p>
+                )}
+            </div>
 
             {/* Smallest Currency Unit (share precision) — shown for investment types */}
             {['STOCK', 'MUTUAL'].includes(formData.account_type) && (

@@ -54,6 +54,7 @@ export const UpdateAccountSchema = z.object({
   hidden: z.number().int().min(0).max(1).optional(),
   placeholder: z.number().int().min(0).max(1).optional(),
   parent_guid: z.string().length(32).nullable().optional(),
+  commodity_guid: z.string().length(32).optional(),
   commodity_scu: z.number().int().min(1).optional(),
   notes: z.string().max(4096).optional(),
   tax_related: z.boolean().optional(),
@@ -166,6 +167,26 @@ export class AccountService {
       throw new Error(`Account not found: ${guid}`);
     }
 
+    // Guard commodity change: only allowed when the account has no splits.
+    // Changing commodity on an account with history would silently reinterpret
+    // historical share quantities under the new commodity's units.
+    if (data.commodity_guid !== undefined && data.commodity_guid !== existing.commodity_guid) {
+      const commodity = await prisma.commodities.findUnique({
+        where: { guid: data.commodity_guid },
+      });
+      if (!commodity) {
+        throw new Error(`Commodity not found: ${data.commodity_guid}`);
+      }
+      const splitsCount = await prisma.splits.count({
+        where: { account_guid: guid },
+      });
+      if (splitsCount > 0) {
+        throw new Error(
+          `Cannot change commodity: account has ${splitsCount} transaction split${splitsCount === 1 ? '' : 's'}. Remove all transactions referencing this account first.`
+        );
+      }
+    }
+
     // Handle reparenting if parent_guid is provided
     if (data.parent_guid !== undefined) {
       if (data.parent_guid !== null) {
@@ -203,6 +224,7 @@ export class AccountService {
           ...(data.hidden !== undefined && { hidden: data.hidden }),
           ...(data.placeholder !== undefined && { placeholder: data.placeholder }),
           ...(data.parent_guid !== undefined && { parent_guid: data.parent_guid }),
+          ...(data.commodity_guid !== undefined && { commodity_guid: data.commodity_guid }),
           ...(data.commodity_scu !== undefined && { commodity_scu: data.commodity_scu }),
         },
         include: {
