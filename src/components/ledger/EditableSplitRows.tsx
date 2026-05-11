@@ -57,6 +57,8 @@ interface EditableSplitRowsProps {
     /** Column IDs from TanStack Table — drives alignment automatically */
     columnIds?: string[];
     sharePrecision?: number;
+    /** SCU of the investment account's commodity (used for quantity precision on the investment split). */
+    commodityScu?: number;
 }
 
 function initSplitsFromTransaction(transaction: AccountTransaction, includeTrading = false, sp = 4): SplitState[] {
@@ -98,7 +100,7 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
 const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsProps>(function EditableSplitRows(
     {
         transaction,
-        accountGuid: _accountGuid,
+        accountGuid,
         columns,
         isActive,
         focusedSplitIndex,
@@ -113,6 +115,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         isInvestmentAccount,
         columnIds,
         sharePrecision: sp = 4,
+        commodityScu,
     },
     ref
 ) {
@@ -253,14 +256,28 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                     const debit = parseFloat(s.debit) || 0;
                     const credit = parseFloat(s.credit) || 0;
                     const signedAmount = debit - credit;
-                    const { num, denom } = toNumDenom(signedAmount);
+                    const { num: valueNum, denom: valueDenom } = toNumDenom(signedAmount);
+
+                    let quantityNum = valueNum;
+                    let quantityDenom = valueDenom;
+
+                    // For the investment-account split itself, the quantity is in
+                    // shares (not USD). Use the commodity's SCU as denom so finer
+                    // precisions (e.g. FSMDX = 1000000) aren't truncated.
+                    if (isInvestmentAccount && s.account_guid === accountGuid && s.shares) {
+                        const sharesValue = parseFloat(s.shares) || 0;
+                        const signedShares = signedAmount >= 0 ? sharesValue : -sharesValue;
+                        quantityDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
+                        quantityNum = Math.round(signedShares * quantityDenom);
+                    }
+
                     return {
                         guid: s.guid,
                         account_guid: s.account_guid,
-                        value_num: num,
-                        value_denom: denom,
-                        quantity_num: num,
-                        quantity_denom: denom,
+                        value_num: valueNum,
+                        value_denom: valueDenom,
+                        quantity_num: quantityNum,
+                        quantity_denom: quantityDenom,
                         memo: s.memo,
                         reconcile_state: s.reconcile_state,
                     };
@@ -286,7 +303,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
             newSplits.push(createBlankSplit());
             setSplits(newSplits);
         },
-    }), [splits, transaction, createBlankSplit]);
+    }), [splits, transaction, createBlankSplit, isInvestmentAccount, accountGuid, commodityScu, sp]);
 
     // Column alignment: map split content to header column IDs
     // Standard splits: memo → description, account → transfer, debit → debit, credit → credit

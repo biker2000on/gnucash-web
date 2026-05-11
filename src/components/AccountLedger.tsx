@@ -677,7 +677,8 @@ export default function AccountLedger({
             const transferValue = -stockValue;
 
             const { num: stockValueNum, denom: stockValueDenom } = toNumDenom(stockValue);
-            const { num: stockQtyNum, denom: stockQtyDenom } = toNumDenom(stockQuantity, 4);
+            const stockQtyDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
+            const stockQtyNum = Math.round(stockQuantity * stockQtyDenom);
             const { num: transferValueNum, denom: transferValueDenom } = toNumDenom(transferValue);
 
             const body: Record<string, unknown> = {
@@ -744,7 +745,7 @@ export default function AccountLedger({
             error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
-    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error]);
+    }, [transactions, accountGuid, accountCommodityGuid, commodityScu, fetchTransactions, success, error]);
 
     // Toggle reviewed status
     const toggleReviewed = useCallback(async (transactionGuid: string) => {
@@ -2108,6 +2109,7 @@ export default function AccountLedger({
                                                 trailingColumns={3}
                                                 isInvestmentAccount={true}
                                                 sharePrecision={sharePrecision}
+                                                commodityScu={commodityScu}
                                                 isActive={index === focusedRowIndex}
                                                 focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
                                                 focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
@@ -2208,6 +2210,7 @@ export default function AccountLedger({
                                                 columns={table.getVisibleFlatColumns().length}
                                                 columnIds={visibleColumnIds}
                                                 sharePrecision={sharePrecision}
+                                                commodityScu={commodityScu}
                                                 isActive={index === focusedRowIndex}
                                                 focusedSplitIndex={index === focusedRowIndex ? focusedSplitIndex : undefined}
                                                 focusedColumnIndex={index === focusedRowIndex && focusedSplitIndex >= 0 ? focusedColumnIndex : undefined}
