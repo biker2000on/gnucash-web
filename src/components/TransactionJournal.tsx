@@ -1,7 +1,8 @@
 "use client";
 
 import { Transaction, Split } from '@/lib/types';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { FilterPanel, AccountTypeFilter, AmountFilter, ReconcileFilter } from './filters';
@@ -12,6 +13,8 @@ import { useToast } from '@/contexts/ToastContext';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from './ui/MobileCard';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
+import { toLocalDateString } from '@/lib/datePresets';
+import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -38,6 +41,7 @@ interface TransactionJournalProps {
 }
 
 export default function TransactionJournal({ initialTransactions, startDate, endDate }: TransactionJournalProps) {
+    const router = useRouter();
     const { success, error } = useToast();
     const isMobile = useIsMobile();
     const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
@@ -56,6 +60,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     // Edit modal state
     const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tx: Transaction; accountGuid?: string } | null>(null);
 
     // Listen for global 'n' key shortcut to open new transaction
     useEffect(() => {
@@ -117,10 +122,10 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         hadAdvancedFilters: false,
     });
 
-    const handleRowClick = (guid: string) => {
+    const handleRowClick = useCallback((guid: string) => {
         setSelectedTxGuid(guid);
         setIsModalOpen(true);
-    };
+    }, []);
 
     const handleCloseModal = () => {
         setIsModalOpen(false);
@@ -269,6 +274,138 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         if (!deletingGuid) return;
         await performDelete(deletingGuid);
     };
+
+    const handleDuplicate = useCallback(async (guid: string) => {
+        const tx = transactions.find(t => t.guid === guid);
+        if (!tx) return;
+
+        const nonTradingSplits = (tx.splits ?? []).filter(
+            s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+        );
+        const today = toLocalDateString(new Date());
+        const txGuid = crypto.randomUUID().replace(/-/g, '');
+        const splitGuids = nonTradingSplits.map(() => crypto.randomUUID().replace(/-/g, ''));
+        const toNum = (value: unknown, fallback: number) => {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : fallback;
+        };
+        const splits = nonTradingSplits.map((split, index) => {
+            const valueNum = toNum(split.value_num, 0);
+            const valueDenom = toNum(split.value_denom, 100);
+            return {
+                guid: splitGuids[index],
+                account_guid: split.account_guid,
+                value_num: valueNum,
+                value_denom: valueDenom,
+                quantity_num: toNum(split.quantity_num, valueNum),
+                quantity_denom: toNum(split.quantity_denom, valueDenom),
+                memo: split.memo || '',
+                action: split.action || '',
+                reconcile_state: 'n' as const,
+            };
+        });
+
+        const optimisticTx: Transaction = {
+            ...tx,
+            guid: txGuid,
+            post_date: new Date(today + 'T00:00:00'),
+            enter_date: new Date(),
+            splits: nonTradingSplits.map((split, index) => ({
+                ...split,
+                guid: splitGuids[index],
+                tx_guid: txGuid,
+                reconcile_state: 'n',
+            })),
+        };
+        const prevTransactions = transactions;
+        setTransactions(prev => [optimisticTx, ...prev]);
+
+        try {
+            const res = await fetch('/api/transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    guid: txGuid,
+                    currency_guid: tx.currency_guid,
+                    post_date: today,
+                    description: tx.description,
+                    num: tx.num,
+                    splits,
+                }),
+            });
+            if (!res.ok) {
+                const errData = await res.json().catch(() => null);
+                const msg = errData?.errors?.map((e: { message: string }) => e.message).join(', ') || errData?.error || 'Failed to duplicate';
+                throw new Error(msg);
+            }
+            success('Transaction duplicated');
+            fetchTransactions();
+        } catch (err) {
+            console.error('Duplicate failed:', err);
+            error(err instanceof Error ? err.message : 'Failed to duplicate transaction');
+            setTransactions(prevTransactions);
+        }
+    }, [error, fetchTransactions, success, transactions]);
+
+    const openContextMenu = useCallback((event: React.MouseEvent, tx: Transaction) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const accountElement = (event.target as HTMLElement).closest<HTMLElement>('[data-account-guid]');
+        setContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            tx,
+            accountGuid: accountElement?.dataset.accountGuid || tx.splits?.[0]?.account_guid,
+        });
+    }, []);
+
+    const copyTransactionGuid = useCallback(async (guid: string) => {
+        try {
+            await navigator.clipboard.writeText(guid);
+            success('Transaction ID copied');
+        } catch {
+            error('Failed to copy transaction ID');
+        }
+    }, [success, error]);
+
+    const contextMenuItems = useMemo<TransactionContextMenuItem[]>(() => {
+        if (!contextMenu) return [];
+        const guid = contextMenu.tx.guid;
+        const accountGuid = contextMenu.accountGuid;
+        return [
+            {
+                id: 'view',
+                label: 'View details',
+                onSelect: () => handleRowClick(guid),
+            },
+            {
+                id: 'edit',
+                label: 'Edit',
+                onSelect: () => handleEdit(guid),
+            },
+            {
+                id: 'duplicate',
+                label: 'Duplicate',
+                onSelect: () => { void handleDuplicate(guid); },
+            },
+            ...(accountGuid ? [{
+                id: 'view-account',
+                label: 'View in account',
+                onSelect: () => router.push(`/accounts/${accountGuid}`),
+            }] : []),
+            {
+                id: 'copy-id',
+                label: 'Copy transaction ID',
+                onSelect: () => { void copyTransactionGuid(guid); },
+            },
+            {
+                id: 'delete',
+                label: 'Delete',
+                variant: 'danger' as const,
+                onSelect: () => handleDelete(guid),
+            },
+        ];
+    }, [contextMenu, copyTransactionGuid, handleDelete, handleDuplicate, handleEdit, handleRowClick, router]);
 
     const handleReconcileWarningConfirm = () => {
         setReconcileWarningOpen(false);
@@ -511,7 +648,12 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                 </tr>
                             ) : (
                                 transactions.map(tx => (
-                                    <tr key={tx.guid} className="hover:bg-white/[0.02] transition-colors group cursor-pointer" onClick={() => handleRowClick(tx.guid)}>
+                                    <tr
+                                        key={tx.guid}
+                                        className="hover:bg-white/[0.02] transition-colors group cursor-pointer"
+                                        onContextMenu={(e) => openContextMenu(e, tx)}
+                                        onClick={() => handleRowClick(tx.guid)}
+                                    >
                                         <td className="px-4 py-2 whitespace-nowrap text-sm text-foreground-secondary align-middle">
                                             {new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                                         </td>
@@ -529,7 +671,11 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-4 py-2 text-sm align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => (
-                                                    <div key={split.guid} className="text-foreground-secondary whitespace-normal break-words">
+                                                    <div
+                                                        key={split.guid}
+                                                        data-account-guid={split.account_guid}
+                                                        className="text-foreground-secondary whitespace-normal break-words"
+                                                    >
                                                         {formatDisplayAccountPath(split.account_fullname, split.account_name)}
                                                     </div>
                                                 ))}
@@ -633,6 +779,14 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 confirmLabel="Delete"
                 confirmVariant="danger"
                 isLoading={isDeleting}
+            />
+
+            <TransactionContextMenu
+                isOpen={!!contextMenu}
+                x={contextMenu?.x ?? 0}
+                y={contextMenu?.y ?? 0}
+                items={contextMenuItems}
+                onClose={() => setContextMenu(null)}
             />
         </div>
     );

@@ -38,6 +38,7 @@ import TransactionTypeIcon from './ledger/TransactionTypeIcon';
 import LotBadge from './ledger/LotBadge';
 import LotAssignmentPopover from './ledger/LotAssignmentPopover';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
+import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -112,6 +113,7 @@ export default function AccountLedger({
     const [isDeleting, setIsDeleting] = useState(false);
     const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
     const [showMoveDialog, setShowMoveDialog] = useState(false);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tx: AccountTransaction } | null>(null);
 
     // Keyboard navigation state
     const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
@@ -854,6 +856,21 @@ export default function AccountLedger({
         }
     }, [transactions, fetchTransactions, success, error, isEditMode]);
 
+    const openContextMenu = useCallback((event: React.MouseEvent, tx: AccountTransaction) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setContextMenu({ x: event.clientX, y: event.clientY, tx });
+    }, []);
+
+    const copyTransactionGuid = useCallback(async (guid: string) => {
+        try {
+            await navigator.clipboard.writeText(guid);
+            success('Transaction ID copied');
+        } catch {
+            error('Failed to copy transaction ID');
+        }
+    }, [success, error]);
+
     // Filter transactions based on reviewed filter
     const displayTransactions = useMemo(() => {
         if (!showUnreviewedOnly) return transactions;
@@ -1024,6 +1041,47 @@ export default function AccountLedger({
         setEditingTransaction(tx || null);
         setIsEditModalOpen(true);
     }, [transactions]);
+
+    const contextMenuItems = useMemo<TransactionContextMenuItem[]>(() => {
+        if (!contextMenu) return [];
+        const guid = contextMenu.tx.guid;
+        return [
+            {
+                id: 'view',
+                label: 'View details',
+                onSelect: () => {
+                    setSelectedTxGuid(guid);
+                    setIsViewModalOpen(true);
+                },
+            },
+            {
+                id: 'edit',
+                label: 'Edit',
+                onSelect: () => handleEditDirect(guid),
+            },
+            ...(contextMenu.tx.reviewed === false ? [{
+                id: 'review',
+                label: 'Mark reviewed',
+                onSelect: () => { void toggleReviewed(guid); },
+            }] : []),
+            {
+                id: 'duplicate',
+                label: 'Duplicate',
+                onSelect: () => { void handleDuplicate(guid); },
+            },
+            {
+                id: 'copy-id',
+                label: 'Copy transaction ID',
+                onSelect: () => { void copyTransactionGuid(guid); },
+            },
+            {
+                id: 'delete',
+                label: 'Delete',
+                variant: 'danger',
+                onSelect: () => handleDeleteClick(guid),
+            },
+        ];
+    }, [contextMenu, copyTransactionGuid, handleDeleteClick, handleDuplicate, handleEditDirect, toggleReviewed]);
 
     // TanStack Table setup
     const columns = useMemo(() => {
@@ -2334,6 +2392,7 @@ export default function AccountLedger({
                                     <React.Fragment key={row.id}>
                                     <tr
                                         className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
+                                        onContextMenu={(e) => openContextMenu(e, tx)}
                                         onClick={(e) => {
                                             // Don't trigger on checkbox or button clicks
                                             if ((e.target as HTMLElement).closest('input, button')) return;
@@ -2758,6 +2817,14 @@ export default function AccountLedger({
                 message={`Delete ${editSelectedGuids.size} selected transaction${editSelectedGuids.size !== 1 ? 's' : ''}? This cannot be undone.`}
                 confirmLabel="Delete"
                 confirmVariant="danger"
+            />
+
+            <TransactionContextMenu
+                isOpen={!!contextMenu}
+                x={contextMenu?.x ?? 0}
+                y={contextMenu?.y ?? 0}
+                items={contextMenuItems}
+                onClose={() => setContextMenu(null)}
             />
         </div>
 
