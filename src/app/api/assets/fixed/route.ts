@@ -1,12 +1,13 @@
 /**
  * Fixed Assets API
  *
- * GET /api/assets/fixed - Returns ASSET-type accounts that are likely fixed assets
- * Excludes bank accounts, investment siblings (STOCK/MUTUAL siblings), and placeholder accounts.
+ * GET /api/assets/fixed - Returns explicitly selected fixed asset accounts.
+ * Selection is provided by accountGuids or by parentGuid. No accounts are returned
+ * without a selection because not every ASSET account is a fixed asset.
  * Includes current balance, depreciation schedule if configured, and last transaction date.
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
@@ -29,45 +30,58 @@ interface FixedAssetAccount {
   } | null;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const roleResult = await requireRole('readonly');
     if (roleResult instanceof NextResponse) return roleResult;
 
     const bookAccountGuids = await getBookAccountGuids();
+    const searchParams = request.nextUrl.searchParams;
+    const parentGuid = searchParams.get('parentGuid');
+    const accountGuids = searchParams.get('accountGuids')
+      ?.split(',')
+      .map((guid) => guid.trim())
+      .filter(Boolean) ?? [];
 
-    // Find all ASSET-type accounts in the current book that are NOT placeholder accounts
+    if (!parentGuid && accountGuids.length === 0) {
+      return NextResponse.json({ assets: [] });
+    }
+
+    let selectedGuids = accountGuids.filter((guid) => bookAccountGuids.includes(guid));
+
+    if (parentGuid && bookAccountGuids.includes(parentGuid)) {
+      const descendants = await prisma.$queryRaw<Array<{ guid: string }>>`
+        WITH RECURSIVE descendants AS (
+          SELECT guid, parent_guid
+          FROM accounts
+          WHERE guid = ${parentGuid}
+
+          UNION ALL
+
+          SELECT a.guid, a.parent_guid
+          FROM accounts a
+          JOIN descendants d ON a.parent_guid = d.guid
+        )
+        SELECT guid FROM descendants
+      `;
+      selectedGuids = descendants
+        .map((row) => row.guid)
+        .filter((guid) => bookAccountGuids.includes(guid));
+    }
+
     const assetAccounts = await prisma.accounts.findMany({
       where: {
-        guid: { in: bookAccountGuids },
+        guid: { in: selectedGuids },
         account_type: 'ASSET',
         placeholder: { not: 1 },
       },
       select: {
         guid: true,
         name: true,
-        parent_guid: true,
-        code: true,
       },
     });
 
-    // Find parent accounts that contain STOCK/MUTUAL children (investment parents)
-    // We want to exclude ASSET accounts under these parents (they are cash siblings of investments)
-    const investmentAccounts = await prisma.accounts.findMany({
-      where: {
-        guid: { in: bookAccountGuids },
-        account_type: { in: ['STOCK', 'MUTUAL'] },
-      },
-      select: { parent_guid: true },
-    });
-    const investmentParentGuids = new Set(
-      investmentAccounts.map((a) => a.parent_guid).filter(Boolean)
-    );
-
-    // Filter: exclude ASSET accounts that are siblings of STOCK/MUTUAL accounts
-    const fixedAssetGuids = assetAccounts
-      .filter((a) => !investmentParentGuids.has(a.parent_guid ?? ''))
-      .map((a) => a.guid);
+    const fixedAssetGuids = assetAccounts.map((a) => a.guid);
 
     if (fixedAssetGuids.length === 0) {
       return NextResponse.json({ assets: [] });

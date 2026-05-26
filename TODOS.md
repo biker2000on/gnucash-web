@@ -64,20 +64,6 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P2 - Fix Asset Analysis Tool: Manual Account Selection
-
-**What:** Redesign the Asset Analysis tool so it starts with a blank/empty account list instead of defaulting to all Asset accounts. Users should manually add specific accounts or sub-account trees to the analysis. Provide an account picker with search and the ability to add/remove individual accounts or entire sub-hierarchies.
-
-**Why:** Defaulting to all Asset accounts makes the tool noisy and misleading — it includes checking accounts, receivables, and other non-investment assets that don't belong in an asset allocation analysis. Users need to curate the account set to get meaningful results (e.g., only brokerage + retirement accounts).
-
-**Effort:** S (human: ~3 days) / with CC: S (~15 min)
-
-**Depends on:** Asset Analysis tool (shipped), account hierarchy (shipped).
-
-**Context:** Added 2026-03-26. The account picker should support: searching by account name, expanding the hierarchy to select sub-trees, persisting the selected accounts to localStorage (or user preferences once auth exists), and showing a summary of selected accounts before running the analysis. Consider a "suggested" preset that auto-selects accounts of type STOCK, MUTUAL, and ASSET accounts with commodity holdings.
-
----
-
 ## P1 - OIDC Authentication & Per-Book Authorization
 
 **What:** Full authentication and authorization system. OIDC-based login (supporting providers like Keycloak, Auth0, Google, etc.), with a per-book permission model. Components:
@@ -207,6 +193,11 @@ Items deferred from plan reviews for future implementation.
 ---
 
 ## Completed
+
+### Asset Analysis Tool: Manual Account Selection
+**Completed:** 2026-05-25
+
+Asset Analysis now starts from a blank account set instead of auto-adding all ASSET accounts. Users choose either a parent fixed asset account, whose non-placeholder ASSET descendants are included, or manually select individual ASSET accounts. The selection is stored in the database-backed user preferences table so it is available across machines.
 
 ### Ledger Transaction Context Menu
 **Completed:** 2026-05-25
