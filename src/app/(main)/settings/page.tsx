@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
-import { useUserPreferences, type CostBasisMethod } from '@/contexts/UserPreferencesContext';
+import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
 
@@ -51,7 +51,7 @@ const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; descrip
 
 export default function SettingsPage() {
   const { success, error: showError } = useToast();
-  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode, balanceReversal, setBalanceReversal, costBasisCarryOver, setCostBasisCarryOver, costBasisMethod, setCostBasisMethod } = useUserPreferences();
+  const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode, homeScreen, setHomeScreen, balanceReversal, setBalanceReversal, costBasisCarryOver, setCostBasisCarryOver, costBasisMethod, setCostBasisMethod } = useUserPreferences();
 
   const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24, refreshTime: '21:00' });
   const [loading, setLoading] = useState(true);
@@ -709,6 +709,22 @@ export default function SettingsPage() {
             </select>
             <p className="text-xs text-foreground-muted">
               Whether account ledgers open in read-only or edit mode by default.
+            </p>
+          </div>
+
+          {/* Home Screen */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Home Screen</label>
+            <select
+              value={homeScreen}
+              onChange={(e) => setHomeScreen(e.target.value as HomeScreen)}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="dashboard">Dashboard</option>
+              <option value="accounts">Account Hierarchy</option>
+            </select>
+            <p className="text-xs text-foreground-muted">
+              The screen shown after login and when opening the app while signed in.
             </p>
           </div>
         </div>

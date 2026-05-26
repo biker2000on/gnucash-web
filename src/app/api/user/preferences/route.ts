@@ -11,6 +11,8 @@ const VALID_DATE_FORMATS = ['MM/DD/YYYY', 'YYYY-MM-DD', 'MM-DD-YYYY'] as const;
 type DateFormat = typeof VALID_DATE_FORMATS[number];
 const VALID_DASHBOARD_PERIODS = ['thisMonth', 'lastMonth', 'thisQuarter', 'thisYear', 'lastYear', 'allTime'] as const;
 type DashboardPeriod = typeof VALID_DASHBOARD_PERIODS[number];
+const VALID_HOME_SCREENS = ['dashboard', 'accounts'] as const;
+type HomeScreen = typeof VALID_HOME_SCREENS[number];
 
 /**
  * GET /api/user/preferences
@@ -56,6 +58,7 @@ export async function GET(request: NextRequest) {
         const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
         const dateFormatPref = await getPreference(roleResult.user.id, 'date_format', 'MM/DD/YYYY');
         const dashboardPeriodPref = await getPreference(roleResult.user.id, 'dashboard.default_period', 'thisYear');
+        const homeScreenPref = await getPreference(roleResult.user.id, 'home_screen', 'dashboard');
 
         return NextResponse.json({
             balanceReversal: user.balance_reversal || 'none',
@@ -63,6 +66,7 @@ export async function GET(request: NextRequest) {
             defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
             dateFormat: (VALID_DATE_FORMATS.includes(dateFormatPref as DateFormat) ? dateFormatPref : 'MM/DD/YYYY') as DateFormat,
             dashboardDefaultPeriod: (VALID_DASHBOARD_PERIODS.includes(dashboardPeriodPref as DashboardPeriod) ? dashboardPeriodPref : 'thisYear') as DashboardPeriod,
+            homeScreen: (VALID_HOME_SCREENS.includes(homeScreenPref as HomeScreen) ? homeScreenPref : 'dashboard') as HomeScreen,
         });
     } catch (error) {
         console.error('Error fetching user preferences:', error);
@@ -80,7 +84,7 @@ export async function PATCH(request: NextRequest) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const body = await request.json();
-        const { balanceReversal, defaultTaxRate, defaultLedgerMode, dateFormat, dashboardDefaultPeriod } = body;
+        const { balanceReversal, defaultTaxRate, defaultLedgerMode, dateFormat, dashboardDefaultPeriod, homeScreen } = body;
 
         // Validate balance reversal value
         if (balanceReversal !== undefined) {
@@ -133,6 +137,16 @@ export async function PATCH(request: NextRequest) {
             }
         }
 
+        // Validate home screen
+        if (homeScreen !== undefined) {
+            if (!VALID_HOME_SCREENS.includes(homeScreen)) {
+                return NextResponse.json(
+                    { error: `Invalid homeScreen value. Must be one of: ${VALID_HOME_SCREENS.join(', ')}` },
+                    { status: 400 }
+                );
+            }
+        }
+
         // Update balance reversal if provided
         let updatedBalanceReversal = balanceReversal;
         if (balanceReversal !== undefined) {
@@ -168,6 +182,11 @@ export async function PATCH(request: NextRequest) {
             await setPreference(roleResult.user.id, 'dashboard.default_period', dashboardDefaultPeriod);
         }
 
+        // Update home screen if provided
+        if (homeScreen !== undefined) {
+            await setPreference(roleResult.user.id, 'home_screen', homeScreen);
+        }
+
         // Fetch current values for response
         const user = await prisma.gnucash_web_users.findUnique({
             where: { id: roleResult.user.id },
@@ -177,6 +196,7 @@ export async function PATCH(request: NextRequest) {
         const ledgerModePref = await getPreference(roleResult.user.id, 'default_ledger_mode', 'readonly');
         const dateFormatPref = await getPreference(roleResult.user.id, 'date_format', 'MM/DD/YYYY');
         const dashboardPeriodPref = await getPreference(roleResult.user.id, 'dashboard.default_period', 'thisYear');
+        const homeScreenPref = await getPreference(roleResult.user.id, 'home_screen', 'dashboard');
 
         return NextResponse.json({
             balanceReversal: updatedBalanceReversal || user?.balance_reversal || 'none',
@@ -184,6 +204,7 @@ export async function PATCH(request: NextRequest) {
             defaultLedgerMode: (VALID_LEDGER_MODES.includes(ledgerModePref as DefaultLedgerMode) ? ledgerModePref : 'readonly') as DefaultLedgerMode,
             dateFormat: (VALID_DATE_FORMATS.includes(dateFormatPref as DateFormat) ? dateFormatPref : 'MM/DD/YYYY') as DateFormat,
             dashboardDefaultPeriod: (VALID_DASHBOARD_PERIODS.includes(dashboardPeriodPref as DashboardPeriod) ? dashboardPeriodPref : 'thisYear') as DashboardPeriod,
+            homeScreen: (VALID_HOME_SCREENS.includes(homeScreenPref as HomeScreen) ? homeScreenPref : 'dashboard') as HomeScreen,
         });
     } catch (error) {
         console.error('Error updating user preferences:', error);

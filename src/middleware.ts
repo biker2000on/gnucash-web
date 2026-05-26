@@ -20,6 +20,7 @@ export async function middleware(request: NextRequest) {
     if (!session.isLoggedIn || !session.userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    await session.save();
     return response;
   }
 
@@ -30,6 +31,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  await session.save();
   return response;
 }
 

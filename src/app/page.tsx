@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { isAuthenticated } from '@/lib/auth';
+import { getSession } from '@/lib/auth';
+import { getPreference } from '@/lib/user-preferences';
 
 const features = [
   {
@@ -42,8 +43,10 @@ const features = [
 ];
 
 export default async function LandingPage() {
-  if (await isAuthenticated()) {
-    redirect('/dashboard');
+  const session = await getSession();
+  if (session.isLoggedIn && session.userId) {
+    const homeScreen = await getPreference(session.userId, 'home_screen', 'dashboard');
+    redirect(homeScreen === 'accounts' ? '/accounts' : '/dashboard');
   }
 
   return (

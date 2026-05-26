@@ -74,6 +74,10 @@ export async function getCurrentUser(): Promise<{ id: number; username: string }
         select: { id: true, username: true },
     });
 
+    if (user) {
+        await session.save();
+    }
+
     return user;
 }
 
@@ -152,6 +156,7 @@ export async function requireAuth(): Promise<
     if (!session.isLoggedIn || !session.userId) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    await session.save();
     const user = await prisma.gnucash_web_users.findUnique({
         where: { id: session.userId },
         select: { id: true, username: true },

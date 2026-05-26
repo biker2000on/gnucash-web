@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 
 interface LoginFormProps {
     mode: 'login' | 'register';
@@ -13,7 +12,6 @@ const LOGIN_INSTALL_PENDING_KEY = 'pwa-install-pending-after-login';
 const INSTALL_STATE_CHANGE_EVENT = 'pwa-install-state-change';
 
 export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard' }: LoginFormProps) {
-    const router = useRouter();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
