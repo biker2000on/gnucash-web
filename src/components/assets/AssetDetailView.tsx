@@ -11,6 +11,8 @@ import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { toLocalDateString } from '@/lib/datePresets';
 import { DepreciationScheduleForm } from './DepreciationScheduleForm';
+import { AccountSelector } from '@/components/ui/AccountSelector';
+import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
 
 interface Transaction {
   guid: string;
@@ -48,13 +50,6 @@ interface AssetDetailViewProps {
   accountGuid: string;
 }
 
-interface AccountOption {
-  guid: string;
-  name: string;
-  fullname: string;
-  account_type: string;
-}
-
 export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
   const { success, error: showError } = useToast();
   const { dateFormat } = useUserPreferences();
@@ -73,7 +68,6 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
   const [adjustContraGuid, setAdjustContraGuid] = useState('');
   const [adjustNotes, setAdjustNotes] = useState('');
   const [adjusting, setAdjusting] = useState(false);
-  const [contraAccounts, setContraAccounts] = useState<AccountOption[]>([]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -149,16 +143,10 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
     fetchData();
   }, [fetchData]);
 
-  // Fetch contra accounts for manual adjustment (EXPENSE and INCOME types)
-  useEffect(() => {
-    fetch('/api/accounts?flat=true')
-      .then((res) => res.json())
-      .then((data) => {
-        const all = (Array.isArray(data) ? data : data.accounts || []) as AccountOption[];
-        setContraAccounts(all.filter((a) => a.account_type === 'EXPENSE' || a.account_type === 'INCOME'));
-      })
-      .catch(() => {});
-  }, []);
+  const { handleDateKeyDown } = useDateShortcuts(adjustDate, (newIso) => {
+    setAdjustDate(newIso);
+    setAdjustDateDisplay(formatDateForDisplay(newIso, dateFormat));
+  });
 
   // Chart data: balance over time
   const chartData = useMemo(() => {
@@ -275,8 +263,13 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
               <input
                 type="text"
                 value={adjustDateDisplay}
-                onChange={(e) => setAdjustDateDisplay(e.target.value)}
+                onChange={(e) => {
+                  setAdjustDateDisplay(e.target.value);
+                  const parsed = parseDateInput(e.target.value);
+                  if (parsed) setAdjustDate(parsed);
+                }}
                 onFocus={(e) => e.target.select()}
+                onKeyDown={handleDateKeyDown}
                 onBlur={() => {
                   const parsed = parseDateInput(adjustDateDisplay);
                   if (parsed) {
@@ -295,18 +288,12 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
             <label className="block text-sm font-medium text-foreground-secondary mb-1">
               Contra Account
             </label>
-            <select
+            <AccountSelector
               value={adjustContraGuid}
-              onChange={(e) => setAdjustContraGuid(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-input-bg border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-            >
-              <option value="">-- Select account --</option>
-              {contraAccounts.map((acc) => (
-                <option key={acc.guid} value={acc.guid}>
-                  {acc.fullname || acc.name}
-                </option>
-              ))}
-            </select>
+              onChange={(guid) => setAdjustContraGuid(guid)}
+              placeholder="Search for contra account..."
+              accountTypes={['EXPENSE', 'INCOME']}
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-foreground-secondary mb-1">
