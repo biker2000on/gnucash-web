@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+vi.mock('@/lib/prisma', () => ({
+  default: {},
+  generateGuid: vi.fn(() => '0'.repeat(32)),
+}));
+
 import {
+  getSimpleFinMatchWindowDays,
   selectManualReconciliationMatch,
   type ReconciliationCandidate,
   selectTransferDedupMatch,
@@ -59,6 +66,19 @@ describe('selectManualReconciliationMatch', () => {
     }];
     const result = selectManualReconciliationMatch(baseSfTxn, candidates);
     expect(result).toBeNull();
+  });
+
+  it('should use a configurable date window', () => {
+    const candidates: ReconciliationCandidate[] = [{
+      transaction_guid: 'd'.repeat(32),
+      post_date: new Date('2026-03-24T10:00:00Z'),
+      description: 'Amazon Purchase',
+      has_meta: true,
+    }];
+    const result = selectManualReconciliationMatch(baseSfTxn, candidates, 5);
+    expect(result).not.toBeNull();
+    expect(result!.transaction_guid).toBe('d'.repeat(32));
+    expect(result!.confidence).toBe('medium');
   });
 
   it('should return null for empty candidates', () => {
@@ -177,6 +197,18 @@ describe('selectTransferDedupMatch', () => {
     expect(result).toBeNull();
   });
 
+  it('should use a configurable date window', () => {
+    const candidates: TransferDedupCandidate[] = [{
+      transaction_guid: 'a'.repeat(32),
+      post_date: new Date('2026-03-24T10:00:00Z'),
+      split_account_guid: 'b'.repeat(32),
+      dest_split_guid: 'c'.repeat(32),
+      dest_account_guid: 'd'.repeat(32),
+    }];
+    const result = selectTransferDedupMatch(baseSfTxn, candidates, 5);
+    expect(result).not.toBeNull();
+  });
+
   it('should return null for empty candidates', () => {
     const result = selectTransferDedupMatch(baseSfTxn, []);
     expect(result).toBeNull();
@@ -287,5 +319,32 @@ describe('Edge cases', () => {
     }]);
 
     expect(result).toBeNull();
+  });
+});
+
+describe('getSimpleFinMatchWindowDays', () => {
+  const originalValue = process.env.SIMPLEFIN_MATCH_WINDOW_DAYS;
+
+  afterEach(() => {
+    if (originalValue === undefined) {
+      delete process.env.SIMPLEFIN_MATCH_WINDOW_DAYS;
+    } else {
+      process.env.SIMPLEFIN_MATCH_WINDOW_DAYS = originalValue;
+    }
+  });
+
+  it('defaults to 3 days', () => {
+    delete process.env.SIMPLEFIN_MATCH_WINDOW_DAYS;
+    expect(getSimpleFinMatchWindowDays()).toBe(3);
+  });
+
+  it('reads a valid environment override', () => {
+    process.env.SIMPLEFIN_MATCH_WINDOW_DAYS = '5';
+    expect(getSimpleFinMatchWindowDays()).toBe(5);
+  });
+
+  it('falls back to default for invalid values', () => {
+    process.env.SIMPLEFIN_MATCH_WINDOW_DAYS = 'nope';
+    expect(getSimpleFinMatchWindowDays()).toBe(3);
   });
 });

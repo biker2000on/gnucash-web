@@ -10,6 +10,16 @@ import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFin
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 
+const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
+
+export function getSimpleFinMatchWindowDays(): number {
+  const raw = process.env.SIMPLEFIN_MATCH_WINDOW_DAYS;
+  if (!raw) return DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS;
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS;
+}
+
 /**
  * Normalize a SimpleFIN `posted` Unix timestamp to a date-only value.
  * SimpleFIN sends the actual posting time in the bank's local zone (Eastern
@@ -346,6 +356,7 @@ export interface ReconciliationCandidate {
 export function selectManualReconciliationMatch(
   sfTxn: { posted: number; description: string },
   candidates: ReconciliationCandidate[],
+  matchWindowDays: number = getSimpleFinMatchWindowDays(),
 ): { transaction_guid: string; confidence: 'high' | 'medium'; has_meta: boolean } | null {
   const sfDate = new Date(sfTxn.posted * 1000);
   const sfDesc = (sfTxn.description || '').trim().toLowerCase();
@@ -353,7 +364,7 @@ export function selectManualReconciliationMatch(
   const scored = candidates
     .map(c => {
       const dayOffset = Math.abs(sfDate.getTime() - c.post_date.getTime()) / (1000 * 60 * 60 * 24);
-      if (dayOffset > 3) return null;
+      if (dayOffset > matchWindowDays) return null;
 
       const cDesc = (c.description || '').trim().toLowerCase();
       // Use word overlap scoring for better fuzzy matching
@@ -412,18 +423,19 @@ export interface TransferDedupCandidate {
 /**
  * Select the best transfer dedup match from candidates.
  * Candidates already have opposite amount (filtered by DB query).
- * Returns null if no candidate is within ±3 days.
+ * Returns null if no candidate is within the configured date window.
  */
 export function selectTransferDedupMatch(
   sfTxn: { posted: number; amount: string; description: string },
   candidates: TransferDedupCandidate[],
+  matchWindowDays: number = getSimpleFinMatchWindowDays(),
 ): TransferDedupCandidate | null {
   const sfDate = new Date(sfTxn.posted * 1000);
 
   const scored = candidates
     .map(c => {
       const dayOffset = Math.abs(sfDate.getTime() - c.post_date.getTime()) / (1000 * 60 * 60 * 24);
-      if (dayOffset > 3) return null;
+      if (dayOffset > matchWindowDays) return null;
       return { ...c, dayOffset };
     })
     .filter((c): c is NonNullable<typeof c> => c !== null);
@@ -448,12 +460,13 @@ async function findAndLinkManualMatch(
   if (isNaN(amount) || amount === 0) return false;
 
   const postDate = new Date(sfTxn.posted * 1000);
+  const matchWindowDays = getSimpleFinMatchWindowDays();
   // Use the account's commodity_scu for correct precision (e.g., 100 for USD, 1 for JPY, 1000 for KWD)
   const scuPrecision = Math.round(Math.log10(accountScu));
   const { num: absNum, denom } = toNumDenom(Math.abs(amount), scuPrecision);
   const valueNum = amount > 0 ? absNum : -absNum;
 
-  // Find transactions in the same account with exact amount, within ±3 days,
+  // Find transactions in the same account with exact amount, within the configured date window,
   // not already linked to a SimpleFin ID, not soft-deleted
   const candidates = await prisma.$queryRaw<ReconciliationCandidate[]>`
     SELECT
@@ -466,14 +479,14 @@ async function findAndLinkManualMatch(
     LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
     WHERE s.value_num = ${BigInt(valueNum)}
       AND s.value_denom = ${BigInt(denom)}
-      AND t.post_date BETWEEN ${new Date(postDate.getTime() - 3 * 86400000)}
-                          AND ${new Date(postDate.getTime() + 3 * 86400000)}
+      AND t.post_date BETWEEN ${new Date(postDate.getTime() - matchWindowDays * 86400000)}
+                          AND ${new Date(postDate.getTime() + matchWindowDays * 86400000)}
       AND (m.simplefin_transaction_id IS NULL)
       AND (m.deleted_at IS NULL OR m.id IS NULL)
     ORDER BY t.post_date ASC, t.enter_date ASC
   `;
 
-  const match = selectManualReconciliationMatch(sfTxn, candidates);
+  const match = selectManualReconciliationMatch(sfTxn, candidates, matchWindowDays);
   if (!match) return false;
 
   // Wrap in transaction for atomicity
@@ -520,6 +533,7 @@ async function findAndLinkTransferDedupMatch(
   if (isNaN(amount) || amount === 0) return false;
 
   const postDate = new Date(sfTxn.posted * 1000);
+  const matchWindowDays = getSimpleFinMatchWindowDays();
   // Use the account's commodity_scu for correct precision
   const scuPrecision = Math.round(Math.log10(accountScu));
   const { num: absNum, denom } = toNumDenom(Math.abs(amount), scuPrecision);
@@ -545,14 +559,14 @@ async function findAndLinkTransferDedupMatch(
       AND m.source = 'simplefin'
       AND m.match_type IS NULL
       AND m.simplefin_transaction_id_2 IS NULL
-      AND t.post_date BETWEEN ${new Date(postDate.getTime() - 3 * 86400000)}
-                          AND ${new Date(postDate.getTime() + 3 * 86400000)}
+      AND t.post_date BETWEEN ${new Date(postDate.getTime() - matchWindowDays * 86400000)}
+                          AND ${new Date(postDate.getTime() + matchWindowDays * 86400000)}
       AND (m.deleted_at IS NULL)
       AND (SELECT COUNT(*) FROM splits WHERE tx_guid = t.guid) = 2
     ORDER BY t.guid, t.post_date ASC
   `;
 
-  const match = selectTransferDedupMatch(sfTxn, candidates);
+  const match = selectTransferDedupMatch(sfTxn, candidates, matchWindowDays);
   if (!match) return false;
 
   // Wrap meta update in a transaction for atomicity
