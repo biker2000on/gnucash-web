@@ -116,20 +116,21 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
             })
             : data.transactions;
 
-        if (!sortState.key || !sortState.direction) {
+        const { key, direction } = sortState;
+        if (!key || !direction) {
             return filteredRows;
         }
 
         return [...filteredRows].sort((a, b) => {
-            const direction = sortState.direction === 'asc' ? 1 : -1;
-            if (sortState.key === 'amount') {
-                return (a.amount - b.amount) * direction;
+            const multiplier = direction === 'asc' ? 1 : -1;
+            if (key === 'amount') {
+                return (a.amount - b.amount) * multiplier;
             }
 
-            return a[sortState.key].localeCompare(b[sortState.key], undefined, {
+            return a[key].localeCompare(b[key], undefined, {
                 numeric: true,
                 sensitivity: 'base',
-            }) * direction;
+            }) * multiplier;
         });
     }, [data, globalFilter, sortState]);
 
