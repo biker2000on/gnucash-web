@@ -30,6 +30,10 @@ interface DrilldownResponse {
 
 type SortKey = keyof Pick<DrilldownRow, 'date' | 'description' | 'accountName' | 'amount'>;
 type SortDirection = 'asc' | 'desc';
+type SortState = {
+    key: SortKey | null;
+    direction: SortDirection | null;
+};
 
 interface Props {
     target: DrilldownTarget | null;
@@ -41,8 +45,7 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [globalFilter, setGlobalFilter] = useState('');
-    const [sortKey, setSortKey] = useState<SortKey>('date');
-    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+    const [sortState, setSortState] = useState<SortState>({ key: null, direction: null });
     const closeBtnRef = useRef<HTMLButtonElement>(null);
 
     // Fetch on target change
@@ -56,8 +59,7 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
             setError(null);
             setData(null);
             setGlobalFilter('');
-            setSortKey('date');
-            setSortDirection('asc');
+            setSortState({ key: null, direction: null });
 
             const params = new URLSearchParams({
                 accountGuid: target.accountGuid,
@@ -114,26 +116,33 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
             })
             : data.transactions;
 
+        if (!sortState.key || !sortState.direction) {
+            return filteredRows;
+        }
+
         return [...filteredRows].sort((a, b) => {
-            const direction = sortDirection === 'asc' ? 1 : -1;
-            if (sortKey === 'amount') {
+            const direction = sortState.direction === 'asc' ? 1 : -1;
+            if (sortState.key === 'amount') {
                 return (a.amount - b.amount) * direction;
             }
 
-            return a[sortKey].localeCompare(b[sortKey], undefined, {
+            return a[sortState.key].localeCompare(b[sortState.key], undefined, {
                 numeric: true,
                 sensitivity: 'base',
             }) * direction;
         });
-    }, [data, globalFilter, sortDirection, sortKey]);
+    }, [data, globalFilter, sortState]);
 
     const handleSort = (key: SortKey) => {
-        if (sortKey === key) {
-            setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
-            return;
-        }
-        setSortKey(key);
-        setSortDirection(key === 'amount' ? 'desc' : 'asc');
+        setSortState(prev => {
+            if (prev.key !== key) {
+                return { key, direction: 'asc' };
+            }
+            if (prev.direction === 'asc') {
+                return { key, direction: 'desc' };
+            }
+            return { key: null, direction: null };
+        });
     };
 
     if (!target || typeof document === 'undefined') return null;
@@ -211,8 +220,7 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
                         visibleRows.length > 0 ? (
                             <DrilldownRows
                                 rows={visibleRows}
-                                sortKey={sortKey}
-                                sortDirection={sortDirection}
+                                sortState={sortState}
                                 onSort={handleSort}
                             />
                         ) : (
@@ -241,38 +249,59 @@ function DrilldownSkeleton() {
     );
 }
 
+function SortIcon({ direction }: { direction: SortDirection | null }) {
+    if (direction === 'asc') {
+        return (
+            <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+                <path d="M8 3v10M8 3 4.5 6.5M8 3l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+        );
+    }
+    if (direction === 'desc') {
+        return (
+            <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+                <path d="M8 13V3M8 13l3.5-3.5M8 13 4.5 9.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+        );
+    }
+    return (
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none">
+            <path d="M5.5 3 3 5.5 5.5 8M3 5.5h10M10.5 8 13 10.5 10.5 13M13 10.5H3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+    );
+}
+
 function SortableHeader({
     label,
     sortKey,
-    activeKey,
-    direction,
+    sortState,
     onSort,
     align = 'left',
 }: {
     label: string;
     sortKey: SortKey;
-    activeKey: SortKey;
-    direction: SortDirection;
+    sortState: SortState;
     onSort: (key: SortKey) => void;
     align?: 'left' | 'right';
 }) {
-    const isActive = activeKey === sortKey;
-    const indicator = isActive ? (direction === 'asc' ? 'Asc' : 'Desc') : 'Sort';
+    const isActive = sortState.key === sortKey;
+    const direction = isActive ? sortState.direction : null;
 
     return (
         <th
             className={`${align === 'right' ? 'text-right' : 'text-left'} px-3 py-2 text-xs uppercase tracking-wider text-foreground-muted font-medium`}
-            aria-sort={isActive ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+            aria-sort={isActive && direction ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
         >
             <button
                 type="button"
                 onClick={() => onSort(sortKey)}
+                aria-label={`Sort ${label}`}
                 className={`inline-flex items-center gap-1 hover:text-foreground focus:outline-none focus:text-primary ${
                     align === 'right' ? 'justify-end w-full' : ''
                 } ${isActive ? 'text-primary' : ''}`}
             >
                 <span>{label}</span>
-                <span aria-hidden="true" className="text-[10px]">{indicator}</span>
+                <SortIcon direction={direction} />
             </button>
         </th>
     );
@@ -280,13 +309,11 @@ function SortableHeader({
 
 function DrilldownRows({
     rows,
-    sortKey,
-    sortDirection,
+    sortState,
     onSort,
 }: {
     rows: DrilldownRow[];
-    sortKey: SortKey;
-    sortDirection: SortDirection;
+    sortState: SortState;
     onSort: (key: SortKey) => void;
 }) {
     return (
@@ -295,10 +322,10 @@ function DrilldownRows({
             <table className="hidden sm:table w-full text-sm">
                 <thead className="sticky top-0 bg-background-tertiary/80 backdrop-blur-sm">
                     <tr className="border-b border-border">
-                        <SortableHeader label="Date" sortKey="date" activeKey={sortKey} direction={sortDirection} onSort={onSort} />
-                        <SortableHeader label="Description" sortKey="description" activeKey={sortKey} direction={sortDirection} onSort={onSort} />
-                        <SortableHeader label="Account" sortKey="accountName" activeKey={sortKey} direction={sortDirection} onSort={onSort} />
-                        <SortableHeader label="Amount" sortKey="amount" activeKey={sortKey} direction={sortDirection} onSort={onSort} align="right" />
+                        <SortableHeader label="Date" sortKey="date" sortState={sortState} onSort={onSort} />
+                        <SortableHeader label="Description" sortKey="description" sortState={sortState} onSort={onSort} />
+                        <SortableHeader label="Account" sortKey="accountName" sortState={sortState} onSort={onSort} />
+                        <SortableHeader label="Amount" sortKey="amount" sortState={sortState} onSort={onSort} align="right" />
                     </tr>
                 </thead>
                 <tbody>
