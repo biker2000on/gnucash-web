@@ -1,19 +1,27 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-const mockGetBaseCurrency = vi.fn();
-const mockFindExchangeRate = vi.fn();
-const mockGetLatestPrice = vi.fn();
+vi.mock('@/lib/prisma', () => ({
+  default: {
+    $queryRaw: vi.fn(),
+    commodities: {
+      findMany: vi.fn(),
+    },
+  },
+}));
 
 vi.mock('@/lib/currency', () => ({
-  getBaseCurrency: (...args: unknown[]) => mockGetBaseCurrency(...args),
-  findExchangeRate: (...args: unknown[]) => mockFindExchangeRate(...args),
+  getBaseCurrency: vi.fn(),
 }));
 
-vi.mock('@/lib/commodities', () => ({
-  getLatestPrice: (...args: unknown[]) => mockGetLatestPrice(...args),
-}));
-
+import prisma from '@/lib/prisma';
+import { getBaseCurrency } from '@/lib/currency';
 import { buildAccountValuationContext } from '../account-valuation';
+
+const mockPrisma = prisma as unknown as {
+  $queryRaw: Mock;
+  commodities: { findMany: Mock };
+};
+const mockGetBaseCurrency = vi.mocked(getBaseCurrency);
 
 const USD = {
   guid: 'usd-guid',
@@ -22,20 +30,33 @@ const USD = {
   fraction: 100,
 };
 
+function pricePair(commodityGuid: string, currencyGuid: string, value: number) {
+  const denom = 1000000;
+  return {
+    commodity_guid: commodityGuid,
+    currency_guid: currencyGuid,
+    commodity_mnemonic: commodityGuid,
+    currency_mnemonic: currencyGuid,
+    value_num: BigInt(Math.round(value * denom)),
+    value_denom: BigInt(denom),
+  };
+}
+
 describe('buildAccountValuationContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetBaseCurrency.mockResolvedValue(USD);
+    mockPrisma.commodities.findMany.mockResolvedValue([
+      { guid: 'usd-guid' },
+      { guid: 'eur-guid' },
+    ]);
+    mockPrisma.$queryRaw.mockResolvedValue([]);
   });
 
   it('converts cash currency accounts into the report currency', async () => {
-    mockFindExchangeRate.mockResolvedValue({
-      fromCurrency: 'IDR',
-      toCurrency: 'USD',
-      rate: 0.000061,
-      date: new Date('2026-06-01'),
-      source: 'user:price-db',
-    });
+    mockPrisma.$queryRaw.mockResolvedValue([
+      pricePair('idr-guid', 'usd-guid', 0.000061),
+    ]);
 
     const valuation = await buildAccountValuationContext([
       {
@@ -50,7 +71,7 @@ describe('buildAccountValuationContext', () => {
       commodityGuid: 'idr-guid',
       commodityNamespace: 'CURRENCY',
     })).toBeCloseTo(68.503);
-    expect(mockFindExchangeRate).toHaveBeenCalledWith('idr-guid', 'usd-guid', undefined);
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('leaves report-currency cash accounts at face value', async () => {
@@ -67,17 +88,35 @@ describe('buildAccountValuationContext', () => {
       commodityGuid: 'usd-guid',
       commodityNamespace: 'CURRENCY',
     })).toBe(1);
-    expect(mockFindExchangeRate).not.toHaveBeenCalled();
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('triangulates currency rates through configured pivot currencies', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([
+      pricePair('gbp-guid', 'eur-guid', 1.17),
+      pricePair('eur-guid', 'usd-guid', 1.08),
+    ]);
+
+    const valuation = await buildAccountValuationContext([
+      {
+        accountType: 'CASH',
+        commodityGuid: 'gbp-guid',
+        commodityNamespace: 'CURRENCY',
+      },
+    ]);
+
+    expect(valuation.getMultiplier({
+      accountType: 'CASH',
+      commodityGuid: 'gbp-guid',
+      commodityNamespace: 'CURRENCY',
+    })).toBeCloseTo(1.2636);
   });
 
   it('continues valuing investment accounts with latest report-currency prices', async () => {
     const asOfDate = new Date('2026-06-08');
-    mockGetLatestPrice.mockResolvedValue({
-      guid: 'price-guid',
-      date: asOfDate,
-      value: 123.45,
-      source: 'yahoo',
-    });
+    mockPrisma.$queryRaw.mockResolvedValue([
+      pricePair('stock-guid', 'usd-guid', 123.45),
+    ]);
 
     const valuation = await buildAccountValuationContext([
       {
@@ -92,6 +131,6 @@ describe('buildAccountValuationContext', () => {
       commodityGuid: 'stock-guid',
       commodityNamespace: 'NASDAQ',
     })).toBe(123.45);
-    expect(mockGetLatestPrice).toHaveBeenCalledWith('stock-guid', 'usd-guid', asOfDate);
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
 });

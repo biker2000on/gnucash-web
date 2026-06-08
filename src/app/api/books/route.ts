@@ -4,6 +4,13 @@ import { generateGuid } from '@/lib/gnucash';
 import { requireAuth } from '@/lib/auth';
 import { getUserBooks } from '@/lib/services/permission.service';
 
+interface BookSummaryRow {
+    guid: string;
+    root_account_guid: string;
+    root_name: string | null;
+    account_count: bigint;
+}
+
 /**
  * GET /api/books
  * List all books the current user has access to.
@@ -22,40 +29,53 @@ export async function GET() {
         const userBookGuids = userBooks.map(b => b.guid);
         const roleMap = new Map(userBooks.map(b => [b.guid, b.role]));
 
+        const bookSummaries = await prisma.$queryRaw<BookSummaryRow[]>`
+            WITH RECURSIVE book_tree AS (
+                SELECT
+                    b.guid AS book_guid,
+                    b.root_account_guid,
+                    b.root_account_guid AS account_guid
+                FROM books b
+                WHERE b.guid = ANY(${userBookGuids}::text[])
+
+                UNION ALL
+
+                SELECT
+                    bt.book_guid,
+                    bt.root_account_guid,
+                    a.guid AS account_guid
+                FROM accounts a
+                JOIN book_tree bt ON a.parent_guid = bt.account_guid
+            )
+            SELECT
+                b.guid,
+                b.root_account_guid,
+                root.name AS root_name,
+                COUNT(bt.account_guid) FILTER (WHERE bt.account_guid != b.root_account_guid)::bigint AS account_count
+            FROM books b
+            LEFT JOIN accounts root ON root.guid = b.root_account_guid
+            LEFT JOIN book_tree bt ON bt.book_guid = b.guid
+            WHERE b.guid = ANY(${userBookGuids}::text[])
+            GROUP BY b.guid, b.root_account_guid, root.name
+        `;
+        const summaryMap = new Map(bookSummaries.map(summary => [summary.guid, summary]));
+
         const books = await prisma.books.findMany({
             where: { guid: { in: userBookGuids } },
+            orderBy: { name: 'asc' },
         });
 
-        // Enrich each book with name and account count
-        const enrichedBooks = await Promise.all(
-            books.map(async (book) => {
-                const rootAccount = await prisma.accounts.findUnique({
-                    where: { guid: book.root_account_guid },
-                    select: { name: true },
-                });
-
-                // Count accounts under this book's root
-                const accountCount = await prisma.$queryRaw<{ count: bigint }[]>`
-                    WITH RECURSIVE account_tree AS (
-                        SELECT guid FROM accounts WHERE guid = ${book.root_account_guid}
-                        UNION ALL
-                        SELECT a.guid FROM accounts a
-                        JOIN account_tree t ON a.parent_guid = t.guid
-                    )
-                    SELECT COUNT(*)::bigint as count FROM account_tree
-                    WHERE guid != ${book.root_account_guid}
-                `;
-
-                return {
-                    guid: book.guid,
-                    name: book.name ?? rootAccount?.name ?? 'Unnamed Book',
-                    description: book.description,
-                    rootAccountGuid: book.root_account_guid,
-                    accountCount: Number(accountCount[0]?.count || 0),
-                    role: roleMap.get(book.guid),
-                };
-            })
-        );
+        const enrichedBooks = books.map((book) => {
+            const summary = summaryMap.get(book.guid);
+            return {
+                guid: book.guid,
+                name: book.name ?? summary?.root_name ?? 'Unnamed Book',
+                description: book.description,
+                rootAccountGuid: book.root_account_guid,
+                accountCount: Number(summary?.account_count || 0),
+                role: roleMap.get(book.guid),
+            };
+        });
 
         return NextResponse.json(enrichedBooks);
     } catch (error) {
