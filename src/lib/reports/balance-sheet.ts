@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { getLatestPrice } from '@/lib/commodities';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
 import { toDecimal, buildHierarchy, resolveRootGuid } from './utils';
 
@@ -11,8 +11,6 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
 
     // Determine root GUID from book scoping or fallback
     const rootGuid = await resolveRootGuid(filters.bookAccountGuids);
-
-    const investmentTypes = ['STOCK', 'MUTUAL'];
 
     // Get all asset, liability, and equity accounts with their balances
     const accounts = await prisma.accounts.findMany({
@@ -29,8 +27,22 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
             account_type: true,
             parent_guid: true,
             commodity_guid: true,
+            commodity: {
+                select: {
+                    namespace: true,
+                },
+            },
         },
     });
+
+    const valuation = await buildAccountValuationContext(
+        accounts.map(account => ({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        endDate
+    );
 
     // Get balances for each account up to end date
     const accountBalances = await Promise.all(
@@ -54,14 +66,11 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
                 return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
-            // For investment accounts, convert shares to market value using latest price
-            let balance = quantity;
-            if (investmentTypes.includes(account.account_type) && account.commodity_guid) {
-                const price = await getLatestPrice(account.commodity_guid, undefined, endDate);
-                if (price) {
-                    balance = quantity * price.value;
-                }
-            }
+            const balance = quantity * valuation.getMultiplier({
+                accountType: account.account_type,
+                commodityGuid: account.commodity_guid,
+                commodityNamespace: account.commodity?.namespace,
+            });
 
             return {
                 ...account,

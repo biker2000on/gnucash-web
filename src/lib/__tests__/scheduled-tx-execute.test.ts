@@ -40,7 +40,6 @@ vi.mock('../gnucash', () => {
 
 import prisma from '../prisma';
 import { resolveTemplateSplits } from '../scheduled-transactions';
-import { generateGuid } from '../gnucash';
 import {
   executeOccurrence,
   skipOccurrence,
@@ -155,7 +154,6 @@ describe('scheduled-tx-execute', () => {
 
       // Verify the UPDATE call used rem_occur = -1 (unchanged)
       // The last $executeRaw call is the UPDATE
-      const updateCall = mockTx.$executeRaw.mock.calls[3];
       // The tagged template literal args: the 3rd positional arg (index 2) should be -1 for rem_occur
       // We check that instance_count was incremented to 51
       expect(mockTx.$executeRaw).toHaveBeenCalledTimes(4);

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { createPayslip, updatePayslipStatus } from '@/lib/payslips';
+import { createPayslip } from '@/lib/payslips';
 import { getStorageBackend, generateStorageKey, thumbnailKeyFrom } from '@/lib/storage/storage-backend';
 import { generateThumbnail } from '@/lib/storage/thumbnail';
 import { enqueueJob } from '@/lib/queue/queues';

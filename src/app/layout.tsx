@@ -1,8 +1,19 @@
 import type { Metadata, Viewport } from "next";
+import { DM_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider, ThemeScript } from "@/contexts/ThemeContext";
 import { UserPreferencesProvider } from "@/contexts/UserPreferencesContext";
 import { PWAInstallProvider } from "@/contexts/PWAInstallContext";
+
+const dmSans = DM_Sans({
+  subsets: ['latin'],
+  variable: '--font-geist-sans',
+});
+
+const jetBrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-geist-mono',
+});
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -31,12 +42,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <ThemeScript />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
         <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
       </head>
-      <body className="antialiased">
+      <body className={`${dmSans.variable} ${jetBrainsMono.variable} antialiased`}>
         <ThemeProvider>
           <UserPreferencesProvider>
             <PWAInstallProvider>

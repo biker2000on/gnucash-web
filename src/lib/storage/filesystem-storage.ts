@@ -16,6 +16,7 @@ function safePath(key: string): string {
 
 export class FilesystemStorage implements StorageBackend {
   async put(key: string, buffer: Buffer, _contentType: string): Promise<void> {
+    void _contentType;
     const filePath = safePath(key);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, buffer);

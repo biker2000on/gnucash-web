@@ -92,7 +92,7 @@ function createMockTx() {
     transactions: {
       create: mockTransactionsCreate,
     },
-  } as any;
+  } as never;
 }
 
 import {
@@ -454,7 +454,7 @@ describe('linkTransferToLot', () => {
 
     expect(result.created).toBe(true);
     // No source_lot_guid or acquisition_date slots since no source lot
-    const slotCreateCalls = mockSlotsCreate.mock.calls.map(c => (c[0] as any).data.name);
+    const slotCreateCalls = mockSlotsCreate.mock.calls.map(c => (c[0] as { data: { name: string } }).data.name);
     expect(slotCreateCalls).not.toContain('source_lot_guid');
     expect(slotCreateCalls).not.toContain('acquisition_date');
   });
@@ -533,7 +533,7 @@ describe('splitTransferAcrossSourceLots', () => {
         lot_guid: 'src-lot-a-guid-00000000000000',
         account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
       },
-    ] as any;
+    ] as never;
 
     mockSplitsFindUnique.mockResolvedValue(split);
     mockLotsCreate.mockResolvedValue({});
@@ -607,7 +607,7 @@ describe('splitTransferAcrossSourceLots', () => {
         lot_guid: 'src-lot-4-guid-00000000000000',
         account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
       },
-    ] as any;
+    ] as never;
 
     mockSplitsFindUnique.mockResolvedValue(split);
     mockLotsCreate.mockResolvedValue({});
@@ -628,13 +628,13 @@ describe('splitTransferAcrossSourceLots', () => {
 
     // 4 source_lot_guid slots created
     const sourceLotSlotCalls = mockSlotsCreate.mock.calls.filter(
-      (c: any) => c[0].data.name === 'source_lot_guid',
+      c => (c[0] as { data: { name: string } }).data.name === 'source_lot_guid',
     );
     expect(sourceLotSlotCalls).toHaveLength(4);
 
     // 4 acquisition_date slots created
     const acqDateSlotCalls = mockSlotsCreate.mock.calls.filter(
-      (c: any) => c[0].data.name === 'acquisition_date',
+      c => (c[0] as { data: { name: string } }).data.name === 'acquisition_date',
     );
     expect(acqDateSlotCalls).toHaveLength(4);
 
@@ -701,7 +701,7 @@ describe('splitTransferAcrossSourceLots', () => {
         lot_guid: null, // No lot assignment
         account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
       },
-    ] as any;
+    ] as never;
 
     mockSplitsFindUnique.mockResolvedValue(split);
     mockLotsCreate.mockResolvedValue({});
@@ -747,7 +747,7 @@ describe('splitTransferAcrossSourceLots', () => {
         lot_guid: 'src-lot-2-guid-00000000000000',
         account: { guid: 'src-acct-guid-000000000000000', commodity_guid: 'aapl-commodity-guid-0000000000', account_type: 'STOCK' },
       },
-    ] as any;
+    ] as never;
 
     mockSplitsFindUnique.mockResolvedValue(split);
     mockLotsCreate.mockResolvedValue({});
@@ -1061,7 +1061,7 @@ describe('generateCapitalGains', () => {
     await generateCapitalGains(lot.guid, runId, tx);
 
     // The invest split should use 10000 as denom for quantity
-    const investSplitCall = mockSplitsCreate.mock.calls[0][0] as any;
+    const investSplitCall = mockSplitsCreate.mock.calls[0][0] as { data: { quantity_denom: bigint } };
     expect(investSplitCall.data.quantity_denom).toBe(10000n);
   });
 
@@ -1194,7 +1194,6 @@ describe('classifyHoldingPeriod', () => {
 
   it('returns short_term for exactly 365 days', () => {
     const open = new Date('2024-01-01');
-    const close = new Date('2025-01-01'); // exactly 366 days (leap year) but close enough
     // 365 days from Jan 1 = Dec 31 of same year
     const close365 = new Date('2024-12-31');
     expect(classifyHoldingPeriod(open, close365)).toBe('short_term');

@@ -17,8 +17,11 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
   // Reset state and set initial selection to active book when opening
   useEffect(() => {
     if (isOpen) {
-      const activeIndex = books.findIndex(b => b.guid === activeBookGuid)
-      setSelectedIndex(activeIndex >= 0 ? activeIndex : 0)
+      const frame = requestAnimationFrame(() => {
+        const activeIndex = books.findIndex(b => b.guid === activeBookGuid)
+        setSelectedIndex(activeIndex >= 0 ? activeIndex : 0)
+      })
+      return () => cancelAnimationFrame(frame)
     }
   }, [isOpen, books, activeBookGuid])
 

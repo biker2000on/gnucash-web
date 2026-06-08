@@ -402,7 +402,6 @@ export class MortgageService {
           monthlyRates.push(impliedMonthlyRate);
           // Only subtract the interest-implied principal (total P+I minus interest),
           // not the raw principal which may include escrow
-          const impliedPrincipal = payment.total - payment.interest;
           // But escrow inflates payment.total too, so use: principal from amortization
           // For a fixed rate: principal = M - interest, but we don't know M yet.
           // Use interest to estimate rate first, then compute M from rate.

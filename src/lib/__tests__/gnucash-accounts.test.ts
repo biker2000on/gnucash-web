@@ -22,9 +22,9 @@ beforeEach(() => {
 describe('findOrCreateAccount', () => {
   it('should return existing leaf account guid when full path exists', async () => {
     mockFindFirst
-      .mockResolvedValueOnce({ guid: 'income-guid' } as any)
-      .mockResolvedValueOnce({ guid: 'capgains-guid' } as any)
-      .mockResolvedValueOnce({ guid: 'st-guid' } as any);
+      .mockResolvedValueOnce({ guid: 'income-guid' } as never)
+      .mockResolvedValueOnce({ guid: 'capgains-guid' } as never)
+      .mockResolvedValueOnce({ guid: 'st-guid' } as never);
 
     const result = await findOrCreateAccount('Income:Capital Gains:Short Term', 'root-guid', 'usd-guid');
     expect(result).toBe('st-guid');
@@ -33,10 +33,10 @@ describe('findOrCreateAccount', () => {
 
   it('should create missing segments in the hierarchy', async () => {
     mockFindFirst
-      .mockResolvedValueOnce({ guid: 'income-guid' } as any)
+      .mockResolvedValueOnce({ guid: 'income-guid' } as never)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
-    mockCreate.mockResolvedValue({} as any);
+    mockCreate.mockResolvedValue({} as never);
 
     await findOrCreateAccount('Income:Capital Gains:Short Term', 'root-guid', 'usd-guid');
     expect(mockCreate).toHaveBeenCalledTimes(2);
@@ -53,14 +53,14 @@ describe('findOrCreateAccount', () => {
 
   it('should create entire hierarchy when nothing exists', async () => {
     mockFindFirst.mockResolvedValue(null);
-    mockCreate.mockResolvedValue({} as any);
+    mockCreate.mockResolvedValue({} as never);
     await findOrCreateAccount('Income:Capital Gains:Long Term', 'root-guid', 'usd-guid');
     expect(mockCreate).toHaveBeenCalledTimes(3);
   });
 
   it('should use correct commodity_guid and commodity_scu', async () => {
     mockFindFirst.mockResolvedValue(null);
-    mockCreate.mockResolvedValue({} as any);
+    mockCreate.mockResolvedValue({} as never);
     await findOrCreateAccount('Income:Gains', 'root-guid', 'my-currency');
     expect(mockCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ commodity_guid: 'my-currency', commodity_scu: 100 }),

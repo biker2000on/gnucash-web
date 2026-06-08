@@ -56,12 +56,6 @@ interface DerivedAccount extends AccountWithChildren {
 
 const COLUMN_VISIBILITY_KEY = 'account_hierarchy.column_visibility';
 const COLUMN_ORDER_KEY = 'account_hierarchy.column_order';
-const REQUIRED_COLUMNS: ColumnId[] = [
-    'accountName',
-    'periodBalance',
-    'totalBalanceUsd',
-    'totalBalanceCommodity',
-];
 const ALWAYS_VISIBLE_COLUMNS: ColumnId[] = ['accountName'];
 const DEFAULT_COLUMN_ORDER: ColumnId[] = [
     'accountName',

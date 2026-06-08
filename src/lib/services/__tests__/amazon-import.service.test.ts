@@ -395,7 +395,7 @@ describe('AmazonImportService', () => {
             quantity_num: 2807n,
             quantity_denom: 100n,
             lot_guid: null,
-            account: { name: 'Credit Card', guid: CC_GUID, commodity: null } as any,
+            account: { name: 'Credit Card', guid: CC_GUID, commodity: null } as never,
             value_decimal: '28.07',
             quantity_decimal: '28.07',
             account_name: 'Credit Card',
@@ -414,15 +414,15 @@ describe('AmazonImportService', () => {
             quantity_num: -2807n,
             quantity_denom: 100n,
             lot_guid: null,
-            account: { name: 'Expenses', guid: ACCT_GUID, commodity: null } as any,
+            account: { name: 'Expenses', guid: ACCT_GUID, commodity: null } as never,
             value_decimal: '-28.07',
             quantity_decimal: '-28.07',
             account_name: 'Expenses',
             commodity_mnemonic: undefined,
           },
         ],
-        currency: { guid: CURRENCY_GUID } as any,
-      } as any);
+        currency: { guid: CURRENCY_GUID } as never,
+      } as never);
 
       // suggestAccount for item
       vi.mocked(suggestAccount).mockResolvedValue({
@@ -439,7 +439,7 @@ describe('AmazonImportService', () => {
       ]);
 
       // TransactionService.update
-      vi.mocked(TransactionService.update).mockResolvedValue({} as any);
+      vi.mocked(TransactionService.update).mockResolvedValue({} as never);
 
       // UPDATE apply_status
       mockQuery.mockResolvedValueOnce({ rowCount: 1 });
@@ -522,15 +522,15 @@ describe('AmazonImportService', () => {
             quantity_num: 2807n,
             quantity_denom: 100n,
             lot_guid: null,
-            account: { name: 'Credit Card', guid: CC_GUID, commodity: null } as any,
+            account: { name: 'Credit Card', guid: CC_GUID, commodity: null } as never,
             value_decimal: '28.07',
             quantity_decimal: '28.07',
             account_name: 'Credit Card',
             commodity_mnemonic: undefined,
           },
         ],
-        currency: { guid: CURRENCY_GUID } as any,
-      } as any);
+        currency: { guid: CURRENCY_GUID } as never,
+      } as never);
 
       // UPDATE apply_status = 'failed'
       mockQuery.mockResolvedValueOnce({ rowCount: 1 });
@@ -620,15 +620,15 @@ describe('AmazonImportService', () => {
               quantity_num: 2807n,
               quantity_denom: 100n,
               lot_guid: null,
-              account: { name: 'CC', guid: CC_GUID, commodity: null } as any,
+              account: { name: 'CC', guid: CC_GUID, commodity: null } as never,
               value_decimal: '28.07',
               quantity_decimal: '28.07',
               account_name: 'CC',
               commodity_mnemonic: undefined,
             },
           ],
-          currency: { guid: CURRENCY_GUID } as any,
-        } as any)
+          currency: { guid: CURRENCY_GUID } as never,
+        } as never)
         // Second order: not found
         .mockResolvedValueOnce(null);
 
@@ -643,7 +643,7 @@ describe('AmazonImportService', () => {
         { account_guid: CC_GUID, value_num: 2807, value_denom: 100, memo: '' },
       ]);
 
-      vi.mocked(TransactionService.update).mockResolvedValue({} as any);
+      vi.mocked(TransactionService.update).mockResolvedValue({} as never);
 
       // UPDATE apply_status for order 1 (applied)
       mockQuery.mockResolvedValueOnce({ rowCount: 1 });

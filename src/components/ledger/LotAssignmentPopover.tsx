@@ -12,9 +12,7 @@ interface LotOption {
 interface LotAssignmentPopoverProps {
   splitGuid: string;
   currentLotGuid: string | null;
-  accountGuid: string;
   lots: LotOption[];
-  currencyMnemonic: string;
   onAssign: (splitGuid: string, lotGuid: string | null) => Promise<void>;
   onCreateAndAssign: (splitGuid: string, title: string) => Promise<void>;
 }
@@ -22,9 +20,7 @@ interface LotAssignmentPopoverProps {
 export default function LotAssignmentPopover({
   splitGuid,
   currentLotGuid,
-  accountGuid,
   lots,
-  currencyMnemonic,
   onAssign,
   onCreateAndAssign,
 }: LotAssignmentPopoverProps) {

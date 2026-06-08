@@ -44,16 +44,6 @@ describe('computeAmazonMatchScore', () => {
 });
 
 describe('rankAmazonCandidates', () => {
-  const makeCandidates = (count: number) =>
-    Array.from({ length: count }, (_, i) => ({
-      guid: `guid-${i}`,
-      description: `Amazon order ${i}`,
-      post_date: '2025-01-15',
-      amount: 49.99 + i * 0.001, // slight variations to get different scores
-      split_guid: `split-${i}`,
-      account_guid: `acct-${i}`,
-    }));
-
   it('returns top 5 sorted by score, filtered >= 0.3', () => {
     const candidates = [
       // exact match

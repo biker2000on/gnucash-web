@@ -27,7 +27,6 @@ vi.mock('../prisma', () => ({
 }));
 
 import { generateContributionSummary } from '../reports/contribution-summary';
-import { ContributionType } from '../reports/contribution-classifier';
 import { ReportType } from '../reports/types';
 import type { ReportFilters } from '../reports/types';
 

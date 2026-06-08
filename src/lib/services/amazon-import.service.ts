@@ -13,7 +13,6 @@ import {
   parseAmazonCsv,
   extractCsvFromZip,
   detectFormat,
-  type AmazonOrder,
 } from '@/lib/amazon-csv-parser';
 import {
   rankAmazonCandidates,

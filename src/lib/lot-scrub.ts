@@ -242,7 +242,6 @@ export async function splitSellAcrossLots(
     },
   });
 
-  const totalAllocShares = allocations.reduce((s, a) => s + a.shares, 0);
   const pricePerShare = Math.abs(sellVal) / remainingSell;
   const subSplitsCreated: string[] = [];
   const lotsUsed: string[] = [];

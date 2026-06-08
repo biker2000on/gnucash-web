@@ -5,7 +5,6 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { PayslipLineItemTable } from './PayslipLineItemTable';
 import { TransactionPreview } from './TransactionPreview';
 import type { PayslipLineItem } from '@/lib/types';
-import { formatDisplayAccountPath } from '@/lib/account-path';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 
 // ---------------------------------------------------------------------------

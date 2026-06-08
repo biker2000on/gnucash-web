@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
-import { getLatestPrice } from '@/lib/commodities';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
 
 interface AccountBalance {
     guid: string;
@@ -99,47 +99,32 @@ export async function GET(request: NextRequest) {
             GROUP BY s.account_guid, a.account_type, a.commodity_guid, c.namespace, c.mnemonic
         `;
 
-        // Identify investment accounts and fetch prices
-        const investmentTypes = ['STOCK', 'MUTUAL'];
-        const priceCache = new Map<string, number>();
+        const valuation = await buildAccountValuationContext(
+            results.map(result => ({
+                accountType: result.account_type,
+                commodityGuid: result.commodity_guid,
+                commodityNamespace: result.commodity_namespace,
+            })),
+            endDate ? new Date(endDate) : undefined
+        );
 
-        for (const result of results) {
-            const isInvestment =
-                investmentTypes.includes(result.account_type) &&
-                result.commodity_guid &&
-                result.commodity_namespace !== 'CURRENCY';
-
-            if (isInvestment && result.commodity_guid) {
-                if (!priceCache.has(result.commodity_guid)) {
-                    const price = await getLatestPrice(result.commodity_guid);
-                    priceCache.set(result.commodity_guid, price?.value || 0);
-                }
-            }
-        }
-
-        // Build response with USD calculations for investments
+        // Build response with report-currency calculations for investments and currencies.
         const balances: AccountBalance[] = results.map(result => {
-            const isInvestment =
-                investmentTypes.includes(result.account_type) &&
-                result.commodity_guid &&
-                result.commodity_namespace !== 'CURRENCY';
-
             const totalBalance = parseFloat(result.total_balance);
             const periodBalance = parseFloat(result.period_balance);
+            const reportCurrencyMultiplier = valuation.getMultiplier({
+                accountType: result.account_type,
+                commodityGuid: result.commodity_guid,
+                commodityNamespace: result.commodity_namespace,
+            });
 
-            const balance: AccountBalance = {
+            return {
                 guid: result.account_guid,
                 total_balance: totalBalance.toFixed(2),
                 period_balance: periodBalance.toFixed(2),
+                total_balance_usd: (totalBalance * reportCurrencyMultiplier).toFixed(2),
+                period_balance_usd: (periodBalance * reportCurrencyMultiplier).toFixed(2),
             };
-
-            if (isInvestment && result.commodity_guid) {
-                const pricePerShare = priceCache.get(result.commodity_guid) || 0;
-                balance.total_balance_usd = (totalBalance * pricePerShare).toFixed(2);
-                balance.period_balance_usd = (periodBalance * pricePerShare).toFixed(2);
-            }
-
-            return balance;
         });
 
         return NextResponse.json(serializeBigInts(balances));

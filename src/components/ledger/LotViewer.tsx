@@ -82,10 +82,6 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
     const totalRealizedGain = lots
         .filter(l => l.isClosed)
         .reduce((sum, l) => sum + l.realizedGain, 0);
-    const totalCost = lots
-        .filter(l => !l.isClosed)
-        .reduce((sum, l) => sum + l.totalCost, 0);
-
     if (loading) {
         return (
             <div className="flex items-center justify-center py-12">
@@ -171,7 +167,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
 
                 {/* Lot Cards */}
                 <div className="space-y-1.5 max-h-[500px] overflow-y-auto">
-                    {visibleLots.map((lot, index) => {
+                    {visibleLots.map((lot) => {
                         const isSelected = lot.guid === selectedLotGuid;
                         const gainValue = lot.isClosed ? lot.realizedGain : lot.unrealizedGain;
                         const gainPercent = lot.totalCost !== 0 && gainValue !== null

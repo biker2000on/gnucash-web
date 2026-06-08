@@ -40,9 +40,6 @@ type CacheEntry = CostBasisResult | typeof IN_PROGRESS;
 // Internal cache that supports both real results and in-progress markers
 type InternalCache = Map<string, CacheEntry>;
 
-// Cache for getAccountCostBasis query results (keyed by accountGuid-commodityGuid-date)
-type AccountSplitsCache = Map<string, Awaited<ReturnType<typeof fetchAccountSplits>>>;
-
 export function createCostBasisCache(): CostBasisCache {
   return new Map();
 }

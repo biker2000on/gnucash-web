@@ -6,7 +6,7 @@ import { query } from '@/lib/db';
 import { rankCandidates } from '@/lib/receipt-matching';
 import { getBookAccountGuids } from '@/lib/book-scope';
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const roleResult = await requireRole('readonly');
     if (roleResult instanceof NextResponse) return roleResult;

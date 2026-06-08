@@ -7,7 +7,7 @@ import { AccountCell } from './cells/AccountCell';
 import { AmountCell } from './cells/AmountCell';
 import { formatCurrency } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
-import { toLocalDateString, toUTCDateString } from '@/lib/datePresets';
+import { toUTCDateString } from '@/lib/datePresets';
 import { transformToInvestmentRow, isMultiSplitTransaction } from './investment-utils';
 
 export interface InvestmentEditRowHandle {
@@ -177,7 +177,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             }
         }, [isDirty, description, transferAccountGuid, transferAccountName, userSharesStr,
             userPriceStr, userTotalStr, displayPrice, displayTotal, autoCalcField,
-            postDate, transaction.guid, originalEnterDate, onSave, isBuy]);
+            postDate, transaction.guid, originalEnterDate, onSave, isBuy, sp]);
 
         useImperativeHandle(ref, () => ({ save, isDirty }), [save, isDirty]);
 

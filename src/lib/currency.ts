@@ -7,6 +7,7 @@
 
 import prisma from './prisma';
 import { toDecimal as toDecimalString } from './gnucash';
+import { getActiveBookRootGuid } from './book-scope';
 
 function toDecimal(num: bigint | number | string | null, denom: bigint | number | string | null): number {
     if (num === null || denom === null) return 0;
@@ -29,9 +30,31 @@ export interface Currency {
 }
 
 /**
- * Get the base currency (first CURRENCY commodity, typically from the root account)
+ * Get the active book's report currency from its root account.
+ * Falls back to USD, then the first available currency, when no active book exists.
  */
 export async function getBaseCurrency(): Promise<Currency | null> {
+    try {
+        const rootGuid = await getActiveBookRootGuid();
+        const rootAccount = await prisma.accounts.findUnique({
+            where: { guid: rootGuid },
+            select: {
+                commodity: true,
+            },
+        });
+
+        if (rootAccount?.commodity?.namespace === 'CURRENCY') {
+            return {
+                guid: rootAccount.commodity.guid,
+                mnemonic: rootAccount.commodity.mnemonic,
+                fullname: rootAccount.commodity.fullname,
+                fraction: rootAccount.commodity.fraction,
+            };
+        }
+    } catch {
+        // Non-request contexts may not have a session/book yet; use legacy fallback.
+    }
+
     // Try to find USD first, then any other currency
     const usd = await prisma.commodities.findFirst({
         where: {

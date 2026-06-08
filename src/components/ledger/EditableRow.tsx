@@ -8,7 +8,7 @@ import { AmountCell } from './cells/AmountCell';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDisplayAccountPath } from '@/lib/account-path';
-import { toLocalDateString, toUTCDateString } from '@/lib/datePresets';
+import { toUTCDateString } from '@/lib/datePresets';
 import { isMultiSplitTransaction } from './investment-utils';
 import { TransactionSuggestion } from '@/app/api/transactions/descriptions/route';
 
@@ -221,7 +221,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 setSaveError(true);
                 return false;
             }
-        }, [isDirty, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
+        }, [isDirty, isSlimMode, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
 
         useImperativeHandle(ref, () => ({
             save,

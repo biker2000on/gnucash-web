@@ -40,11 +40,15 @@ interface TransactionJournalProps {
     endDate?: string | null;
 }
 
+interface JournalTransaction extends Transaction {
+    receipt_count?: number;
+}
+
 export default function TransactionJournal({ initialTransactions, startDate, endDate }: TransactionJournalProps) {
     const router = useRouter();
     const { success, error } = useToast();
     const isMobile = useIsMobile();
-    const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
+    const [transactions, setTransactions] = useState<JournalTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
@@ -255,6 +259,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         setDeleteConfirmOpen(false);
         setDeletingGuid(null);
         setIsModalOpen(false);
+        setIsDeleting(true);
 
         try {
             const res = await fetch(`/api/transactions/${guid}`, {
@@ -267,6 +272,8 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             error('Failed to delete transaction');
             // Rollback on failure
             setTransactions(prevTransactions);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -665,7 +672,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                             <ReceiptIndicator
                                                 transactionGuid={tx.guid}
                                                 transactionDescription={tx.description}
-                                                receiptCount={(tx as any).receipt_count || 0}
+                                                receiptCount={tx.receipt_count || 0}
                                             />
                                         </td>
                                         <td className="px-4 py-2 text-sm align-top">

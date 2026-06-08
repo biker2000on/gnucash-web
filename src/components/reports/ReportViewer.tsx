@@ -5,10 +5,6 @@ import { ReportFilters as ReportFiltersType, ReportData } from '@/lib/reports/ty
 import { ReportFilters } from './ReportFilters';
 import { generateCSV, downloadCSV } from '@/lib/reports/csv-export';
 
-function escapeHtml(s: string): string {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
 interface ReportViewerProps {
     title: string;
     description?: string;

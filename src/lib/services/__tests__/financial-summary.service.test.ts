@@ -9,7 +9,7 @@
  * - computeFullSummary (integration of all above)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { FinancialSummaryService } from '../financial-summary.service';
 
 // Mock prisma
@@ -30,7 +30,11 @@ vi.mock('@/lib/currency', () => ({
 import prisma from '@/lib/prisma';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 
-const mockPrisma = vi.mocked(prisma);
+const mockPrisma = prisma as unknown as {
+  accounts: { findMany: Mock };
+  splits: { findMany: Mock };
+  prices: { findMany: Mock };
+};
 const mockGetBaseCurrency = vi.mocked(getBaseCurrency);
 const mockFindExchangeRate = vi.mocked(findExchangeRate);
 

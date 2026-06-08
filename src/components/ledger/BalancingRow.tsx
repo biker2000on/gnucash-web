@@ -10,15 +10,11 @@ interface Split {
 interface BalancingRowProps {
   splits: Split[];
   currencyMnemonic: string;
-  transactionGuid: string;
-  onAddSplit: (accountGuid: string, amount: number) => void;
 }
 
 export default function BalancingRow({
   splits,
   currencyMnemonic,
-  transactionGuid,
-  onAddSplit,
 }: BalancingRowProps) {
   const [selectedAccountGuid, setSelectedAccountGuid] = useState('');
 

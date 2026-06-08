@@ -88,7 +88,6 @@ vi.mock('@/lib/prisma', () => ({
   default: {
     $transaction: async (
       fn: (t: typeof tx) => Promise<void>,
-      _opts?: { maxWait?: number; timeout?: number },
     ) => fn(tx),
   },
 }));

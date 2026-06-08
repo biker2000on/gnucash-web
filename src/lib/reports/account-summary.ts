@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { getLatestPrice } from '@/lib/commodities';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
 import { toDecimal, buildHierarchy, resolveRootGuid, AccountWithBalance } from './utils';
 
@@ -10,8 +10,6 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
     const now = new Date();
     const startDate = filters.startDate ? new Date(filters.startDate + 'T00:00:00Z') : new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : now;
-
-    const investmentTypes = ['STOCK', 'MUTUAL'];
 
     // Determine root GUID from book scoping or fallback
     const rootGuid = await resolveRootGuid(filters.bookAccountGuids);
@@ -28,14 +26,26 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
             account_type: true,
             parent_guid: true,
             commodity_guid: true,
+            commodity: {
+                select: {
+                    namespace: true,
+                },
+            },
         },
     });
+
+    const valuation = await buildAccountValuationContext(
+        accounts.map(account => ({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        endDate
+    );
 
     // Get balances for each account
     const accountBalances: AccountWithBalance[] = await Promise.all(
         accounts.map(async (account) => {
-            const isInvestment = investmentTypes.includes(account.account_type) && account.commodity_guid;
-
             // Get opening balance (before start date)
             const openingSplits = await prisma.splits.findMany({
                 where: {
@@ -50,7 +60,7 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 },
             });
 
-            let openingBalance = openingSplits.reduce((sum, split) => {
+            const openingBalance = openingSplits.reduce((sum, split) => {
                 return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
@@ -68,22 +78,20 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
                 },
             });
 
-            let closingBalance = closingSplits.reduce((sum, split) => {
+            const closingBalance = closingSplits.reduce((sum, split) => {
                 return sum + toDecimal(split.quantity_num, split.quantity_denom);
             }, 0);
 
-            // For investment accounts, convert share quantities to market value
-            if (isInvestment) {
-                const price = await getLatestPrice(account.commodity_guid!, undefined, endDate);
-                const priceValue = price?.value || 0;
-                openingBalance *= priceValue;
-                closingBalance *= priceValue;
-            }
+            const reportCurrencyMultiplier = valuation.getMultiplier({
+                accountType: account.account_type,
+                commodityGuid: account.commodity_guid,
+                commodityNamespace: account.commodity?.namespace,
+            });
 
             return {
                 ...account,
-                balance: closingBalance,
-                previousBalance: openingBalance,
+                balance: closingBalance * reportCurrencyMultiplier,
+                previousBalance: openingBalance * reportCurrencyMultiplier,
             };
         })
     );

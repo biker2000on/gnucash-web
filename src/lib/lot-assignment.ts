@@ -12,7 +12,6 @@ import prisma from './prisma';
 import { generateGuid, toDecimalNumber } from './gnucash';
 import {
   splitSellAcrossLots,
-  linkTransferToLot,
   splitTransferAcrossSourceLots,
   generateCapitalGains,
   type OpenLot,
@@ -330,13 +329,6 @@ export async function clearLotAssignments(
 ): Promise<{ splitsUnassigned: number; lotsDeleted: number }> {
   return prisma.$transaction(async (tx) => {
     // 1. Find and delete auto-generated sub-splits and gains transactions
-
-    // Find all lots for this account
-    const accountLots = await tx.lots.findMany({
-      where: { account_guid: accountGuid },
-      select: { guid: true },
-    });
-    const lotGuids = accountLots.map(l => l.guid);
 
     // Find splits in this account tagged with gnucash_web_generated
     const taggedSplitSlots = await tx.slots.findMany({
@@ -748,7 +740,7 @@ export async function detectWashSales(
   const washSales: WashSaleResult[] = [];
   const WASH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
-  for (const [commodityGuid, accounts] of accountsByCommodity) {
+  for (const accounts of accountsByCommodity.values()) {
     const accountGuids = accounts.map(a => a.guid);
     const ticker = accounts[0].commodity?.mnemonic || 'Unknown';
 

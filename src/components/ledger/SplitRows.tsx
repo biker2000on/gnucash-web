@@ -23,22 +23,20 @@ interface SplitRowsProps {
   columnIds?: string[];
   /** If true, render investment-style columns: memo, account, shares, price, buy, sell */
   isInvestmentAccount?: boolean;
-  /** The account currency for investment accounts (e.g. 'USD') */
-  accountCurrency?: string;
   sharePrecision?: number;
 }
 
 // IMPORTANT: Pass ALL splits including the account's own split.
 // Do NOT filter out splits where account_guid === current account.
 
-export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, accountCurrency, sharePrecision: sp = 4 }: SplitRowsProps) {
+export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, sharePrecision: sp = 4 }: SplitRowsProps) {
   // Compute leading/trailing from columnIds when provided, falling back to arithmetic.
   // Content columns are what the split row renders body cells for.
   const splitContentColumns = isInvestmentAccount
     ? ['description', 'transfer', 'shares', 'price', 'buy', 'sell']
     : ['description', 'transfer', 'debit', 'credit'];
   const splitContentSet = new Set(splitContentColumns);
-  let leadingIds: string[] = [];
+  const leadingIds: string[] = [];
   let trailingIds: string[] = [];
   if (columnIds) {
     let foundFirst = false;
@@ -62,8 +60,6 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
     const trailingEmpty = trailingColumns ?? 2; // shareBalance + costBasis
     const leadingEmpty = columnIds ? leadingIds.length : Math.max(0, columns - contentCols - trailingEmpty);
     const actualTrailing = columnIds ? trailingIds.length : columns - leadingEmpty - contentCols;
-    const currency = accountCurrency || 'USD';
-
     return (
       <>
         {splits.map(split => {
@@ -72,10 +68,6 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
           const absQty = Math.abs(qty);
           const absVal = Math.abs(val);
           const splitCommodity = split.commodity_mnemonic || currencyMnemonic;
-          // Determine if this split is a buy (positive qty) or sell (negative qty)
-          const isBuy = qty > 0;
-          // For non-stock splits (currency splits), qty === val, show in buy/sell based on value sign
-          const isStockSplit = splitCommodity !== currency && splitCommodity !== 'USD' && !splitCommodity.startsWith('Trading');
 
           return (
             <tr key={split.guid} className="bg-background-secondary/30 border-b border-border/30">

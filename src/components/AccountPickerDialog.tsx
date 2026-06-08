@@ -44,9 +44,11 @@ export default function AccountPickerDialog({
 
     useEffect(() => {
         if (!isOpen) return;
-        setLoading(true);
-        setSearch('');
-        setSelectedIndex(0);
+        const frame = requestAnimationFrame(() => {
+            setLoading(true);
+            setSearch('');
+            setSelectedIndex(0);
+        });
         fetch('/api/accounts?flat=true')
             .then(res => res.json())
             .then(data => {
@@ -54,6 +56,7 @@ export default function AccountPickerDialog({
                 setLoading(false);
             })
             .catch(() => setLoading(false));
+        return () => cancelAnimationFrame(frame);
     }, [isOpen]);
 
     const filtered = useMemo(() => {
@@ -78,7 +81,8 @@ export default function AccountPickerDialog({
 
     // Reset selected index when filter changes
     useEffect(() => {
-        setSelectedIndex(0);
+        const frame = requestAnimationFrame(() => setSelectedIndex(0));
+        return () => cancelAnimationFrame(frame);
     }, [search]);
 
     // Scroll selected item into view

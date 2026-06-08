@@ -30,7 +30,8 @@ export function CurrencySelect({ value, onChange, id, className }: CurrencySelec
 
   // Reset highlight when filtered list changes
   useEffect(() => {
-    setHighlightedIndex(0);
+    const frame = requestAnimationFrame(() => setHighlightedIndex(0));
+    return () => cancelAnimationFrame(frame);
   }, [filtered]);
 
   // Scroll highlighted item into view

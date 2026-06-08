@@ -41,10 +41,13 @@ export function QuickAccountSwitcher({ isOpen, onClose }: QuickAccountSwitcherPr
   // Reset state when opening
   useEffect(() => {
     if (isOpen) {
-      setQuery('')
-      setSelectedIndex(0)
-      // Focus input after render
-      requestAnimationFrame(() => inputRef.current?.focus())
+      const frame = requestAnimationFrame(() => {
+        setQuery('')
+        setSelectedIndex(0)
+        // Focus input after render
+        inputRef.current?.focus()
+      })
+      return () => cancelAnimationFrame(frame)
     }
   }, [isOpen])
 
@@ -85,7 +88,8 @@ export function QuickAccountSwitcher({ isOpen, onClose }: QuickAccountSwitcherPr
 
   // Reset selected index when filter changes
   useEffect(() => {
-    setSelectedIndex(0)
+    const frame = requestAnimationFrame(() => setSelectedIndex(0))
+    return () => cancelAnimationFrame(frame)
   }, [query])
 
   if (!isOpen) return null

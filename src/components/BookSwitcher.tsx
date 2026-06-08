@@ -70,10 +70,13 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
     // Reset highlighted index to active book when opening
     useEffect(() => {
         if (open) {
-            const activeIndex = books.findIndex(b => b.guid === activeBookGuid);
-            setHighlightedIndex(activeIndex >= 0 ? activeIndex : 0);
-            // Focus the list container for keyboard events
-            requestAnimationFrame(() => listRef.current?.focus());
+            const frame = requestAnimationFrame(() => {
+                const activeIndex = books.findIndex(b => b.guid === activeBookGuid);
+                setHighlightedIndex(activeIndex >= 0 ? activeIndex : 0);
+                // Focus the list container for keyboard events
+                listRef.current?.focus();
+            });
+            return () => cancelAnimationFrame(frame);
         }
     }, [open, books, activeBookGuid]);
 

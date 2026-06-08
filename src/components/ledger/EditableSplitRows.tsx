@@ -128,10 +128,13 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         if (transaction.guid !== txGuidRef.current) {
             txGuidRef.current = transaction.guid;
             const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount, sp);
-            setSplits(newSplits);
-            originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
+            const frame = requestAnimationFrame(() => {
+                setSplits(newSplits);
+                originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
+            });
+            return () => cancelAnimationFrame(frame);
         }
-    }, [transaction]);
+    }, [transaction, isInvestmentAccount, sp]);
 
     // Also re-init if the transaction's splits change (e.g., after save with same guid)
     const txSplitsKeyRef = useRef(
@@ -142,10 +145,13 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
         if (newKey !== txSplitsKeyRef.current) {
             txSplitsKeyRef.current = newKey;
             const newSplits = initSplitsFromTransaction(transaction, isInvestmentAccount, sp);
-            setSplits(newSplits);
-            originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
+            const frame = requestAnimationFrame(() => {
+                setSplits(newSplits);
+                originalRef.current = JSON.stringify(newSplits.filter(s => !s.isPlaceholder));
+            });
+            return () => cancelAnimationFrame(frame);
         }
-    }, [transaction]);
+    }, [transaction, isInvestmentAccount, sp]);
 
     // Imbalance calculation — the placeholder row mirrors the imbalance so it
     // represents "the amount still needed to balance". When splits balance,
@@ -314,7 +320,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
     const splitContentSet = new Set(splitContentColumns);
 
     // Compute leading/trailing from columnIds when available, fall back to arithmetic
-    let leadingIds: string[] = [];
+    const leadingIds: string[] = [];
     let trailingIds: string[] = [];
     if (columnIds) {
         let foundFirst = false;

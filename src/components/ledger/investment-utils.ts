@@ -85,12 +85,6 @@ function findTransferSplit(splits: Split[], accountGuid: string): Split | undefi
  *  - Sell: negative quantity (shares out), negative value (credit)
  *  - Dividend / other: zero quantity
  */
-function classifyTransaction(shares: number): 'buy' | 'sell' | 'dividend' | 'other' {
-    if (shares > 0) return 'buy';
-    if (shares < 0) return 'sell';
-    return 'dividend';
-}
-
 // ── Account name pattern helpers ─────────────────────────────────────
 
 function isIncomeAccount(name: string): boolean {

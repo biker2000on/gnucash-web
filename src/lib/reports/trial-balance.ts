@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportFilters, TrialBalanceData, TrialBalanceEntry } from './types';
 import { toDecimal, buildAccountPathMap } from './utils';
 
@@ -39,8 +40,23 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
             guid: true,
             name: true,
             account_type: true,
+            commodity_guid: true,
+            commodity: {
+                select: {
+                    namespace: true,
+                },
+            },
         },
     });
+
+    const valuation = await buildAccountValuationContext(
+        accounts.map(account => ({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        })),
+        endDate
+    );
 
     // Build full account path map
     const pathMap = await buildAccountPathMap(filters.bookAccountGuids);
@@ -64,9 +80,15 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
             },
         });
 
-        const rawBalance = splits.reduce((sum, split) => {
+        const quantityBalance = splits.reduce((sum, split) => {
             return sum + toDecimal(split.quantity_num, split.quantity_denom);
         }, 0);
+        const reportCurrencyMultiplier = valuation.getMultiplier({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        });
+        const rawBalance = quantityBalance * reportCurrencyMultiplier;
 
         // Skip zero-balance accounts unless showZeroBalances is true
         if (Math.abs(rawBalance) < 0.005 && !filters.showZeroBalances) {

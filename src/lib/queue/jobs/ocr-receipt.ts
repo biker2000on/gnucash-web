@@ -1,4 +1,5 @@
 import { Job } from 'bullmq';
+import { execSync } from 'child_process';
 import { updateOcrResults } from '@/lib/receipts';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
 import { query } from '@/lib/db';
@@ -9,7 +10,6 @@ let _systemTesseractAvailable: boolean | null = null;
 function isSystemTesseractAvailable(): boolean {
   if (_systemTesseractAvailable !== null) return _systemTesseractAvailable;
   try {
-    const { execSync } = require('child_process');
     execSync('which tesseract', { stdio: 'ignore' });
     _systemTesseractAvailable = true;
   } catch {

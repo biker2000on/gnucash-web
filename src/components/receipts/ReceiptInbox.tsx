@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element */
+
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { TransactionPicker } from './TransactionPicker';
@@ -71,7 +73,6 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const candidates = receipt.match_candidates;
-  const topCandidate = candidates[0] ?? null;
   const visibleCandidates = expanded ? candidates : candidates.slice(0, 1);
 
   const handleLink = useCallback(

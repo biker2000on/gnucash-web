@@ -28,7 +28,6 @@ import { toLocalDateString } from '@/lib/datePresets';
 import { FilterPanel, AmountFilter, ReconcileFilter } from './filters';
 import ViewMenu from './ViewMenu';
 import SplitRows from './ledger/SplitRows';
-import BalancingRow from './ledger/BalancingRow';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import AccountPickerDialog from './AccountPickerDialog';
 import EditableSplitRows, { EditableSplitRowsHandle } from '@/components/ledger/EditableSplitRows';
@@ -49,6 +48,23 @@ export interface AccountTransaction extends Transaction {
     reviewed?: boolean;
     source?: string;
     match_type?: string | null;
+    receipt_count?: number;
+}
+
+type HoldingPeriod = 'short_term' | 'long_term' | null;
+
+interface LotSummary {
+    guid: string;
+    isClosed: boolean;
+    title: string;
+    totalShares: number;
+    totalCost: number;
+    unrealizedGain: number | null;
+    holdingPeriod: HoldingPeriod;
+}
+
+interface LotMapEntry extends Omit<LotSummary, 'guid'> {
+    index: number;
 }
 
 interface AccountLedgerProps {
@@ -154,7 +170,7 @@ export default function AccountLedger({
 
     // Lots view state
     const [showLotsView, setShowLotsView] = useState(false);
-    const [lotMap, setLotMap] = useState<Map<string, { index: number; isClosed: boolean; title: string; totalShares: number; totalCost: number; unrealizedGain: number | null; holdingPeriod: string | null }>>(new Map());
+    const [lotMap, setLotMap] = useState<Map<string, LotMapEntry>>(new Map());
     const [accountCostBasisMethod, setAccountCostBasisMethod] = useState<string | null>(null);
 
     const isSlimEditMode = isEditMode && (ledgerViewStyle === 'journal' || ledgerViewStyle === 'autosplit');
@@ -178,9 +194,9 @@ export default function AccountLedger({
         fetch(`/api/accounts/${accountGuid}/lots`)
             .then(res => res.json())
             .then(data => {
-                const lots = Array.isArray(data) ? data : data.lots || [];
-                const map = new Map<string, { index: number; isClosed: boolean; title: string; totalShares: number; totalCost: number; unrealizedGain: number | null; holdingPeriod: string | null }>();
-                lots.forEach((lot: any, i: number) => {
+                const lots: LotSummary[] = Array.isArray(data) ? data : data.lots || [];
+                const map = new Map<string, LotMapEntry>();
+                lots.forEach((lot, i) => {
                     map.set(lot.guid, {
                         index: i + 1,
                         isClosed: lot.isClosed,
@@ -200,9 +216,9 @@ export default function AccountLedger({
         fetch(`/api/accounts/${accountGuid}/lots`)
             .then(r => r.json())
             .then(data => {
-                const lots = Array.isArray(data) ? data : data.lots || [];
-                const map = new Map<string, { index: number; isClosed: boolean; title: string; totalShares: number; totalCost: number; unrealizedGain: number | null; holdingPeriod: string | null }>();
-                lots.forEach((lot: any, i: number) => {
+                const lots: LotSummary[] = Array.isArray(data) ? data : data.lots || [];
+                const map = new Map<string, LotMapEntry>();
+                lots.forEach((lot, i) => {
                     map.set(lot.guid, {
                         index: i + 1,
                         isClosed: lot.isClosed,
@@ -428,6 +444,7 @@ export default function AccountLedger({
         setTransactions(prev => prev.filter(t => t.guid !== deletedGuid));
         setDeleteConfirmOpen(false);
         setDeletingGuid(null);
+        setIsDeleting(true);
 
         // Move focus to next row (or previous if deleting last)
         if (deleteIndex >= 0) {
@@ -451,6 +468,8 @@ export default function AccountLedger({
             error('Failed to delete transaction');
             // Rollback on failure
             setTransactions(prevTransactions);
+        } finally {
+            setIsDeleting(false);
         }
     }, [deletingGuid, transactions, success, error, fetchTransactions]);
 
@@ -854,7 +873,7 @@ export default function AccountLedger({
             // Rollback on failure
             setTransactions(prevTransactions);
         }
-    }, [transactions, fetchTransactions, success, error, isEditMode]);
+    }, [transactions, fetchTransactions, success, error, accountGuid]);
 
     const openContextMenu = useCallback((event: React.MouseEvent, tx: AccountTransaction) => {
         event.preventDefault();
@@ -980,18 +999,6 @@ export default function AccountLedger({
         await fetchTransactions();
         success(`Deleted ${guids.length} transaction${guids.length !== 1 ? 's' : ''}`);
     }, [editSelectedGuids, fetchTransactions, success]);
-
-    // Handle adding a new split to a transaction (for BalancingRow)
-    const handleAddSplit = useCallback(async (transactionGuid: string, accountGuid: string, amount: number) => {
-        try {
-            const res = await fetch(`/api/transactions/${transactionGuid}`);
-            if (!res.ok) throw new Error('Failed to fetch transaction');
-            // Refresh transaction list after modification
-            await fetchTransactions();
-        } catch (err) {
-            console.error('Failed to add split:', err);
-        }
-    }, [fetchTransactions]);
 
     // Bulk move handler
     const handleBulkMove = useCallback(async (targetAccountGuid: string, targetAccountName: string) => {
@@ -1925,7 +1932,7 @@ export default function AccountLedger({
                                                                         shares: mLotInfo.totalShares,
                                                                         costBasis: mLotInfo.totalCost,
                                                                         unrealizedGain: mLotInfo.unrealizedGain,
-                                                                        holdingPeriod: mLotInfo.holdingPeriod as any,
+                                                                        holdingPeriod: mLotInfo.holdingPeriod,
                                                                         currencyMnemonic: accountCurrency,
                                                                     }}
                                                                 />
@@ -1933,14 +1940,12 @@ export default function AccountLedger({
                                                             <LotAssignmentPopover
                                                                 splitGuid={mLotSplit?.guid || mAccountSplit?.guid || ''}
                                                                 currentLotGuid={mLotSplit?.lot_guid || null}
-                                                                accountGuid={accountGuid}
                                                                 lots={Array.from(lotMap.entries()).map(([guid, info]) => ({
                                                                     guid,
                                                                     title: info.title,
                                                                     totalShares: info.totalShares,
                                                                     isClosed: info.isClosed,
                                                                 }))}
-                                                                currencyMnemonic={accountCurrency}
                                                                 onAssign={handleSplitLotAssign}
                                                                 onCreateAndAssign={handleSplitCreateAndAssign}
                                                             />
@@ -2496,7 +2501,7 @@ export default function AccountLedger({
                                                                         shares: lotInfo.totalShares,
                                                                         costBasis: lotInfo.totalCost,
                                                                         unrealizedGain: lotInfo.unrealizedGain,
-                                                                        holdingPeriod: lotInfo.holdingPeriod as any,
+                                                                        holdingPeriod: lotInfo.holdingPeriod,
                                                                         currencyMnemonic: accountCurrency,
                                                                     }}
                                                                 />
@@ -2505,14 +2510,12 @@ export default function AccountLedger({
                                                                 <LotAssignmentPopover
                                                                     splitGuid={lotSplit?.guid || accountSplit?.guid || ''}
                                                                     currentLotGuid={lotSplit?.lot_guid || null}
-                                                                    accountGuid={accountGuid}
                                                                     lots={Array.from(lotMap.entries()).map(([guid, info]) => ({
                                                                         guid,
                                                                         title: info.title,
                                                                         totalShares: info.totalShares,
                                                                         isClosed: info.isClosed,
                                                                     }))}
-                                                                    currencyMnemonic={accountCurrency}
                                                                     onAssign={handleSplitLotAssign}
                                                                     onCreateAndAssign={handleSplitCreateAndAssign}
                                                                 />
@@ -2700,7 +2703,7 @@ export default function AccountLedger({
                                                         <ReceiptIndicator
                                                             transactionGuid={tx.guid}
                                                             transactionDescription={tx.description}
-                                                            receiptCount={(tx as any).receipt_count || 0}
+                                                            receiptCount={tx.receipt_count || 0}
                                                         />
                                                     </td>
                                                 );
@@ -2726,7 +2729,6 @@ export default function AccountLedger({
                                             columnIds={visibleColumnIds}
                                             trailingColumns={isInvestmentAccount ? 2 : undefined}
                                             isInvestmentAccount={isInvestmentAccount}
-                                            accountCurrency={accountCurrency}
                                             sharePrecision={sharePrecision}
                                         />
                                     )}
