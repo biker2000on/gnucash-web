@@ -59,7 +59,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
     const [filterText, setFilterText] = useState(initialSearch || '');
-    const [debouncedFilter, setDebouncedFilter] = useState('');
+    const [debouncedFilter, setDebouncedFilter] = useState(initialSearch || '');
     const loader = useRef<HTMLDivElement>(null);
     const filterInputRef = useRef<HTMLInputElement>(null);
 
