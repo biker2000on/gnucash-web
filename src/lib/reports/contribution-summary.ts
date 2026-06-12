@@ -195,7 +195,10 @@ export async function generateContributionSummary(
 
     // Find primary source account name
     const cashSources = entry.otherSplits
-      .filter(s => toDecimalNumber(s.value_num, s.value_denom) < 0)
+      .filter(s =>
+        toDecimalNumber(s.value_num, s.value_denom) < 0 &&
+        s.account?.account_type !== 'TRADING'
+      )
       .sort((a, b) =>
         Math.abs(toDecimalNumber(b.value_num, b.value_denom)) -
         Math.abs(toDecimalNumber(a.value_num, a.value_denom))

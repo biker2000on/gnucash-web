@@ -42,7 +42,27 @@ export function classifyContribution(
   const quantity = toDecimalNumber(split.quantity_num, split.quantity_denom);
 
   if (value === 0 && quantity === 0) return ContributionType.OTHER;
-  if (value < 0) return ContributionType.WITHDRAWAL;
+  if (value < 0) {
+    // Money leaving this account: if the primary destination is itself within
+    // the retirement umbrella (e.g. an investment buy moving cash -> stock
+    // inside a 401k, or a rollover to another retirement account), this is an
+    // internal transfer, not a withdrawal.
+    const destinations = otherSplits
+      .filter(s => {
+        const v = toDecimalNumber(s.value_num, s.value_denom);
+        // TRADING splits are GnuCash bookkeeping entries, not real destinations
+        return v > 0 && s.account?.account_type !== 'TRADING';
+      })
+      .sort((a, b) => {
+        const va = Math.abs(toDecimalNumber(a.value_num, a.value_denom));
+        const vb = Math.abs(toDecimalNumber(b.value_num, b.value_denom));
+        return vb - va;
+      });
+    if (destinations.length > 0 && retirementGuids.has(destinations[0].account_guid)) {
+      return ContributionType.TRANSFER;
+    }
+    return ContributionType.WITHDRAWAL;
+  }
 
   // Check share transfer from another investment account
   const shareTransferSource = otherSplits.find(s => {
@@ -56,7 +76,8 @@ export function classifyContribution(
   const cashSources = otherSplits
     .filter(s => {
       const v = toDecimalNumber(s.value_num, s.value_denom);
-      return v < 0;
+      // TRADING splits are GnuCash bookkeeping entries, not real sources
+      return v < 0 && s.account?.account_type !== 'TRADING';
     })
     .sort((a, b) => {
       const va = Math.abs(toDecimalNumber(a.value_num, a.value_denom));

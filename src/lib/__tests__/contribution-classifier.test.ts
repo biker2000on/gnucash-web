@@ -115,6 +115,166 @@ describe('Contribution Classifier', () => {
       expect(result).toBe(ContributionType.WITHDRAWAL);
     });
 
+    it('should classify genuine withdrawal to checking as WITHDRAWAL', () => {
+      // Money leaving retirement cash to an external BANK account
+      const split = mockSplit({
+        account_guid: 'acct-retirement-cash',
+        value_num: -500000n,
+        quantity_num: -500000n,
+      });
+      const otherSplits = [mockOtherSplit({
+        account_guid: 'acct-checking',
+        value_num: 500000n,
+        quantity_num: 500000n,
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids);
+      expect(result).toBe(ContributionType.WITHDRAWAL);
+    });
+
+    describe('internal buy inside 401k (cash -> stock under same retirement umbrella)', () => {
+      const buyGuids = new Set(['acct-401k', 'acct-401k-cash', 'acct-401k-stock']);
+
+      it('should classify the cash leg (negative) as TRANSFER, not WITHDRAWAL', () => {
+        const cashLeg = mockSplit({
+          account_guid: 'acct-401k-cash',
+          value_num: -300002n,
+          quantity_num: -300002n,
+        });
+        const otherSplits = [
+          mockOtherSplit({
+            guid: 'split-stock',
+            account_guid: 'acct-401k-stock',
+            value_num: 300002n,
+            quantity_num: 102181n,
+            quantity_denom: 1000n,
+            account: { account_type: 'MUTUAL', commodity_guid: 'vwusx-guid', name: 'VWUSX' },
+          }),
+          // GnuCash trading splits mirror the real splits
+          mockOtherSplit({
+            guid: 'split-trading-usd',
+            account_guid: 'acct-trading-usd',
+            value_num: 300002n,
+            quantity_num: 300002n,
+            account: { account_type: 'TRADING', commodity_guid: 'usd-guid', name: 'USD' },
+          }),
+          mockOtherSplit({
+            guid: 'split-trading-fund',
+            account_guid: 'acct-trading-fund',
+            value_num: -300002n,
+            quantity_num: -102181n,
+            quantity_denom: 1000n,
+            account: { account_type: 'TRADING', commodity_guid: 'vwusx-guid', name: 'VWUSX' },
+          }),
+        ];
+        const result = classifyContribution(cashLeg, otherSplits, buyGuids);
+        expect(result).toBe(ContributionType.TRANSFER);
+      });
+
+      it('should classify the stock leg (positive) as TRANSFER, not CONTRIBUTION', () => {
+        const stockLeg = mockSplit({
+          account_guid: 'acct-401k-stock',
+          value_num: 300002n,
+          quantity_num: 102181n,
+          quantity_denom: 1000n,
+        });
+        const otherSplits = [
+          mockOtherSplit({
+            guid: 'split-cash',
+            account_guid: 'acct-401k-cash',
+            value_num: -300002n,
+            quantity_num: -300002n,
+            account: { account_type: 'CASH', commodity_guid: 'usd-guid', name: 'Cash' },
+          }),
+          mockOtherSplit({
+            guid: 'split-trading-usd',
+            account_guid: 'acct-trading-usd',
+            value_num: 300002n,
+            quantity_num: 300002n,
+            account: { account_type: 'TRADING', commodity_guid: 'usd-guid', name: 'USD' },
+          }),
+          mockOtherSplit({
+            guid: 'split-trading-fund',
+            account_guid: 'acct-trading-fund',
+            value_num: -300002n,
+            quantity_num: -102181n,
+            quantity_denom: 1000n,
+            account: { account_type: 'TRADING', commodity_guid: 'vwusx-guid', name: 'VWUSX' },
+          }),
+        ];
+        const result = classifyContribution(stockLeg, otherSplits, buyGuids);
+        expect(result).toBe(ContributionType.TRANSFER);
+      });
+
+      it('should classify both legs of a sell inside the 401k as TRANSFER', () => {
+        // Sell: stock leg negative, cash leg positive
+        const stockLeg = mockSplit({
+          account_guid: 'acct-401k-stock',
+          value_num: -150000n,
+          quantity_num: -50000n,
+          quantity_denom: 1000n,
+        });
+        const sellOthers = [
+          mockOtherSplit({
+            guid: 'split-cash',
+            account_guid: 'acct-401k-cash',
+            value_num: 150000n,
+            quantity_num: 150000n,
+            account: { account_type: 'CASH', commodity_guid: 'usd-guid', name: 'Cash' },
+          }),
+        ];
+        expect(classifyContribution(stockLeg, sellOthers, buyGuids)).toBe(ContributionType.TRANSFER);
+
+        const cashLeg = mockSplit({
+          account_guid: 'acct-401k-cash',
+          value_num: 150000n,
+          quantity_num: 150000n,
+        });
+        const cashOthers = [
+          mockOtherSplit({
+            guid: 'split-stock',
+            account_guid: 'acct-401k-stock',
+            value_num: -150000n,
+            quantity_num: -50000n,
+            quantity_denom: 1000n,
+            account: { account_type: 'MUTUAL', commodity_guid: 'vwusx-guid', name: 'VWUSX' },
+          }),
+        ];
+        expect(classifyContribution(cashLeg, cashOthers, buyGuids)).toBe(ContributionType.TRANSFER);
+      });
+    });
+
+    it('should classify rollover between two retirement accounts as TRANSFER on both legs', () => {
+      // Outgoing leg: old 401k cash -> rollover IRA
+      const outgoing = mockSplit({
+        account_guid: 'acct-401k',
+        value_num: -2000000n,
+        quantity_num: -2000000n,
+      });
+      const outgoingOthers = [mockOtherSplit({
+        guid: 'split-ira',
+        account_guid: 'acct-retirement',
+        value_num: 2000000n,
+        quantity_num: 2000000n,
+        account: { account_type: 'ASSET', commodity_guid: 'usd-guid', name: 'Rollover IRA' },
+      })];
+      expect(classifyContribution(outgoing, outgoingOthers, retirementGuids)).toBe(ContributionType.TRANSFER);
+
+      // Incoming leg: rollover IRA receives from old 401k
+      const incoming = mockSplit({
+        account_guid: 'acct-retirement',
+        value_num: 2000000n,
+        quantity_num: 2000000n,
+      });
+      const incomingOthers = [mockOtherSplit({
+        guid: 'split-401k',
+        account_guid: 'acct-401k',
+        value_num: -2000000n,
+        quantity_num: -2000000n,
+        account: { account_type: 'ASSET', commodity_guid: 'usd-guid', name: 'Old 401k' },
+      })];
+      expect(classifyContribution(incoming, incomingOthers, retirementGuids)).toBe(ContributionType.TRANSFER);
+    });
+
     it('should classify share transfer as TRANSFER', () => {
       const split = mockSplit({
         quantity_num: 100000n,
