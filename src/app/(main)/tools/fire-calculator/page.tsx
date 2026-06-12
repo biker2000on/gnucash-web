@@ -562,7 +562,11 @@ export default function FireCalculatorPage() {
   ]);
 
   // Debounce by serialized inputs so rapid slider/typing changes coalesce.
-  const debouncedKey = useDebounced(JSON.stringify(mcInputs), 250);
+  const liveKey = useMemo(() => JSON.stringify(mcInputs), [mcInputs]);
+  const debouncedKey = useDebounced(liveKey, 250);
+  // True from the moment any input changes until the simulation memos below
+  // have recomputed with the new inputs — drives the inline indicator.
+  const isRecalculating = liveKey !== debouncedKey;
 
   const mcResult = useMemo(() => {
     const inputs = JSON.parse(debouncedKey) as MonteCarloInputs;
@@ -619,6 +623,9 @@ export default function FireCalculatorPage() {
   const isLoading = kpiState === 'loading' || investmentState === 'loading';
   const hasError = kpiState === 'error' && investmentState !== 'loaded';
   const isEmpty = kpiState === 'empty' && investmentState === 'empty';
+
+  // Subtle dimming while results are stale (per DESIGN.md: 150ms, ease-out)
+  const recalcDim = `transition-opacity duration-150 ease-out ${isRecalculating ? 'opacity-60' : 'opacity-100'}`;
 
   /* ---------------------------------------------------------------- */
   /* Render                                                            */
@@ -696,7 +703,7 @@ export default function FireCalculatorPage() {
 
       {/* Headline results */}
       {!isLoading && (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <section className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 ${recalcDim}`}>
           <ResultCard
             label="FI Number"
             value={Number.isFinite(mcResult.fiNumber) ? fmt.format(mcResult.fiNumber) : '—'}
@@ -764,7 +771,15 @@ export default function FireCalculatorPage() {
         <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-foreground">Portfolio Projection</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-semibold text-foreground">Portfolio Projection</h2>
+                {isRecalculating && (
+                  <span className="flex items-center gap-1.5 text-xs text-foreground-muted" role="status">
+                    <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full" />
+                    Recalculating…
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-foreground-muted mt-0.5">
                 Real (inflation-adjusted) portfolio value across {mcResult.numSimulations.toLocaleString()} simulated futures
               </p>
@@ -788,12 +803,14 @@ export default function FireCalculatorPage() {
               />
             </div>
           </div>
-          <MonteCarloChart
-            result={mcResult}
-            deterministic={deterministicValues}
-            retirementAge={targetRetirementAge}
-            showDeterministic={showDeterministic}
-          />
+          <div className={recalcDim}>
+            <MonteCarloChart
+              result={mcResult}
+              deterministic={deterministicValues}
+              retirementAge={targetRetirementAge}
+              showDeterministic={showDeterministic}
+            />
+          </div>
           <p className="text-xs text-foreground-muted mt-3 text-center">
             {assumptions.returnMode === 'historical'
               ? `Each simulated year samples stock, bond, and inflation outcomes together from the same historical year (1928–2024) to preserve their correlation. Contributions of ${fmt.format(annualSavings)}/yr until age ${targetRetirementAge}, then withdrawals.`
@@ -804,7 +821,7 @@ export default function FireCalculatorPage() {
 
       {/* FI distribution + sensitivity */}
       {!isLoading && (
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section className={`grid grid-cols-1 lg:grid-cols-2 gap-4 ${recalcDim}`}>
           <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
             <h2 className="text-lg font-semibold text-foreground mb-1">When Do You Reach FI?</h2>
             <p className="text-xs text-foreground-muted mb-4">

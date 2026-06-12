@@ -24,6 +24,33 @@ import { fmtPct } from './shared';
 /* FI age histogram                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Custom tooltip matching MonteCarloChart's BandTooltip pattern: explicit
+ * surface/border/foreground colors from the app's CSS variables, so text
+ * stays readable in dark mode (recharts' default item color is #000).
+ */
+function HistogramTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: { value?: number | string }[];
+  label?: string | number;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const share = Number(payload[0]?.value ?? 0);
+  return (
+    <div
+      className="rounded-lg border border-border bg-surface px-3 py-2 text-xs"
+      style={{ fontFeatureSettings: "'tnum'" }}
+    >
+      <p className="font-semibold text-foreground mb-0.5">FI at age {label}</p>
+      <p className="font-mono text-primary">{fmtPct(share, 1)} of simulations</p>
+    </div>
+  );
+}
+
 export function FiAgeHistogram({ result }: { result: MonteCarloResult }) {
   const data = useMemo(
     () =>
@@ -62,15 +89,7 @@ export function FiAgeHistogram({ result }: { result: MonteCarloResult }) {
           />
           <Tooltip
             cursor={{ fill: 'var(--color-surface-hover, #1e2d4a)', opacity: 0.4 }}
-            formatter={(value) => [fmtPct(Number(value), 1), 'Share of simulations']}
-            labelFormatter={(label) => `FI at age ${label}`}
-            contentStyle={{
-              backgroundColor: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: '0.5rem',
-              color: 'var(--color-foreground)',
-              fontSize: 12,
-            }}
+            content={<HistogramTooltip />}
           />
           <Bar dataKey="share" isAnimationActive={false} radius={[2, 2, 0, 0]}>
             {data.map(d => (

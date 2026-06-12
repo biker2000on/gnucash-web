@@ -223,6 +223,7 @@ const navItems: NavItem[] = [
         icon: 'Wrench',
         children: [
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
+            { name: 'Tax Estimator', href: '/tools/tax-estimator' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
             { name: 'Scheduled Transactions', href: '/scheduled-transactions' },
             { name: 'Asset Analysis', href: '/assets' },
