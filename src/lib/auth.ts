@@ -124,7 +124,8 @@ export async function authenticateUser(username: string, password: string): Prom
         where: { username },
     });
 
-    if (!user) {
+    // OIDC-only users have no password and cannot log in with one
+    if (!user || !user.password_hash) {
         return null;
     }
 

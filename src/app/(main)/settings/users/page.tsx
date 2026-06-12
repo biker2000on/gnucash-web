@@ -7,8 +7,18 @@ import { useBooks } from '@/contexts/BookContext';
 interface BookUser {
     userId: number;
     username: string;
+    email: string | null;
     role: string;
+    authMethod: string;
     grantedAt: string;
+}
+
+const ROLE_OPTIONS = ['readonly', 'edit', 'admin'] as const;
+
+function authMethodBadges(authMethod: string): string[] {
+    if (authMethod === 'both') return ['password', 'OIDC'];
+    if (authMethod === 'oidc') return ['OIDC'];
+    return ['password'];
 }
 
 interface Invitation {
@@ -121,6 +131,26 @@ export default function UsersPage() {
         }
     };
 
+    const handleRoleChange = async (userId: number, role: string) => {
+        if (!activeBookGuid) return;
+        try {
+            const res = await fetch(`/api/books/${activeBookGuid}/users/${userId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role }),
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Failed to change role');
+            }
+            success('Role updated');
+            await loadData();
+        } catch (err) {
+            showError(err instanceof Error ? err.message : 'Failed to change role');
+            await loadData();
+        }
+    };
+
     const handleCopyLink = async (code: string) => {
         const link = `${window.location.origin}/invite/${code}`;
         await navigator.clipboard.writeText(link);
@@ -171,25 +201,54 @@ export default function UsersPage() {
             <h1 className="text-2xl font-bold text-foreground">User Management</h1>
 
             {/* Current Users */}
-            {users.length > 0 && (
-                <div className="bg-surface rounded-xl border border-border p-6">
-                    <h2 className="text-lg font-semibold text-foreground mb-4">Current Users</h2>
-                    <div className="space-y-2">
-                        {users.map((u) => (
-                            <div key={u.userId} className="flex items-center justify-between py-2 px-3 bg-background-tertiary rounded-lg">
-                                <span className="text-sm font-medium text-foreground">{u.username}</span>
-                                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                                    u.role === 'admin' ? 'bg-amber-500/20 text-amber-400' :
-                                    u.role === 'edit' ? 'bg-primary/20 text-primary' :
-                                    'bg-gray-500/20 text-gray-400'
-                                }`}>
-                                    {u.role}
-                                </span>
-                            </div>
-                        ))}
+            {users.length > 0 && (() => {
+                const adminCount = users.filter(u => u.role === 'admin').length;
+                return (
+                    <div className="bg-surface rounded-xl border border-border p-6">
+                        <h2 className="text-lg font-semibold text-foreground mb-4">Current Users</h2>
+                        <div className="space-y-2">
+                            {users.map((u) => {
+                                const isLastAdmin = u.role === 'admin' && adminCount <= 1;
+                                return (
+                                    <div key={u.userId} className="flex items-center justify-between gap-3 py-2 px-3 bg-background-tertiary rounded-lg">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-sm font-medium text-foreground">{u.username}</span>
+                                                {authMethodBadges(u.authMethod).map((badge) => (
+                                                    <span
+                                                        key={badge}
+                                                        className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                                            badge === 'OIDC'
+                                                                ? 'bg-secondary-light text-secondary'
+                                                                : 'bg-gray-500/20 text-gray-400'
+                                                        }`}
+                                                    >
+                                                        {badge}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                            {u.email && (
+                                                <p className="text-xs text-foreground-muted truncate">{u.email}</p>
+                                            )}
+                                        </div>
+                                        <select
+                                            value={u.role}
+                                            onChange={(e) => handleRoleChange(u.userId, e.target.value)}
+                                            disabled={isLastAdmin}
+                                            title={isLastAdmin ? 'Cannot demote the last admin' : undefined}
+                                            className="bg-input-bg border border-border rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-60 disabled:cursor-not-allowed"
+                                        >
+                                            {ROLE_OPTIONS.map((r) => (
+                                                <option key={r} value={r}>{r}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* Create Invitation */}
             <div className="bg-surface rounded-xl border border-border p-6">

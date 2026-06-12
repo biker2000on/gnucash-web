@@ -7,7 +7,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const roleResult = await requireRole('readonly');
+    const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { id: idStr } = await params;
@@ -36,7 +36,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const roleResult = await requireRole('readonly');
+    const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { id: idStr } = await params;

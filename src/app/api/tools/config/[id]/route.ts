@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { ToolConfigService, UpdateToolConfigSchema } from '@/lib/services/tool-config.service';
 
@@ -12,10 +12,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+    const user = roleResult.user;
 
     const bookGuid = await getActiveBookGuid();
     const { id } = await params;
@@ -50,10 +49,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+    const user = roleResult.user;
 
     const bookGuid = await getActiveBookGuid();
     const { id } = await params;
@@ -96,10 +94,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+    const user = roleResult.user;
 
     const bookGuid = await getActiveBookGuid();
     const { id } = await params;

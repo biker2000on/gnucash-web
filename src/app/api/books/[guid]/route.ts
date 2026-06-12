@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/auth';
+import { getUserRoleForBook } from '@/lib/services/permission.service';
 
 /**
  * GET /api/books/[guid]
@@ -40,6 +41,45 @@ export async function GET(
             WHERE guid != ${book.root_account_guid}
         `;
 
+        // Optionally include the book's users + roles (admins only)
+        let users: {
+            userId: number;
+            username: string;
+            email: string | null;
+            role: string;
+            authMethod: string;
+            grantedAt: Date | null;
+        }[] | undefined;
+        if (request.nextUrl.searchParams.get('includeUsers') === 'true') {
+            const requesterRole = await getUserRoleForBook(authResult.user.id, guid);
+            if (requesterRole === 'admin') {
+                const rows = await prisma.gnucash_web_book_permissions.findMany({
+                    where: { book_guid: guid },
+                    include: {
+                        role: true,
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                email: true,
+                                auth_method: true,
+                            },
+                        },
+                    },
+                });
+                users = rows
+                    .map((p) => ({
+                        userId: p.user.id,
+                        username: p.user.username,
+                        email: p.user.email,
+                        role: p.role.name,
+                        authMethod: p.user.auth_method,
+                        grantedAt: p.granted_at,
+                    }))
+                    .sort((a, b) => a.username.localeCompare(b.username));
+            }
+        }
+
         return NextResponse.json({
             guid: book.guid,
             name: book.name ?? rootAccount?.name ?? 'Unnamed Book',
@@ -47,6 +87,7 @@ export async function GET(
             rootAccountGuid: book.root_account_guid,
             rootTemplateGuid: book.root_template_guid,
             accountCount: Number(accountCount[0]?.count || 0),
+            ...(users ? { users } : {}),
         });
     } catch (error) {
         console.error('Error fetching book:', error);

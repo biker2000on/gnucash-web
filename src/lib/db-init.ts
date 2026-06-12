@@ -158,6 +158,36 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Migration: OIDC support — identity columns + nullable password for OIDC-only users
+    const addOidcColumnsDDL = `
+        ALTER TABLE gnucash_web_users
+        ADD COLUMN IF NOT EXISTS email VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS oidc_subject VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS oidc_issuer VARCHAR(500),
+        ADD COLUMN IF NOT EXISTS auth_method VARCHAR(20) NOT NULL DEFAULT 'password',
+        ADD COLUMN IF NOT EXISTS display_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'gnucash_web_users'
+                AND column_name = 'password_hash'
+                AND is_nullable = 'NO'
+            ) THEN
+                ALTER TABLE gnucash_web_users
+                ALTER COLUMN password_hash DROP NOT NULL;
+            END IF;
+        END $$;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+            ON gnucash_web_users(email) WHERE email IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity
+            ON gnucash_web_users(oidc_issuer, oidc_subject)
+            WHERE oidc_issuer IS NOT NULL AND oidc_subject IS NOT NULL;
+    `;
+
     // Migration: Add name and description columns to books table
     const addBooksColumnsDDL = `
         DO $$
@@ -714,6 +744,7 @@ async function createExtensionTables() {
         await query(userTableDDL);
         await query(auditTableDDL);
         await query(addBalanceReversalDDL);
+        await query(addOidcColumnsDDL);
         await query(addBooksColumnsDDL);
         await query(savedReportsTableDDL);
         await query(savedReportsTriggerDDL);

@@ -7,7 +7,7 @@ export async function POST(
   { params }: { params: Promise<{ batchId: string }> },
 ) {
   try {
-    const roleResult = await requireRole('readonly');
+    const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
     const { bookGuid } = roleResult;
 

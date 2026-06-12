@@ -7,7 +7,22 @@ import { usePWAInstall } from '@/contexts/PWAInstallContext';
 interface User {
     id: number;
     username: string;
+    email: string | null;
+    displayName: string | null;
+    authMethod: string;
+    hasPassword: boolean;
+    oidcLinked: boolean;
+    oidcProvider: string | null;
+    role: string | null;
 }
+
+const OIDC_STATUS_MESSAGES: Record<string, { type: 'success' | 'error'; text: string }> = {
+    linked: { type: 'success', text: 'Identity linked successfully. You can now sign in with single sign-on.' },
+    already_linked: { type: 'success', text: 'This identity is already linked to your account.' },
+    conflict: { type: 'error', text: 'That identity is already linked to a different account.' },
+    cancelled: { type: 'error', text: 'Linking was cancelled.' },
+    error: { type: 'error', text: 'Linking failed. Please try again.' },
+};
 
 const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; description: string; icon: string }[] = [
     {
@@ -46,6 +61,20 @@ export default function ProfilePage() {
     const [installingApp, setInstallingApp] = useState(false);
     const [installMessage, setInstallMessage] = useState<string | null>(null);
     const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [oidcMessage, setOidcMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [emailInput, setEmailInput] = useState('');
+    const [savingEmail, setSavingEmail] = useState(false);
+    const [unlinking, setUnlinking] = useState(false);
+
+    useEffect(() => {
+        // Status from a completed OIDC link flow (?oidc=...)
+        const params = new URLSearchParams(window.location.search);
+        const oidcStatus = params.get('oidc');
+        if (oidcStatus && OIDC_STATUS_MESSAGES[oidcStatus]) {
+            setOidcMessage(OIDC_STATUS_MESSAGES[oidcStatus]);
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+    }, []);
 
     useEffect(() => {
         async function fetchUser() {
@@ -54,6 +83,7 @@ export default function ProfilePage() {
                 if (res.ok) {
                     const data = await res.json();
                     setUser(data.user);
+                    setEmailInput(data.user?.email ?? '');
                 }
             } catch {
                 // Not logged in
@@ -133,6 +163,7 @@ export default function ProfilePage() {
             }
 
             setPasswordMessage({ type: 'success', text: 'Password changed successfully' });
+            setUser((prev) => (prev ? { ...prev, hasPassword: true } : prev));
             setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
@@ -141,6 +172,51 @@ export default function ProfilePage() {
             setPasswordMessage({ type: 'error', text: 'Failed to change password' });
         } finally {
             setChangingPassword(false);
+        }
+    };
+
+    const handleSaveEmail = async () => {
+        setSavingEmail(true);
+        setOidcMessage(null);
+        try {
+            const res = await fetch('/api/user/profile', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: emailInput.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                setOidcMessage({ type: 'error', text: data.error || 'Failed to save email' });
+                return;
+            }
+            setUser((prev) => (prev ? { ...prev, email: data.email } : prev));
+            setOidcMessage({ type: 'success', text: 'Email saved' });
+        } catch {
+            setOidcMessage({ type: 'error', text: 'Failed to save email' });
+        } finally {
+            setSavingEmail(false);
+        }
+    };
+
+    const handleUnlink = async () => {
+        if (!confirm('Unlink your single sign-on identity? You will only be able to sign in with your password.')) {
+            return;
+        }
+        setUnlinking(true);
+        setOidcMessage(null);
+        try {
+            const res = await fetch('/api/auth/oidc/unlink', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) {
+                setOidcMessage({ type: 'error', text: data.error || 'Failed to unlink' });
+                return;
+            }
+            setUser((prev) => (prev ? { ...prev, oidcLinked: false, authMethod: 'password' } : prev));
+            setOidcMessage({ type: 'success', text: 'Identity unlinked. Sign in with your password from now on.' });
+        } catch {
+            setOidcMessage({ type: 'error', text: 'Failed to unlink' });
+        } finally {
+            setUnlinking(false);
         }
     };
 
@@ -211,8 +287,114 @@ export default function ProfilePage() {
                         {user.username.charAt(0).toUpperCase()}
                     </div>
                     <div>
-                        <h2 className="text-xl font-semibold text-foreground">{user.username}</h2>
-                        <p className="text-sm text-foreground-muted">User ID: {user.id}</p>
+                        <h2 className="text-xl font-semibold text-foreground">{user.displayName || user.username}</h2>
+                        <p className="text-sm text-foreground-muted">
+                            {user.username} &middot; User ID: {user.id}
+                            {user.role && <> &middot; {user.role} access</>}
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Account Security */}
+            <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
+                <h3 className="text-lg font-semibold text-foreground mb-2">Account Security</h3>
+                <p className="text-sm text-foreground-muted mb-4">
+                    Manage how you sign in to GnuCash Web.
+                </p>
+
+                {oidcMessage && (
+                    <div
+                        className={`mb-4 px-4 py-2 rounded-lg text-sm ${
+                            oidcMessage.type === 'success'
+                                ? 'bg-primary/10 border border-primary/30 text-primary'
+                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                        }`}
+                    >
+                        {oidcMessage.text}
+                    </div>
+                )}
+
+                <div className="space-y-3">
+                    {/* Password method */}
+                    <div className="flex items-center justify-between py-3 px-4 bg-background-tertiary rounded-lg">
+                        <div>
+                            <p className="text-sm font-medium text-foreground">Password</p>
+                            <p className="text-xs text-foreground-muted mt-0.5">
+                                {user.hasPassword ? 'A password is set for this account' : 'No password set (single sign-on only)'}
+                            </p>
+                        </div>
+                        <span
+                            className={`text-xs px-2 py-0.5 rounded-full ${
+                                user.hasPassword ? 'bg-primary/20 text-primary' : 'bg-gray-500/20 text-gray-400'
+                            }`}
+                        >
+                            {user.hasPassword ? 'Enabled' : 'Not set'}
+                        </span>
+                    </div>
+
+                    {/* OIDC method */}
+                    {user.oidcProvider && (
+                        <div className="flex items-center justify-between py-3 px-4 bg-background-tertiary rounded-lg">
+                            <div>
+                                <p className="text-sm font-medium text-foreground">{user.oidcProvider}</p>
+                                <p className="text-xs text-foreground-muted mt-0.5">
+                                    {user.oidcLinked
+                                        ? `Linked${user.email ? ` (${user.email})` : ''}`
+                                        : 'Sign in with single sign-on instead of a password'}
+                                </p>
+                            </div>
+                            {user.oidcLinked ? (
+                                <button
+                                    onClick={handleUnlink}
+                                    disabled={unlinking || !user.hasPassword}
+                                    title={!user.hasPassword ? 'Set a password first so you are not locked out' : undefined}
+                                    className="px-3 py-1.5 text-xs bg-rose-600/10 border border-rose-600/30 rounded-lg hover:bg-rose-600/20 transition-colors text-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {unlinking ? 'Unlinking...' : 'Unlink'}
+                                </button>
+                            ) : (
+                                <a
+                                    href="/api/auth/oidc/login?link=1"
+                                    className="px-3 py-1.5 text-xs bg-background border border-border rounded-lg hover:border-border-hover transition-colors text-foreground-secondary"
+                                >
+                                    Link {user.oidcProvider}
+                                </a>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Email */}
+                    <div className="py-3 px-4 bg-background-tertiary rounded-lg">
+                        <label className="block text-sm font-medium text-foreground mb-1">Email</label>
+                        {user.oidcLinked ? (
+                            <p className="text-sm text-foreground-secondary">
+                                {user.email || 'Not provided'}{' '}
+                                <span className="text-xs text-foreground-muted">(managed by {user.oidcProvider})</span>
+                            </p>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="email"
+                                    value={emailInput}
+                                    onChange={(e) => setEmailInput(e.target.value)}
+                                    placeholder="you@example.com"
+                                    className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                />
+                                <button
+                                    onClick={handleSaveEmail}
+                                    disabled={savingEmail || emailInput.trim() === (user.email ?? '')}
+                                    className="px-3 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-lg transition-colors disabled:cursor-not-allowed"
+                                >
+                                    {savingEmail ? 'Saving...' : 'Save'}
+                                </button>
+                            </div>
+                        )}
+                        {!user.oidcLinked && user.oidcProvider && (
+                            <p className="text-xs text-foreground-muted mt-1.5">
+                                Setting your email to match your {user.oidcProvider} account lets you link the two automatically on your next single sign-on.
+                            </p>
+                        )}
                     </div>
                 </div>
             </div>
@@ -363,9 +545,13 @@ export default function ProfilePage() {
 
             {/* Change Password */}
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
-                <h3 className="text-lg font-semibold text-foreground mb-2">Change Password</h3>
+                <h3 className="text-lg font-semibold text-foreground mb-2">
+                    {user.hasPassword ? 'Change Password' : 'Set Password'}
+                </h3>
                 <p className="text-sm text-foreground-muted mb-6">
-                    Update your account password. You will need to enter your current password to confirm the change.
+                    {user.hasPassword
+                        ? 'Update your account password. You will need to enter your current password to confirm the change.'
+                        : 'Your account uses single sign-on only. Set a password to also sign in directly (required before unlinking).'}
                 </p>
 
                 {passwordMessage && (
@@ -381,16 +567,18 @@ export default function ProfilePage() {
                 )}
 
                 <form onSubmit={handlePasswordChange} className="space-y-4">
-                    <div>
-                        <label className="block text-sm text-foreground-secondary mb-1">Current Password</label>
-                        <input
-                            type="password"
-                            value={currentPassword}
-                            onChange={(e) => setCurrentPassword(e.target.value)}
-                            required
-                            className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                        />
-                    </div>
+                    {user.hasPassword && (
+                        <div>
+                            <label className="block text-sm text-foreground-secondary mb-1">Current Password</label>
+                            <input
+                                type="password"
+                                value={currentPassword}
+                                onChange={(e) => setCurrentPassword(e.target.value)}
+                                required
+                                className="w-full bg-background-tertiary border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            />
+                        </div>
+                    )}
                     <div>
                         <label className="block text-sm text-foreground-secondary mb-1">New Password</label>
                         <input
@@ -415,7 +603,7 @@ export default function ProfilePage() {
                     </div>
                     <button
                         type="submit"
-                        disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+                        disabled={changingPassword || (user.hasPassword && !currentPassword) || !newPassword || !confirmPassword}
                         className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {changingPassword && (

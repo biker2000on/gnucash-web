@@ -29,6 +29,7 @@ import { FilterPanel, AmountFilter, ReconcileFilter } from './filters';
 import ViewMenu from './ViewMenu';
 import SplitRows from './ledger/SplitRows';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
+import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import AccountPickerDialog from './AccountPickerDialog';
 import EditableSplitRows, { EditableSplitRowsHandle } from '@/components/ledger/EditableSplitRows';
 import { Modal } from '@/components/ui/Modal';
@@ -105,6 +106,7 @@ export default function AccountLedger({
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode, ledgerViewStyle, setLedgerViewStyle, costBasisCarryOver, costBasisMethod } = useUserPreferences();
     const { success, error } = useToast();
+    const { isReadonly } = useCurrentUser();
     const isMobile = useIsMobile();
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
     const sharePrecision = commodityScu ? Math.max(0, Math.round(Math.log10(commodityScu))) : 4;
@@ -186,10 +188,15 @@ export default function AccountLedger({
     // Initialize edit mode from preference on mount (once preferences are loaded)
     useEffect(() => {
         if (!editModeInitialized && defaultLedgerMode) {
-            setIsEditMode(defaultLedgerMode === 'edit');
+            setIsEditMode(defaultLedgerMode === 'edit' && !isReadonly);
             setEditModeInitialized(true);
         }
-    }, [defaultLedgerMode, editModeInitialized]);
+    }, [defaultLedgerMode, editModeInitialized, isReadonly]);
+
+    // Force-exit edit mode if the role resolves to readonly after init
+    useEffect(() => {
+        if (isReadonly) setIsEditMode(false);
+    }, [isReadonly]);
 
     // Fetch lot data for investment accounts (for lot badges)
     useEffect(() => {
@@ -1755,8 +1762,9 @@ export default function AccountLedger({
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        title={isEditMode ? 'New Transaction (n)' : 'New Transaction'}
-                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2"
+                        disabled={isReadonly}
+                        title={isReadonly ? READONLY_TOOLTIP : (isEditMode ? 'New Transaction (n)' : 'New Transaction')}
+                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-foreground-muted"
                     >
                         New Transaction
                     </button>
@@ -1803,7 +1811,9 @@ export default function AccountLedger({
                     )}
                     <button
                         onClick={handleToggleEditMode}
-                        className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors ${
+                        disabled={isReadonly}
+                        title={isReadonly ? READONLY_TOOLTIP : undefined}
+                        className={`hidden md:inline-flex px-3 py-2 min-h-[44px] items-center text-xs rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                             isEditMode
                                 ? 'bg-primary/10 border-primary/30 text-primary'
                                 : 'border-border text-foreground-muted hover:text-foreground'

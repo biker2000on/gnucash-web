@@ -7,9 +7,11 @@ import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/contexts/ToastContext';
 import { TAG_COLORS, normalizeTagName, isValidTagName, type Tag } from '@/lib/tags';
+import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 
 export default function TagsPage() {
     const { success, error } = useToast();
+    const { isReadonly } = useCurrentUser();
     const [tags, setTags] = useState<Tag[]>([]);
     const [loading, setLoading] = useState(true);
     const [newTagName, setNewTagName] = useState('');
@@ -143,7 +145,8 @@ export default function TagsPage() {
                     />
                     <button
                         type="submit"
-                        disabled={creating || !newTagName.trim()}
+                        disabled={creating || !newTagName.trim() || isReadonly}
+                        title={isReadonly ? READONLY_TOOLTIP : undefined}
                         className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
                     >
                         {creating ? 'Creating...' : '+ Create Tag'}

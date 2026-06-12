@@ -27,13 +27,13 @@ export async function POST(request: NextRequest) {
             const user = await registerUser(username, password);
             await createSession(user.id, user.username);
 
-            // Bootstrap RBAC: grant readonly on all existing books
+            // Bootstrap RBAC: new manual registrations get edit on all existing books
             try {
                 const books = await prisma.$queryRaw<{ guid: string }[]>`
                     SELECT guid FROM books
                 `;
                 for (const book of books) {
-                    await grantRole(user.id, book.guid, 'readonly', user.id);
+                    await grantRole(user.id, book.guid, 'edit', user.id);
                 }
             } catch (rbacError) {
                 console.error('Failed to bootstrap RBAC for new user:', rbacError);

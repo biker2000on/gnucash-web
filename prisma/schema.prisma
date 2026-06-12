@@ -409,10 +409,18 @@ model gnclock {
 model gnucash_web_users {
   id               Int       @id @default(autoincrement())
   username         String    @unique @db.VarChar(255)
-  password_hash    String    @db.VarChar(255)
+  password_hash    String?   @db.VarChar(255)
   balance_reversal String    @default("none") @db.VarChar(20)
   created_at       DateTime  @default(now())
   last_login       DateTime?
+  email            String?   @unique @db.VarChar(255)
+  oidc_subject     String?   @db.VarChar(255)
+  oidc_issuer      String?   @db.VarChar(500)
+  auth_method      String    @default("password") @db.VarChar(20)
+  display_name     String?   @db.VarChar(255)
+  avatar_url       String?
+
+  @@unique([oidc_issuer, oidc_subject])
 
   // Relations
   audit_logs             gnucash_web_audit[]

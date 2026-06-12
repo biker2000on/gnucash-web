@@ -18,6 +18,7 @@ import { TransactionContextMenu, type TransactionContextMenuItem } from '@/compo
 import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
+import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -51,6 +52,7 @@ interface JournalTransaction extends Transaction {
 export default function TransactionJournal({ initialTransactions, startDate, endDate, initialSearch }: TransactionJournalProps) {
     const router = useRouter();
     const { success, error } = useToast();
+    const { isReadonly } = useCurrentUser();
     const isMobile = useIsMobile();
     const [transactions, setTransactions] = useState<JournalTransaction[]>(initialTransactions);
     const [offset, setOffset] = useState(initialTransactions.length);
@@ -558,7 +560,9 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             setEditingTransaction(null);
                             setIsEditModalOpen(true);
                         }}
-                        className="w-full md:w-auto px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 whitespace-nowrap"
+                        disabled={isReadonly}
+                        title={isReadonly ? READONLY_TOOLTIP : undefined}
+                        className="w-full md:w-auto px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors font-medium flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <span>+</span>
                         New Transaction

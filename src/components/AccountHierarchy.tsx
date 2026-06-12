@@ -26,6 +26,7 @@ import { Modal } from './ui/Modal';
 import { AccountForm } from './AccountForm';
 import TagChip from './tags/TagChip';
 import type { Tag } from '@/lib/tags';
+import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 
 interface TagWithAccounts extends Tag {
     account_guids?: string[];
@@ -307,6 +308,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const { balanceReversal, dateFormat } = useUserPreferences();
     const invalidateAccounts = useInvalidateAccounts();
     const { success: toastSuccess, error: toastError } = useToast();
+    const { isReadonly } = useCurrentUser();
     const { data: reviewStatusData } = useReviewStatus();
     const statusMap = useMemo<ReviewStatusMap>(() => reviewStatusData ?? {}, [reviewStatusData]);
 
@@ -1028,7 +1030,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     <div className="flex flex-wrap items-center gap-4">
                         <button
                             onClick={handleNewAccount}
-                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+                            disabled={isReadonly}
+                            title={isReadonly ? READONLY_TOOLTIP : undefined}
+                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

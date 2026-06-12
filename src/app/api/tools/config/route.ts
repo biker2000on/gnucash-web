@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth';
+import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { ToolConfigService, CreateToolConfigSchema } from '@/lib/services/tool-config.service';
 
@@ -10,10 +10,9 @@ import { ToolConfigService, CreateToolConfigSchema } from '@/lib/services/tool-c
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+    const user = roleResult.user;
 
     const bookGuid = await getActiveBookGuid();
     const { searchParams } = new URL(request.url);
@@ -37,10 +36,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const roleResult = await requireRole('readonly');
+    if (roleResult instanceof NextResponse) return roleResult;
+    const user = roleResult.user;
 
     const bookGuid = await getActiveBookGuid();
     const body = await request.json();

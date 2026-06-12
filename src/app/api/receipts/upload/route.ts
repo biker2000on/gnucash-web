@@ -22,7 +22,7 @@ function sanitizeFilename(name: string): string {
 export async function POST(request: Request) {
   try {
     // Receipts are app-managed data (not GnuCash data), so all authenticated users can upload
-    const roleResult = await requireRole('readonly');
+    const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
     const { user, bookGuid } = roleResult;
 

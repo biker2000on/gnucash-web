@@ -53,6 +53,8 @@ cp .env.example .env.local
 
 Required: `DATABASE_URL`, `NEXTAUTH_SECRET`, `REDIS_URL`. See `.env.example` for all options including AI, S3, and Docker Compose variables.
 
+**Optional OIDC single sign-on**: set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` (and optionally `OIDC_PROVIDER_NAME`) to add a "Sign in with ..." button alongside password login (authorization code + PKCE; tested with Pocket ID). Register `{NEXTAUTH_URL}/api/auth/oidc/callback` as the redirect URL. Existing password accounts are matched by verified email on first SSO login, or can be linked manually from the Profile page. New SSO users start with read-only access; admins assign roles (readonly/edit/admin) under Settings → Users.
+
 ### Development
 
 ```bash
@@ -97,7 +99,7 @@ docker run -p 3000:3000 -e DATABASE_URL="your_db_url" gnucash-web
 - **Database**: PostgreSQL via [Prisma](https://www.prisma.io/)
 - **Queue**: [BullMQ](https://docs.bullmq.io/) + Redis
 - **Testing**: [Vitest](https://vitest.dev/) (227 tests)
-- **Auth**: NextAuth.js
+- **Auth**: iron-session + bcrypt, optional OIDC SSO (openid-client)
 - **Typing**: TypeScript
 
 ## 📄 License

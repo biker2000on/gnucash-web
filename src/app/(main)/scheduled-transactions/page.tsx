@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { CreateScheduledPanel } from '@/components/scheduled-transactions/CreateScheduledPanel';
+import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 
 // ---------------------------------------------------------------------------
 // Types matching API responses
@@ -136,6 +137,7 @@ export default function ScheduledTransactionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Record<string, 'loading' | 'executed' | 'skipped' | 'error'>>({});
   const [batchLoading, setBatchLoading] = useState(false);
+  const { isReadonly } = useCurrentUser();
   const [showCreatePanel, setShowCreatePanel] = useState(false);
 
   // Filters
@@ -547,14 +549,16 @@ export default function ScheduledTransactionsPage() {
             <>
               <button
                 onClick={() => handleExecute(occ.scheduledTransactionGuid, occ.date)}
-                disabled={actionState === 'loading'}
+                disabled={actionState === 'loading' || isReadonly}
+                title={isReadonly ? READONLY_TOOLTIP : undefined}
                 className="px-3 py-1 text-xs font-medium rounded-md bg-primary hover:bg-primary-hover text-primary-foreground transition-colors disabled:opacity-50"
               >
                 {actionState === 'loading' ? '...' : 'Execute'}
               </button>
               <button
                 onClick={() => handleSkip(occ.scheduledTransactionGuid, occ.date)}
-                disabled={actionState === 'loading'}
+                disabled={actionState === 'loading' || isReadonly}
+                title={isReadonly ? READONLY_TOOLTIP : undefined}
                 className="px-3 py-1 text-xs font-medium rounded-md bg-gray-600/50 hover:bg-gray-500/50 text-foreground-muted transition-colors disabled:opacity-50"
               >
                 {actionState === 'loading' ? '...' : 'Skip'}
@@ -593,14 +597,16 @@ export default function ScheduledTransactionsPage() {
               <>
                 <button
                   onClick={() => handleExecute(occ.scheduledTransactionGuid, occ.date)}
-                  disabled={actionState === 'loading'}
+                  disabled={actionState === 'loading' || isReadonly}
+                  title={isReadonly ? READONLY_TOOLTIP : undefined}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-primary hover:bg-primary-hover text-primary-foreground transition-colors disabled:opacity-50 whitespace-nowrap"
                 >
                   {actionState === 'loading' ? '...' : 'Execute'}
                 </button>
                 <button
                   onClick={() => handleSkip(occ.scheduledTransactionGuid, occ.date)}
-                  disabled={actionState === 'loading'}
+                  disabled={actionState === 'loading' || isReadonly}
+                  title={isReadonly ? READONLY_TOOLTIP : undefined}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-600/50 hover:bg-gray-500/50 text-foreground-muted transition-colors disabled:opacity-50 whitespace-nowrap"
                 >
                   {actionState === 'loading' ? '...' : 'Skip'}
@@ -638,7 +644,9 @@ export default function ScheduledTransactionsPage() {
         </div>
         <button
           onClick={() => setShowCreatePanel(true)}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors flex items-center gap-2"
+          disabled={isReadonly}
+          title={isReadonly ? READONLY_TOOLTIP : undefined}
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -774,7 +782,8 @@ export default function ScheduledTransactionsPage() {
                 </span>
                 <button
                   onClick={handleBatchExecute}
-                  disabled={batchLoading}
+                  disabled={batchLoading || isReadonly}
+                  title={isReadonly ? READONLY_TOOLTIP : undefined}
                   className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 transition-colors disabled:opacity-50"
                 >
                   {batchLoading ? 'Processing...' : 'Process All'}
