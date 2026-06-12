@@ -61,24 +61,26 @@ RUN npx esbuild worker.ts \
       --external:@prisma/client --external:sharp --external:bcrypt \
       --outfile=.next/standalone/db-init.js
 
-# Minimal stage that installs ONLY the prisma CLI and its direct runtime
-# inputs. The CLI is not part of next's traced output, so we ship it as a
-# small side-car rather than dragging the whole prod node_modules into the
-# runtime image.
-FROM node:24-alpine AS prisma-cli
-WORKDIR /opt/prisma-cli
-RUN npm config set strict-ssl false && \
-    echo '{"name":"prisma-cli","version":"0.0.0","private":true,"dependencies":{"prisma":"^7.3.0","dotenv":"^17.2.3","@prisma/adapter-pg":"^7.3.0"}}' > package.json && \
-    npm install --omit=peer --omit=optional && \
-    rm -rf node_modules/@next/swc-linux-x64-gnu \
-           node_modules/lightningcss-linux-x64-gnu \
-           node_modules/@napi-rs/canvas-linux-x64-gnu && \
-    find node_modules \( -name "*.md" -o -name "*.map" -o -name "CHANGELOG*" -o -name "README*" \) -delete 2>/dev/null || true && \
-    find node_modules -type d \( -name "test" -o -name "tests" -o -name "__tests__" -o -name "docs" -o -name "example" -o -name "examples" \) -prune -exec rm -rf {} + 2>/dev/null || true && \
-    npm cache clean --force
+# Generate the empty-database bootstrap SQL at build time so the runtime
+# image needs no prisma CLI. db-init.js applies it on fresh installs.
+RUN NODE_TLS_REJECT_UNAUTHORIZED=0 npx prisma migrate diff \
+      --from-empty --to-schema prisma/schema.prisma --script \
+      -o .next/standalone/bootstrap.sql \
+ && grep -q "CREATE TABLE" .next/standalone/bootstrap.sql
 
-# Production image, copy all the files and run next
-FROM node:24-alpine AS runner
+# Drop dead weight Next's file tracing pulls into standalone:
+#   - typescript: traced via a type-only prisma import, never required at runtime
+#   - @img glibc variants: Alpine runtime is musl-only
+RUN rm -rf .next/standalone/node_modules/typescript \
+           .next/standalone/node_modules/@img/sharp-libvips-linux-x64 \
+           .next/standalone/node_modules/@img/sharp-linux-x64
+
+# Production image, copy all the files and run next.
+# Plain Alpine + the distro nodejs package (stripped, shared-lib build) is
+# ~85 MB lighter than the node:24-alpine base and drops npm/yarn, which the
+# runtime never uses. Node 22 LTS satisfies Next.js 16 (>= 20.9) and the
+# native modules (sharp, bcrypt, pg) are NAPI, which is ABI-stable.
+FROM alpine:3.22 AS runner
 WORKDIR /app
 
 LABEL org.opencontainers.image.source="https://github.com/biker2000on/gnucash-web"
@@ -90,9 +92,11 @@ ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 
 # Install tesseract-ocr for receipt OCR, poppler-utils for PDF rendering,
-# and fonts so pdftoppm can render standard PDF fonts (Helvetica, Times, etc.)
-RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng poppler-utils \
-    font-noto font-noto-cjk poppler-data
+# and DejaVu fonts so pdftoppm can substitute the standard PDF base fonts
+# (Helvetica, Times, Courier). The Noto/CJK set added ~175 MB for glyph
+# coverage receipts don't need.
+RUN apk add --no-cache nodejs tesseract-ocr tesseract-ocr-data-eng \
+    poppler-utils ttf-dejavu
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -112,15 +116,6 @@ RUN chown nextjs:nodejs data/receipts
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-# Prisma schema + config are read by the CLI during `prisma db push` at
-# container start, so they need to exist at the paths the config expects.
-COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
-COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./
-
-# Prisma CLI side-car (see prisma-cli stage above). Kept out of /app to
-# avoid any risk of clashing with standalone's traced node_modules.
-COPY --from=prisma-cli --chown=nextjs:nodejs /opt/prisma-cli /opt/prisma-cli
 
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
