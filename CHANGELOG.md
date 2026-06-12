@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0.0] - 2026-06-12
+
+### Added
+- **Monte Carlo FIRE Calculator**: seeded bootstrap simulation over the Damodaran 1928–2024 stock/bond/CPI dataset with 10/25/50/75/90 confidence bands, FI-age distribution, retirement-age success sensitivity, and a full assumptions panel (allocation + glide path, inflation mode, withdrawal strategy, retirement tax, healthcare bump, contribution growth, end age, simulation count)
+- **Social Security estimation from book data**: SSA benefit formula (AWI indexing, top-35 years, AIME → PIA bend points, claiming ages 62–70) computed from W-2-mapped or salary-account earnings history, feeding the FIRE calculator as a data-driven default with override
+- **Tax Estimator tool**: federal liability for 2024–2026 (brackets, standard/itemized with OBBBA SALT cap and senior deduction, LTCG/QDI stacking, SE tax, NIIT, Additional Medicare, safe-harbor 1040-ES schedule), pluggable state modules (no-tax, flat, CA/NY, flat-rate fallback), account→tax-category mapper with auto-suggestions, and side-by-side contribution scenarios validated against IRS limits
+- **Account & transaction tagging**: global tags with colors, tag chips in ledgers and the account tree, context-menu tag editor, `/tags` management page, and `#tag` search syntax in the general ledger and account ledgers (account tags propagate to their transactions)
+- **Optional OIDC login (Pocket ID or any OIDC provider)**: env-configured (`OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET`/`OIDC_PROVIDER_NAME`), PKCE S256, verified-email auto-link migrates existing manual accounts, explicit link/unlink in profile, OIDC-only users can set a password later
+- **Granular roles**: readonly/edit/admin enforced on every mutating API route, per-book role management UI in Settings → Users with last-admin protection, read-only UX gating on ledgers, accounts, scheduled transactions, and tags
+
+### Fixed
+- Ledger deep links with a seeded search (e.g. `/ledger?search=%23tag`) now apply the filter on first load
+
 ## [0.3.0.0] - 2026-04-08
 
 ### Added

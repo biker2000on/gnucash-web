@@ -16,7 +16,7 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P2 - Monte Carlo FIRE Projections
+## P2 - Monte Carlo FIRE Projections — ✅ SHIPPED 2026-06-12 (v0.4.0.0)
 
 **What:** Replace the single-line FIRE projection with a Monte Carlo simulation that samples from historical market return distributions. Show confidence bands (e.g., 10th/25th/50th/75th/90th percentile outcomes) instead of a single deterministic line.
 
@@ -64,7 +64,7 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P1 - OIDC Authentication & Per-Book Authorization
+## P1 - OIDC Authentication & Per-Book Authorization — ✅ SHIPPED 2026-06-12 (v0.4.0.0; OIDC login via Pocket ID, email auto-link migration, readonly/edit/admin enforcement across the API; per-book permission editor UI shipped in settings/users)
 
 **What:** Full authentication and authorization system. OIDC-based login (supporting providers like Keycloak, Auth0, Google, etc.), with a per-book permission model. Components:
 1. **OIDC authentication:** Login via OpenID Connect provider, session management, token refresh.
@@ -105,7 +105,7 @@ Shipped at `/tools/tax-estimator`: federal engine (2024-2026, all five filing st
 
 ---
 
-## P2 - FIRE Calculator: Expose Assumptions & Monte Carlo Analysis
+## P2 - FIRE Calculator: Expose Assumptions & Monte Carlo Analysis — ✅ SHIPPED 2026-06-12 (v0.4.0.0; incl. Social Security estimation from book earnings history)
 
 **What:** Enhance the FIRE calculator with two improvements: (1) Surface and make configurable the underlying assumptions (inflation rate, withdrawal strategy, Social Security estimates, tax rates, healthcare costs, asset allocation glide path, etc.). (2) Add Monte Carlo simulation using historical return distributions to show probability-weighted outcome ranges instead of a single deterministic projection.
 
@@ -133,7 +133,7 @@ Shipped at `/tools/tax-estimator`: federal engine (2024-2026, all five filing st
 
 ---
 
-## P3 - Account & Transaction Tagging
+## P3 - Account & Transaction Tagging — ✅ SHIPPED 2026-06-12 (v0.4.0.0)
 
 **What:** A tagging system for accounts and transactions that provides an alternative, non-hierarchical grouping mechanism alongside the existing account hierarchy. Tags are flat labels (not hierarchical) that can be applied to any account or transaction. Features:
 1. **Tag CRUD:** Create, rename, delete tags. Tags are global to the book.
