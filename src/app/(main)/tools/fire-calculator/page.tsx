@@ -1,76 +1,45 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ReferenceLine,
-  ResponsiveContainer,
-} from 'recharts';
 import { calculateTimeWeightedReturn } from '@/lib/investment-performance';
 import type { PerformanceHistoryPoint, PerformanceCashFlowPoint } from '@/lib/investment-performance';
+import {
+  runMonteCarlo,
+  successRateSensitivity,
+  deterministicProjection,
+  type MonteCarloInputs,
+} from '@/lib/fire/monte-carlo';
+import { meanStockReturn, meanBondReturn, meanInflation } from '@/lib/fire/historical-returns';
+import { DEFAULT_ASSUMPTIONS, mergeAssumptions, type FireAssumptions } from '@/lib/fire/assumptions';
+import {
+  fmt,
+  fmtPct,
+  effectiveValue,
+  InputField,
+  DataDrivenInputField,
+  ResultCard,
+  SavedConfigCard,
+  Toggle,
+  type DataDrivenValue,
+  type LoadingState,
+  type KPIData,
+  type FireConfig,
+} from './shared';
+import MonteCarloChart from './MonteCarloChart';
+import AssumptionsPanel from './AssumptionsPanel';
+import { FiAgeHistogram, SensitivityRow } from './FiInsights';
 
 /* ------------------------------------------------------------------ */
-/* Formatters                                                          */
+/* Debounce hook                                                       */
 /* ------------------------------------------------------------------ */
 
-const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-const fmtFull = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
-/* ------------------------------------------------------------------ */
-
-interface DataDrivenValue {
-  computed: number | null;
-  override: number | null;
-}
-
-type LoadingState = 'loading' | 'loaded' | 'error' | 'empty';
-
-interface KPIData {
-  netWorth: number;
-  totalIncome: number;
-  totalExpenses: number;
-  savingsRate: number;
-  investmentValue: number;
-}
-
-interface FireConfig {
-  id: number;
-  name: string;
-  tool_type: string;
-  account_guid: string | null;
-  config: {
-    overrides?: Record<string, number | null>;
-    currentAge?: number;
-    targetRetirementAge?: number;
-    safeWithdrawalRate?: number;
-    inflationRate?: number;
-    adjustForInflation?: boolean;
-  };
-  created_at: string;
-  updated_at: string;
-}
-
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-
-function effectiveValue(ddv: DataDrivenValue, fallback: number): number {
-  if (ddv.override !== null) return ddv.override;
-  if (ddv.computed !== null) return ddv.computed;
-  return fallback;
-}
-
-function sourceLabel(ddv: DataDrivenValue): 'data' | 'override' | 'manual' {
-  if (ddv.override !== null) return 'override';
-  if (ddv.computed !== null) return 'data';
-  return 'manual';
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,8 +69,13 @@ export default function FireCalculatorPage() {
   const [currentAge, setCurrentAge] = useState(30);
   const [targetRetirementAge, setTargetRetirementAge] = useState(55);
   const [safeWithdrawalRate, setSafeWithdrawalRate] = useState(4);
-  const [inflationRate, setInflationRate] = useState(3);
-  const [adjustForInflation, setAdjustForInflation] = useState(false);
+
+  // ---- Monte Carlo assumptions ----
+  const [assumptions, setAssumptions] = useState<FireAssumptions>(DEFAULT_ASSUMPTIONS);
+  const [showDeterministic, setShowDeterministic] = useState(false);
+  const patchAssumptions = useCallback((patch: Partial<FireAssumptions>) => {
+    setAssumptions(prev => ({ ...prev, ...patch }));
+  }, []);
 
   // ---- Saved configs state ----
   const [savedConfigs, setSavedConfigs] = useState<FireConfig[]>([]);
@@ -254,16 +228,14 @@ export default function FireCalculatorPage() {
 
         let annualReturn: number;
         if (years > 0 && years !== 1) {
-          // Convert total return to annual: (1 + totalReturn)^(1/years) - 1
           const totalReturnDecimal = twr / 100;
           annualReturn = (Math.pow(1 + totalReturnDecimal, 1 / years) - 1) * 100;
         } else {
           annualReturn = twr;
         }
 
-        // Store the computed TWR as informational, but don't use it as the default.
-        // A single year's return is too volatile for long-term FIRE projections.
-        // Default to 7% (historical real S&P 500 average); user can override.
+        // Informational only: a single year's return is too volatile for
+        // long-term FIRE projections. Default stays at 7%; user can override.
         if (Number.isFinite(annualReturn)) {
           setComputedPortfolioReturn(Math.round(annualReturn * 100) / 100);
         }
@@ -318,8 +290,11 @@ export default function FireCalculatorPage() {
         currentAge,
         targetRetirementAge,
         safeWithdrawalRate,
-        inflationRate,
-        adjustForInflation,
+        // Legacy fields kept for backward compatibility with older readers
+        inflationRate: assumptions.fixedInflationPct,
+        adjustForInflation: true,
+        // v2: full Monte Carlo assumption set
+        assumptions,
       };
 
       let res: Response;
@@ -374,8 +349,17 @@ export default function FireCalculatorPage() {
     if (c.currentAge !== undefined) setCurrentAge(c.currentAge);
     if (c.targetRetirementAge !== undefined) setTargetRetirementAge(c.targetRetirementAge);
     if (c.safeWithdrawalRate !== undefined) setSafeWithdrawalRate(c.safeWithdrawalRate);
-    if (c.inflationRate !== undefined) setInflationRate(c.inflationRate);
-    if (c.adjustForInflation !== undefined) setAdjustForInflation(c.adjustForInflation);
+
+    // v2 assumptions (merged with defaults); legacy configs map inflationRate
+    if (c.assumptions) {
+      setAssumptions(mergeAssumptions(c.assumptions));
+    } else {
+      setAssumptions(mergeAssumptions(
+        c.inflationRate !== undefined
+          ? { inflationMode: 'fixed', fixedInflationPct: c.inflationRate }
+          : undefined
+      ));
+    }
 
     if (c.overrides) {
       setCurrentSavingsDDV(prev => ({ ...prev, override: c.overrides?.currentSavings ?? null }));
@@ -467,111 +451,87 @@ export default function FireCalculatorPage() {
   };
 
   /* ---------------------------------------------------------------- */
-  /* Calculations                                                      */
+  /* Monte Carlo simulation (debounced)                                */
   /* ---------------------------------------------------------------- */
 
-  const calculations = useMemo(() => {
-    const fiNumber = annualExpenses / (safeWithdrawalRate / 100);
+  const mcInputs = useMemo<MonteCarloInputs>(() => ({
+    currentSavings,
+    annualContribution: annualSavings,
+    contributionGrowthPct: assumptions.contributionGrowthPct,
+    annualExpenses,
+    safeWithdrawalRate,
+    currentAge,
+    retirementAge: targetRetirementAge,
+    endAge: assumptions.endAge,
+    stockAllocationPct: assumptions.stockAllocationPct,
+    glidePathRetirementStockPct: assumptions.glidePathEnabled ? assumptions.glidePathRetirementStockPct : null,
+    returnMode: assumptions.returnMode,
+    fixedReturnPct: expectedReturn,
+    inflationMode: assumptions.inflationMode,
+    fixedInflationPct: assumptions.fixedInflationPct,
+    numSimulations: assumptions.numSimulations,
+    seed: 12345,
+    withdrawalStrategy: assumptions.withdrawalStrategy,
+    retirementTaxRatePct: assumptions.retirementTaxRatePct,
+    socialSecurity: assumptions.socialSecurityEnabled
+      ? { startAge: assumptions.socialSecurityStartAge, annualBenefit: assumptions.socialSecurityMonthlyBenefit * 12 }
+      : null,
+    healthcarePre65Annual: assumptions.healthcarePre65Annual,
+  }), [
+    currentSavings, annualSavings, annualExpenses, expectedReturn,
+    safeWithdrawalRate, currentAge, targetRetirementAge, assumptions,
+  ]);
 
-    const rNominal = expectedReturn / 100;
-    const r = adjustForInflation
-      ? (1 + rNominal) / (1 + inflationRate / 100) - 1
-      : rNominal;
+  // Debounce by serialized inputs so rapid slider/typing changes coalesce.
+  const debouncedKey = useDebounced(JSON.stringify(mcInputs), 250);
 
-    const P = currentSavings;
-    const C = annualSavings;
-    const FI = fiNumber;
+  const mcResult = useMemo(() => {
+    const inputs = JSON.parse(debouncedKey) as MonteCarloInputs;
+    return runMonteCarlo(inputs);
+  }, [debouncedKey]);
 
-    let yearsToFI: number;
-    let yearsToFIDisplay: string;
+  const sensitivity = useMemo(() => {
+    const inputs = JSON.parse(debouncedKey) as MonteCarloInputs;
+    return successRateSensitivity(inputs, [-2, -1, 0, 1, 2]);
+  }, [debouncedKey]);
 
-    if (P >= FI) {
-      yearsToFI = 0;
-      yearsToFIDisplay = '0.0';
-    } else if (r === 0) {
-      if (C === 0) {
-        yearsToFI = Infinity;
-        yearsToFIDisplay = 'N/A';
-      } else {
-        yearsToFI = (FI - P) / C;
-        yearsToFIDisplay = yearsToFI < 0 ? '0.0' : yearsToFI.toFixed(1);
-        if (yearsToFI < 0) yearsToFI = 0;
-      }
+  // Deterministic overlay: expected real return applied to the accumulation
+  // phase only (no withdrawals), shown in today's dollars.
+  const deterministicValues = useMemo(() => {
+    const inputs = JSON.parse(debouncedKey) as MonteCarloInputs;
+    const infl = inputs.inflationMode === 'fixed' ? (inputs.fixedInflationPct ?? 3) / 100 : meanInflation();
+    let nominal: number;
+    if (inputs.returnMode === 'fixed') {
+      nominal = (inputs.fixedReturnPct ?? 7) / 100;
     } else {
-      const numerator = FI * r + C;
-      const denominator = P * r + C;
-
-      if (denominator <= 0 || numerator <= 0 || numerator / denominator <= 0) {
-        yearsToFI = NaN;
-        yearsToFIDisplay = 'N/A';
-      } else {
-        yearsToFI = Math.log(numerator / denominator) / Math.log(1 + r);
-        if (isNaN(yearsToFI) || !isFinite(yearsToFI)) {
-          yearsToFIDisplay = 'N/A';
-        } else if (yearsToFI < 0) {
-          yearsToFI = 0;
-          yearsToFIDisplay = '0.0';
-        } else {
-          yearsToFIDisplay = yearsToFI.toFixed(1);
-        }
-      }
+      const w = inputs.stockAllocationPct / 100;
+      nominal = w * meanStockReturn() + (1 - w) * meanBondReturn();
     }
-
-    const fiAge = isFinite(yearsToFI) && !isNaN(yearsToFI)
-      ? currentAge + yearsToFI
-      : NaN;
-
-    const annualIncomeAtFI = fiNumber * (safeWithdrawalRate / 100);
-    const monthlyIncomeAtFI = annualIncomeAtFI / 12;
-
-    const progressPercent = fiNumber > 0
-      ? Math.min((currentSavings / fiNumber) * 100, 100)
-      : 0;
-
-    return {
-      fiNumber,
-      yearsToFI,
-      yearsToFIDisplay,
-      fiAge,
-      annualIncomeAtFI,
-      monthlyIncomeAtFI,
-      progressPercent,
-      r,
-    };
-  }, [currentAge, currentSavings, annualSavings, annualExpenses, expectedReturn, safeWithdrawalRate, inflationRate, adjustForInflation]);
+    const realPct = ((1 + nominal) / (1 + infl) - 1) * 100;
+    const accumYears = Math.max(0, (inputs.retirementAge ?? 65) - inputs.currentAge);
+    return deterministicProjection({
+      currentSavings: inputs.currentSavings,
+      annualContribution: inputs.annualContribution,
+      contributionGrowthPct: inputs.contributionGrowthPct,
+      realReturnPct: realPct,
+      years: accumYears,
+    });
+  }, [debouncedKey]);
 
   /* ---------------------------------------------------------------- */
-  /* Chart data                                                        */
+  /* Derived headline metrics                                          */
   /* ---------------------------------------------------------------- */
 
-  const chartData = useMemo(() => {
-    const { yearsToFI, r } = calculations;
-    const fiYears = isFinite(yearsToFI) && !isNaN(yearsToFI) ? Math.ceil(yearsToFI) : 40;
-    const maxYears = Math.max(fiYears + 10, 40);
+  const progressPercent = mcResult.fiNumber > 0 && Number.isFinite(mcResult.fiNumber)
+    ? Math.min((currentSavings / mcResult.fiNumber) * 100, 100)
+    : 0;
 
-    const data: Array<{ year: number; portfolio: number; projected: number | null }> = [];
-    for (let year = 0; year <= maxYears; year++) {
-      let portfolio: number;
-      if (r === 0) {
-        portfolio = currentSavings + annualSavings * year;
-      } else {
-        const growthFactor = Math.pow(1 + r, year);
-        portfolio = currentSavings * growthFactor + annualSavings * (growthFactor - 1) / r;
-      }
-      const value = Math.round(portfolio);
-      // Split into "current trajectory" (solid) and "projected future" (dashed) at FI point
-      if (year <= fiYears) {
-        data.push({ year, portfolio: value, projected: null });
-      } else {
-        // Add a bridge point at the FI year boundary
-        if (data.length > 0 && data[data.length - 1].projected === null) {
-          data[data.length - 1].projected = data[data.length - 1].portfolio;
-        }
-        data.push({ year, portfolio: null as unknown as number, projected: value });
-      }
-    }
-    return data;
-  }, [currentSavings, annualSavings, calculations]);
+  const medianYearsToFi = mcResult.medianFiAge !== null ? mcResult.medianFiAge - currentAge : null;
+  const yearsToFiRange = mcResult.fiAgeP10 !== null && mcResult.fiAgeP90 !== null
+    ? `${Math.max(0, mcResult.fiAgeP10 - currentAge)}–${Math.max(0, mcResult.fiAgeP90 - currentAge)} yrs (10th–90th pct)`
+    : 'wide uncertainty';
+
+  const annualIncomeAtFI = mcResult.fiNumber * (safeWithdrawalRate / 100);
 
   /* ---------------------------------------------------------------- */
   /* Overall loading state                                             */
@@ -590,7 +550,8 @@ export default function FireCalculatorPage() {
       <header>
         <h1 className="text-3xl font-bold text-foreground">FIRE Calculator</h1>
         <p className="text-foreground-muted mt-1">
-          Calculate your Financial Independence number and estimate years to retirement.
+          Monte Carlo financial independence projections using {assumptions.returnMode === 'historical' ? '97 years of market history (1928–2024)' : 'your fixed return assumption'}.
+          All values in today&apos;s dollars.
         </p>
       </header>
 
@@ -654,51 +615,54 @@ export default function FireCalculatorPage() {
         </section>
       )}
 
-      {/* Primary: FI Dashboard Cards */}
+      {/* Headline results */}
       {!isLoading && (
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <ResultCard
-            label="Net Worth"
-            value={fmt.format(currentSavings)}
-            sublabel={sourceLabel(currentSavingsDDV) === 'data' ? 'Current portfolio value' : 'Manual entry'}
+            label="FI Number"
+            value={Number.isFinite(mcResult.fiNumber) ? fmt.format(mcResult.fiNumber) : '—'}
+            sublabel={`${(100 / safeWithdrawalRate).toFixed(0)}x expenses at ${safeWithdrawalRate}% SWR · ${fmt.format(annualIncomeAtFI)}/yr income`}
             color="primary"
+            progress={progressPercent}
           />
           <ResultCard
-            label="FI Number"
-            value={fmt.format(calculations.fiNumber)}
-            sublabel="Target portfolio size"
+            label="Median FI Age"
+            value={mcResult.medianFiAge !== null ? String(mcResult.medianFiAge) : '—'}
+            sublabel={
+              medianYearsToFi !== null
+                ? `${medianYearsToFi} yrs to FI · range ${yearsToFiRange}`
+                : mcResult.probNeverFi >= 0.5
+                  ? 'Most scenarios never reach FI in horizon'
+                  : 'Adjust inputs to estimate'
+            }
             color="emerald"
           />
           <ResultCard
-            label="Years to FI"
-            value={calculations.yearsToFIDisplay}
-            sublabel={
-              !isNaN(calculations.fiAge) && isFinite(calculations.fiAge)
-                ? `Reaching FI at age ${calculations.fiAge.toFixed(1)}`
-                : 'Adjust inputs to calculate'
-            }
+            label={`FI by Age ${targetRetirementAge}`}
+            value={fmtPct(mcResult.probFiByRetirementAge)}
+            sublabel={`Chance of hitting your FI number by your target retirement age`}
             color="purple"
-            progress={calculations.progressPercent}
           />
           <ResultCard
-            label="Annual Income at FI"
-            value={fmt.format(calculations.annualIncomeAtFI)}
-            sublabel={`${fmtFull.format(calculations.monthlyIncomeAtFI)} / month`}
+            label="Plan Success Rate"
+            value={fmtPct(mcResult.successRate)}
+            sublabel={`Retire at ${targetRetirementAge}, money lasts to ${assumptions.endAge} in ${mcResult.numSimulations.toLocaleString()} scenarios`}
             color="amber"
           />
         </section>
       )}
 
-      {/* Target Retirement Age Info */}
-      {!isLoading && !isNaN(calculations.yearsToFI) && isFinite(calculations.yearsToFI) && calculations.yearsToFI > 0 && (
+      {/* Target retirement readiness note */}
+      {!isLoading && mcResult.medianFiAge !== null && (
         <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4">
-          {currentAge + calculations.yearsToFI <= targetRetirementAge ? (
+          {mcResult.medianFiAge <= targetRetirementAge ? (
             <div className="flex items-center gap-3 text-primary">
               <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <span className="text-sm">
-                You will reach FI <strong>{(targetRetirementAge - currentAge - calculations.yearsToFI).toFixed(1)} years before</strong> your target retirement age of {targetRetirementAge}.
+                In the median scenario you reach FI at age <strong>{mcResult.medianFiAge}</strong>,{' '}
+                <strong>{targetRetirementAge - mcResult.medianFiAge} years before</strong> your target retirement age of {targetRetirementAge}.
               </span>
             </div>
           ) : (
@@ -707,103 +671,80 @@ export default function FireCalculatorPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <span className="text-sm">
-                At current rates, you will reach FI <strong>{(currentAge + calculations.yearsToFI - targetRetirementAge).toFixed(1)} years after</strong> your target retirement age of {targetRetirementAge}. Consider increasing savings or reducing expenses.
+                In the median scenario FI arrives at age <strong>{mcResult.medianFiAge}</strong>,{' '}
+                <strong>{mcResult.medianFiAge - targetRetirementAge} years after</strong> your target of {targetRetirementAge}.
+                Consider increasing savings, reducing expenses, or retiring later.
               </span>
             </div>
           )}
         </section>
       )}
 
-      {/* Secondary: Projection Chart */}
+      {/* Monte Carlo projection chart */}
       {!isLoading && (
         <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4">Portfolio Growth Projection</h2>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                <defs>
-                  <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.02} />
-                  </linearGradient>
-                  <linearGradient id="projectedGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#22d3ee" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                <XAxis
-                  dataKey="year"
-                  stroke="var(--color-foreground-muted)"
-                  tick={{ fill: 'var(--color-foreground-muted)', fontSize: 12 }}
-                  label={{ value: 'Years', position: 'insideBottomRight', offset: -5, fill: 'var(--color-foreground-muted)', fontSize: 12 }}
-                />
-                <YAxis
-                  stroke="var(--color-foreground-muted)"
-                  tick={{ fill: 'var(--color-foreground-muted)', fontSize: 12 }}
-                  tickFormatter={(value: number) => {
-                    if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-                    if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
-                    return `$${value}`;
-                  }}
-                />
-                <Tooltip
-                  formatter={(value, name) => {
-                    if (value === undefined || value === null) return ['', ''];
-                    const label = name === 'projected' ? 'Projected' : 'Portfolio Value';
-                    return [fmtFull.format(Number(value)), label];
-                  }}
-                  labelFormatter={(label) => `Year ${label}`}
-                  contentStyle={{
-                    backgroundColor: 'var(--color-surface)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: '0.5rem',
-                    color: 'var(--color-foreground)',
-                  }}
-                />
-                <ReferenceLine
-                  y={calculations.fiNumber}
-                  stroke="#22d3ee"
-                  strokeDasharray="8 4"
-                  label={{
-                    value: `FI: ${fmt.format(calculations.fiNumber)}`,
-                    position: 'right',
-                    fill: '#22d3ee',
-                    fontSize: 12,
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="portfolio"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  fill="url(#portfolioGradient)"
-                  dot={false}
-                  name="Portfolio Value"
-                  connectNulls={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="projected"
-                  stroke="#22d3ee"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  fill="url(#projectedGradient)"
-                  dot={false}
-                  name="projected"
-                  connectNulls={false}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Portfolio Projection</h2>
+              <p className="text-xs text-foreground-muted mt-0.5">
+                Real (inflation-adjusted) portfolio value across {mcResult.numSimulations.toLocaleString()} simulated futures
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="hidden sm:flex items-center gap-3 text-xs text-foreground-muted">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-3 rounded-sm bg-primary/10 border border-primary/30" /> 10–90%
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-3 rounded-sm bg-primary/25 border border-primary/40" /> 25–75%
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-4 h-0.5 bg-primary" /> Median
+                </span>
+              </div>
+              <Toggle
+                checked={showDeterministic}
+                onChange={setShowDeterministic}
+                label="Deterministic"
+              />
+            </div>
           </div>
+          <MonteCarloChart
+            result={mcResult}
+            deterministic={deterministicValues}
+            retirementAge={targetRetirementAge}
+            showDeterministic={showDeterministic}
+          />
           <p className="text-xs text-foreground-muted mt-3 text-center">
-            Projection based on {adjustForInflation ? 'inflation-adjusted (real)' : 'nominal'} return of{' '}
-            {(calculations.r * 100).toFixed(2)}% per year with constant annual contributions of {fmt.format(annualSavings)}.
+            {assumptions.returnMode === 'historical'
+              ? `Each simulated year samples stock, bond, and inflation outcomes together from the same historical year (1928–2024) to preserve their correlation. Contributions of ${fmt.format(annualSavings)}/yr until age ${targetRetirementAge}, then withdrawals.`
+              : `Fixed ${expectedReturn}% nominal return every year. Switch to Monte Carlo in Assumptions to see market uncertainty.`}
           </p>
         </section>
       )}
 
-      {/* Tertiary: Inputs Grid with Inline Override */}
+      {/* FI distribution + sensitivity */}
+      {!isLoading && (
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-foreground mb-1">When Do You Reach FI?</h2>
+            <p className="text-xs text-foreground-muted mb-4">
+              Distribution of the age your portfolio first crosses the FI number
+              {mcResult.probNeverFi > 0 && ` · ${fmtPct(mcResult.probNeverFi)} of runs never reach it`}
+            </p>
+            <FiAgeHistogram result={mcResult} />
+          </div>
+          <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-foreground mb-1">Retirement Age Sensitivity</h2>
+            <p className="text-xs text-foreground-muted mb-4">
+              Success rate (money lasts to {assumptions.endAge}) if you retire a little earlier or later
+            </p>
+            <SensitivityRow rows={sensitivity} retirementAge={targetRetirementAge} />
+          </div>
+        </section>
+      )}
+
+      {/* Parameters with inline override */}
       {!isLoading && (
         <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
           <h2 className="text-lg font-semibold text-foreground mb-4">Parameters</h2>
@@ -849,7 +790,7 @@ export default function FireCalculatorPage() {
             />
             <div>
               <DataDrivenInputField
-                label="Expected Annual Return"
+                label={assumptions.returnMode === 'fixed' ? 'Expected Annual Return (used)' : 'Expected Annual Return (fixed-mode only)'}
                 field="expectedReturn"
                 ddv={expectedReturnDDV}
                 fallback={7}
@@ -861,12 +802,13 @@ export default function FireCalculatorPage() {
                 onCommit={commitEdit}
                 onReset={resetOverride}
               />
-              {computedPortfolioReturn !== null && (
-                <p className="mt-1 text-xs text-foreground-muted">
-                  Your portfolio returned {computedPortfolioReturn.toFixed(1)}% over the last year.
-                  Default is 7% (historical average).
-                </p>
-              )}
+              <p className="mt-1 text-xs text-foreground-muted">
+                {assumptions.returnMode === 'historical'
+                  ? 'Monte Carlo mode samples historical returns; this rate only applies in fixed-rate mode (see Assumptions).'
+                  : computedPortfolioReturn !== null
+                    ? `Your portfolio returned ${computedPortfolioReturn.toFixed(1)}% over the last year. Default is 7%.`
+                    : 'Default is 7% (historical average).'}
+              </p>
             </div>
             <div>
               <InputField
@@ -925,42 +867,20 @@ export default function FireCalculatorPage() {
             <InputField
               label="Safe Withdrawal Rate"
               value={safeWithdrawalRate}
-              onChange={setSafeWithdrawalRate}
+              onChange={v => setSafeWithdrawalRate(Math.max(0.1, v))}
               type="percent"
             />
-            <InputField
-              label="Expected Inflation Rate"
-              value={inflationRate}
-              onChange={setInflationRate}
-              type="percent"
-            />
-            <div className="md:col-span-2 flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={adjustForInflation}
-                onClick={() => setAdjustForInflation(!adjustForInflation)}
-                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-transparent ${
-                  adjustForInflation ? 'bg-primary' : 'bg-foreground-muted/30'
-                }`}
-              >
-                <span
-                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
-                    adjustForInflation ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-              <div>
-                <span className="text-sm font-medium text-foreground">Adjust for Inflation</span>
-                <p className="text-xs text-foreground-muted">
-                  {adjustForInflation
-                    ? `Using real return rate: ${(((1 + expectedReturn / 100) / (1 + inflationRate / 100) - 1) * 100).toFixed(2)}%`
-                    : `Using nominal return rate: ${expectedReturn.toFixed(2)}%`}
-                </p>
-              </div>
-            </div>
           </div>
         </section>
+      )}
+
+      {/* Assumptions */}
+      {!isLoading && (
+        <AssumptionsPanel
+          assumptions={assumptions}
+          onChange={patchAssumptions}
+          fixedReturnPct={expectedReturn}
+        />
       )}
 
       {/* Save / Load Configurations */}
@@ -1019,245 +939,16 @@ export default function FireCalculatorPage() {
           )}
         </section>
       )}
-    </div>
-  );
-}
 
-/* ------------------------------------------------------------------ */
-/* Sub-components                                                      */
-/* ------------------------------------------------------------------ */
-
-interface InputFieldProps {
-  label: string;
-  value: number;
-  onChange: (val: number) => void;
-  type: 'number' | 'currency' | 'percent';
-  suffix?: string;
-}
-
-function InputField({ label, value, onChange, type, suffix }: InputFieldProps) {
-  const prefix = type === 'currency' ? '$' : undefined;
-  const sfx = type === 'percent' ? '%' : suffix;
-
-  return (
-    <div>
-      <label className="block text-sm font-medium text-foreground-muted mb-1">{label}</label>
-      <div className="relative">
-        {prefix && (
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted text-sm pointer-events-none">
-            {prefix}
-          </span>
-        )}
-        <input
-          type="number"
-          value={value}
-          onChange={e => onChange(parseFloat(e.target.value) || 0)}
-          step={type === 'percent' ? 0.1 : type === 'currency' ? 1000 : 1}
-          className={`w-full bg-input-bg border border-border rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
-            prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
-          }${prefix && sfx ? ' pr-10' : ''}`}
-        />
-        {sfx && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted text-sm pointer-events-none">
-            {sfx}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Data-driven input with inline override                              */
-/* ------------------------------------------------------------------ */
-
-interface DataDrivenInputFieldProps {
-  label: string;
-  field: string;
-  ddv: DataDrivenValue;
-  fallback: number;
-  type: 'currency' | 'percent';
-  editingField: string | null;
-  editingValue: string;
-  onStartEdit: (field: string, value: number) => void;
-  onEditChange: (value: string) => void;
-  onCommit: (field: string) => void;
-  onReset: (field: string) => void;
-}
-
-function DataDrivenInputField({
-  label,
-  field,
-  ddv,
-  fallback,
-  type,
-  editingField,
-  editingValue,
-  onStartEdit,
-  onEditChange,
-  onCommit,
-  onReset,
-}: DataDrivenInputFieldProps) {
-  const value = effectiveValue(ddv, fallback);
-  const source = sourceLabel(ddv);
-  const isEditing = editingField === field;
-  const prefix = type === 'currency' ? '$' : undefined;
-  const sfx = type === 'percent' ? '%' : undefined;
-
-  const sourceText = source === 'data' ? '(from your data)' : source === 'override' ? '(override)' : '';
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-1">
-        <label className="block text-sm font-medium text-foreground-muted">{label}</label>
-        {sourceText && (
-          <span className={`text-xs ${source === 'data' ? 'text-primary' : 'text-amber-400'}`}>
-            {sourceText}
-          </span>
-        )}
-        {source === 'override' && ddv.computed !== null && (
-          <button
-            type="button"
-            onClick={() => onReset(field)}
-            className="text-xs text-foreground-muted hover:text-rose-400 transition-colors"
-            title="Reset to computed value"
-          >
-            x
-          </button>
-        )}
-      </div>
-      {isEditing ? (
-        <div className="relative">
-          {prefix && (
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-muted text-sm pointer-events-none">
-              {prefix}
-            </span>
-          )}
-          <input
-            type="number"
-            value={editingValue}
-            onChange={e => onEditChange(e.target.value)}
-            onBlur={() => onCommit(field)}
-            onKeyDown={e => { if (e.key === 'Enter') onCommit(field); if (e.key === 'Escape') onCommit(field); }}
-            autoFocus
-            step={type === 'percent' ? 0.1 : 1000}
-            className={`w-full bg-input-bg border border-primary rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
-              prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
-            }${prefix && sfx ? ' pr-10' : ''}`}
-          />
-          {sfx && (
-            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted text-sm pointer-events-none">
-              {sfx}
-            </span>
-          )}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => onStartEdit(field, value)}
-          className="w-full text-left bg-input-bg border border-border rounded-lg py-2 px-3 text-foreground text-sm hover:border-primary/50 transition-colors group flex items-center justify-between"
-        >
-          <span>
-            {type === 'currency' ? fmt.format(value) : `${value.toFixed(type === 'percent' ? 2 : 0)}%`}
-          </span>
-          <svg className="w-3.5 h-3.5 text-foreground-muted opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-          </svg>
-        </button>
+      {/* Methodology footnote */}
+      {!isLoading && (
+        <p className="text-xs text-foreground-muted">
+          Methodology: bootstrap Monte Carlo over annual S&amp;P 500 total returns, 10-year Treasury
+          returns, and CPI inflation, 1928–2024 (NYU Stern / Damodaran dataset). Withdrawals are
+          taken at the start of each retirement year{assumptions.retirementTaxRatePct > 0 ? `, grossed up for a ${assumptions.retirementTaxRatePct}% tax rate` : ''};
+          contributions are invested at year end. Past performance does not guarantee future results.
+        </p>
       )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Result Card                                                         */
-/* ------------------------------------------------------------------ */
-
-interface ResultCardProps {
-  label: string;
-  value: string;
-  sublabel: string;
-  color: 'primary' | 'emerald' | 'purple' | 'amber';
-  progress?: number;
-}
-
-function ResultCard({ label, value, sublabel, color, progress }: ResultCardProps) {
-  const backgrounds: Record<string, string> = {
-    primary: 'bg-primary/10',
-    emerald: 'bg-primary/10',
-    purple: 'bg-purple-500/10',
-    amber: 'bg-amber-500/10',
-  };
-  const accents: Record<string, string> = {
-    primary: 'text-primary',
-    emerald: 'text-primary',
-    purple: 'text-purple-400',
-    amber: 'text-amber-400',
-  };
-  const bars: Record<string, string> = {
-    primary: 'bg-primary',
-    emerald: 'bg-primary',
-    purple: 'bg-purple-500',
-    amber: 'bg-amber-500',
-  };
-
-  return (
-    <div className={`${backgrounds[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
-      <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${accents[color]}`}>{value}</p>
-      <p className="text-xs text-foreground-muted mt-1">{sublabel}</p>
-      {progress !== undefined && (
-        <div className="mt-3 h-2 bg-foreground-muted/20 rounded-full overflow-hidden">
-          <div
-            className={`h-full ${bars[color]} rounded-full transition-all duration-500`}
-            style={{ width: `${Math.min(progress, 100)}%` }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Saved Config Card                                                   */
-/* ------------------------------------------------------------------ */
-
-interface SavedCardProps {
-  config: FireConfig;
-  onLoad: (config: FireConfig) => void;
-  onDelete: (id: number) => void;
-  isDeleting: boolean;
-}
-
-function SavedConfigCard({ config, onLoad, onDelete, isDeleting }: SavedCardProps) {
-  return (
-    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center justify-between gap-4 hover:border-primary/30 transition-colors">
-      <button
-        type="button"
-        onClick={() => onLoad(config)}
-        className="flex-1 text-left min-w-0"
-      >
-        <h3 className="text-sm font-semibold text-foreground truncate">{config.name}</h3>
-        <div className="flex items-center gap-3 mt-1 text-xs text-foreground-muted">
-          {config.config.safeWithdrawalRate !== undefined && (
-            <span>SWR: {config.config.safeWithdrawalRate}%</span>
-          )}
-          {config.config.currentAge !== undefined && (
-            <span>Age: {config.config.currentAge}</span>
-          )}
-        </div>
-      </button>
-      <button
-        type="button"
-        onClick={() => onDelete(config.id)}
-        disabled={isDeleting}
-        className="shrink-0 p-1.5 text-foreground-muted hover:text-rose-400 transition-colors disabled:opacity-50"
-        title="Delete saved configuration"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-        </svg>
-      </button>
     </div>
   );
 }
