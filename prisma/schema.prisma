@@ -539,6 +539,7 @@ model gnucash_web_account_preferences {
   lot_assignment_method   String?  @db.VarChar(20) // 'fifo', 'lifo', 'average'
   is_retirement           Boolean  @default(false)
   retirement_account_type String?  @db.VarChar(20)
+  tax_related             Boolean  @default(false)
 
   @@map("gnucash_web_account_preferences")
 }
