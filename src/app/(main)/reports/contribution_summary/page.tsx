@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import Link from 'next/link';
 import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters, ContributionSummaryData } from '@/lib/reports/types';
 import { ContributionTable } from '@/components/reports/ContributionTable';
@@ -93,6 +94,12 @@ function ContributionSummaryContent() {
                         Tax Year
                     </button>
                 </div>
+                <Link
+                    href="/tools/tax-estimator"
+                    className="ml-auto text-sm text-primary hover:text-primary-hover transition-colors"
+                >
+                    Map accounts for taxes →
+                </Link>
             </div>
 
             <ReportViewer

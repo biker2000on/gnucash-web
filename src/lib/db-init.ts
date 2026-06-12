@@ -683,6 +683,17 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON gnucash_web_account_tags(tag_id);
     `;
 
+    // Tax estimator: account -> tax category mappings
+    const taxMappingsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_tax_mappings (
+            account_guid VARCHAR(32) PRIMARY KEY,
+            tax_category VARCHAR(40) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_tax_mappings_category ON gnucash_web_tax_mappings(tax_category);
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -736,6 +747,7 @@ async function createExtensionTables() {
         await query(categoryMappingsTableDDL);
         await query(importBatchesTableDDL);
         await query(tagsTableDDL);
+        await query(taxMappingsTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

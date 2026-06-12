@@ -83,7 +83,9 @@ Items deferred from plan reviews for future implementation.
 
 ---
 
-## P1 - Tax Estimator (Federal + State)
+## P1 - Tax Estimator (Federal + State) — ✅ SHIPPED 2026-06-12
+
+Shipped at `/tools/tax-estimator`: federal engine (2024-2026, all five filing statuses, LTCG stacking, NIIT, Additional Medicare, SE tax, OBBBA SALT cap + senior deduction, safe-harbor 1040-ES schedule), pluggable state modules (9 no-tax states, 10 flat states, CA + NY brackets, flat-rate fallback), account→tax-category mapper with auto-suggestions (`gnucash_web_tax_mappings`), book-data aggregation with annualize toggle, and contribution scenario modeling validated against IRS limits.
 
 **What:** A tax estimation tool that computes federal and state income tax liability (and quarterly estimated payments) from actual book data. Reads income, deductions, capital gains, retirement contributions, and withholding from GnuCash accounts, applies current tax brackets and rules, and produces: (1) projected annual tax liability, (2) quarterly estimated payment schedule (1040-ES / state equivalent), (3) comparison of withheld vs. owed, (4) marginal and effective tax rate breakdown.
 

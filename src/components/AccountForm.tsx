@@ -536,6 +536,61 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                 Placeholder accounts are used for organization and cannot hold transactions directly.
             </p>
 
+            {/* Tax & retirement flags */}
+            <div className="space-y-3 border-t border-border pt-4">
+                <div className="flex flex-wrap gap-6">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={formData.tax_related}
+                            onChange={e => setFormData(prev => ({ ...prev, tax_related: e.target.checked }))}
+                            className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
+                        />
+                        <span className="text-sm text-foreground-secondary">Tax related</span>
+                    </label>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={formData.is_retirement}
+                            onChange={e => setFormData(prev => ({
+                                ...prev,
+                                is_retirement: e.target.checked,
+                                retirement_account_type: e.target.checked ? prev.retirement_account_type : null,
+                            }))}
+                            className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
+                        />
+                        <span className="text-sm text-foreground-secondary">Retirement account</span>
+                    </label>
+
+                    {formData.is_retirement && (
+                        <select
+                            value={formData.retirement_account_type ?? ''}
+                            onChange={e => setFormData(prev => ({
+                                ...prev,
+                                retirement_account_type: e.target.value || null,
+                            }))}
+                            className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                        >
+                            <option value="">Select type...</option>
+                            <option value="401k">401(k)</option>
+                            <option value="403b">403(b)</option>
+                            <option value="457">457</option>
+                            <option value="traditional_ira">Traditional IRA</option>
+                            <option value="roth_ira">Roth IRA</option>
+                            <option value="hsa">HSA</option>
+                            <option value="hra">HRA</option>
+                            <option value="fsa">FSA</option>
+                            <option value="brokerage">Brokerage (taxable)</option>
+                        </select>
+                    )}
+                </div>
+                <p className="text-xs text-foreground-muted">
+                    Retirement flags drive the Contribution Summary report, IRS limit tracking,
+                    and the Tax Estimator. Flag the top-level account; children inherit it.
+                </p>
+            </div>
+
             {/* Actions */}
             <div className="flex flex-col-reverse sm:flex-row sm:justify-between sm:items-center gap-3 pt-4 border-t border-border">
                 <span className="hidden sm:inline text-xs text-foreground-muted">

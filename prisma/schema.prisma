@@ -555,6 +555,16 @@ model gnucash_web_contribution_tax_year {
   @@map("gnucash_web_contribution_tax_year")
 }
 
+model gnucash_web_tax_mappings {
+  account_guid String   @id @db.VarChar(32)
+  tax_category String   @db.VarChar(40)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @default(now())
+
+  @@index([tax_category])
+  @@map("gnucash_web_tax_mappings")
+}
+
 model gnucash_web_transaction_types {
   split_guid        String @id @db.VarChar(32)  // keyed by the account's split in the transaction
   transaction_type  String @db.VarChar(30)       // 'buy', 'sell', 'dividend', 'stock_split', 'return_of_capital', 'reinvested_dividend', 'other'

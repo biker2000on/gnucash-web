@@ -24,6 +24,14 @@ function ToolIcon({ icon }: { icon: string }) {
                     <circle cx="12" cy="14" r="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} />
                 </svg>
             );
+        case 'percent':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 5L5 19" />
+                    <circle cx="7.5" cy="7.5" r="2.5" strokeWidth={1.5} />
+                    <circle cx="16.5" cy="16.5" r="2.5" strokeWidth={1.5} />
+                </svg>
+            );
         case 'building':
             return (
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -89,6 +97,12 @@ export default function ToolsPage() {
             description: 'Estimate payoff timeline with extra payments or calculate the payment needed for a target date.',
             icon: 'calendar',
             href: '/tools/mortgage#payoff',
+        },
+        {
+            title: 'Tax Estimator',
+            description: 'Estimate federal and state taxes from your book data, with contribution scenarios and IRS limit tracking.',
+            icon: 'percent',
+            href: '/tools/tax-estimator',
         },
         {
             title: 'Asset Analysis',
