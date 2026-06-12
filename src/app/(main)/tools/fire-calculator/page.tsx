@@ -12,6 +12,11 @@ import {
 import { meanStockReturn, meanBondReturn, meanInflation } from '@/lib/fire/historical-returns';
 import { DEFAULT_ASSUMPTIONS, mergeAssumptions, type FireAssumptions } from '@/lib/fire/assumptions';
 import {
+  estimateSocialSecurityBenefit,
+  type EarningsRecord,
+  type SocialSecurityEstimate,
+} from '@/lib/fire/social-security';
+import {
   fmt,
   fmtPct,
   effectiveValue,
@@ -69,6 +74,18 @@ export default function FireCalculatorPage() {
   const [currentAge, setCurrentAge] = useState(30);
   const [targetRetirementAge, setTargetRetirementAge] = useState(55);
   const [safeWithdrawalRate, setSafeWithdrawalRate] = useState(4);
+
+  // ---- Social Security estimate from book earnings history ----
+  const [ssaState, setSsaState] = useState<LoadingState>('loading');
+  const [ssaData, setSsaData] = useState<{
+    available: boolean;
+    birthYear: number | null;
+    earningsYears: EarningsRecord[];
+    yearsWithEarnings: number;
+    source: 'mappings' | 'heuristic' | null;
+    assumedFutureEarnings: number | null;
+  } | null>(null);
+  const [ssBenefitOverride, setSsBenefitOverride] = useState<number | null>(null);
 
   // ---- Monte Carlo assumptions ----
   const [assumptions, setAssumptions] = useState<FireAssumptions>(DEFAULT_ASSUMPTIONS);
@@ -250,6 +267,59 @@ export default function FireCalculatorPage() {
   }, []);
 
   /* ---------------------------------------------------------------- */
+  /* Fetch Social Security earnings history on mount                   */
+  /* ---------------------------------------------------------------- */
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchSsa() {
+      setSsaState('loading');
+      try {
+        const res = await fetch('/api/fire/social-security');
+        if (!res.ok) throw new Error('Social Security fetch failed');
+        const data = await res.json();
+        if (cancelled) return;
+        setSsaData({
+          available: !!data.available,
+          birthYear: data.birthYear ?? null,
+          earningsYears: data.earningsYears ?? [],
+          yearsWithEarnings: data.yearsWithEarnings ?? 0,
+          source: data.source ?? null,
+          assumedFutureEarnings: data.assumedFutureEarnings ?? null,
+        });
+        setSsaState(data.available ? 'loaded' : 'empty');
+      } catch {
+        if (!cancelled) setSsaState('error');
+      }
+    }
+    fetchSsa();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Recompute benefits per claiming age locally — the engine is pure, so
+  // changing the claiming age never needs another round-trip.
+  const ssaEstimates = useMemo<Record<number, SocialSecurityEstimate> | null>(() => {
+    if (!ssaData?.available || ssaData.birthYear === null) return null;
+    const map: Record<number, SocialSecurityEstimate> = {};
+    for (let age = 62; age <= 70; age++) {
+      map[age] = estimateSocialSecurityBenefit({
+        earnings: ssaData.earningsYears,
+        birthYear: ssaData.birthYear,
+        claimingAge: age,
+        projectFutureEarnings: true,
+      });
+    }
+    return map;
+  }, [ssaData]);
+
+  const ssClaimingAge = Math.min(70, Math.max(62, Math.round(assumptions.socialSecurityStartAge)));
+  const ssBenefitDDV: DataDrivenValue = {
+    computed: ssaEstimates?.[ssClaimingAge]?.monthlyBenefit ?? null,
+    override: ssBenefitOverride,
+  };
+  const ssMonthlyBenefit = effectiveValue(ssBenefitDDV, assumptions.socialSecurityMonthlyBenefit);
+
+  /* ---------------------------------------------------------------- */
   /* Fetch saved configs on mount                                      */
   /* ---------------------------------------------------------------- */
 
@@ -286,6 +356,7 @@ export default function FireCalculatorPage() {
           annualSavings: annualSavingsDDV.override,
           annualExpenses: annualExpensesDDV.override,
           expectedReturn: expectedReturnDDV.override,
+          socialSecurityMonthlyBenefit: ssBenefitOverride,
         },
         currentAge,
         targetRetirementAge,
@@ -366,6 +437,7 @@ export default function FireCalculatorPage() {
       setAnnualSavingsDDV(prev => ({ ...prev, override: c.overrides?.annualSavings ?? null }));
       setAnnualExpensesDDV(prev => ({ ...prev, override: c.overrides?.annualExpenses ?? null }));
       setExpectedReturnDDV(prev => ({ ...prev, override: c.overrides?.expectedReturn ?? null }));
+      setSsBenefitOverride(c.overrides?.socialSecurityMonthlyBenefit ?? null);
     }
   };
 
@@ -428,6 +500,9 @@ export default function FireCalculatorPage() {
         case 'expectedReturn':
           setExpectedReturnDDV(prev => ({ ...prev, override: val }));
           break;
+        case 'socialSecurityMonthlyBenefit':
+          setSsBenefitOverride(Math.max(0, val));
+          break;
       }
     }
     setEditingField(null);
@@ -446,6 +521,9 @@ export default function FireCalculatorPage() {
         break;
       case 'expectedReturn':
         setExpectedReturnDDV(prev => ({ ...prev, override: null }));
+        break;
+      case 'socialSecurityMonthlyBenefit':
+        setSsBenefitOverride(null);
         break;
     }
   };
@@ -474,12 +552,13 @@ export default function FireCalculatorPage() {
     withdrawalStrategy: assumptions.withdrawalStrategy,
     retirementTaxRatePct: assumptions.retirementTaxRatePct,
     socialSecurity: assumptions.socialSecurityEnabled
-      ? { startAge: assumptions.socialSecurityStartAge, annualBenefit: assumptions.socialSecurityMonthlyBenefit * 12 }
+      ? { startAge: assumptions.socialSecurityStartAge, annualBenefit: ssMonthlyBenefit * 12 }
       : null,
     healthcarePre65Annual: assumptions.healthcarePre65Annual,
   }), [
     currentSavings, annualSavings, annualExpenses, expectedReturn,
     safeWithdrawalRate, currentAge, targetRetirementAge, assumptions,
+    ssMonthlyBenefit,
   ]);
 
   // Debounce by serialized inputs so rapid slider/typing changes coalesce.
@@ -880,6 +959,20 @@ export default function FireCalculatorPage() {
           assumptions={assumptions}
           onChange={patchAssumptions}
           fixedReturnPct={expectedReturn}
+          ssa={{
+            state: ssaState,
+            estimates: ssaEstimates,
+            yearsWithEarnings: ssaData?.yearsWithEarnings ?? 0,
+            source: ssaData?.source ?? null,
+            assumedFutureEarnings: ssaData?.assumedFutureEarnings ?? null,
+            ddv: ssBenefitDDV,
+          }}
+          editingField={editingField}
+          editingValue={editingValue}
+          onStartEdit={startEditing}
+          onEditChange={setEditingValue}
+          onCommit={commitEdit}
+          onReset={resetOverride}
         />
       )}
 
