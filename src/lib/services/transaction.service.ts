@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, toDecimal } from '@/lib/gnucash';
+import { recordImpliedPrices } from '@/lib/services/implied-price.service';
 import { Prisma } from '@prisma/client';
 
 // Validation schemas - using num/denom format for API compatibility
@@ -117,6 +118,14 @@ export class TransactionService {
       });
     });
 
+    // Record implied prices from investment splits (best-effort, like
+    // GnuCash desktop's split-register price quotes)
+    await recordImpliedPrices({
+      currency_guid: data.currency_guid,
+      post_date: data.post_date,
+      splits: data.splits,
+    });
+
     return transaction;
   }
 
@@ -194,6 +203,12 @@ export class TransactionService {
           },
         },
       });
+    });
+
+    await recordImpliedPrices({
+      currency_guid: data.currency_guid,
+      post_date: data.post_date,
+      splits: data.splits,
     });
 
     return transaction;

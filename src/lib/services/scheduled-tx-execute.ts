@@ -115,7 +115,11 @@ export async function executeOccurrence(
         VALUES (${transactionGuid}, ${currencyGuid}, '', ${postDate}, ${enterDate}, ${sx.name})
       `;
 
-      // Create splits
+      // Create splits.
+      // Note: no implied-price recording here (unlike TransactionService) —
+      // template splits always carry quantity == value (dollar terms), so an
+      // implied price would always be a meaningless 1.0. Same applies to the
+      // SimpleFin sync path, which lacks share quantities (Phase 1).
       for (const split of splits) {
         const splitGuid = generateGuid();
         const { num, denom } = fromDecimal(split.amount);
