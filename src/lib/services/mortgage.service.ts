@@ -94,8 +94,11 @@ export class MortgageService {
       }
 
       if (split.account_guid === mortgageAccountGuid) {
-        // Principal payment reduces the liability (positive value = paying down)
-        entry.principal += Math.abs(value);
+        // Principal: keep the sign. Positive (debit) = paying down the liability;
+        // negative (credit) = balance increase (opening balance, escrow
+        // disbursement charged to the loan, etc.). Taking Math.abs here would
+        // turn a disbursement into a fake paydown and corrupt balance tracking.
+        entry.principal += value;
       } else if (split.account_guid === interestAccountGuid) {
         // Interest expense
         entry.interest += Math.abs(value);
@@ -383,7 +386,7 @@ export class MortgageService {
     // originalAmount (within 10%), which is not a regular monthly payment.
     const regularPayments = payments.filter(
       (p) => p.principal > 0 && p.interest > 0 &&
-        Math.abs(p.principal - originalAmount) / originalAmount > 0.1
+        Math.abs(Math.abs(p.principal) - originalAmount) / originalAmount > 0.1
     );
 
     // Estimate total payments (assume 30-year mortgage if we can't determine)
@@ -498,9 +501,11 @@ export class MortgageService {
       }
     }
 
-    // Build payment history excluding the opening balance transaction
+    // Build payment history excluding the opening balance transaction.
+    // Principal is signed, so compare magnitudes (the opening balance is a
+    // large negative posting roughly equal to the original amount).
     const paymentHistory = payments.filter(
-      (p) => Math.abs(p.principal - originalAmount) / originalAmount > 0.1
+      (p) => Math.abs(Math.abs(p.principal) - originalAmount) / originalAmount > 0.1
     );
 
     return {

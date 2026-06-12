@@ -3,10 +3,15 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { AmortizationTable } from '@/components/mortgage/AmortizationTable';
-import type { AmortizationRow } from '@/components/mortgage/AmortizationTable';
 import { PayoffComparison } from '@/components/mortgage/PayoffComparison';
 import { MortgageAutoDetect } from '@/components/mortgage/MortgageAutoDetect';
 import type { AutoDetectResult, ActualPayment } from '@/components/mortgage/MortgageAutoDetect';
+import {
+  calcMonthlyPayment,
+  buildAmortizationSchedule,
+  buildHybridSchedule,
+  totalInterestFromSchedule,
+} from '@/lib/mortgage-schedule';
 
 /* ------------------------------------------------------------------ */
 /* Formatters                                                          */
@@ -34,139 +39,6 @@ interface MortgageConfig {
   };
   created_at: string;
   updated_at: string;
-}
-
-/* ------------------------------------------------------------------ */
-/* Mortgage math helpers                                                */
-/* ------------------------------------------------------------------ */
-
-function calcMonthlyPayment(principal: number, monthlyRate: number, totalMonths: number): number {
-  if (principal <= 0 || totalMonths <= 0) return 0;
-  if (monthlyRate === 0) return principal / totalMonths;
-  return principal * (monthlyRate * Math.pow(1 + monthlyRate, totalMonths)) / (Math.pow(1 + monthlyRate, totalMonths) - 1);
-}
-
-function buildAmortizationSchedule(
-  principal: number,
-  monthlyRate: number,
-  totalMonths: number,
-  extraPayment: number,
-): AmortizationRow[] {
-  const basePayment = calcMonthlyPayment(principal, monthlyRate, totalMonths);
-  if (basePayment <= 0 || principal <= 0) return [];
-
-  const rows: AmortizationRow[] = [];
-  let balance = principal;
-
-  for (let month = 1; balance > 0; month++) {
-    const interest = balance * monthlyRate;
-    let principalPortion = basePayment - interest + extraPayment;
-
-    // Final month adjustment
-    if (principalPortion > balance) {
-      principalPortion = balance;
-    }
-
-    const actualExtra = Math.min(extraPayment, Math.max(0, balance - (basePayment - interest)));
-    const actualPrincipal = principalPortion - actualExtra;
-
-    balance = Math.max(0, balance - principalPortion);
-
-    rows.push({
-      month,
-      payment: actualPrincipal + interest + actualExtra,
-      principal: actualPrincipal,
-      interest,
-      extra: actualExtra,
-      balance,
-    });
-
-    // Safety: prevent runaway loops
-    if (month > 1200) break;
-  }
-
-  return rows;
-}
-
-function totalInterestFromSchedule(schedule: AmortizationRow[]): number {
-  return schedule.reduce((sum, r) => sum + r.interest, 0);
-}
-
-/**
- * Build a hybrid amortization schedule:
- * - Actual payments from GnuCash history (marked actual=true, with dates)
- * - Projected future payments from current balance forward (marked actual=false)
- */
-function buildHybridSchedule(
-  actualPayments: ActualPayment[],
-  originalAmount: number,
-  monthlyRate: number,
-  totalMonths: number,
-  extraPayment: number,
-  currentBalance: number | null,
-): AmortizationRow[] {
-  const rows: AmortizationRow[] = [];
-
-  // Phase 1: Actual payments from history
-  let balance = originalAmount;
-  for (let i = 0; i < actualPayments.length; i++) {
-    const p = actualPayments[i];
-    balance = Math.max(0, balance - p.principal);
-    rows.push({
-      month: i + 1,
-      date: new Date(p.date).toISOString().slice(0, 10),
-      payment: p.total,
-      principal: p.principal,
-      interest: p.interest,
-      extra: 0,
-      balance,
-      actual: true,
-    });
-  }
-
-  // Phase 2: Project future payments from current balance
-  // Use the actual current balance if available (more accurate than computed)
-  const projectionBalance = currentBalance != null ? Math.abs(currentBalance) : balance;
-  if (projectionBalance <= 0 || monthlyRate <= 0) return rows;
-
-  const remainingMonths = totalMonths - actualPayments.length;
-  if (remainingMonths <= 0) return rows;
-
-  const basePayment = calcMonthlyPayment(projectionBalance, monthlyRate, remainingMonths);
-  if (basePayment <= 0) return rows;
-
-  let bal = projectionBalance;
-  const lastActualDate = actualPayments.length > 0
-    ? new Date(actualPayments[actualPayments.length - 1].date)
-    : new Date();
-
-  for (let m = 1; bal > 0; m++) {
-    const interest = bal * monthlyRate;
-    let principalPortion = basePayment - interest + extraPayment;
-    if (principalPortion > bal) principalPortion = bal;
-
-    const actualExtra = Math.min(extraPayment, Math.max(0, bal - (basePayment - interest)));
-    const actualPrincipal = principalPortion - actualExtra;
-    bal = Math.max(0, bal - principalPortion);
-
-    const projDate = new Date(lastActualDate);
-    projDate.setMonth(projDate.getMonth() + m);
-
-    rows.push({
-      month: actualPayments.length + m,
-      date: projDate.toISOString().slice(0, 10),
-      payment: actualPrincipal + interest + actualExtra,
-      principal: actualPrincipal,
-      interest,
-      extra: actualExtra,
-      balance: bal,
-      actual: false,
-    });
-
-    if (m > 1200) break;
-  }
-
-  return rows;
 }
 
 /* ------------------------------------------------------------------ */
@@ -608,12 +480,18 @@ export default function MortgageCalculatorPage() {
     const newInterest = totalInterestFromSchedule(scheduleAccelerated);
     const interestSaved = originalInterest - newInterest;
 
-    // Compute payoff dates
+    // Compute payoff dates. When the schedule carries real dates (hybrid mode),
+    // use the last row's date so the payoff estimate follows the actual balance
+    // trajectory; otherwise fall back to start date + month count.
     const start = startDate ? new Date(startDate + 'T00:00:00') : new Date();
-    const originalPayoffDate = new Date(start);
-    originalPayoffDate.setMonth(originalPayoffDate.getMonth() + originalMonths);
-    const newPayoffDate = new Date(start);
-    newPayoffDate.setMonth(newPayoffDate.getMonth() + newMonths);
+    const lastOriginal = scheduleOriginal[scheduleOriginal.length - 1];
+    const lastAccelerated = scheduleAccelerated[scheduleAccelerated.length - 1];
+    const originalPayoffDate = lastOriginal?.date
+      ? new Date(lastOriginal.date + 'T00:00:00')
+      : (() => { const d = new Date(start); d.setMonth(d.getMonth() + originalMonths); return d; })();
+    const newPayoffDate = lastAccelerated?.date
+      ? new Date(lastAccelerated.date + 'T00:00:00')
+      : (() => { const d = new Date(start); d.setMonth(d.getMonth() + newMonths); return d; })();
 
     return {
       scheduleOriginal,

@@ -219,6 +219,25 @@ describe('MortgageService.separateSplits', () => {
     expect(result[0].total).toBe(1250);
   });
 
+  it('keeps the sign of liability splits (escrow disbursement is not a paydown)', () => {
+    const splits = [
+      // Regular payment: $500 principal paydown (debit, positive)
+      makeSplit('tx-1', MORTGAGE_GUID, 50000, 100, new Date('2026-03-02')),
+      // Escrow disbursement charged to the loan: -$2107 (credit, increases balance)
+      makeSplit('tx-2', MORTGAGE_GUID, -210700, 100, new Date('2026-04-02')),
+    ];
+
+    const result = MortgageService.separateSplits(
+      splits,
+      MORTGAGE_GUID,
+      INTEREST_GUID
+    );
+
+    expect(result).toHaveLength(2);
+    expect(result[0].principal).toBe(500);
+    expect(result[1].principal).toBe(-2107);
+  });
+
   it('T9: returns empty array when no interest splits', () => {
     const splits = [
       // Only bank splits, no mortgage or interest
@@ -303,5 +322,9 @@ describe('MortgageService.detectMortgageDetails', () => {
     expect(result.paymentsAnalyzed).toBe(13); // 12 regular + 1 opening balance
     expect(result.confidence).toBe('high');
     expect(result.warnings).not.toContain('Insufficient data');
+
+    // paymentHistory excludes the (negative) opening balance transaction
+    expect(result.paymentHistory).toHaveLength(12);
+    expect(result.paymentHistory.every((p) => p.principal > 0 && p.principal < 1000)).toBe(true);
   });
 });
