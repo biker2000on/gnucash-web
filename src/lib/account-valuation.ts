@@ -60,6 +60,7 @@ async function loadLatestPricePairs(commodityGuids: string[], asOfDate: Date): P
     WHERE p.date <= ${asOfDate}
       AND p.commodity_guid = ANY(${uniqueGuids}::text[])
       AND p.currency_guid = ANY(${uniqueGuids}::text[])
+      AND p.value_num > 0
     ORDER BY p.commodity_guid, p.currency_guid, p.date DESC
   `;
 

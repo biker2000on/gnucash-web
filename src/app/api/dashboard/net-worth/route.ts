@@ -148,6 +148,8 @@ export async function GET(request: NextRequest) {
                 commodity_guid: {
                     in: investmentCommodityGuids,
                 },
+                // Skip implied $0 prices from zero-value transfer transactions
+                value_num: { gt: 0 },
             },
             select: {
                 commodity_guid: true,

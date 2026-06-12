@@ -47,9 +47,13 @@ export async function getLatestPrice(
         commodity_guid: string;
         date: { lte: Date };
         currency_guid?: string;
+        value_num: { gt: number };
     } = {
         commodity_guid: commodityGuid,
         date: { lte: date },
+        // GnuCash's split register records implied $0 prices for zero-value
+        // transfer transactions; never value holdings with them.
+        value_num: { gt: 0 },
     };
 
     if (currencyGuid) {

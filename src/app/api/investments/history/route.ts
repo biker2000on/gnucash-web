@@ -124,11 +124,15 @@ export async function GET(request: NextRequest) {
     // Get all unique commodity GUIDs
     const commodityGuids = [...new Set(filteredAccounts.map(a => a.commodity_guid).filter(Boolean))];
 
-    // Fetch all prices in date range for these commodities
+    // Fetch all prices in date range for these commodities. Exclude
+    // non-positive prices: GnuCash's split register records an implied
+    // $0 price for zero-value transfers, which would zero out a holding
+    // for the day (forward-fill picks it up) and show a false cliff.
     const prices = await prisma.prices.findMany({
       where: {
         commodity_guid: { in: commodityGuids as string[] },
         date: { gte: startDate },
+        value_num: { gt: 0 },
       },
       orderBy: { date: 'asc' },
       select: {
@@ -148,6 +152,7 @@ export async function GET(request: NextRequest) {
           where: {
             commodity_guid: commodityGuid as string,
             date: { lt: startDate },
+            value_num: { gt: 0 },
           },
           orderBy: { date: 'desc' },
           select: { value_num: true, value_denom: true },
