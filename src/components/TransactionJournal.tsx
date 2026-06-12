@@ -15,6 +15,9 @@ import { MobileCard } from './ui/MobileCard';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
 import { toLocalDateString } from '@/lib/datePresets';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
+import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
+import TagChip from '@/components/tags/TagChip';
+import type { Tag } from '@/lib/tags';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -38,13 +41,14 @@ interface TransactionJournalProps {
     initialTransactions: Transaction[];
     startDate?: string | null;
     endDate?: string | null;
+    initialSearch?: string;
 }
 
 interface JournalTransaction extends Transaction {
     receipt_count?: number;
 }
 
-export default function TransactionJournal({ initialTransactions, startDate, endDate }: TransactionJournalProps) {
+export default function TransactionJournal({ initialTransactions, startDate, endDate, initialSearch }: TransactionJournalProps) {
     const router = useRouter();
     const { success, error } = useToast();
     const isMobile = useIsMobile();
@@ -52,7 +56,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
-    const [filterText, setFilterText] = useState('');
+    const [filterText, setFilterText] = useState(initialSearch || '');
     const [debouncedFilter, setDebouncedFilter] = useState('');
     const loader = useRef<HTMLDivElement>(null);
     const filterInputRef = useRef<HTMLInputElement>(null);
@@ -65,6 +69,13 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tx: Transaction; accountGuid?: string } | null>(null);
+
+    // Tag editor state
+    const [tagEditorGuid, setTagEditorGuid] = useState<string | null>(null);
+
+    const handleTagsSaved = useCallback((guid: string, tags: Tag[]) => {
+        setTransactions(prev => prev.map(tx => (tx.guid === guid ? { ...tx, tags } : tx)));
+    }, []);
 
     // Listen for global 'n' key shortcut to open new transaction
     useEffect(() => {
@@ -395,6 +406,11 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 label: 'Duplicate',
                 onSelect: () => { void handleDuplicate(guid); },
             },
+            {
+                id: 'tags',
+                label: 'Tags…',
+                onSelect: () => setTagEditorGuid(guid),
+            },
             ...(accountGuid ? [{
                 id: 'view-account',
                 label: 'View in account',
@@ -572,7 +588,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         <input
                             ref={filterInputRef}
                             type="text"
-                            placeholder="Search... (press / to focus)"
+                            placeholder="Search or #tag... (press / to focus)"
                             className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                             value={filterText}
                             onChange={(e) => setFilterText(e.target.value)}
@@ -667,6 +683,19 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-4 py-2 text-sm text-foreground align-middle max-w-xs leading-tight">
                                             <div className="font-medium">{tx.description}</div>
                                             {tx.num && <span className="text-xs text-foreground-muted">#{tx.num}</span>}
+                                            {tx.tags && tx.tags.length > 0 && (
+                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                    {tx.tags.map(tag => (
+                                                        <TagChip
+                                                            key={tag.id}
+                                                            name={tag.name}
+                                                            color={tag.color}
+                                                            onClick={() => setFilterText(`#${tag.name}`)}
+                                                            title={`Filter by #${tag.name}`}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-1 py-1 align-middle" onClick={(e) => e.stopPropagation()}>
                                             <ReceiptIndicator
@@ -794,6 +823,14 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 y={contextMenu?.y ?? 0}
                 items={contextMenuItems}
                 onClose={() => setContextMenu(null)}
+            />
+
+            {/* Tag Editor Modal */}
+            <TransactionTagEditor
+                transactionGuid={tagEditorGuid}
+                isOpen={!!tagEditorGuid}
+                onClose={() => setTagEditorGuid(null)}
+                onSaved={handleTagsSaved}
             />
         </div>
     );

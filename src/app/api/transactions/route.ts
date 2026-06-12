@@ -11,6 +11,8 @@ import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
+import { parseSearchQuery } from '@/lib/tags';
+import { getTagsForTransactions } from '@/lib/services/tag.service';
 
 /**
  * @openapi
@@ -85,7 +87,9 @@ export async function GET(request: Request) {
         const { searchParams } = new URL(request.url);
         const limit = parseInt(searchParams.get('limit') || '100');
         const offset = parseInt(searchParams.get('offset') || '0');
-        const search = searchParams.get('search') || '';
+        // '#tag' tokens in the search act as tag filters (AND semantics);
+        // remaining text is the normal description/num/account search.
+        const { text: search, tags: tagFilters } = parseSearchQuery(searchParams.get('search') || '');
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
         const accountTypes = searchParams.get('accountTypes');
@@ -131,6 +135,18 @@ export async function GET(request: Request) {
                     },
                 },
             ];
+        }
+
+        // Tag filters: a transaction matches a tag when it carries the tag
+        // directly OR any of its splits' accounts carries it (account tags
+        // propagate to transactions). Multiple tags AND together.
+        if (tagFilters.length > 0) {
+            whereConditions.AND = tagFilters.map(name => ({
+                OR: [
+                    { tags: { some: { tag: { name } } } },
+                    { splits: { some: { account: { tags: { some: { tag: { name } } } } } } },
+                ],
+            }));
         }
 
         // Account type filter (merged with existing book scoping)
@@ -190,6 +206,9 @@ export async function GET(request: Request) {
             : [];
         const receiptCountMap = new Map(receiptCounts.map(r => [r.transaction_guid, Number(r.receipt_count)]));
 
+        // Fetch direct tags for the fetched transactions
+        const tagMap = await getTagsForTransactions(txGuids);
+
         // Post-filter for amount range and reconcile states if needed
         let filteredTransactions = transactions;
 
@@ -229,6 +248,7 @@ export async function GET(request: Request) {
             enter_date: tx.enter_date,
             description: tx.description,
             receipt_count: receiptCountMap.get(tx.guid) ?? 0,
+            tags: tagMap.get(tx.guid) ?? [],
             splits: tx.splits.map(split => ({
                 guid: split.guid,
                 tx_guid: split.tx_guid,

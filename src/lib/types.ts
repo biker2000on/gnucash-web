@@ -82,6 +82,13 @@ export interface Transaction {
     enter_date: Date;
     description: string;
     splits?: Split[];
+    tags?: TransactionTag[];
+}
+
+export interface TransactionTag {
+    id: number;
+    name: string;
+    color: string | null;
 }
 
 export interface Split {

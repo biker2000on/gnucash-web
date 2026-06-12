@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
+import type { Tag } from '@/lib/tags';
 
 const ACCOUNT_TYPES = [
     { value: 'ASSET', label: 'Asset', group: 'Assets' },
@@ -92,6 +95,23 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [saving, setSaving] = useState(false);
     const formRef = useRef<HTMLFormElement>(null);
+    const queryClient = useQueryClient();
+
+    // Tags (edit mode only -- new accounts don't have a guid yet)
+    const [tags, setTags] = useState<SelectedTag[]>([]);
+    const [tagsDirty, setTagsDirty] = useState(false);
+
+    useEffect(() => {
+        if (mode !== 'edit' || !accountGuid) return;
+        let cancelled = false;
+        fetch(`/api/accounts/${accountGuid}/tags`)
+            .then(res => (res.ok ? res.json() : []))
+            .then((data: Tag[]) => {
+                if (!cancelled) setTags(data.map(t => ({ name: t.name, color: t.color })));
+            })
+            .catch(() => { /* tags are optional; leave empty */ });
+        return () => { cancelled = true; };
+    }, [mode, accountGuid]);
 
     const isSecurityAccount = SECURITY_ACCOUNT_TYPES.has(formData.account_type);
 
@@ -241,6 +261,20 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
 
         try {
             await onSave(formData);
+
+            // Persist tags separately (edit mode only)
+            if (mode === 'edit' && accountGuid && tagsDirty) {
+                const res = await fetch(`/api/accounts/${accountGuid}/tags`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tags: tags.map(t => t.name) }),
+                });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => null);
+                    throw new Error(data?.error || 'Account saved, but updating tags failed');
+                }
+                queryClient.invalidateQueries({ queryKey: ['tags'] });
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to save account');
         } finally {
@@ -457,6 +491,23 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     placeholder="Optional description..."
                 />
             </div>
+
+            {/* Tags (edit mode only) */}
+            {mode === 'edit' && accountGuid && (
+                <div>
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                        Tags
+                    </label>
+                    <TagPicker
+                        selected={tags}
+                        onChange={(next) => { setTags(next); setTagsDirty(true); }}
+                        placeholder="Add tags (e.g. vacation, rental-property)..."
+                    />
+                    <p className="mt-1 text-xs text-foreground-muted">
+                        Account tags apply to all of the account&apos;s transactions when searching with #tag.
+                    </p>
+                </div>
+            )}
 
             {/* Flags */}
             <div className="flex gap-6">

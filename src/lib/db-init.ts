@@ -658,6 +658,31 @@ async function createExtensionTables() {
           ON gnucash_web_category_mappings (book_guid, source, keyword_normalized);
     `;
 
+    // Tagging tables: flat labels applied to accounts and transactions
+    const tagsTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_tags (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) UNIQUE NOT NULL,
+            color VARCHAR(20),
+            description TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_transaction_tags (
+            transaction_guid VARCHAR(32) NOT NULL,
+            tag_id INTEGER NOT NULL REFERENCES gnucash_web_tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (transaction_guid, tag_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_transaction_tags_tag ON gnucash_web_transaction_tags(tag_id);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_account_tags (
+            account_guid VARCHAR(32) NOT NULL,
+            tag_id INTEGER NOT NULL REFERENCES gnucash_web_tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (account_guid, tag_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_tags_tag ON gnucash_web_account_tags(tag_id);
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -710,6 +735,7 @@ async function createExtensionTables() {
         await query(amazonOrdersTableDDL);
         await query(categoryMappingsTableDDL);
         await query(importBatchesTableDDL);
+        await query(tagsTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

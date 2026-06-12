@@ -38,6 +38,9 @@ import LotBadge from './ledger/LotBadge';
 import LotAssignmentPopover from './ledger/LotAssignmentPopover';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
+import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
+import TagChip from '@/components/tags/TagChip';
+import type { Tag } from '@/lib/tags';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -1049,6 +1052,13 @@ export default function AccountLedger({
         setIsEditModalOpen(true);
     }, [transactions]);
 
+    // Tag editor state
+    const [tagEditorGuid, setTagEditorGuid] = useState<string | null>(null);
+
+    const handleTagsSaved = useCallback((guid: string, tags: Tag[]) => {
+        setTransactions(prev => prev.map(tx => (tx.guid === guid ? { ...tx, tags } : tx)));
+    }, []);
+
     const contextMenuItems = useMemo<TransactionContextMenuItem[]>(() => {
         if (!contextMenu) return [];
         const guid = contextMenu.tx.guid;
@@ -1075,6 +1085,11 @@ export default function AccountLedger({
                 id: 'duplicate',
                 label: 'Duplicate',
                 onSelect: () => { void handleDuplicate(guid); },
+            },
+            {
+                id: 'tags',
+                label: 'Tags…',
+                onSelect: () => setTagEditorGuid(guid),
             },
             {
                 id: 'copy-id',
@@ -1712,7 +1727,7 @@ export default function AccountLedger({
                         <input
                             ref={searchInputRef}
                             type="text"
-                            placeholder="Search... (press / to focus)"
+                            placeholder="Search or #tag... (press / to focus)"
                             className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
                             value={searchText}
                             onChange={(e) => setSearchText(e.target.value)}
@@ -2480,6 +2495,9 @@ export default function AccountLedger({
                                                                 <TransactionTypeIcon type={descInvRow.transactionType} className="mr-0.5" />
                                                             )}
                                                             <span className="font-medium">{tx.description}</span>
+                                                            {tx.tags && tx.tags.length > 0 && tx.tags.map(tag => (
+                                                                <TagChip key={tag.id} name={tag.name} color={tag.color} title={`#${tag.name}`} />
+                                                            ))}
                                                             {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
                                                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
                                                                     Imported
@@ -2827,6 +2845,13 @@ export default function AccountLedger({
                 y={contextMenu?.y ?? 0}
                 items={contextMenuItems}
                 onClose={() => setContextMenu(null)}
+            />
+
+            <TransactionTagEditor
+                transactionGuid={tagEditorGuid}
+                isOpen={!!tagEditorGuid}
+                onClose={() => setTagEditorGuid(null)}
+                onSaved={handleTagsSaved}
             />
         </div>
 

@@ -24,6 +24,12 @@ import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
 import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
 import { AccountForm } from './AccountForm';
+import TagChip from './tags/TagChip';
+import type { Tag } from '@/lib/tags';
+
+interface TagWithAccounts extends Tag {
+    account_guids?: string[];
+}
 
 type SortKey = 'name' | 'total_balance' | 'period_balance';
 
@@ -313,6 +319,32 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         },
         staleTime: 1000 * 60 * 5,
     });
+
+    // Tags per account (for chips after the account name)
+    const { data: allTags = [] } = useQuery<TagWithAccounts[]>({
+        queryKey: ['tags', 'with-accounts'],
+        queryFn: async () => {
+            const res = await fetch('/api/tags?include=accounts');
+            if (!res.ok) throw new Error('Failed to fetch tags');
+            return res.json() as Promise<TagWithAccounts[]>;
+        },
+        staleTime: 1000 * 60 * 5,
+    });
+
+    const accountTagsMap = useMemo(() => {
+        const map = new Map<string, Tag[]>();
+        for (const tag of allTags) {
+            for (const guid of tag.account_guids ?? []) {
+                const list = map.get(guid) ?? [];
+                list.push(tag);
+                map.set(guid, list);
+            }
+        }
+        for (const list of map.values()) {
+            list.sort((a, b) => a.name.localeCompare(b.name));
+        }
+        return map;
+    }, [allTags]);
 
     const [showHidden, setShowHidden] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -673,6 +705,16 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         >
                             {account.name}
                         </Link>
+                        {(accountTagsMap.get(account.guid) ?? []).map(tag => (
+                            <TagChip
+                                key={tag.id}
+                                name={tag.name}
+                                color={tag.color}
+                                title={`Show transactions tagged #${tag.name}`}
+                                onClick={() => router.push(`/ledger?search=${encodeURIComponent(`#${tag.name}`)}`)}
+                                className="flex-shrink-0"
+                            />
+                        ))}
                         {account.hasSimpleFin && (
                             <svg className="w-3 h-3 text-foreground-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Linked to SimpleFin">
                                 <title>Linked to SimpleFin</title>
@@ -809,7 +851,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 </div>
             ),
         },
-    ], [dateFormat, filterText, handleDeleteConfirm, handleEdit, handleNewChild, handleRowToggle, isMobile]);
+    ], [accountTagsMap, dateFormat, filterText, handleDeleteConfirm, handleEdit, handleNewChild, handleRowToggle, isMobile, router]);
 
     const normalizedVisibility = useMemo(() => normalizeVisibility(columnVisibility), [columnVisibility]);
     const normalizedOrder = useMemo(() => normalizeColumnOrder(columnOrder), [columnOrder]);

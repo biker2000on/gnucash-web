@@ -33,6 +33,7 @@ model accounts {
   splits         splits[]
   budget_amounts budget_amounts[]
   lots           lots[]
+  tags           gnucash_web_account_tags[]
 }
 
 model transactions {
@@ -46,6 +47,7 @@ model transactions {
   // Relations
   currency commodities @relation(fields: [currency_guid], references: [guid])
   splits   splits[]
+  tags     gnucash_web_transaction_tags[]
 
   @@index([post_date], map: "tx_post_date_index")
 }
@@ -761,6 +763,43 @@ model gnucash_web_simplefin_account_map {
   connection              gnucash_web_simplefin_connections @relation(fields: [connection_id], references: [id], onDelete: Cascade)
 
   @@unique([connection_id, simplefin_account_id])
+}
+
+// Tagging: flat labels for accounts and transactions.
+// NOTE: junction tables intentionally have NO DB foreign keys to the GnuCash
+// transactions/accounts tables (GnuCash schema is untouched); the Prisma
+// relations below are app-level joins only.
+model gnucash_web_tags {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(100)
+  color       String?   @db.VarChar(20)
+  description String?   @db.Text
+  created_at  DateTime? @default(now())
+
+  transaction_tags gnucash_web_transaction_tags[]
+  account_tags     gnucash_web_account_tags[]
+}
+
+model gnucash_web_transaction_tags {
+  transaction_guid String @db.VarChar(32)
+  tag_id           Int
+
+  tag         gnucash_web_tags @relation(fields: [tag_id], references: [id], onDelete: Cascade)
+  transaction transactions     @relation(fields: [transaction_guid], references: [guid])
+
+  @@id([transaction_guid, tag_id])
+  @@index([tag_id], map: "idx_transaction_tags_tag")
+}
+
+model gnucash_web_account_tags {
+  account_guid String @db.VarChar(32)
+  tag_id       Int
+
+  tag     gnucash_web_tags @relation(fields: [tag_id], references: [id], onDelete: Cascade)
+  account accounts         @relation(fields: [account_guid], references: [guid])
+
+  @@id([account_guid, tag_id])
+  @@index([tag_id], map: "idx_account_tags_tag")
 }
 
 model gnucash_web_category_mappings {

@@ -159,7 +159,17 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
     Settings: IconSettings,
     Paperclip: IconPaperclip,
     Payslip: IconPayslip,
+    Tag: IconTag,
 };
+
+function IconTag({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.59 13.41L12 22 2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
+            <circle cx="7" cy="7" r="1" fill="currentColor" stroke="none" />
+        </svg>
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Chevron icon for expandable items
@@ -191,6 +201,7 @@ const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
+    { name: 'Tags', href: '/tags', icon: 'Tag' },
     { name: 'Receipts', href: '/receipts', icon: 'Paperclip' },
     { name: 'Payslips', href: '/payslips', icon: 'Payslip' },
     {

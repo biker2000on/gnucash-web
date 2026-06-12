@@ -6,6 +6,8 @@ import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
+import { parseSearchQuery } from '@/lib/tags';
+import { getTagsForTransactions } from '@/lib/services/tag.service';
 
 export async function GET(
     request: Request,
@@ -21,7 +23,8 @@ export async function GET(
         const startDate = searchParams.get('startDate');
         const endDate = searchParams.get('endDate');
         const unreviewedOnly = searchParams.get('unreviewedOnly') === 'true';
-        const search = searchParams.get('search')?.trim() || '';
+        // '#tag' tokens in the search act as tag filters (AND semantics)
+        const { text: search, tags: tagFilters } = parseSearchQuery(searchParams.get('search')?.trim() || '');
         const minAmount = searchParams.get('minAmount') ? parseFloat(searchParams.get('minAmount')!) : null;
         const maxAmount = searchParams.get('maxAmount') ? parseFloat(searchParams.get('maxAmount')!) : null;
         const reconcileStates = searchParams.get('reconcileStates')?.split(',').filter(Boolean) || [];
@@ -288,11 +291,23 @@ export async function GET(
             ],
         } : {};
 
+        // Tag filter: matches direct transaction tags or any split account's
+        // tags (account tags propagate); multiple tags AND together.
+        const tagFilter: Prisma.transactionsWhereInput = tagFilters.length > 0 ? {
+            AND: tagFilters.map(name => ({
+                OR: [
+                    { tags: { some: { tag: { name } } } },
+                    { splits: { some: { account: { tags: { some: { tag: { name } } } } } } },
+                ],
+            })),
+        } : {};
+
         // 3. Fetch transactions for this account with date filtering
         const transactions = await prisma.transactions.findMany({
             where: {
                 ...dateFilter,
                 ...searchFilter,
+                ...tagFilter,
                 ...(unreviewedGuids ? { guid: { in: unreviewedGuids } } : {}),
                 splits: {
                     some: {
@@ -351,6 +366,9 @@ export async function GET(
         `;
         const receiptCountMap = new Map(receiptCounts.map(r => [r.transaction_guid, Number(r.receipt_count)]));
 
+        // 3d. Fetch direct tags for these transactions
+        const tagMap = await getTagsForTransactions(txGuids);
+
         // 4. Build account path map
         const accountPathMap = await buildAccountPathMap();
 
@@ -398,6 +416,7 @@ export async function GET(
                 enter_date: tx.enter_date,
                 description: tx.description,
                 receipt_count: receiptCountMap.get(tx.guid) ?? 0,
+                tags: tagMap.get(tx.guid) ?? [],
                 splits: enrichedSplits,
                 running_balance: unreviewedOnly ? '' : currentRunningBalance.toFixed(2),
                 account_split_value: splitValue.toFixed(2),

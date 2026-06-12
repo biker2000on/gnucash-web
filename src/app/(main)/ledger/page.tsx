@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import TransactionJournal from '@/components/TransactionJournal';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { useDateFilter } from '@/hooks/useDateFilter';
@@ -8,6 +9,8 @@ import { Transaction } from '@/lib/types';
 
 function LedgerContent() {
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
+    const searchParams = useSearchParams();
+    const initialSearch = searchParams.get('search') ?? undefined;
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -69,6 +72,7 @@ function LedgerContent() {
                     initialTransactions={transactions}
                     startDate={startDate}
                     endDate={endDate}
+                    initialSearch={initialSearch}
                 />
             )}
         </div>
