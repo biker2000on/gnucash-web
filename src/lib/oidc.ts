@@ -65,6 +65,15 @@ export function getRedirectUri(requestOrigin: string): string {
     return new URL(OIDC_CALLBACK_PATH, base).toString();
 }
 
+/**
+ * Build an absolute app URL for user-facing redirects. The request origin
+ * inside the container is the bind address (e.g. http://0.0.0.0:3000) when
+ * running behind a reverse proxy, so NEXTAUTH_URL must win when set.
+ */
+export function appUrl(path: string, requestUrl: string): URL {
+    return new URL(path, process.env.NEXTAUTH_URL || requestUrl);
+}
+
 /** Transaction state carried across the redirect in a sealed cookie. */
 export interface OidcTransaction {
     state: string;

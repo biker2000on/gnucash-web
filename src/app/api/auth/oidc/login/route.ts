@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth';
 import {
+    appUrl,
     isOidcConfigured,
     getOidcConfiguration,
     getRedirectUri,
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
     if (linkMode) {
         const session = await getSession();
         if (!session.isLoggedIn || !session.userId) {
-            return NextResponse.redirect(new URL('/login?error=link_requires_login', request.url));
+            return NextResponse.redirect(appUrl('/login?error=link_requires_login', request.url));
         }
         linkUserId = session.userId;
     }
@@ -79,6 +80,6 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         console.error('OIDC login initiation failed:', error);
         const target = linkMode ? '/profile?oidc=error' : '/login?error=oidc_unavailable';
-        return NextResponse.redirect(new URL(target, request.url));
+        return NextResponse.redirect(appUrl(target, request.url));
     }
 }

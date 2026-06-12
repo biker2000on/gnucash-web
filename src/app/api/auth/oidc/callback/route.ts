@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { createSession } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
 import {
+    appUrl,
     isOidcConfigured,
     getOidcConfiguration,
     getOidcIssuer,
@@ -49,7 +50,7 @@ function toCandidate(user: DbUser | null): OidcUserCandidate | null {
 }
 
 function loginRedirect(request: NextRequest, params: Record<string, string>) {
-    const url = new URL('/login', request.url);
+    const url = appUrl('/login', request.url);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     return NextResponse.redirect(url);
 }
@@ -100,7 +101,7 @@ export async function GET(request: NextRequest) {
     const providerError = request.nextUrl.searchParams.get('error');
     if (providerError) {
         const target = txn.linkUserId
-            ? NextResponse.redirect(new URL('/profile?oidc=cancelled', request.url))
+            ? NextResponse.redirect(appUrl('/profile?oidc=cancelled', request.url))
             : loginRedirect(request, { error: 'oidc_cancelled' });
         return clearTxnCookie(target);
     }
@@ -144,7 +145,7 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         console.error('OIDC callback validation failed:', error);
         const target = txn.linkUserId
-            ? NextResponse.redirect(new URL('/profile?oidc=error', request.url))
+            ? NextResponse.redirect(appUrl('/profile?oidc=error', request.url))
             : loginRedirect(request, { error: 'oidc_failed' });
         return clearTxnCookie(target);
     }
@@ -221,18 +222,18 @@ export async function GET(request: NextRequest) {
                     },
                 });
                 return clearTxnCookie(
-                    NextResponse.redirect(new URL('/profile?oidc=linked', request.url))
+                    NextResponse.redirect(appUrl('/profile?oidc=linked', request.url))
                 );
             }
 
             case 'link-already':
                 return clearTxnCookie(
-                    NextResponse.redirect(new URL('/profile?oidc=already_linked', request.url))
+                    NextResponse.redirect(appUrl('/profile?oidc=already_linked', request.url))
                 );
 
             case 'link-conflict':
                 return clearTxnCookie(
-                    NextResponse.redirect(new URL('/profile?oidc=conflict', request.url))
+                    NextResponse.redirect(appUrl('/profile?oidc=conflict', request.url))
                 );
 
             case 'login': {
@@ -249,7 +250,7 @@ export async function GET(request: NextRequest) {
                 });
                 await createSession(user.id, user.username);
                 return clearTxnCookie(
-                    NextResponse.redirect(new URL(txn.redirectTo || '/', request.url))
+                    NextResponse.redirect(appUrl(txn.redirectTo || '/', request.url))
                 );
             }
 
@@ -268,7 +269,7 @@ export async function GET(request: NextRequest) {
                 });
                 await createSession(user.id, user.username);
                 return clearTxnCookie(
-                    NextResponse.redirect(new URL(txn.redirectTo || '/', request.url))
+                    NextResponse.redirect(appUrl(txn.redirectTo || '/', request.url))
                 );
             }
 
@@ -310,14 +311,14 @@ export async function GET(request: NextRequest) {
 
                 await createSession(user.id, user.username);
                 return clearTxnCookie(
-                    NextResponse.redirect(new URL(txn.redirectTo || '/', request.url))
+                    NextResponse.redirect(appUrl(txn.redirectTo || '/', request.url))
                 );
             }
         }
     } catch (error) {
         console.error('OIDC callback failed:', error);
         const target = txn.linkUserId
-            ? NextResponse.redirect(new URL('/profile?oidc=error', request.url))
+            ? NextResponse.redirect(appUrl('/profile?oidc=error', request.url))
             : loginRedirect(request, { error: 'oidc_failed' });
         return clearTxnCookie(target);
     }
