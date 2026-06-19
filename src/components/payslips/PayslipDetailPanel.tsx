@@ -206,21 +206,38 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
     setPayslip(prev => prev ? { ...prev, line_items: items } : null);
   }, [payslip]);
 
+  const savePayslipEdits = useCallback(async (): Promise<PayslipData> => {
+    if (!payslip) throw new Error('Payslip not loaded');
+
+    const res = await fetch(`/api/payslips/${payslipId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        line_items: payslip.line_items,
+        employer_name: editableEmployerName,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error ?? 'Failed to save line items');
+    }
+
+    const updated: PayslipData = await res.json();
+    setPayslip(updated);
+    setEditableEmployerName(updated.employer_name || '');
+    return updated;
+  }, [payslip, payslipId, editableEmployerName]);
+
   const handleSaveLineItems = useCallback(async () => {
-    if (!payslip) return;
     try {
-      await fetch(`/api/payslips/${payslipId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          line_items: payslip.line_items,
-          employer_name: editableEmployerName,
-        }),
-      });
+      await savePayslipEdits();
+      setPostError(null);
     } catch (err) {
       console.error('Failed to save line items:', err);
+      setPostError(err instanceof Error ? err.message : 'Failed to save line items');
     }
-  }, [payslip, payslipId, editableEmployerName]);
+  }, [savePayslipEdits]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!payslip || payslip.status === 'posted') return;
@@ -298,6 +315,8 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
     setPostError(null);
 
     try {
+      await savePayslipEdits();
+
       // Fetch accounts to get currency_guid
       const accRes = await fetch('/api/accounts');
       const accounts = await accRes.json();
