@@ -53,6 +53,15 @@ services:
       createbuckets:
         condition: service_completed_successfully
     restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cash.rule=Host(`cash.adventureintandem.com`)"
+      - "traefik.http.routers.cash.entrypoints=websecure"
+      - "traefik.http.routers.cash.tls=true"
+      - "traefik.http.routers.cash.tls.certresolver=cloudflare"
+      - "traefik.http.routers.cash.tls.domains[0].main=adventureintandem.com"
+      - "traefik.http.routers.cash.tls.domains[0].sans=*.adventureintandem.com"
+      - "traefik.http.services.cash.loadbalancer.server.port=3000"
 
   worker:
     image: ghcr.io/biker2000on/gnucash-web:latest
