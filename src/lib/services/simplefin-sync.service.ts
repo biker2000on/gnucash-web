@@ -55,9 +55,14 @@ export interface SyncResult {
     transferDedup: number;
   };
   errors: { account: string; error: string }[];
+  warnings: { account: string; warning: string }[];
 }
 
 type SimpleFinSyncStatus = SyncResult['status'] | 'running' | 'queued';
+
+export function isNonFatalSimpleFinWarning(message: string): boolean {
+  return /requested date range exceeds recommended range/i.test(message);
+}
 
 export async function updateSimpleFinConnectionSyncStatus(
   connectionId: number,
@@ -107,6 +112,7 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
       transferDedup: 0,
     },
     errors: [],
+    warnings: [],
   };
 
   // Get connection
@@ -198,7 +204,11 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   }
 
   for (const error of accountSet.errors) {
-    result.errors.push({ account: 'all', error });
+    if (isNonFatalSimpleFinWarning(error)) {
+      result.warnings.push({ account: 'all', warning: error });
+    } else {
+      result.errors.push({ account: 'all', error });
+    }
   }
 
   // Build a map of SimpleFin account id -> account data
@@ -1115,6 +1125,7 @@ export async function syncAllConnections(): Promise<SyncResult[]> {
           transferDedup: 0,
         },
         errors: [{ account: 'connection', error: `Sync failed: ${error}` }],
+        warnings: [],
       });
     }
   }

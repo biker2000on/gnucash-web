@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { decryptAccessUrl, fetchAccounts, SimpleFinAccessRevokedError } from '@/lib/services/simplefin.service';
-import { updateSimpleFinConnectionSyncStatus } from '@/lib/services/simplefin-sync.service';
+import { isNonFatalSimpleFinWarning, updateSimpleFinConnectionSyncStatus } from '@/lib/services/simplefin-sync.service';
 
 // GET /api/simplefin/accounts -- list SimpleFin accounts with mapping status
 export async function GET() {
@@ -67,7 +67,9 @@ export async function GET() {
       const accessUrl = decryptAccessUrl(connection.access_url_encrypted);
       // Fetch accounts from SimpleFin (no date range = just accounts, no transactions)
       const accountSet = await fetchAccounts(accessUrl);
-      const liveError = accountSet.errors.length > 0 ? accountSet.errors.join('\n') : null;
+      const simplefinWarnings = accountSet.errors.filter(isNonFatalSimpleFinWarning);
+      const simplefinErrors = accountSet.errors.filter(error => !isNonFatalSimpleFinWarning(error));
+      const liveError = simplefinErrors.length > 0 ? simplefinErrors.join('\n') : null;
 
       for (const acc of accountSet.accounts) {
         const stored = accountMap.get(acc.id);
@@ -95,7 +97,8 @@ export async function GET() {
         accounts: Array.from(accountMap.values()),
         live: true,
         liveError,
-        simplefinErrors: accountSet.errors,
+        simplefinErrors,
+        simplefinWarnings,
       });
     } catch (error) {
       const isRevoked = error instanceof SimpleFinAccessRevokedError;

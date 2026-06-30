@@ -34,6 +34,7 @@ interface SyncResult {
     transferDedup: number;
   };
   errors: { account: string; error: string }[];
+  warnings?: { account: string; warning: string }[];
 }
 
 export default function ConnectionsPage() {
@@ -413,6 +414,18 @@ export default function ConnectionsPage() {
                     <ul className="mt-1 text-xs text-foreground-muted space-y-1">
                       {sfSyncResult.errors.map((err, i) => (
                         <li key={i}>{err.account}: {err.error}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {sfSyncResult.warnings && sfSyncResult.warnings.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-amber-400 cursor-pointer">
+                      {sfSyncResult.warnings.length} warning(s)
+                    </summary>
+                    <ul className="mt-1 text-xs text-foreground-muted space-y-1">
+                      {sfSyncResult.warnings.map((warning, i) => (
+                        <li key={i}>{warning.account}: {warning.warning}</li>
                       ))}
                     </ul>
                   </details>

@@ -227,6 +227,9 @@ async function main() {
           const { syncSimpleFin } = await import('./src/lib/services/simplefin-sync.service');
           const syncResult = await syncSimpleFin(connectionId, bookGuid);
           console.log(`SimpleFin sync: ${syncResult.status}, ${syncResult.transactionsImported} imported, ${syncResult.transactionsSkipped} skipped, ${syncResult.investmentTransactionsImported} investment txns`);
+          if (syncResult.warnings.length > 0) {
+            console.warn(`SimpleFin sync warnings:`, syncResult.warnings);
+          }
           if (syncResult.errors.length > 0) {
             console.error(`SimpleFin sync errors:`, syncResult.errors);
           }
