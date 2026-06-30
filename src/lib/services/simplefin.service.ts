@@ -167,7 +167,7 @@ export async function fetchAccounts(
   });
 
   if (!response.ok) {
-    if (response.status === 403) {
+    if (response.status === 401 || response.status === 403) {
       throw new SimpleFinAccessRevokedError();
     }
     throw new SimpleFinError(`SimpleFin API error: ${response.status}`, response.status);

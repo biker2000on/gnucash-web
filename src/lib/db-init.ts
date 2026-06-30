@@ -376,10 +376,22 @@ async function createExtensionTables() {
             book_guid VARCHAR(32) NOT NULL,
             access_url_encrypted TEXT NOT NULL,
             last_sync_at TIMESTAMP,
+            last_sync_status VARCHAR(20),
+            last_sync_error TEXT,
+            last_sync_error_at TIMESTAMP,
+            last_successful_sync_at TIMESTAMP,
             sync_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, book_guid)
         );
+    `;
+
+    const simpleFinConnectionsAddHealthDDL = `
+        ALTER TABLE gnucash_web_simplefin_connections
+        ADD COLUMN IF NOT EXISTS last_sync_status VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS last_sync_error TEXT,
+        ADD COLUMN IF NOT EXISTS last_sync_error_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS last_successful_sync_at TIMESTAMP;
     `;
 
     const simpleFinAccountMapTableDDL = `
@@ -756,6 +768,7 @@ async function createExtensionTables() {
         await query(bookPermissionsTableDDL);
         await query(invitationsTableDDL);
         await query(simpleFinConnectionsTableDDL);
+        await query(simpleFinConnectionsAddHealthDDL);
         await query(simpleFinAccountMapTableDDL);
         await query(simpleFinAccountMapAddInvestmentDDL);
         await query(transactionMetaAddDeletedAtDDL);

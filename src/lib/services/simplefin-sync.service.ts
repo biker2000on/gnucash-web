@@ -43,6 +43,9 @@ function normalizePostDate(postedUnixSeconds: number): Date {
 }
 
 export interface SyncResult {
+  status: 'success' | 'failed' | 'revoked';
+  fatal: boolean;
+  revoked: boolean;
   accountsProcessed: number;
   transactionsImported: number;
   transactionsSkipped: number;
@@ -54,11 +57,47 @@ export interface SyncResult {
   errors: { account: string; error: string }[];
 }
 
+type SimpleFinSyncStatus = SyncResult['status'] | 'running' | 'queued';
+
+export async function updateSimpleFinConnectionSyncStatus(
+  connectionId: number,
+  status: SimpleFinSyncStatus,
+  error?: string | null,
+) {
+  const now = new Date();
+
+  if (status === 'success') {
+    await prisma.$executeRaw`
+      UPDATE gnucash_web_simplefin_connections
+      SET
+        last_sync_at = ${now},
+        last_successful_sync_at = ${now},
+        last_sync_status = 'success',
+        last_sync_error = NULL,
+        last_sync_error_at = NULL
+      WHERE id = ${connectionId}
+    `;
+    return;
+  }
+
+  await prisma.$executeRaw`
+    UPDATE gnucash_web_simplefin_connections
+    SET
+      last_sync_status = ${status},
+      last_sync_error = ${error || null},
+      last_sync_error_at = ${error ? now : null}
+    WHERE id = ${connectionId}
+  `;
+}
+
 /**
  * Sync all mapped accounts for a given connection.
  */
 export async function syncSimpleFin(connectionId: number, bookGuid: string): Promise<SyncResult> {
   const result: SyncResult = {
+    status: 'success',
+    fatal: false,
+    revoked: false,
     accountsProcessed: 0,
     transactionsImported: 0,
     transactionsSkipped: 0,
@@ -77,14 +116,22 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   });
 
   if (!connection) {
+    result.status = 'failed';
+    result.fatal = true;
     result.errors.push({ account: 'connection', error: 'Connection not found' });
     return result;
   }
+
+  await updateSimpleFinConnectionSyncStatus(connectionId, 'running');
+
   let accessUrl: string;
   try {
     accessUrl = decryptAccessUrl(connection.access_url_encrypted);
   } catch {
+    result.status = 'failed';
+    result.fatal = true;
     result.errors.push({ account: 'connection', error: 'Failed to decrypt access URL' });
+    await updateSimpleFinConnectionSyncStatus(connectionId, 'failed', 'Failed to decrypt access URL');
     return result;
   }
 
@@ -108,6 +155,7 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   >;
 
   if (mappedAccounts.length === 0) {
+    await updateSimpleFinConnectionSyncStatus(connectionId, 'success');
     return result;
   }
 
@@ -133,11 +181,24 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     accountSet = await fetchAccountsChunked(accessUrl, earliestSync, endDate);
   } catch (error) {
     if (error instanceof SimpleFinAccessRevokedError) {
-      result.errors.push({ account: 'all', error: 'SimpleFin access has been revoked' });
+      const message = error.message;
+      result.status = 'revoked';
+      result.fatal = true;
+      result.revoked = true;
+      result.errors.push({ account: 'all', error: message });
+      await updateSimpleFinConnectionSyncStatus(connectionId, 'revoked', message);
     } else {
-      result.errors.push({ account: 'all', error: `Failed to fetch from SimpleFin: ${error}` });
+      const message = `Failed to fetch from SimpleFin: ${error}`;
+      result.status = 'failed';
+      result.fatal = true;
+      result.errors.push({ account: 'all', error: message });
+      await updateSimpleFinConnectionSyncStatus(connectionId, 'failed', message);
     }
     return result;
+  }
+
+  for (const error of accountSet.errors) {
+    result.errors.push({ account: 'all', error });
   }
 
   // Build a map of SimpleFin account id -> account data
@@ -329,11 +390,16 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
     }
   }
 
-  // Update connection last_sync_at
-  await prisma.gnucash_web_simplefin_connections.update({
-    where: { id: connectionId },
-    data: { last_sync_at: new Date() },
-  });
+  if (result.errors.length > 0) {
+    result.status = 'failed';
+    await updateSimpleFinConnectionSyncStatus(
+      connectionId,
+      'failed',
+      result.errors.map(err => `${err.account}: ${err.error}`).join('\n'),
+    );
+  } else {
+    await updateSimpleFinConnectionSyncStatus(connectionId, 'success');
+  }
 
   return result;
 }
@@ -1037,6 +1103,9 @@ export async function syncAllConnections(): Promise<SyncResult[]> {
       results.push(result);
     } catch (error) {
       results.push({
+        status: 'failed',
+        fatal: true,
+        revoked: false,
         accountsProcessed: 0,
         transactionsImported: 0,
         transactionsSkipped: 0,

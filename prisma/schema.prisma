@@ -756,6 +756,10 @@ model gnucash_web_simplefin_connections {
   book_guid          String    @db.VarChar(32)
   access_url_encrypted String  @db.Text
   last_sync_at       DateTime?
+  last_sync_status   String?   @db.VarChar(20)
+  last_sync_error    String?   @db.Text
+  last_sync_error_at DateTime?
+  last_successful_sync_at DateTime?
   sync_enabled       Boolean   @default(true)
   created_at         DateTime  @default(now())
 

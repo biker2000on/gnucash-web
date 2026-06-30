@@ -39,6 +39,9 @@ export async function POST() {
       });
     }
 
+    const { updateSimpleFinConnectionSyncStatus } = await import('@/lib/services/simplefin-sync.service');
+    await updateSimpleFinConnectionSyncStatus(connectionId, 'queued');
+
     return NextResponse.json({
       success: true,
       message: 'SimpleFin sync job queued',

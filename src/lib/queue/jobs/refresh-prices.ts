@@ -43,7 +43,10 @@ export async function handleRefreshPrices(job: Job): Promise<void> {
             continue;
           }
           const result = await syncSimpleFin(conn.id, conn.book_guid);
-          console.log(`[Job ${job.id}] SimpleFin sync (connection ${conn.id}): ${result.transactionsImported} imported, ${result.transactionsSkipped} skipped`);
+          console.log(`[Job ${job.id}] SimpleFin sync (connection ${conn.id}): ${result.status}, ${result.transactionsImported} imported, ${result.transactionsSkipped} skipped`);
+          if (result.errors.length > 0) {
+            console.error(`[Job ${job.id}] SimpleFin sync errors (connection ${conn.id}):`, result.errors);
+          }
         }
       } else {
         console.log(`[Job ${job.id}] SimpleFin sync: no enabled connections for book ${bookGuid}`);

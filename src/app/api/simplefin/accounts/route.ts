@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { decryptAccessUrl, fetchAccounts, SimpleFinAccessRevokedError } from '@/lib/services/simplefin.service';
+import { updateSimpleFinConnectionSyncStatus } from '@/lib/services/simplefin-sync.service';
 
 // GET /api/simplefin/accounts -- list SimpleFin accounts with mapping status
 export async function GET() {
@@ -20,41 +21,104 @@ export async function GET() {
     if (!connection) {
       return NextResponse.json({ error: 'No SimpleFin connection found' }, { status: 404 });
     }
-    const accessUrl = decryptAccessUrl(connection.access_url_encrypted);
-
-    // Fetch accounts from SimpleFin (no date range = just accounts, no transactions)
-    const accountSet = await fetchAccounts(accessUrl);
-
-    // Get existing mappings
     const mappings = await prisma.gnucash_web_simplefin_account_map.findMany({
       where: { connection_id: connection.id },
-      select: { simplefin_account_id: true, gnucash_account_guid: true, last_sync_at: true, is_investment: true },
-    });
-    const mappingMap = new Map(mappings.map(m => [m.simplefin_account_id, m]));
-
-    // Build response with mapping status
-    const accounts = accountSet.accounts.map(acc => {
-      const mapping = mappingMap.get(acc.id);
-      return {
-        id: acc.id,
-        name: acc.name,
-        institution: acc.org?.name || null,
-        currency: acc.currency,
-        balance: acc.balance,
-        availableBalance: acc['available-balance'] || null,
-        gnucashAccountGuid: mapping?.gnucash_account_guid || null,
-        lastSyncAt: mapping?.last_sync_at || null,
-        isMapped: !!mapping?.gnucash_account_guid,
-        hasHoldings: Array.isArray(acc.holdings) && acc.holdings.length > 0,
-        isInvestment: mapping?.is_investment ?? false,
-      };
+      select: {
+        simplefin_account_id: true,
+        simplefin_account_name: true,
+        simplefin_institution: true,
+        simplefin_last4: true,
+        gnucash_account_guid: true,
+        last_sync_at: true,
+        is_investment: true,
+        last_balance: true,
+        last_balance_date: true,
+      },
+      orderBy: [
+        { simplefin_institution: 'asc' },
+        { simplefin_account_name: 'asc' },
+        { simplefin_account_id: 'asc' },
+      ],
     });
 
-    return NextResponse.json({ accounts });
-  } catch (error) {
-    if (error instanceof SimpleFinAccessRevokedError) {
-      return NextResponse.json({ error: error.message, revoked: true }, { status: 403 });
+    const accountMap = new Map(mappings.map(mapping => [
+      mapping.simplefin_account_id,
+      {
+        id: mapping.simplefin_account_id,
+        name: mapping.simplefin_account_name || mapping.simplefin_account_id,
+        institution: mapping.simplefin_institution,
+        last4: mapping.simplefin_last4,
+        currency: null as string | null,
+        balance: mapping.last_balance === null ? null : String(mapping.last_balance),
+        availableBalance: null as string | null,
+        lastBalanceDate: mapping.last_balance_date,
+        gnucashAccountGuid: mapping.gnucash_account_guid,
+        lastSyncAt: mapping.last_sync_at,
+        isMapped: !!mapping.gnucash_account_guid,
+        hasHoldings: false,
+        isInvestment: mapping.is_investment,
+        isLive: false,
+        isStored: true,
+        liveMissing: true,
+      },
+    ]));
+
+    try {
+      const accessUrl = decryptAccessUrl(connection.access_url_encrypted);
+      // Fetch accounts from SimpleFin (no date range = just accounts, no transactions)
+      const accountSet = await fetchAccounts(accessUrl);
+      const liveError = accountSet.errors.length > 0 ? accountSet.errors.join('\n') : null;
+
+      for (const acc of accountSet.accounts) {
+        const stored = accountMap.get(acc.id);
+        accountMap.set(acc.id, {
+          id: acc.id,
+          name: acc.name,
+          institution: acc.org?.name || stored?.institution || null,
+          last4: stored?.last4 || null,
+          currency: acc.currency,
+          balance: acc.balance,
+          availableBalance: acc['available-balance'] || null,
+          lastBalanceDate: stored?.lastBalanceDate || null,
+          gnucashAccountGuid: stored?.gnucashAccountGuid || null,
+          lastSyncAt: stored?.lastSyncAt || null,
+          isMapped: !!stored?.gnucashAccountGuid,
+          hasHoldings: Array.isArray(acc.holdings) && acc.holdings.length > 0,
+          isInvestment: stored?.isInvestment ?? false,
+          isLive: true,
+          isStored: !!stored,
+          liveMissing: false,
+        });
+      }
+
+      return NextResponse.json({
+        accounts: Array.from(accountMap.values()),
+        live: true,
+        liveError,
+        simplefinErrors: accountSet.errors,
+      });
+    } catch (error) {
+      const isRevoked = error instanceof SimpleFinAccessRevokedError;
+      const message = isRevoked
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : 'Failed to fetch accounts from SimpleFin';
+
+      await updateSimpleFinConnectionSyncStatus(
+        connection.id,
+        isRevoked ? 'revoked' : 'failed',
+        message,
+      );
+
+      return NextResponse.json({
+        accounts: Array.from(accountMap.values()),
+        live: false,
+        liveError: message,
+        revoked: isRevoked,
+      });
     }
+  } catch (error) {
     console.error('Error fetching SimpleFin accounts:', error);
     return NextResponse.json({ error: 'Failed to fetch accounts' }, { status: 500 });
   }

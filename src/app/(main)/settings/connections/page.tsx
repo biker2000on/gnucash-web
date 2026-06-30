@@ -9,14 +9,19 @@ interface SimpleFinAccount {
   id: string;
   name: string;
   institution: string | null;
-  currency: string;
-  balance: string;
+  last4?: string | null;
+  currency: string | null;
+  balance: string | null;
   availableBalance: string | null;
+  lastBalanceDate?: string | null;
   gnucashAccountGuid: string | null;
   lastSyncAt: string | null;
   isMapped: boolean;
   hasHoldings: boolean;
   isInvestment: boolean;
+  isLive: boolean;
+  isStored: boolean;
+  liveMissing: boolean;
 }
 
 interface SyncResult {
@@ -46,8 +51,15 @@ export default function ConnectionsPage() {
   const [sfDisconnecting, setSfDisconnecting] = useState(false);
   const [sfSyncResult, setSfSyncResult] = useState<SyncResult | null>(null);
   const [sfLastSyncAt, setSfLastSyncAt] = useState<string | null>(null);
+  const [sfLastSuccessfulSyncAt, setSfLastSuccessfulSyncAt] = useState<string | null>(null);
+  const [sfSyncStatus, setSfSyncStatus] = useState<string | null>(null);
+  const [sfLastSyncError, setSfLastSyncError] = useState<string | null>(null);
+  const [sfLastSyncErrorAt, setSfLastSyncErrorAt] = useState<string | null>(null);
+  const [sfRevoked, setSfRevoked] = useState(false);
   const [sfAccountsTotal, setSfAccountsTotal] = useState(0);
   const [sfAccountsMapped, setSfAccountsMapped] = useState(0);
+  const [sfLiveLoading, setSfLiveLoading] = useState(false);
+  const [sfLiveError, setSfLiveError] = useState<string | null>(null);
 
   const fetchSimplefinStatus = useCallback(async () => {
     try {
@@ -56,8 +68,16 @@ export default function ConnectionsPage() {
         const data = await res.json();
         setSimplefinConnected(data.connected);
         setSfLastSyncAt(data.lastSyncAt ?? null);
+        setSfLastSuccessfulSyncAt(data.lastSuccessfulSyncAt ?? null);
+        setSfSyncStatus(data.syncStatus ?? null);
+        setSfLastSyncError(data.lastSyncError ?? null);
+        setSfLastSyncErrorAt(data.lastSyncErrorAt ?? null);
+        setSfRevoked(data.revoked ?? false);
         setSfAccountsTotal(data.accountsTotal ?? 0);
         setSfAccountsMapped(data.accountsMapped ?? 0);
+        if (Array.isArray(data.accounts)) {
+          setSfAccounts(data.accounts);
+        }
       }
     } catch {
       // Silently fail
@@ -67,18 +87,28 @@ export default function ConnectionsPage() {
   }, []);
 
   const fetchSimplefinAccounts = useCallback(async () => {
+    setSfLiveLoading(true);
+    setSfLiveError(null);
     try {
       const res = await fetch('/api/simplefin/accounts');
-      if (res.ok) {
-        const data = await res.json();
-        const accounts = (data.accounts || []).map((a: SimpleFinAccount) => ({
-          ...a,
-          isInvestment: a.isInvestment || (a.hasHoldings && !a.isMapped),
-        }));
-        setSfAccounts(accounts);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to refresh SimpleFin accounts');
       }
-    } catch {
-      // Silently fail
+      const accounts = (data.accounts || []).map((a: SimpleFinAccount) => ({
+        ...a,
+        isInvestment: a.isInvestment || (a.hasHoldings && !a.isMapped),
+      }));
+      setSfAccounts(accounts);
+      setSfLiveError(data.liveError ?? null);
+      setSfRevoked(data.revoked ?? false);
+      if (data.liveError) {
+        setSfLastSyncError(data.liveError);
+      }
+    } catch (err) {
+      setSfLiveError(err instanceof Error ? err.message : 'Failed to refresh SimpleFin accounts');
+    } finally {
+      setSfLiveLoading(false);
     }
   }, []);
 
@@ -188,11 +218,19 @@ export default function ConnectionsPage() {
       }
       if (data.direct) {
         setSfSyncResult(data);
+        setSfSyncStatus(data.status ?? null);
+        setSfRevoked(data.revoked ?? false);
+        setSfLastSyncError(data.errors?.length ? data.errors.map((err: { account: string; error: string }) => `${err.account}: ${err.error}`).join('\n') : null);
         const matched = (data.transactionsMatched?.manualReconciliation || 0) + (data.transactionsMatched?.transferDedup || 0);
         const matchedMsg = matched > 0 ? `, matched ${matched} existing` : '';
-        success(`Imported ${data.transactionsImported} transactions, skipped ${data.transactionsSkipped} duplicates${matchedMsg}`);
+        if (data.errors?.length) {
+          showError(data.errors[0].error || 'Sync finished with errors');
+        } else {
+          success(`Imported ${data.transactionsImported} transactions, skipped ${data.transactionsSkipped} duplicates${matchedMsg}`);
+        }
       } else {
         success('Sync job queued');
+        setSfSyncStatus('queued');
       }
       await fetchSimplefinStatus();
     } catch {
@@ -281,19 +319,40 @@ export default function ConnectionsPage() {
           </div>
         ) : (
           <div className="space-y-4">
+            {(sfRevoked || sfSyncStatus === 'failed' || sfLastSyncError || sfLiveError) && (
+              <div className="border border-red-500/30 bg-red-500/10 rounded-lg p-3">
+                <p className="text-sm font-medium text-red-400">
+                  {sfRevoked ? 'SimpleFin access needs to be reconnected.' : 'SimpleFin sync needs attention.'}
+                </p>
+                <p className="text-xs text-foreground-secondary mt-1 whitespace-pre-line">
+                  {sfLiveError || sfLastSyncError || 'The last sync did not complete successfully.'}
+                </p>
+                {sfLastSyncErrorAt && (
+                  <p className="text-xs text-foreground-muted mt-1">
+                    Last error: {new Date(sfLastSyncErrorAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Status */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <div className="w-2.5 h-2.5 rounded-full bg-primary" />
-                  <span className="text-sm font-medium text-foreground">Connected</span>
+                  <div className={`w-2.5 h-2.5 rounded-full ${sfRevoked || sfSyncStatus === 'failed' ? 'bg-red-400' : sfSyncStatus === 'queued' || sfSyncStatus === 'running' ? 'bg-amber-400' : 'bg-primary'}`} />
+                  <span className="text-sm font-medium text-foreground">
+                    {sfRevoked ? 'Reconnect required' : sfSyncStatus === 'failed' ? 'Connected with errors' : sfSyncStatus === 'queued' ? 'Sync queued' : sfSyncStatus === 'running' ? 'Sync running' : 'Connected'}
+                  </span>
                 </div>
                 <p className="text-xs text-foreground-muted">
-                  {sfLastSyncAt
-                    ? `Last sync: ${new Date(sfLastSyncAt).toLocaleString()}`
-                    : 'Never synced'}
+                  {sfLastSuccessfulSyncAt
+                    ? `Last successful sync: ${new Date(sfLastSuccessfulSyncAt).toLocaleString()}`
+                    : sfLastSyncAt
+                      ? `Last sync attempt: ${new Date(sfLastSyncAt).toLocaleString()}`
+                      : 'Never synced'}
                   {' | '}
                   {sfAccountsMapped}/{sfAccountsTotal} accounts mapped
+                  {sfLiveLoading && ' | Refreshing live account data...'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -382,7 +441,19 @@ export default function ConnectionsPage() {
                           <div className="text-sm text-foreground">{account.name}</div>
                           <div className="text-xs text-foreground-muted">
                             {account.institution && <span>{account.institution} | </span>}
-                            {account.currency} | {account.balance}
+                            {account.currency || 'Last known'}
+                            {account.balance && <span> | {account.balance}</span>}
+                            {account.last4 && <span> | ...{account.last4}</span>}
+                          </div>
+                          <div className="text-[10px] text-foreground-muted mt-0.5">
+                            {account.isLive
+                              ? 'Live from SimpleFin'
+                              : account.liveMissing
+                                ? 'Stored mapping; not returned by latest SimpleFin refresh'
+                                : 'Stored mapping'}
+                            {account.lastBalanceDate && !account.isLive && (
+                              <span> | Balance as of {new Date(account.lastBalanceDate).toLocaleDateString()}</span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-2">
@@ -425,10 +496,18 @@ export default function ConnectionsPage() {
 
             {sfAccounts.length === 0 && (
               <p className="text-sm text-foreground-muted text-center py-4">
-                No bank accounts found. Make sure you have connected banks on{' '}
-                <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-hover">
-                  SimpleFin Bridge
-                </a>.
+                {sfLiveLoading
+                  ? 'Refreshing accounts from SimpleFin...'
+                  : sfLiveError
+                    ? 'Stored mappings are empty, and the live SimpleFin refresh failed.'
+                    : (
+                      <>
+                        No bank accounts found. Make sure you have connected banks on{' '}
+                        <a href="https://beta-bridge.simplefin.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary-hover">
+                          SimpleFin Bridge
+                        </a>.
+                      </>
+                    )}
               </p>
             )}
 
