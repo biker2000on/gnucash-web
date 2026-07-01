@@ -42,7 +42,7 @@ export async function handleRefreshPrices(job: Job): Promise<void> {
             console.log(`[Job ${job.id}] SimpleFin sync: preference not enabled for connection ${conn.id} (user ${conn.user_id})`);
             continue;
           }
-          const result = await syncSimpleFin(conn.id, conn.book_guid);
+          const result = await syncSimpleFin(conn.id, conn.book_guid, { source: 'refresh' });
           console.log(`[Job ${job.id}] SimpleFin sync (connection ${conn.id}): ${result.status}, ${result.transactionsImported} imported, ${result.transactionsSkipped} skipped`);
           if (result.warnings.length > 0) {
             console.warn(`[Job ${job.id}] SimpleFin sync warnings (connection ${conn.id}):`, result.warnings);

@@ -9,6 +9,7 @@ import prisma, { generateGuid } from '@/lib/prisma';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
+import { createNotification } from '@/lib/notifications';
 
 const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
 
@@ -60,6 +61,11 @@ export interface SyncResult {
 
 type SimpleFinSyncStatus = SyncResult['status'] | 'running' | 'queued';
 
+interface SyncSimpleFinOptions {
+  notifyOnSuccess?: boolean;
+  source?: 'manual' | 'scheduled' | 'refresh' | 'unknown';
+}
+
 export function isNonFatalSimpleFinWarning(message: string): boolean {
   return /requested date range exceeds recommended range/i.test(message);
 }
@@ -98,7 +104,11 @@ export async function updateSimpleFinConnectionSyncStatus(
 /**
  * Sync all mapped accounts for a given connection.
  */
-export async function syncSimpleFin(connectionId: number, bookGuid: string): Promise<SyncResult> {
+export async function syncSimpleFin(
+  connectionId: number,
+  bookGuid: string,
+  options: SyncSimpleFinOptions = {},
+): Promise<SyncResult> {
   const result: SyncResult = {
     status: 'success',
     fatal: false,
@@ -118,7 +128,7 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
   // Get connection
   const connection = await prisma.gnucash_web_simplefin_connections.findUnique({
     where: { id: connectionId },
-    select: { id: true, access_url_encrypted: true, last_sync_at: true },
+    select: { id: true, user_id: true, access_url_encrypted: true, last_sync_at: true },
   });
 
   if (!connection) {
@@ -193,12 +203,14 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
       result.revoked = true;
       result.errors.push({ account: 'all', error: message });
       await updateSimpleFinConnectionSyncStatus(connectionId, 'revoked', message);
+      await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
     } else {
       const message = `Failed to fetch from SimpleFin: ${error}`;
       result.status = 'failed';
       result.fatal = true;
       result.errors.push({ account: 'all', error: message });
       await updateSimpleFinConnectionSyncStatus(connectionId, 'failed', message);
+      await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
     }
     return result;
   }
@@ -407,11 +419,58 @@ export async function syncSimpleFin(connectionId: number, bookGuid: string): Pro
       'failed',
       result.errors.map(err => `${err.account}: ${err.error}`).join('\n'),
     );
+    await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
   } else {
     await updateSimpleFinConnectionSyncStatus(connectionId, 'success');
+    if (options.notifyOnSuccess) {
+      await createSimpleFinNotification(connection.user_id, bookGuid, result, options);
+    }
   }
 
   return result;
+}
+
+async function createSimpleFinNotification(
+  userId: number,
+  bookGuid: string,
+  result: SyncResult,
+  options: SyncSimpleFinOptions,
+) {
+  try {
+    const source = options.source || 'unknown';
+    const matched = result.transactionsMatched.manualReconciliation + result.transactionsMatched.transferDedup;
+    const summary = `Imported ${result.transactionsImported} transaction${result.transactionsImported === 1 ? '' : 's'}, skipped ${result.transactionsSkipped}, matched ${matched}.`;
+
+    if (result.status === 'success') {
+      await createNotification({
+        userId,
+        bookGuid,
+        type: 'simplefin_sync',
+        severity: 'success',
+        title: source === 'manual' ? 'Manual SimpleFin sync finished' : 'SimpleFin sync finished',
+        message: summary,
+        href: '/settings/connections',
+        source: 'simplefin',
+        sourceId: `simplefin:${source}:success:${Date.now()}`,
+      });
+      return;
+    }
+
+    const errorText = result.errors.map(err => `${err.account}: ${err.error}`).join('\n') || 'SimpleFin sync failed.';
+    await createNotification({
+      userId,
+      bookGuid,
+      type: 'simplefin_sync',
+      severity: result.status === 'revoked' ? 'error' : 'warning',
+      title: result.status === 'revoked' ? 'SimpleFin connection revoked' : 'SimpleFin sync needs attention',
+      message: errorText,
+      href: '/settings/connections',
+      source: 'simplefin',
+      sourceId: `simplefin:${source}:${result.status}:${Date.now()}`,
+    });
+  } catch (error) {
+    console.warn('Failed to create SimpleFin notification:', error);
+  }
 }
 
 /**

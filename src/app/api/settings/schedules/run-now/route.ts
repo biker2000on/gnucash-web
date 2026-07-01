@@ -9,9 +9,9 @@ export async function POST() {
     const roleResult = await requireRole('admin');
     if (roleResult instanceof NextResponse) return roleResult;
 
-    const { bookGuid } = roleResult;
+    const { user, bookGuid } = roleResult;
 
-    const jobId = await enqueueJob('refresh-prices', { bookGuid });
+    const jobId = await enqueueJob('refresh-prices', { bookGuid, userId: user.id, source: 'manual' });
 
     if (!jobId) {
       // No Redis configured, run directly
@@ -29,7 +29,7 @@ export async function POST() {
           const syncPref = await getPreference<string>(connections[0].user_id, 'simplefin_sync_with_refresh', 'false');
           if (syncPref === 'true') {
             const { syncSimpleFin } = await import('@/lib/services/simplefin-sync.service');
-            simplefinResult = await syncSimpleFin(connections[0].id, connections[0].book_guid);
+            simplefinResult = await syncSimpleFin(connections[0].id, connections[0].book_guid, { notifyOnSuccess: true, source: 'manual' });
           }
         }
       } catch (err) {

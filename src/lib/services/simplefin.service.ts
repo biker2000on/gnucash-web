@@ -8,6 +8,12 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
+const DEFAULT_FETCH_TIMEOUT_MS = 60000;
+
+function getFetchTimeoutMs(): number {
+  const parsed = Number(process.env.SIMPLEFIN_FETCH_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_FETCH_TIMEOUT_MS;
+}
 
 // --- Encryption ---
 
@@ -163,7 +169,7 @@ export async function fetchAccounts(
     headers: {
       'Authorization': `Basic ${auth}`,
     },
-    signal: AbortSignal.timeout(30000), // 30 second timeout
+    signal: AbortSignal.timeout(getFetchTimeoutMs()),
   });
 
   if (!response.ok) {

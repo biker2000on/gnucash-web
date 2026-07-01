@@ -101,6 +101,8 @@ export default function ConnectionsPage() {
         isInvestment: a.isInvestment || (a.hasHoldings && !a.isMapped),
       }));
       setSfAccounts(accounts);
+      setSfAccountsTotal(accounts.length);
+      setSfAccountsMapped(accounts.filter((account: SimpleFinAccount) => account.isMapped).length);
       setSfLiveError(data.liveError ?? null);
       setSfRevoked(data.revoked ?? false);
       if (data.liveError) {

@@ -26,12 +26,12 @@ export async function POST() {
     const connectionId = connections[0].id;
 
     // Try to enqueue via Redis worker
-    const jobId = await enqueueJob('sync-simplefin', { connectionId, bookGuid });
+    const jobId = await enqueueJob('sync-simplefin', { connectionId, bookGuid, userId: user.id, source: 'manual' });
 
     if (!jobId) {
       // No Redis configured, run sync directly
       const { syncSimpleFin } = await import('@/lib/services/simplefin-sync.service');
-      const result = await syncSimpleFin(connectionId, bookGuid);
+      const result = await syncSimpleFin(connectionId, bookGuid, { notifyOnSuccess: true, source: 'manual' });
       return NextResponse.json({
         success: true,
         direct: true,

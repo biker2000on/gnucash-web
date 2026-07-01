@@ -223,9 +223,17 @@ async function main() {
           break;
         }
         case 'sync-simplefin': {
-          const { connectionId, bookGuid } = job.data as { connectionId: number; bookGuid: string };
+          const { connectionId, bookGuid, source } = job.data as {
+            connectionId: number;
+            bookGuid: string;
+            userId?: number;
+            source?: 'manual' | 'scheduled' | 'refresh' | 'unknown';
+          };
           const { syncSimpleFin } = await import('./src/lib/services/simplefin-sync.service');
-          const syncResult = await syncSimpleFin(connectionId, bookGuid);
+          const syncResult = await syncSimpleFin(connectionId, bookGuid, {
+            notifyOnSuccess: source === 'manual',
+            source: source || 'unknown',
+          });
           console.log(`SimpleFin sync: ${syncResult.status}, ${syncResult.transactionsImported} imported, ${syncResult.transactionsSkipped} skipped, ${syncResult.investmentTransactionsImported} investment txns`);
           if (syncResult.warnings.length > 0) {
             console.warn(`SimpleFin sync warnings:`, syncResult.warnings);

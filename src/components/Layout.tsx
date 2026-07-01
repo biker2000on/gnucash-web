@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { UserMenu } from './UserMenu';
+import { NotificationBell } from './NotificationBell';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
@@ -222,6 +223,7 @@ const navItems: NavItem[] = [
         href: '/tools',
         icon: 'Wrench',
         children: [
+            { name: 'All Tools', href: '/tools' },
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
             { name: 'Tax Estimator', href: '/tools/tax-estimator' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
@@ -416,51 +418,71 @@ export default function Layout({ children }: { children: ReactNode }) {
                     }
                     return next;
                 });
+                return;
             }
             setMobileSidebarState({ open: false, pathname });
         };
 
-        return (
-            <div key={item.href}>
-                <Link
-                    href={item.href}
-                    onClick={handleParentClick}
-                    className={`relative flex items-center rounded-xl transition-all duration-200 group
+        const parentClasses = `relative flex items-center rounded-xl transition-all duration-200 group
                         ${isCollapsed ? 'justify-center px-0 py-3' : 'px-4 py-3'}
                         ${isActive
                             ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
                             : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
-                        }`}
+                        }`;
+
+        const content = (
+            <>
+                {Icon && (
+                    <span className={isCollapsed ? '' : 'mr-3'}>
+                        <Icon className="w-5 h-5 shrink-0" />
+                    </span>
+                )}
+                {/* Label: hidden when collapsed on desktop */}
+                <span
+                    className={`font-medium whitespace-nowrap transition-opacity duration-200
+                        ${isCollapsed ? 'hidden' : 'block'}`}
                 >
-                    {Icon && (
-                        <span className={isCollapsed ? '' : 'mr-3'}>
-                            <Icon className="w-5 h-5 shrink-0" />
-                        </span>
-                    )}
-                    {/* Label: hidden when collapsed on desktop */}
-                    <span
-                        className={`font-medium whitespace-nowrap transition-opacity duration-200
-                            ${isCollapsed ? 'hidden' : 'block'}`}
-                    >
+                    {item.name}
+                </span>
+                {/* Chevron for expandable items */}
+                {item.children && !isCollapsed && (
+                    <IconChevronDown
+                        className={`ml-auto w-4 h-4 transition-transform duration-200 ${isSectionExpanded ? '' : '-rotate-90'}`}
+                    />
+                )}
+                {/* Active dot (only for items without children) */}
+                {isActive && !item.children && !isCollapsed && (
+                    <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
+                )}
+                {/* Tooltip when collapsed */}
+                {isCollapsed && (
+                    <span className="absolute left-full ml-2 px-2 py-1 rounded-md bg-surface-elevated text-foreground text-xs font-medium whitespace-nowrap shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
                         {item.name}
                     </span>
-                    {/* Chevron for expandable items */}
-                    {item.children && !isCollapsed && (
-                        <IconChevronDown
-                            className={`ml-auto w-4 h-4 transition-transform duration-200 ${isSectionExpanded ? '' : '-rotate-90'}`}
-                        />
-                    )}
-                    {/* Active dot (only for items without children) */}
-                    {isActive && !item.children && !isCollapsed && (
-                        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
-                    )}
-                    {/* Tooltip when collapsed */}
-                    {isCollapsed && (
-                        <span className="absolute left-full ml-2 px-2 py-1 rounded-md bg-surface-elevated text-foreground text-xs font-medium whitespace-nowrap shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
-                            {item.name}
-                        </span>
-                    )}
-                </Link>
+                )}
+            </>
+        );
+
+        return (
+            <div key={item.href}>
+                {item.children && !isCollapsed ? (
+                    <button
+                        type="button"
+                        onClick={handleParentClick}
+                        className={`${parentClasses} w-full text-left`}
+                        aria-expanded={isSectionExpanded}
+                    >
+                        {content}
+                    </button>
+                ) : (
+                    <Link
+                        href={item.href}
+                        onClick={handleParentClick}
+                        className={parentClasses}
+                    >
+                        {content}
+                    </Link>
+                )}
                 {/* Sub-items (desktop expanded only) */}
                 {item.children && isSectionExpanded && !isCollapsed && (
                     <div className="ml-8 mt-1 space-y-0.5">
@@ -595,33 +617,53 @@ export default function Layout({ children }: { children: ReactNode }) {
                                     }
                                     return next;
                                 });
+                                return;
                             }
                             setMobileSidebarState({ open: false, pathname });
                         };
 
-                        return (
-                            <div key={item.href}>
-                                <Link
-                                    href={item.href}
-                                    onClick={handleMobileParentClick}
-                                    className={`flex items-center px-4 py-3 rounded-xl transition-all duration-200
+                        const mobileParentClasses = `flex items-center px-4 py-3 rounded-xl transition-all duration-200
                                         ${isActive
                                             ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
                                             : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
-                                        }`}
-                                >
-                                    {Icon && <Icon className="w-5 h-5 mr-3 shrink-0" />}
-                                    <span className="font-medium">{item.name}</span>
-                                    {item.children ? (
-                                        <IconChevronDown
-                                            className={`ml-auto w-4 h-4 transition-transform duration-200 ${isSectionExpanded ? '' : '-rotate-90'}`}
-                                        />
-                                    ) : (
-                                        isActive && (
-                                            <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
-                                        )
-                                    )}
-                                </Link>
+                                        }`;
+
+                        const mobileContent = (
+                            <>
+                                {Icon && <Icon className="w-5 h-5 mr-3 shrink-0" />}
+                                <span className="font-medium">{item.name}</span>
+                                {item.children ? (
+                                    <IconChevronDown
+                                        className={`ml-auto w-4 h-4 transition-transform duration-200 ${isSectionExpanded ? '' : '-rotate-90'}`}
+                                    />
+                                ) : (
+                                    isActive && (
+                                        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-text-active animate-pulse" />
+                                    )
+                                )}
+                            </>
+                        );
+
+                        return (
+                            <div key={item.href}>
+                                {item.children ? (
+                                    <button
+                                        type="button"
+                                        onClick={handleMobileParentClick}
+                                        className={`${mobileParentClasses} w-full text-left`}
+                                        aria-expanded={isSectionExpanded}
+                                    >
+                                        {mobileContent}
+                                    </button>
+                                ) : (
+                                    <Link
+                                        href={item.href}
+                                        onClick={handleMobileParentClick}
+                                        className={mobileParentClasses}
+                                    >
+                                        {mobileContent}
+                                    </Link>
+                                )}
                                 {/* Mobile sub-items */}
                                 {item.children && isSectionExpanded && (
                                     <div className="ml-8 mt-1 space-y-0.5">
@@ -669,7 +711,10 @@ export default function Layout({ children }: { children: ReactNode }) {
                         {/* Spacer pushes UserMenu to right on desktop */}
                         <div className="hidden md:block" />
 
-                        <UserMenu />
+                        <div className="flex items-center gap-2">
+                            <NotificationBell />
+                            <UserMenu />
+                        </div>
                     </div>
                 </div>
 

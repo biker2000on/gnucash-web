@@ -70,9 +70,50 @@ export async function GET() {
       const simplefinWarnings = accountSet.errors.filter(isNonFatalSimpleFinWarning);
       const simplefinErrors = accountSet.errors.filter(error => !isNonFatalSimpleFinWarning(error));
       const liveError = simplefinErrors.length > 0 ? simplefinErrors.join('\n') : null;
+      const now = new Date();
 
       for (const acc of accountSet.accounts) {
         const stored = accountMap.get(acc.id);
+        const parsedBalance = acc.balance === undefined ? null : Number.parseFloat(acc.balance);
+        const liveBalance = parsedBalance === null || Number.isNaN(parsedBalance) ? null : parsedBalance;
+        const liveBalanceDate = liveBalance === null ? null : now;
+
+        await prisma.$executeRaw`
+          INSERT INTO gnucash_web_simplefin_account_map
+            (
+              connection_id,
+              simplefin_account_id,
+              simplefin_account_name,
+              simplefin_institution,
+              simplefin_last4,
+              gnucash_account_guid,
+              is_investment,
+              last_balance,
+              last_balance_date,
+              last_sync_at
+            )
+          VALUES
+            (
+              ${connection.id},
+              ${acc.id},
+              ${acc.name || null},
+              ${acc.org?.name || null},
+              ${stored?.last4 || null},
+              ${stored?.gnucashAccountGuid || null},
+              ${stored?.isInvestment ?? false},
+              ${liveBalance},
+              ${liveBalanceDate},
+              ${now}
+            )
+          ON CONFLICT (connection_id, simplefin_account_id)
+          DO UPDATE SET
+            simplefin_account_name = COALESCE(${acc.name || null}, gnucash_web_simplefin_account_map.simplefin_account_name),
+            simplefin_institution = COALESCE(${acc.org?.name || null}, gnucash_web_simplefin_account_map.simplefin_institution),
+            last_balance = COALESCE(${liveBalance}, gnucash_web_simplefin_account_map.last_balance),
+            last_balance_date = COALESCE(${liveBalanceDate}, gnucash_web_simplefin_account_map.last_balance_date),
+            last_sync_at = ${now}
+        `;
+
         accountMap.set(acc.id, {
           id: acc.id,
           name: acc.name,
