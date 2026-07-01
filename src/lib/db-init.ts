@@ -753,28 +753,33 @@ async function createExtensionTables() {
     `;
 
     const notificationsTableDDL = `
-        CREATE TABLE IF NOT EXISTS gnucash_web_notifications (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
-            book_guid VARCHAR(32),
-            type VARCHAR(50) NOT NULL DEFAULT 'background_job',
-            severity VARCHAR(20) NOT NULL DEFAULT 'info',
-            title VARCHAR(255) NOT NULL,
-            message TEXT,
-            href TEXT,
-            source VARCHAR(100),
-            source_id VARCHAR(255),
-            read_at TIMESTAMP,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_notifications_schema'));
 
-        CREATE INDEX IF NOT EXISTS idx_notifications_user_created
-            ON gnucash_web_notifications(user_id, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
-            ON gnucash_web_notifications(user_id, read_at)
-            WHERE read_at IS NULL;
-        CREATE INDEX IF NOT EXISTS idx_notifications_user_book
-            ON gnucash_web_notifications(user_id, book_guid, created_at DESC);
+            CREATE TABLE IF NOT EXISTS gnucash_web_notifications (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES gnucash_web_users(id) ON DELETE CASCADE,
+                book_guid VARCHAR(32),
+                type VARCHAR(50) NOT NULL DEFAULT 'background_job',
+                severity VARCHAR(20) NOT NULL DEFAULT 'info',
+                title VARCHAR(255) NOT NULL,
+                message TEXT,
+                href TEXT,
+                source VARCHAR(100),
+                source_id VARCHAR(255),
+                read_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+                ON gnucash_web_notifications(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
+                ON gnucash_web_notifications(user_id, read_at)
+                WHERE read_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_notifications_user_book
+                ON gnucash_web_notifications(user_id, book_guid, created_at DESC);
+        END $$;
     `;
 
     try {
