@@ -24,6 +24,8 @@ interface CategoryData {
 interface TaxPieChartProps {
     data: CategoryData[];
     loading: boolean;
+    /** True when tax accounts are identified via the "taxes" account tag. */
+    taggedMode?: boolean;
 }
 
 function formatCurrency(value: number): string {
@@ -106,7 +108,7 @@ function renderCustomLabel(props: PieLabelRenderProps) {
     );
 }
 
-export default function TaxPieChart({ data, loading }: TaxPieChartProps) {
+export default function TaxPieChart({ data, loading, taggedMode = false }: TaxPieChartProps) {
     const expanded = useContext(ExpandedContext);
 
     if (loading) return <ChartSkeleton />;
@@ -115,8 +117,13 @@ export default function TaxPieChart({ data, loading }: TaxPieChartProps) {
         return (
             <div className={`bg-surface border border-border rounded-xl p-6 ${expanded ? 'h-full' : ''}`}>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Taxes by Category</h3>
-                <div className="h-[300px] flex items-center justify-center">
+                <div className="h-[300px] flex flex-col items-center justify-center gap-2 px-6 text-center">
                     <p className="text-foreground-muted text-sm">No tax data available.</p>
+                    <p className="text-foreground-muted text-xs">
+                        {taggedMode
+                            ? 'No activity in accounts tagged "taxes" for this period.'
+                            : 'Tip: tag expense accounts with the "taxes" tag (edit account → Tags) to control exactly which accounts appear here.'}
+                    </p>
                 </div>
             </div>
         );

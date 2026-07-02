@@ -433,9 +433,10 @@ export default function FireCalculatorPage() {
     }
 
     if (c.overrides) {
-      setCurrentSavingsDDV(prev => ({ ...prev, override: c.overrides?.currentSavings ?? null }));
-      setAnnualSavingsDDV(prev => ({ ...prev, override: c.overrides?.annualSavings ?? null }));
-      setAnnualExpensesDDV(prev => ({ ...prev, override: c.overrides?.annualExpenses ?? null }));
+      const nonNegative = (v: number | null | undefined) => (v == null ? null : Math.max(0, v));
+      setCurrentSavingsDDV(prev => ({ ...prev, override: nonNegative(c.overrides?.currentSavings) }));
+      setAnnualSavingsDDV(prev => ({ ...prev, override: nonNegative(c.overrides?.annualSavings) }));
+      setAnnualExpensesDDV(prev => ({ ...prev, override: nonNegative(c.overrides?.annualExpenses) }));
       setExpectedReturnDDV(prev => ({ ...prev, override: c.overrides?.expectedReturn ?? null }));
       setSsBenefitOverride(c.overrides?.socialSecurityMonthlyBenefit ?? null);
     }
@@ -489,13 +490,13 @@ export default function FireCalculatorPage() {
     if (!isNaN(val)) {
       switch (field) {
         case 'currentSavings':
-          setCurrentSavingsDDV(prev => ({ ...prev, override: val }));
+          setCurrentSavingsDDV(prev => ({ ...prev, override: Math.max(0, val) }));
           break;
         case 'annualSavings':
-          setAnnualSavingsDDV(prev => ({ ...prev, override: val }));
+          setAnnualSavingsDDV(prev => ({ ...prev, override: Math.max(0, val) }));
           break;
         case 'annualExpenses':
-          setAnnualExpensesDDV(prev => ({ ...prev, override: val }));
+          setAnnualExpensesDDV(prev => ({ ...prev, override: Math.max(0, val) }));
           break;
         case 'expectedReturn':
           setExpectedReturnDDV(prev => ({ ...prev, override: val }));
@@ -665,8 +666,8 @@ export default function FireCalculatorPage() {
 
       {/* Error State */}
       {!isLoading && hasError && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-rose-500/30 rounded-xl p-6">
-          <div className="flex items-center gap-3 text-rose-400 mb-4">
+        <section className="bg-surface/30 backdrop-blur-xl border border-error/30 rounded-xl p-6">
+          <div className="flex items-center gap-3 text-error mb-4">
             <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
@@ -752,7 +753,7 @@ export default function FireCalculatorPage() {
               </span>
             </div>
           ) : (
-            <div className="flex items-center gap-3 text-amber-400">
+            <div className="flex items-center gap-3 text-warning">
               <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
@@ -774,7 +775,7 @@ export default function FireCalculatorPage() {
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-foreground">Portfolio Projection</h2>
                 {isRecalculating && (
-                  <span className="flex items-center gap-1.5 text-xs text-foreground-muted" role="status">
+                  <span className="flex items-center gap-1.5 text-xs text-foreground-muted" role="status" aria-live="polite">
                     <span className="animate-spin h-3 w-3 border-2 border-primary border-t-transparent rounded-full" />
                     Recalculating…
                   </span>
@@ -1024,7 +1025,7 @@ export default function FireCalculatorPage() {
             )}
           </div>
           {saveStatus === 'error' && (
-            <p className="text-xs text-rose-400 mb-4">Failed to save configuration. Please try again.</p>
+            <p className="text-xs text-error mb-4">Failed to save configuration. Please try again.</p>
           )}
 
           {/* Saved configs list */}

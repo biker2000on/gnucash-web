@@ -879,6 +879,16 @@ async function createPerformanceIndexes() {
         // SPLITS - Low: reconciliation workflow optimization
         `CREATE INDEX IF NOT EXISTS idx_splits_account_reconcile
             ON splits (account_guid, reconcile_state)`,
+
+        // SPLITS - High: covering index enables index-only scans for balance aggregates
+        `CREATE INDEX IF NOT EXISTS idx_splits_account_covering
+            ON splits (account_guid) INCLUDE (tx_guid, quantity_num, quantity_denom, value_num, value_denom)`,
+        `CREATE INDEX IF NOT EXISTS idx_splits_tx_account
+            ON splits (tx_guid, account_guid)`,
+
+        // SLOTS - Medium: notes/lot metadata lookups filtered by name
+        `CREATE INDEX IF NOT EXISTS idx_slots_obj_name
+            ON slots (obj_guid, name)`,
     ];
 
     try {

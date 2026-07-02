@@ -101,66 +101,40 @@ export async function GET(
         let startingBalance = 0;
 
         if (!unreviewedOnly) {
-            const balanceWhere: Prisma.splitsWhereInput = {
-                account_guid: { in: targetAccountGuids },
-                ...(endDate ? {
-                    transaction: {
-                        post_date: {
-                            lte: new Date(endDate),
-                        },
-                    },
-                } : {}),
-            };
-
-            const balanceSplits = await prisma.splits.findMany({
-                where: balanceWhere,
-            });
-
-            const totalBalance = balanceSplits.reduce((sum, split) => {
-                return sum + Number(split.quantity_num) / Number(split.quantity_denom);
-            }, 0);
+            // Aggregate the balance in SQL instead of fetching every split row into JS
+            const totalBalanceRows = await prisma.$queryRaw<{ balance: number }[]>`
+                SELECT COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS balance
+                FROM splits s
+                JOIN transactions t ON t.guid = s.tx_guid
+                WHERE s.account_guid = ANY(${targetAccountGuids}::text[])
+                ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
+            `;
+            const totalBalance = totalBalanceRows[0]?.balance ?? 0;
 
             // 2. Get the sum of splits for transactions that are NEWER than the current batch (to calculate starting balance for the page)
             startingBalance = totalBalance;
             if (offset > 0) {
-                // Get transaction GUIDs that are newer (before this page)
-                const newerTransactions = await prisma.transactions.findMany({
-                    where: {
-                        ...dateFilter,
-                        splits: {
-                            some: {
-                                account_guid: { in: targetAccountGuids },
-                            },
-                        },
-                    },
-                    orderBy: [
-                        { post_date: 'desc' },
-                        { enter_date: 'desc' },
-                    ],
-                    take: offset,
-                    select: {
-                        guid: true,
-                    },
-                });
-
-                const newerTxGuids = newerTransactions.map(tx => tx.guid);
-
-                if (newerTxGuids.length > 0) {
-                    const newerSplits = await prisma.splits.findMany({
-                        where: {
-                            account_guid: { in: targetAccountGuids },
-                            tx_guid: {
-                                in: newerTxGuids,
-                            },
-                        },
-                    });
-
-                    const newerSum = newerSplits.reduce((sum, split) => {
-                        return sum + Number(split.quantity_num) / Number(split.quantity_denom);
-                    }, 0);
-
-                    startingBalance = totalBalance - newerSum;
-                }
+                // Sum splits belonging to the `offset` newest transactions (before this page),
+                // using the same ordering/date filters as the page query below
+                const newerSumRows = await prisma.$queryRaw<{ newer_sum: number }[]>`
+                    SELECT COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS newer_sum
+                    FROM splits s
+                    WHERE s.account_guid = ANY(${targetAccountGuids}::text[])
+                      AND s.tx_guid IN (
+                        SELECT t.guid
+                        FROM transactions t
+                        WHERE EXISTS (
+                            SELECT 1 FROM splits s2
+                            WHERE s2.tx_guid = t.guid
+                              AND s2.account_guid = ANY(${targetAccountGuids}::text[])
+                        )
+                        ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
+                        ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
+                        ORDER BY t.post_date DESC, t.enter_date DESC
+                        LIMIT ${offset}
+                      )
+                `;
+                startingBalance = totalBalance - (newerSumRows[0]?.newer_sum ?? 0);
             }
         }
 

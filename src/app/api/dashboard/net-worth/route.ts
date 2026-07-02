@@ -11,21 +11,31 @@ const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
 const LIABILITY_TYPES = ['LIABILITY', 'CREDIT', 'PAYABLE'];
 
-/**
- * Generate an array of monthly date points between start and end (inclusive).
- * Each date point is the last moment of that month (or end date for the final month).
- */
-function generateMonthlyDatePoints(start: Date, end: Date): Date[] {
-    const points: Date[] = [];
-    const current = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
-    const endMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+type GroupBy = 'month' | 'quarter' | 'year';
 
-    while (current <= endMonth) {
-        // End of this month
-        const endOfMonth = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+const VALID_GROUP_BYS: GroupBy[] = ['month', 'quarter', 'year'];
+
+/**
+ * Generate an array of period-end date points between start and end (inclusive).
+ * Each date point is the last moment of that month/quarter/year (or the end
+ * date for the final partial period).
+ */
+function generateDatePoints(start: Date, end: Date, groupBy: GroupBy): Date[] {
+    const monthStep = groupBy === 'year' ? 12 : groupBy === 'quarter' ? 3 : 1;
+    const points: Date[] = [];
+
+    // Align the cursor to the start of the calendar period containing `start`
+    let startMonth = start.getUTCMonth();
+    if (groupBy === 'quarter') startMonth = Math.floor(startMonth / 3) * 3;
+    if (groupBy === 'year') startMonth = 0;
+    const current = new Date(Date.UTC(start.getUTCFullYear(), startMonth, 1));
+
+    while (current <= end) {
+        // End of this period
+        const endOfPeriod = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + monthStep, 0, 23, 59, 59, 999));
         // Cap at the end date
-        points.push(endOfMonth > end ? new Date(end) : endOfMonth);
-        current.setUTCMonth(current.getUTCMonth() + 1);
+        points.push(endOfPeriod > end ? new Date(end) : endOfPeriod);
+        current.setUTCMonth(current.getUTCMonth() + monthStep);
     }
 
     return points;
@@ -39,6 +49,10 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const startDateParam = searchParams.get('startDate');
         const endDateParam = searchParams.get('endDate');
+        const groupByParam = searchParams.get('groupBy');
+        const groupBy: GroupBy = VALID_GROUP_BYS.includes(groupByParam as GroupBy)
+            ? (groupByParam as GroupBy)
+            : 'month';
 
         const now = new Date();
 
@@ -50,7 +64,9 @@ export async function GET(request: NextRequest) {
 
         // Build cache key from book guid + metric + date params
         const bookGuid = await getActiveBookGuid();
-        const cacheKey = `cache:${bookGuid}:net-worth:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+        // groupBy sits before the date range so the cache invalidation index
+        // (which parses the trailing ":START-END" date portion) still works.
+        const cacheKey = `cache:${bookGuid}:net-worth:${groupBy}:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
 
         // Check cache first
         const cached = await cacheGet(cacheKey);
@@ -58,7 +74,7 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(cached);
         }
 
-        const datePoints = generateMonthlyDatePoints(startDate, endDate);
+        const datePoints = generateDatePoints(startDate, endDate, groupBy);
 
         // Fetch base currency for conversions
         const baseCurrency = await getBaseCurrency();

@@ -44,6 +44,17 @@ interface FixedAssetSelection {
   selectedGuids: string[];
 }
 
+function describeSchedule(schedule: DepreciationScheduleInfo): string {
+  const kind = schedule.isAppreciation ? 'Appreciation' : 'Depreciation';
+  const details = [schedule.method, schedule.frequency]
+    .filter((part) => typeof part === 'string' && part.length > 0)
+    .map((part) => part.replace(/_/g, ' '));
+  const suffix = schedule.enabled ? '' : ' (disabled)';
+  return details.length > 0
+    ? `${kind} schedule: ${details.join(', ')}${suffix}`
+    : `${kind} schedule configured${suffix}`;
+}
+
 export default function AssetsPage() {
   const { error: showError } = useToast();
   const [assets, setAssets] = useState<FixedAsset[]>([]);
@@ -54,6 +65,8 @@ export default function AssetsPage() {
   const [parentGuid, setParentGuid] = useState('');
   const [selectedGuids, setSelectedGuids] = useState<string[]>([]);
   const [manualSearch, setManualSearch] = useState('');
+  const [assetSearch, setAssetSearch] = useState('');
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectionLoaded, setSelectionLoaded] = useState(false);
   const [savingSelection, setSavingSelection] = useState(false);
 
@@ -151,20 +164,25 @@ export default function AssetsPage() {
       params.set('accountGuids', selectedGuids.join(','));
     } else {
       setAssets([]);
+      setFetchError(null);
       setLoading(false);
       return;
     }
 
     setLoading(true);
+    setFetchError(null);
     try {
       const res = await fetch(`/api/assets/fixed?${params.toString()}`);
       const data = await res.json();
       if (res.ok) {
         setAssets(data.assets || []);
       } else {
-        showError(data.error || 'Failed to load fixed assets');
+        const message = data.error || 'Failed to load fixed assets';
+        setFetchError(message);
+        showError(message);
       }
     } catch {
+      setFetchError('Failed to load fixed assets');
       showError('Failed to load fixed assets');
     } finally {
       setLoading(false);
@@ -194,6 +212,12 @@ export default function AssetsPage() {
   };
 
   const hasSelection = selectionMode === 'parent' ? !!parentGuid : selectedGuids.length > 0;
+
+  const filteredAssets = assets.filter((asset) => {
+    const query = assetSearch.trim().toLowerCase();
+    if (!query) return true;
+    return asset.name.toLowerCase().includes(query) || asset.accountPath.toLowerCase().includes(query);
+  });
 
   if (loading) {
     return (
@@ -332,6 +356,20 @@ export default function AssetsPage() {
         )}
       </section>
 
+      {/* Error State */}
+      {!loading && fetchError && (
+        <div className="bg-error/10 border border-error/30 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-error">{fetchError}</p>
+          <button
+            type="button"
+            onClick={() => fetchAssets()}
+            className="px-3 py-1.5 text-sm font-medium rounded-md border border-error/40 text-error hover:bg-error/10 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Empty State */}
       {!loading && !hasSelection && (
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
@@ -345,7 +383,7 @@ export default function AssetsPage() {
         </div>
       )}
 
-      {!loading && hasSelection && assets.length === 0 && (
+      {!loading && !fetchError && hasSelection && assets.length === 0 && (
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
           <svg className="w-12 h-12 mx-auto text-foreground-muted mb-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
@@ -354,67 +392,91 @@ export default function AssetsPage() {
           <p className="text-foreground-muted">
             The selected source did not include any non-placeholder ASSET accounts.
           </p>
+          <p className="text-foreground-muted text-sm mt-2">
+            Check that the accounts are of type ASSET and are not marked as placeholders in GnuCash.
+          </p>
         </div>
       )}
 
       {/* Asset Cards */}
       {assets.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {assets.map((asset) => (
-            <Link
-              key={asset.guid}
-              href={`/assets/${asset.guid}`}
-              className="block bg-background-secondary rounded-lg border border-border p-5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all duration-200 group"
-            >
-              {/* Name & Path */}
-              <div className="mb-3">
-                <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
-                  {asset.name}
-                </h3>
-                <p className="text-sm text-foreground-muted truncate">
-                  {asset.accountPath}
-                </p>
-              </div>
+        <div className="space-y-4">
+          <input
+            type="text"
+            value={assetSearch}
+            onChange={(event) => setAssetSearch(event.target.value)}
+            placeholder="Filter assets by name or account path..."
+            aria-label="Filter assets by name or account path"
+            className="w-full sm:max-w-sm bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+          />
+          {filteredAssets.length === 0 ? (
+            <div className="bg-background-secondary rounded-lg p-6 border border-border text-center">
+              <p className="text-foreground-muted text-sm">
+                No assets match &ldquo;{assetSearch.trim()}&rdquo;.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredAssets.map((asset) => (
+                <Link
+                  key={asset.guid}
+                  href={`/assets/${asset.guid}`}
+                  className="block bg-background-secondary rounded-lg border border-border p-5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all duration-200 group"
+                >
+                  {/* Name & Path */}
+                  <div className="mb-3">
+                    <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
+                      {asset.name}
+                    </h3>
+                    <p className="text-sm text-foreground-muted truncate">
+                      {asset.accountPath}
+                    </p>
+                  </div>
 
-              {/* Balance */}
-              <div className="mb-3">
-                <p className="text-2xl font-bold text-foreground">
-                  {formatCurrency(asset.currentBalance)}
-                </p>
-                <p className="text-xs text-foreground-muted">Current Value</p>
-              </div>
+                  {/* Balance */}
+                  <div className="mb-3">
+                    <p className="text-2xl font-bold text-foreground">
+                      {formatCurrency(asset.currentBalance)}
+                    </p>
+                    <p className="text-xs text-foreground-muted">Current Value</p>
+                  </div>
 
-              {/* Footer Info */}
-              <div className="flex items-center justify-between text-sm">
-                <div>
-                  {asset.lastTransactionDate ? (
-                    <span className="text-foreground-secondary">
-                      Last activity: {asset.lastTransactionDate}
-                    </span>
-                  ) : (
-                    <span className="text-foreground-muted">No transactions</span>
-                  )}
-                </div>
-                <div>
-                  {asset.depreciationSchedule ? (
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                      asset.depreciationSchedule.enabled
-                        ? asset.depreciationSchedule.isAppreciation
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : 'bg-amber-500/20 text-amber-400'
-                        : 'bg-gray-500/20 text-gray-400'
-                    }`}>
-                      {asset.depreciationSchedule.isAppreciation ? 'Appreciating' : 'Depreciating'}
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400">
-                      No schedule
-                    </span>
-                  )}
-                </div>
-              </div>
-            </Link>
-          ))}
+                  {/* Footer Info */}
+                  <div className="flex items-center justify-between text-sm">
+                    <div>
+                      {asset.lastTransactionDate ? (
+                        <span className="text-foreground-secondary">
+                          Last activity: {asset.lastTransactionDate}
+                        </span>
+                      ) : (
+                        <span className="text-foreground-muted">No transactions</span>
+                      )}
+                    </div>
+                    <div>
+                      {asset.depreciationSchedule ? (
+                        <span
+                          title={describeSchedule(asset.depreciationSchedule)}
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            asset.depreciationSchedule.enabled
+                              ? asset.depreciationSchedule.isAppreciation
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : 'bg-amber-500/20 text-amber-400'
+                              : 'bg-gray-500/20 text-gray-400'
+                          }`}
+                        >
+                          {asset.depreciationSchedule.isAppreciation ? 'Appreciating' : 'Depreciating'}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400">
+                          No schedule
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

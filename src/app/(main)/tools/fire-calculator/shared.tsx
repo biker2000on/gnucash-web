@@ -252,7 +252,7 @@ export function DataDrivenInputField({
       <div className="flex items-center gap-2 mb-1">
         <label className="block text-sm font-medium text-foreground-muted">{label}</label>
         {sourceText && (
-          <span className={`text-xs ${source === 'data' ? 'text-primary' : 'text-amber-400'}`}>
+          <span className={`text-xs ${source === 'data' ? 'text-primary' : 'text-warning'}`}>
             {sourceText}
           </span>
         )}
@@ -260,7 +260,7 @@ export function DataDrivenInputField({
           <button
             type="button"
             onClick={() => onReset(field)}
-            className="text-xs text-foreground-muted hover:text-rose-400 transition-colors"
+            className="text-xs text-foreground-muted hover:text-error transition-colors"
             title="Reset to computed value"
           >
             x
@@ -282,6 +282,7 @@ export function DataDrivenInputField({
             onKeyDown={e => { if (e.key === 'Enter') onCommit(field); if (e.key === 'Escape') onCommit(field); }}
             autoFocus
             step={type === 'percent' ? 0.1 : 1000}
+            min={type === 'currency' ? 0 : undefined}
             className={`w-full bg-input-bg border border-primary rounded-lg py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
               prefix ? 'pl-7 pr-3' : sfx ? 'pl-3 pr-10' : 'pl-3 pr-3'
             }${prefix && sfx ? ' pr-10' : ''}`}
@@ -397,7 +398,7 @@ export function SavedConfigCard({ config, onLoad, onDelete, isDeleting }: SavedC
         type="button"
         onClick={() => onDelete(config.id)}
         disabled={isDeleting}
-        className="shrink-0 p-1.5 text-foreground-muted hover:text-rose-400 transition-colors disabled:opacity-50"
+        className="shrink-0 p-1.5 text-foreground-muted hover:text-error transition-colors disabled:opacity-50"
         title="Delete saved configuration"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -124,7 +124,7 @@ export function SensitivityRow({
           const isCurrent = row.retirementAge === retirementAge;
           const pct = row.successRate * 100;
           const color =
-            pct >= 90 ? 'text-positive' : pct >= 75 ? 'text-amber-400' : 'text-negative';
+            pct >= 90 ? 'text-positive' : pct >= 75 ? 'text-warning' : 'text-negative';
           return (
             <div
               key={row.retirementAge}

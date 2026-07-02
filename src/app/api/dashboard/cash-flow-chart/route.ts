@@ -6,6 +6,17 @@ import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import { requireRole } from '@/lib/auth';
 
+type GroupBy = 'month' | 'quarter' | 'year';
+
+const VALID_GROUP_BYS: GroupBy[] = ['month', 'quarter', 'year'];
+
+/** Bucket key for a date: "YYYY-MM", "YYYY-Qn", or "YYYY". */
+function periodKey(year: number, month: number, groupBy: GroupBy): string {
+    if (groupBy === 'year') return String(year);
+    if (groupBy === 'quarter') return `${year}-Q${Math.floor(month / 3) + 1}`;
+    return `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
 export async function GET(request: NextRequest) {
     try {
         const roleResult = await requireRole('readonly');
@@ -14,6 +25,10 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const startDateParam = searchParams.get('startDate');
         const endDateParam = searchParams.get('endDate');
+        const groupByParam = searchParams.get('groupBy');
+        const groupBy: GroupBy = VALID_GROUP_BYS.includes(groupByParam as GroupBy)
+            ? (groupByParam as GroupBy)
+            : 'month';
 
         const endDate = endDateParam ? new Date(endDateParam + 'T23:59:59Z') : new Date();
 
@@ -107,7 +122,7 @@ export async function GET(request: NextRequest) {
             },
         });
 
-        // Group by month
+        // Group by period (month/quarter/year)
         const monthlyData = new Map<
             string,
             { income: number; expenses: number }
@@ -117,7 +132,7 @@ export async function GET(request: NextRequest) {
             const postDate = split.transaction.post_date;
             if (!postDate) continue;
 
-            const monthKey = `${postDate.getUTCFullYear()}-${String(postDate.getUTCMonth() + 1).padStart(2, '0')}`;
+            const monthKey = periodKey(postDate.getUTCFullYear(), postDate.getUTCMonth(), groupBy);
             const entry = monthlyData.get(monthKey) || { income: 0, expenses: 0 };
 
             const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
@@ -143,11 +158,15 @@ export async function GET(request: NextRequest) {
         const expenses: number[] = [];
         const netCashFlow: number[] = [];
 
-        const current = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), 1));
+        const monthStep = groupBy === 'year' ? 12 : groupBy === 'quarter' ? 3 : 1;
+        let alignedStartMonth = startDate.getUTCMonth();
+        if (groupBy === 'quarter') alignedStartMonth = Math.floor(alignedStartMonth / 3) * 3;
+        if (groupBy === 'year') alignedStartMonth = 0;
+        const current = new Date(Date.UTC(startDate.getUTCFullYear(), alignedStartMonth, 1));
         const endMonth = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1));
 
         while (current <= endMonth) {
-            const monthKey = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, '0')}`;
+            const monthKey = periodKey(current.getUTCFullYear(), current.getUTCMonth(), groupBy);
             const data = monthlyData.get(monthKey) || { income: 0, expenses: 0 };
 
             const incomeValue = Math.round(data.income * 100) / 100;
@@ -159,7 +178,7 @@ export async function GET(request: NextRequest) {
             expenses.push(expensesValue);
             netCashFlow.push(netValue);
 
-            current.setUTCMonth(current.getUTCMonth() + 1);
+            current.setUTCMonth(current.getUTCMonth() + monthStep);
         }
 
         return NextResponse.json({ months, income, expenses, netCashFlow });

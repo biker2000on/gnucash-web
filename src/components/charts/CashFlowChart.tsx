@@ -41,9 +41,26 @@ function formatFullCurrency(value: number): string {
 }
 
 function formatMonth(monthStr: string): string {
+    // Period keys: "YYYY" (year), "YYYY-Qn" (quarter), "YYYY-MM" (month)
+    if (/^\d{4}$/.test(monthStr)) return monthStr;
+    if (/^\d{4}-Q\d$/.test(monthStr)) {
+        const [year, quarter] = monthStr.split('-');
+        return `${quarter} '${year.slice(2)}`;
+    }
     const [year, month] = monthStr.split('-');
     const date = new Date(parseInt(year), parseInt(month) - 1, 1);
     return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+}
+
+function formatPeriodLong(periodStr: string): string {
+    if (/^\d{4}$/.test(periodStr)) return periodStr;
+    if (/^\d{4}-Q\d$/.test(periodStr)) {
+        const [year, quarter] = periodStr.split('-');
+        return `${quarter} ${year}`;
+    }
+    const [year, month] = periodStr.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
 function ChartSkeleton() {
@@ -68,12 +85,7 @@ interface CustomTooltipProps {
 function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
     if (!active || !payload || !label) return null;
 
-    const [year, month] = label.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, 1);
-    const formattedDate = date.toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-    });
+    const formattedDate = formatPeriodLong(label);
 
     return (
         <div className="bg-background border border-border rounded-lg p-3 shadow-xl">

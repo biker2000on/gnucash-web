@@ -262,8 +262,8 @@ export default function TaxEstimatorPage() {
           priorYearAgi?: number;
         };
         if (Array.isArray(saved.scenarios)) setScenarios(saved.scenarios.slice(0, 3));
-        if (typeof saved.priorYearTax === 'number') setPriorYearTax(saved.priorYearTax);
-        if (typeof saved.priorYearAgi === 'number') setPriorYearAgi(saved.priorYearAgi);
+        if (typeof saved.priorYearTax === 'number') setPriorYearTax(Math.max(0, saved.priorYearTax));
+        if (typeof saved.priorYearAgi === 'number') setPriorYearAgi(Math.max(0, saved.priorYearAgi));
       })
       .catch(() => {});
   }, []);
@@ -420,83 +420,90 @@ export default function TaxEstimatorPage() {
             Federal + state estimates from your book data, with contribution scenario modeling.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={year}
-            onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
-            className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
-          >
-            {SUPPORTED_TAX_YEARS.map(y => (
-              <option key={y} value={y}>Tax year {y}</option>
-            ))}
-          </select>
-          <select
-            value={filingStatus}
-            onChange={e => {
-              const fs = e.target.value as FilingStatus;
-              setFilingStatus(fs);
-              savePreferences({ filingStatus: fs });
-            }}
-            className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
-          >
-            {FILING_STATUSES.map(fs => (
-              <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
-            ))}
-          </select>
-          <select
-            value={stateCode}
-            onChange={e => {
-              setStateCode(e.target.value);
-              savePreferences({ state: e.target.value });
-            }}
-            className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
-          >
-            {STATE_OPTIONS.map(s => (
-              <option key={s.code} value={s.code}>{s.name}</option>
-            ))}
-          </select>
-          {stateCode === 'OTHER' && (
-            <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
-              Flat rate %
-              <input
-                type="number"
-                min={0}
-                max={20}
-                step={0.1}
-                value={stateFlatRate * 100 || ''}
-                placeholder="0"
-                onChange={e => {
-                  const rate = Math.max(0, (parseFloat(e.target.value) || 0) / 100);
-                  setStateFlatRate(rate);
-                  savePreferences({ flatRate: rate });
-                }}
-                className="w-16 bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-right font-mono text-foreground focus:outline-none focus:border-primary"
-              />
-            </label>
-          )}
-          {isCurrentYear && (
-            <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer">
-              <input
-                type="checkbox"
-                checked={annualize}
-                onChange={e => setAnnualize(e.target.checked)}
-                className="accent-[var(--primary)]"
-              />
-              Annualize YTD
-            </label>
-          )}
-          <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
-            Filers 65+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select
-              value={filersAge65Plus}
-              onChange={e => setFilersAge65Plus(parseInt(e.target.value, 10))}
-              className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+              value={year}
+              onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
+              aria-label="Tax year"
+              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
             >
-              <option value={0}>0</option>
-              <option value={1}>1</option>
-              <option value={2}>2</option>
+              {SUPPORTED_TAX_YEARS.map(y => (
+                <option key={y} value={y}>Tax year {y}</option>
+              ))}
             </select>
-          </label>
+            <select
+              value={filingStatus}
+              onChange={e => {
+                const fs = e.target.value as FilingStatus;
+                setFilingStatus(fs);
+                savePreferences({ filingStatus: fs });
+              }}
+              aria-label="Filing status"
+              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+            >
+              {FILING_STATUSES.map(fs => (
+                <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
+              ))}
+            </select>
+            <select
+              value={stateCode}
+              onChange={e => {
+                setStateCode(e.target.value);
+                savePreferences({ state: e.target.value });
+              }}
+              aria-label="State"
+              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+            >
+              {STATE_OPTIONS.map(s => (
+                <option key={s.code} value={s.code}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {stateCode === 'OTHER' && (
+              <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
+                Flat rate %
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  step={0.1}
+                  value={stateFlatRate * 100 || ''}
+                  placeholder="0"
+                  onChange={e => {
+                    const rate = Math.max(0, (parseFloat(e.target.value) || 0) / 100);
+                    setStateFlatRate(rate);
+                    savePreferences({ flatRate: rate });
+                  }}
+                  className="w-16 bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-right font-mono text-foreground focus:outline-none focus:border-primary"
+                />
+              </label>
+            )}
+            {isCurrentYear && (
+              <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={annualize}
+                  onChange={e => setAnnualize(e.target.checked)}
+                  className="accent-[var(--primary)]"
+                />
+                Annualize YTD
+              </label>
+            )}
+            <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
+              Filers 65+
+              <select
+                value={filersAge65Plus}
+                onChange={e => setFilersAge65Plus(parseInt(e.target.value, 10))}
+                className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+              >
+                <option value={0}>0</option>
+                <option value={1}>1</option>
+                <option value={2}>2</option>
+              </select>
+            </label>
+          </div>
         </div>
       </header>
 
@@ -504,7 +511,7 @@ export default function TaxEstimatorPage() {
       {!hasMappings && mappingsData && (
         <Section
           title="Get started: map your accounts to tax categories"
-          subtitle="The estimator reads income, withholding, deductions, and contributions from your book once accounts are mapped. Start from the suggestions below."
+          subtitle="The estimator reads income, withholding, deductions, and contributions from your book once accounts are mapped. Start from the suggestions below. Hidden and placeholder accounts are excluded."
         >
           <TaxMappingPanel
             accounts={mappingsData.accounts}

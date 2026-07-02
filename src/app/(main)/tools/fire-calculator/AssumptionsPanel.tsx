@@ -148,10 +148,10 @@ export default function AssumptionsPanel({
                   value={a.returnMode}
                   onChange={v => onChange({ returnMode: v })}
                 />
-                <p className="text-xs text-foreground-muted mt-1.5">
-                  {a.returnMode === 'historical'
-                    ? 'Each simulated year samples real stock/bond/inflation data from 1928–2024, preserving their correlation.'
-                    : `Every year returns exactly ${fixedReturnPct}% nominal (set under Parameters). No volatility — bands collapse to one line.`}
+                <p className="text-xs text-foreground-secondary mt-1.5">
+                  Historical mode samples actual 1928–2024 annual returns, preserving stock/bond/inflation
+                  correlation; fixed mode applies a constant {fixedReturnPct}% nominal return every year
+                  (set under Parameters).
                 </p>
               </div>
               <div>
@@ -351,7 +351,7 @@ export default function AssumptionsPanel({
 
                   {/* Sparse-history caveat */}
                   {ssa.estimates && ssa.yearsWithEarnings < 10 && (
-                    <p className="text-xs text-amber-400">
+                    <p className="text-xs text-warning">
                       Your book only covers {ssa.yearsWithEarnings}{' '}
                       {ssa.yearsWithEarnings === 1 ? 'year' : 'years'} of earnings, so this
                       estimate misses most of your real earnings record. For a more accurate
@@ -360,7 +360,7 @@ export default function AssumptionsPanel({
                         href="https://www.ssa.gov/myaccount/"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="underline hover:text-amber-300"
+                        className="underline hover:text-foreground"
                       >
                         SSA.gov statement
                       </a>{' '}
