@@ -17,6 +17,8 @@ import PayslipDetailPanel from '@/components/payslips/PayslipDetailPanel';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { Modal } from '@/components/ui/Modal';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -162,6 +164,7 @@ const columns = [
 // ---------------------------------------------------------------------------
 
 export default function PayslipsPage() {
+  const isMobile = useIsMobile();
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
@@ -390,6 +393,60 @@ export default function PayslipsPage() {
                 ? 'No payslips yet. Upload one to get started.'
                 : 'No payslips match your filters.'}
             </span>
+          </div>
+        ) : isMobile ? (
+          <div>
+            {table.getRowModel().rows.map(row => (
+              <MobileCard
+                key={row.id}
+                onClick={() => setSelectedId(row.original.id)}
+                className={row.getIsSelected() ? 'bg-primary/5' : ''}
+                fields={[]}
+              >
+                {/* Title row: employer + pay date, selection checkbox top-right */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-foreground">{row.original.employer_name}</div>
+                    <div className="text-xs text-foreground-muted font-mono tabular-nums">{formatDate(row.original.pay_date)}</div>
+                  </div>
+                  {row.original.status !== 'posted' && (
+                    <input
+                      type="checkbox"
+                      checked={row.getIsSelected()}
+                      onChange={row.getToggleSelectedHandler()}
+                      onClick={e => e.stopPropagation()}
+                      className="rounded border-border mt-0.5 flex-shrink-0"
+                    />
+                  )}
+                </div>
+
+                {/* Fields */}
+                <div className="mt-2">
+                  <div className="flex justify-between items-baseline py-0.5">
+                    <span className="text-xs text-foreground-muted uppercase tracking-wider">Gross</span>
+                    <span className="text-sm text-foreground text-right font-mono tabular-nums">{formatAmount(row.original.gross_pay)}</span>
+                  </div>
+                  <div className="flex justify-between items-baseline py-0.5">
+                    <span className="text-xs text-foreground-muted uppercase tracking-wider">Net</span>
+                    <span className="text-sm text-foreground text-right font-mono tabular-nums">{formatAmount(row.original.net_pay)}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-0.5">
+                    <span className="text-xs text-foreground-muted uppercase tracking-wider">Status</span>
+                    <StatusBadge status={row.original.status} />
+                  </div>
+                </div>
+
+                {/* Actions footer */}
+                <div className="mt-3 flex justify-end">
+                  <button
+                    onClick={e => { e.stopPropagation(); setSelectedId(row.original.id); }}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
+                  >
+                    View
+                  </button>
+                </div>
+              </MobileCard>
+            ))}
           </div>
         ) : (
           <table className="w-full">

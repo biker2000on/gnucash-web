@@ -8,10 +8,13 @@ import { Modal } from '@/components/ui/Modal';
 import { useToast } from '@/contexts/ToastContext';
 import { TAG_COLORS, normalizeTagName, isValidTagName, type Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 export default function TagsPage() {
     const { success, error } = useToast();
     const { isReadonly } = useCurrentUser();
+    const isMobile = useIsMobile();
     const [tags, setTags] = useState<Tag[]>([]);
     const [loading, setLoading] = useState(true);
     const [newTagName, setNewTagName] = useState('');
@@ -163,6 +166,47 @@ export default function TagsPage() {
                 ) : tags.length === 0 ? (
                     <div className="p-12 text-center text-foreground-muted">
                         No tags yet. Create one above, or tag a transaction from its context menu (right-click → Tags…).
+                    </div>
+                ) : isMobile ? (
+                    <div>
+                        {tags.map(tag => (
+                            <MobileCard
+                                key={tag.id}
+                                fields={[
+                                    {
+                                        label: 'Tag',
+                                        value: (
+                                            <Link
+                                                href={`/ledger?search=${encodeURIComponent(`#${tag.name}`)}`}
+                                                title={`Show transactions tagged #${tag.name}`}
+                                            >
+                                                <TagChip name={tag.name} color={tag.color} size="sm" className="cursor-pointer hover:brightness-125 transition-all" />
+                                            </Link>
+                                        ),
+                                    },
+                                    { label: 'Description', value: tag.description || <span className="text-foreground-muted">—</span> },
+                                    { label: 'Transactions', value: <span className="font-mono">{tag.transaction_count ?? 0}</span> },
+                                    { label: 'Accounts', value: <span className="font-mono">{tag.account_count ?? 0}</span> },
+                                ]}
+                            >
+                                <div className="flex justify-end gap-2 pt-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => openEdit(tag)}
+                                        className="px-3 py-1.5 text-xs rounded-md border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors"
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setDeletingTag(tag)}
+                                        className="px-3 py-1.5 text-xs rounded-md border border-rose-500/30 text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            </MobileCard>
+                        ))}
                     </div>
                 ) : (
                     <div className="overflow-x-auto">

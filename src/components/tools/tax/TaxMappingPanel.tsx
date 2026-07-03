@@ -6,6 +6,8 @@ import {
   TAX_CATEGORY_LABELS,
   type TaxCategory,
 } from '@/lib/tax/types';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 export interface MappingAccount {
   guid: string;
@@ -67,6 +69,7 @@ export default function TaxMappingPanel({
   saving,
   onSave,
 }: TaxMappingPanelProps) {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [showOnlyMapped, setShowOnlyMapped] = useState(false);
   /** Pending local edits not yet saved */
@@ -181,6 +184,70 @@ export default function TaxMappingPanel({
 
       {/* Account list */}
       <div className="border border-border rounded-md overflow-hidden max-h-[480px] overflow-y-auto">
+        {isMobile ? (
+          <div>
+            {visibleAccounts.map(a => {
+              const current = effectiveCategory(a.guid);
+              const suggestion = suggestionByGuid.get(a.guid);
+              const showSuggestion = suggestion && !current;
+              const dirty = a.guid in pending;
+              return (
+                <MobileCard
+                  key={a.guid}
+                  fields={[
+                    {
+                      label: 'Account',
+                      value: (
+                        <span className="font-medium">
+                          {a.name}
+                          {dirty && (
+                            <span className="ml-1.5 align-middle text-[10px] uppercase font-normal text-warning border border-warning/40 rounded px-1 py-px">
+                              edited
+                            </span>
+                          )}
+                        </span>
+                      ),
+                    },
+                    {
+                      label: 'Type',
+                      value: <span className="font-mono text-xs text-foreground-muted">{a.accountType}</span>,
+                    },
+                    {
+                      label: 'Path',
+                      value: (
+                        <span className="block text-[11px] text-foreground-muted truncate max-w-[220px]" title={a.fullname}>
+                          {a.fullname}
+                        </span>
+                      ),
+                    },
+                  ]}
+                >
+                  <div className="mt-2 space-y-2">
+                    <CategorySelect
+                      value={current}
+                      onChange={v => setCategory(a.guid, v)}
+                      className={`w-full ${dirty ? 'border-primary' : ''}`}
+                    />
+                    {showSuggestion && (
+                      <button
+                        onClick={() => acceptSuggestion(suggestion)}
+                        title={suggestion.reason}
+                        className="w-full text-left text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-1 transition-colors"
+                      >
+                        Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
+                      </button>
+                    )}
+                  </div>
+                </MobileCard>
+              );
+            })}
+            {visibleAccounts.length === 0 && (
+              <div className="px-3 py-6 text-center text-sm text-foreground-muted">
+                No accounts match.
+              </div>
+            )}
+          </div>
+        ) : (
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-background-tertiary">
             <tr className="text-left text-xs text-foreground-muted">
@@ -236,6 +303,7 @@ export default function TaxMappingPanel({
             )}
           </tbody>
         </table>
+        )}
       </div>
       <p className="text-[11px] text-foreground-muted">
         Mapping a parent account automatically covers its children unless a child has its own mapping.

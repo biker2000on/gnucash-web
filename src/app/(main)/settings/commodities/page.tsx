@@ -14,6 +14,8 @@ import { CommodityEditorModal, type CommodityFormValues } from '@/components/com
 import { NamespaceSelector } from '@/components/commodities/NamespaceSelector';
 import { EditableCell } from '@/components/commodities/EditableCell';
 import { verifySymbol, verifySymbolsBulk } from '@/lib/hooks/useYahooSymbolVerify';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 const COL_ORDER = ['namespace', 'mnemonic', 'fullname', 'cusip', 'fraction', 'quoteFlag', 'quoteSource', 'quoteTz'] as const;
 type ColKey = typeof COL_ORDER[number];
@@ -91,6 +93,7 @@ function normalizeCommodity(row: CommodityRow): EditableCommodityRow {
 
 export default function CommodityPriceSettingsPage() {
   const { success, error: showError } = useToast();
+  const isMobile = useIsMobile();
   const [commodities, setCommodities] = useState<EditableCommodityRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -708,6 +711,49 @@ export default function CommodityPriceSettingsPage() {
 
         {loading ? (
           <div className="p-8 text-center text-foreground-secondary">Loading commodities...</div>
+        ) : isMobile ? (
+          <div>
+            {table.getRowModel().rows.map((tableRow) => {
+              const row = tableRow.original;
+              const dirty = !rowsEqual(row);
+              return (
+                <MobileCard
+                  key={row.guid}
+                  fields={[
+                    {
+                      label: 'Symbol',
+                      value: (
+                        <span className="inline-flex items-center gap-2">
+                          {dirty && (
+                            <span className="text-xs text-warning" title="Unsaved changes">
+                              ●
+                            </span>
+                          )}
+                          <span className="font-mono font-medium">{row.mnemonic}</span>
+                          {renderVerifyBadge(row.verifyStatus)}
+                        </span>
+                      ),
+                    },
+                    { label: 'Namespace', value: row.namespace },
+                    { label: 'Full Name', value: row.fullname || '—' },
+                    { label: 'Fraction', value: <span className="font-mono">{row.fraction}</span> },
+                    { label: 'Quote', value: row.quoteFlag ? 'Yes' : 'No' },
+                  ]}
+                >
+                  <button
+                    onClick={() => handleOpenEdit(row)}
+                    className="mt-3 w-full px-4 py-2 text-sm bg-background-tertiary text-foreground-secondary hover:bg-surface-hover rounded-lg transition-colors"
+                    aria-label={`Edit ${row.mnemonic}`}
+                  >
+                    Edit
+                  </button>
+                </MobileCard>
+              );
+            })}
+            {table.getRowModel().rows.length === 0 && (
+              <div className="p-8 text-center text-foreground-secondary">No commodities found</div>
+            )}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1100px]">

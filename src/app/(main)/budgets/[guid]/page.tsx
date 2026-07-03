@@ -771,18 +771,18 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                 </select>
                             </FilterBar>
                         </div>
-                        <div className="overflow-auto max-h-[calc(100vh-300px)]">
-                            <table className="w-full text-sm">
+                        <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-300px)]">
+                            <table className="w-full text-sm max-md:text-xs">
                                 <thead className="sticky top-0 z-20">
                                     <tr className="bg-background-secondary text-foreground-secondary text-xs uppercase tracking-widest shadow-md">
-                                        <th className="px-4 py-3 text-left font-semibold sticky left-0 bg-background-secondary z-30 min-w-[250px]">Account</th>
+                                        <th className="px-4 py-3 max-md:px-1.5 max-md:py-1 text-left font-semibold sticky left-0 bg-background-secondary z-30 min-w-[250px] max-md:min-w-[160px]">Account</th>
                                         {Array.from({ length: budget.num_periods }, (_, i) => (
-                                            <th key={i} className="px-3 py-3 text-right font-semibold min-w-[90px]">
+                                            <th key={i} className="px-3 py-3 max-md:px-1.5 max-md:py-1 text-right font-semibold min-w-[90px]">
                                                 {getPeriodLabel(budget.num_periods, i)}
                                             </th>
                                         ))}
-                                        <th className="px-4 py-3 text-right font-semibold bg-background-tertiary/30 min-w-[100px]">Total</th>
-                                        <th className="px-3 py-3 text-center font-semibold min-w-[120px]">Actions</th>
+                                        <th className="px-4 py-3 max-md:px-1.5 max-md:py-1 text-right font-semibold bg-background-tertiary/30 min-w-[100px]">Total</th>
+                                        <th className="px-3 py-3 max-md:px-1.5 max-md:py-1 text-center font-semibold min-w-[120px]">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border/50">
@@ -797,7 +797,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
                                         return (
                                             <tr key={account.guid} className={`hover:bg-white/[0.02] transition-colors ${isUnbudgeted ? 'opacity-50' : ''}`}>
-                                                <td className="px-4 py-3 font-medium text-foreground sticky left-0 bg-background/90 backdrop-blur-sm z-10">
+                                                <td className="px-4 py-3 max-md:px-1.5 max-md:py-1 font-medium text-foreground sticky left-0 bg-background/90 backdrop-blur-sm z-10">
                                                     <div
                                                         className="flex items-center gap-2"
                                                         style={{ paddingLeft: `${account.depth * 20}px` }}
@@ -887,7 +887,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         const displayValue = applyBalanceReversal(value, account.type, balanceReversal);
                                                         const isSubtotal = showRolledUp && account.rolledUpTotal !== 0;
                                                         return (
-                                                            <td key={i} className={`px-2 py-1 text-right font-mono text-sm ${
+                                                            <td key={i} className={`px-2 py-1 max-md:px-1.5 text-right font-mono text-sm max-md:text-xs ${
                                                                 isSubtotal
                                                                     ? `italic ${displayValue < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
                                                                     : displayValue < 0 ? 'text-rose-400' : 'text-primary'
@@ -900,7 +900,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                 {(() => {
                                                     const totalDisplay = applyBalanceReversal(displayTotal, account.type, balanceReversal);
                                                     return (
-                                                        <td className={`px-4 py-3 text-right font-mono font-semibold bg-background-tertiary/30 ${
+                                                        <td className={`px-4 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono font-semibold bg-background-tertiary/30 ${
                                                             isUnbudgeted
                                                                 ? 'text-foreground-muted'
                                                                 : showRolledUp && !account.hasOwnBudget
@@ -914,7 +914,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         </td>
                                                     );
                                                 })()}
-                                                <td className="px-2 py-2 text-center">
+                                                <td className="px-2 py-2 max-md:px-1 max-md:py-1 text-center">
                                                     {account.hasOwnBudget ? (
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
@@ -965,60 +965,60 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                 <tfoot className="sticky bottom-0 z-20">
                                     {/* Income row */}
                                     <tr className="bg-background-tertiary/80 font-semibold border-t border-border">
-                                        <td className="px-4 py-2 text-emerald-400 sticky left-0 bg-background-tertiary/80 z-30">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-emerald-400 sticky left-0 bg-background-tertiary/80 z-30">
                                             Income
                                         </td>
                                         {incomePeriods.map((val, i) => (
-                                            <td key={i} className="px-3 py-2 text-right font-mono text-emerald-400">
+                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-emerald-400">
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-2 text-right font-mono text-emerald-400 bg-emerald-500/10">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-emerald-400 bg-emerald-500/10">
                                             {formatCurrency(incomeTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-2"></td>
                                     </tr>
                                     {/* Expense row */}
                                     <tr className="bg-background-tertiary/80 font-semibold">
-                                        <td className="px-4 py-2 text-rose-400 sticky left-0 bg-background-tertiary/80 z-30">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-rose-400 sticky left-0 bg-background-tertiary/80 z-30">
                                             Expenses
                                         </td>
                                         {expensePeriods.map((val, i) => (
-                                            <td key={i} className="px-3 py-2 text-right font-mono text-rose-400">
+                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-rose-400">
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-2 text-right font-mono text-rose-400 bg-rose-500/10">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-rose-400 bg-rose-500/10">
                                             {formatCurrency(expenseTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-2"></td>
                                     </tr>
                                     {/* Transfers row */}
                                     <tr className="bg-background-tertiary/80 font-semibold">
-                                        <td className="px-4 py-2 text-foreground-secondary sticky left-0 bg-background-tertiary/80 z-30">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-foreground-secondary sticky left-0 bg-background-tertiary/80 z-30">
                                             Transfers
                                         </td>
                                         {transferPeriods.map((val, i) => (
-                                            <td key={i} className="px-3 py-2 text-right font-mono text-foreground-secondary">
+                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-foreground-secondary">
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-2 text-right font-mono text-foreground-secondary bg-background-tertiary/30">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-foreground-secondary bg-background-tertiary/30">
                                             {formatCurrency(transferTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-2"></td>
                                     </tr>
                                     {/* Remaining to Budget row */}
                                     <tr className="bg-background-tertiary font-semibold shadow-[0_-2px_10px_rgba(0,0,0,0.3)]">
-                                        <td className="px-4 py-3 text-foreground sticky left-0 bg-background-tertiary z-30">
+                                        <td className="px-4 py-3 max-md:px-1.5 max-md:py-1 text-foreground sticky left-0 bg-background-tertiary z-30">
                                             Remaining to Budget
                                         </td>
                                         {remainingPeriods.map((val, i) => (
-                                            <td key={i} className={`px-3 py-3 text-right font-mono ${val < 0 ? 'text-rose-400' : 'text-primary'}`}>
+                                            <td key={i} className={`px-3 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono ${val < 0 ? 'text-rose-400' : 'text-primary'}`}>
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className={`px-4 py-3 text-right font-mono font-bold ${remainingTotal < 0 ? 'text-rose-400 bg-rose-500/10' : 'text-emerald-400 bg-emerald-500/10'}`}>
+                                        <td className={`px-4 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono font-bold ${remainingTotal < 0 ? 'text-rose-400 bg-rose-500/10' : 'text-emerald-400 bg-emerald-500/10'}`}>
                                             {formatCurrency(remainingTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-3"></td>

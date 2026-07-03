@@ -13,6 +13,8 @@ import { toLocalDateString } from '@/lib/datePresets';
 import { DepreciationScheduleForm } from './DepreciationScheduleForm';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useDateShortcuts } from '@/lib/hooks/useDateShortcuts';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 interface Transaction {
   guid: string;
@@ -53,6 +55,7 @@ interface AssetDetailViewProps {
 export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
   const { success, error: showError } = useToast();
   const { dateFormat } = useUserPreferences();
+  const isMobile = useIsMobile();
 
   const [asset, setAsset] = useState<AssetInfo | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -378,6 +381,34 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
           <p className="text-foreground-muted text-center py-4">
             No transactions found for this account
           </p>
+        ) : isMobile ? (
+          <div className="overflow-x-auto -mx-5 border-t border-border">
+            {[...transactions].reverse().map((tx) => (
+              <MobileCard
+                key={tx.guid}
+                className="px-5"
+                fields={[
+                  {
+                    label: tx.date,
+                    value: <span className="font-medium">{tx.description}</span>,
+                    className: 'pb-1',
+                  },
+                  {
+                    label: 'Amount',
+                    value: (
+                      <span className={`font-mono ${tx.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
+                      </span>
+                    ),
+                  },
+                  {
+                    label: 'Balance',
+                    value: <span className="font-mono">{formatCurrency(tx.runningBalance)}</span>,
+                  },
+                ]}
+              />
+            ))}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

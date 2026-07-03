@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 interface SimpleFinAccount {
   id: string;
@@ -39,6 +41,7 @@ interface SyncResult {
 
 export default function ConnectionsPage() {
   const { success, error: showError } = useToast();
+  const isMobile = useIsMobile();
 
   const [simplefinConnected, setSimplefinConnected] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -441,6 +444,60 @@ export default function ConnectionsPage() {
                 <div className="px-4 py-2 bg-background-tertiary/50 border-b border-border/50">
                   <h3 className="text-sm font-medium text-foreground-secondary">Account Mapping</h3>
                 </div>
+                {isMobile ? (
+                  <div>
+                    {sfAccounts.map(account => (
+                      <MobileCard
+                        key={account.id}
+                        className="border-border/30"
+                        fields={[
+                          {
+                            label: 'Account',
+                            value: (
+                              <span className="inline-flex items-center gap-2 flex-wrap justify-end">
+                                <span className="font-medium">{account.name}</span>
+                                {account.isMapped ? (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                                    Mapped
+                                  </span>
+                                ) : (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                    Unmapped
+                                  </span>
+                                )}
+                              </span>
+                            ),
+                          },
+                          { label: 'Institution', value: account.institution || '—' },
+                          { label: 'Balance', value: <span className="font-mono">{account.balance || '—'}</span> },
+                          { label: 'Last 4', value: <span className="font-mono">{account.last4 ? `...${account.last4}` : '—'}</span> },
+                        ]}
+                      >
+                        <div className="mt-3 space-y-2">
+                          <AccountSelector
+                            value={account.gnucashAccountGuid || ''}
+                            onChange={(guid) => handleSfMapAccount(account.id, guid, account)}
+                            placeholder="Select account..."
+                            className="w-full"
+                          />
+                          {account.isMapped && (
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={account.isInvestment}
+                                onChange={(e) => handleSfToggleInvestment(account.id, e.target.checked, account)}
+                                className="w-3 h-3 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+                              />
+                              <span className="text-[10px] text-foreground-muted">
+                                Investment (routes to child accounts by symbol)
+                              </span>
+                            </label>
+                          )}
+                        </div>
+                      </MobileCard>
+                    ))}
+                  </div>
+                ) : (
                 <table className="w-full text-left">
                   <thead>
                     <tr className="text-[10px] uppercase tracking-[0.2em] text-foreground-muted font-bold">
@@ -506,6 +563,7 @@ export default function ConnectionsPage() {
                     ))}
                   </tbody>
                 </table>
+                )}
               </div>
             )}
 

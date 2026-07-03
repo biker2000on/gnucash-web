@@ -3,6 +3,8 @@
 import { formatCurrency } from '@/lib/format';
 import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 import type { PayslipLineItem } from '@/lib/types';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 
 interface TransactionPreviewProps {
   lineItems: PayslipLineItem[];
@@ -25,6 +27,7 @@ export function TransactionPreview({
   employerName,
   payDate,
 }: TransactionPreviewProps) {
+  const isMobile = useIsMobile();
   const imbalance = validatePayslipBalance(lineItems, netPay);
   const splits = buildSplitsFromLineItems(lineItems, mappings, depositAccountGuid, netPay);
 
@@ -56,7 +59,54 @@ export function TransactionPreview({
         </div>
       )}
 
-      {/* Transaction table */}
+      {/* Transaction splits: mobile cards */}
+      {isMobile ? (
+        <div>
+          {splits.map((split, idx) => {
+            const accountName = split.accountGuid === depositAccountGuid
+              ? depositAccountName
+              : (accountNames[split.accountGuid] || `Unknown Account`);
+            const isDebit = split.amount > 0;
+
+            return (
+              <MobileCard
+                key={idx}
+                fields={[
+                  { label: 'Account', value: <span className="font-medium">{accountName}</span> },
+                  ...(isDebit
+                    ? [{ label: 'Debit', value: <span className="font-mono tabular-nums text-emerald-400">{formatCurrency(split.amount, 'USD')}</span> }]
+                    : [{ label: 'Credit', value: <span className="font-mono tabular-nums text-rose-400">{formatCurrency(Math.abs(split.amount), 'USD')}</span> }]),
+                ]}
+              />
+            );
+          })}
+
+          {/* Totals card */}
+          <MobileCard
+            className="border-t-2 border-t-border bg-surface/50"
+            fields={[
+              { label: 'Total Debits', value: (
+                <span className="font-mono tabular-nums font-semibold text-foreground">
+                  {formatCurrency(
+                    splits.filter((s) => s.amount > 0).reduce((sum, s) => sum + s.amount, 0),
+                    'USD'
+                  )}
+                </span>
+              ) },
+              { label: 'Total Credits', value: (
+                <span className="font-mono tabular-nums font-semibold text-foreground">
+                  {formatCurrency(
+                    splits
+                      .filter((s) => s.amount < 0)
+                      .reduce((sum, s) => sum + Math.abs(s.amount), 0),
+                    'USD'
+                  )}
+                </span>
+              ) },
+            ]}
+          />
+        </div>
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           {/* Table header */}
@@ -112,6 +162,7 @@ export function TransactionPreview({
           </tfoot>
         </table>
       </div>
+      )}
     </div>
   );
 }

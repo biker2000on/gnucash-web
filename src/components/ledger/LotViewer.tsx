@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 import AutoAssignDialog from './AutoAssignDialog';
 
 interface LotSplit {
@@ -39,6 +41,7 @@ interface LotViewerProps {
 }
 
 export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecision: sp = 4 }: LotViewerProps) {
+    const isMobile = useIsMobile();
     const [lots, setLots] = useState<LotSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -352,6 +355,50 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                             <h4 className="text-sm font-semibold text-foreground-secondary mb-2 uppercase tracking-wider">
                                 Splits in This Lot
                             </h4>
+                            {isMobile ? (
+                                <div className="border-t border-border">
+                                    {selectedLot.splits.map(split => (
+                                        <MobileCard
+                                            key={split.guid}
+                                            fields={[
+                                                {
+                                                    label: 'Date',
+                                                    value: (
+                                                        <span className="font-mono text-xs text-foreground-secondary">
+                                                            {new Date(split.postDate).toLocaleDateString()}
+                                                        </span>
+                                                    ),
+                                                },
+                                                { label: 'Description', value: split.description },
+                                                {
+                                                    label: 'Shares',
+                                                    value: (
+                                                        <span className={`font-mono ${split.shares > 0 ? 'text-emerald-400' : split.shares < 0 ? 'text-rose-400' : 'text-foreground-muted'}`}>
+                                                            {split.shares > 0 ? '+' : ''}{split.shares.toFixed(sp)}
+                                                        </span>
+                                                    ),
+                                                },
+                                                {
+                                                    label: 'Value',
+                                                    value: (
+                                                        <span className={`font-mono ${split.value < 0 ? 'text-rose-400' : split.value > 0 ? 'text-emerald-400' : 'text-foreground-muted'}`}>
+                                                            {formatCurrency(split.value, currencyMnemonic)}
+                                                        </span>
+                                                    ),
+                                                },
+                                                {
+                                                    label: 'Share Bal',
+                                                    value: (
+                                                        <span className="font-mono font-bold">
+                                                            {split.shareBalance.toFixed(sp)}
+                                                        </span>
+                                                    ),
+                                                },
+                                            ]}
+                                        />
+                                    ))}
+                                </div>
+                            ) : (
                             <div className="overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead>
@@ -386,6 +433,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                     </tbody>
                                 </table>
                             </div>
+                            )}
                         </div>
                     </div>
                 ) : (

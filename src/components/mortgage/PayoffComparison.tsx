@@ -1,5 +1,7 @@
 'use client';
 
+import type { ReactNode } from 'react';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import type { AmortizationRow } from './AmortizationTable';
 
 /* ------------------------------------------------------------------ */
@@ -41,6 +43,30 @@ interface PayoffComparisonProps {
 }
 
 /* ------------------------------------------------------------------ */
+/* Mobile metric card                                                  */
+/* ------------------------------------------------------------------ */
+
+function ComparisonCard({ label, current, plan }: {
+  label: string;
+  current: ReactNode;
+  plan: ReactNode;
+}) {
+  return (
+    <div className="p-4 border-b border-border">
+      <p className="text-xs text-foreground-muted uppercase tracking-wider">{label}</p>
+      <div className="mt-1.5 flex justify-between items-baseline py-0.5">
+        <span className="text-xs text-foreground-muted">Current Plan</span>
+        <span className="text-sm text-foreground text-right font-mono tabular-nums">{current}</span>
+      </div>
+      <div className="flex justify-between items-baseline py-0.5">
+        <span className="text-xs text-foreground-muted">Your Plan</span>
+        <span className="text-sm text-right font-mono tabular-nums font-semibold">{plan}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Component                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -50,6 +76,7 @@ export function PayoffComparison({
   originalPayment,
   acceleratedPayment,
 }: PayoffComparisonProps) {
+  const isMobile = useIsMobile();
   const originalInterest = totalInterestFromSchedule(originalSchedule);
   const acceleratedInterest = totalInterestFromSchedule(acceleratedSchedule);
   const originalTotal = totalPaidFromSchedule(originalSchedule);
@@ -62,6 +89,54 @@ export function PayoffComparison({
 
   return (
     <div className="border border-border rounded-xl overflow-hidden">
+      {isMobile ? (
+        <div>
+          <ComparisonCard
+            label="Monthly Payment"
+            current={fmtFull.format(originalPayment)}
+            plan={<span className="text-primary">{fmtFull.format(acceleratedPayment)}</span>}
+          />
+          <ComparisonCard
+            label="Payoff Term"
+            current={formatMonthsToYearsMonths(originalSchedule.length)}
+            plan={<span className="text-emerald-400">{formatMonthsToYearsMonths(acceleratedSchedule.length)}</span>}
+          />
+          <ComparisonCard
+            label="Total Interest"
+            current={fmt.format(originalInterest)}
+            plan={<span className="text-emerald-400">{fmt.format(acceleratedInterest)}</span>}
+          />
+          <ComparisonCard
+            label="Total Paid"
+            current={fmt.format(originalTotal)}
+            plan={<span className="text-emerald-400">{fmt.format(acceleratedTotal)}</span>}
+          />
+          {/* Savings summary card */}
+          <div className="p-4 border-t-2 border-primary/30 bg-primary/10">
+            <p className="text-xs text-primary font-semibold uppercase tracking-wider">Savings</p>
+            <div className="mt-1.5 space-y-0.5 text-sm text-primary font-semibold">
+              <div className="flex justify-between items-baseline py-0.5">
+                <span className="text-xs font-normal text-primary/70">Extra per month</span>
+                <span className="font-mono tabular-nums text-right">+{fmtFull.format(paymentDelta)}/mo</span>
+              </div>
+              {monthsDelta > 0 && (
+                <div className="flex justify-between items-baseline py-0.5">
+                  <span className="text-xs font-normal text-primary/70">Paid off</span>
+                  <span className="text-right">{formatMonthsToYearsMonths(monthsDelta)} sooner</span>
+                </div>
+              )}
+              <div className="flex justify-between items-baseline py-0.5">
+                <span className="text-xs font-normal text-primary/70">Interest saved</span>
+                <span className="font-mono tabular-nums text-right">{fmt.format(interestDelta)}</span>
+              </div>
+              <div className="flex justify-between items-baseline py-0.5">
+                <span className="text-xs font-normal text-primary/70">Total saved</span>
+                <span className="font-mono tabular-nums text-right">{fmt.format(totalDelta)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
       <table className="w-full text-sm">
         <thead className="bg-background-secondary">
           <tr className="text-foreground-muted text-xs uppercase tracking-wider">
@@ -105,6 +180,7 @@ export function PayoffComparison({
           </tr>
         </tbody>
       </table>
+      )}
     </div>
   );
 }

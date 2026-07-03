@@ -20,6 +20,8 @@ import {
   type TaxYear,
 } from '@/lib/tax/types';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { MobileCard } from '@/components/ui/MobileCard';
 import BracketFillChart from '@/components/tools/tax/BracketFillChart';
 import TaxMappingPanel, {
   type MappingAccount,
@@ -182,6 +184,7 @@ const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
 /* ------------------------------------------------------------------ */
 
 export default function TaxEstimatorPage() {
+  const isMobile = useIsMobile();
   const currentYear = new Date().getFullYear();
   const defaultYear: TaxYear = isSupportedTaxYear(currentYear) ? currentYear : 2026;
 
@@ -593,6 +596,46 @@ export default function TaxEstimatorPage() {
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Category provenance table */}
               <div>
+                {isMobile ? (
+                  <div className="border-t border-border">
+                    {estimate.bookData.categories.map(cat => {
+                      const factor = annualize && isCurrentYear && ANNUALIZABLE.includes(cat.category)
+                        ? 1 / estimate.bookData.elapsedYearFraction : 1;
+                      return (
+                        <CategoryCard
+                          key={cat.category}
+                          label={TAX_CATEGORY_LABELS[cat.category]}
+                          ytd={cat.total}
+                          used={cat.total * factor}
+                          accounts={cat.accounts}
+                        />
+                      );
+                    })}
+                    {(Math.abs(estimate.bookData.realizedGains.shortTerm) > 0.004 ||
+                      Math.abs(estimate.bookData.realizedGains.longTerm) > 0.004) && (
+                      <>
+                        <CategoryCard
+                          label="Realized short-term gains (lots)"
+                          ytd={estimate.bookData.realizedGains.shortTerm}
+                          used={estimate.bookData.realizedGains.shortTerm}
+                          accounts={estimate.bookData.realizedGains.accounts.map(a => ({
+                            accountGuid: a.accountGuid, accountName: a.accountName,
+                            accountPath: a.accountPath, amount: a.shortTerm,
+                          }))}
+                        />
+                        <CategoryCard
+                          label="Realized long-term gains (lots)"
+                          ytd={estimate.bookData.realizedGains.longTerm}
+                          used={estimate.bookData.realizedGains.longTerm}
+                          accounts={estimate.bookData.realizedGains.accounts.map(a => ({
+                            accountGuid: a.accountGuid, accountName: a.accountName,
+                            accountPath: a.accountPath, amount: a.longTerm,
+                          }))}
+                        />
+                      </>
+                    )}
+                  </div>
+                ) : (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs text-foreground-muted border-b border-border">
@@ -640,6 +683,7 @@ export default function TaxEstimatorPage() {
                     )}
                   </tbody>
                 </table>
+                )}
                 <p className="text-[11px] text-foreground-muted mt-2">
                   Realized gains and retirement contributions are never annualized.
                   Click a category to see source accounts.
@@ -752,6 +796,22 @@ export default function TaxEstimatorPage() {
                   </p>
                 )}
               </div>
+              {isMobile ? (
+                <MobileCard
+                  className="self-start border border-border rounded-md"
+                  fields={computed.safeHarbor.quarterlySchedule.map(q => ({
+                    label: `Q${q.quarter} · due ${q.dueDate}`,
+                    value: (
+                      <span
+                        className={`font-mono text-xs ${q.amount > 0 ? 'text-foreground' : 'text-foreground-muted'}`}
+                        style={{ fontFeatureSettings: "'tnum'" }}
+                      >
+                        {formatCurrency(q.amount)}
+                      </span>
+                    ),
+                  }))}
+                />
+              ) : (
               <table className="w-full text-sm self-start">
                 <thead>
                   <tr className="text-left text-xs text-foreground-muted border-b border-border">
@@ -772,6 +832,7 @@ export default function TaxEstimatorPage() {
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
           </Section>
 
@@ -828,6 +889,61 @@ function BreakdownRow({ label, value, strong }: { label: string; value: number; 
       <dd className={strong ? 'text-foreground font-semibold' : 'text-foreground-secondary'}>
         {formatCurrency(value)}
       </dd>
+    </div>
+  );
+}
+
+/** Mobile card version of CategoryRow: same expand behavior, stacked account list */
+function CategoryCard({ label, ytd, used, accounts }: {
+  label: string;
+  ytd: number;
+  used: number;
+  accounts: Array<{ accountGuid: string; accountName: string; accountPath: string; amount: number }>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-border/50">
+      <div
+        onClick={() => setOpen(v => !v)}
+        className="py-2.5 cursor-pointer active:bg-surface-hover"
+      >
+        <div className="flex items-center gap-1.5 text-sm text-foreground-secondary">
+          <span className="text-foreground-muted text-xs">{open ? '▾' : '▸'}</span>
+          <span>{label}</span>
+        </div>
+        <div className="mt-1.5 space-y-0.5 pl-4">
+          <div className="flex justify-between items-baseline">
+            <span className="text-xs text-foreground-muted uppercase tracking-wider">YTD</span>
+            <span className="text-xs font-mono text-right text-foreground-secondary" style={{ fontFeatureSettings: "'tnum'" }}>
+              {formatCurrency(ytd)}
+            </span>
+          </div>
+          <div className="flex justify-between items-baseline">
+            <span className="text-xs text-foreground-muted uppercase tracking-wider">Used</span>
+            <span className="text-xs font-mono text-right text-foreground" style={{ fontFeatureSettings: "'tnum'" }}>
+              {formatCurrency(used)}
+            </span>
+          </div>
+        </div>
+      </div>
+      {open && (
+        <div className="pb-2.5 pl-4 space-y-1">
+          {accounts.map(a => (
+            <div key={a.accountGuid} className="flex justify-between items-baseline gap-2">
+              <Link
+                href={`/accounts/${a.accountGuid}`}
+                className="text-[11px] text-secondary hover:text-secondary-hover truncate"
+                title={a.accountPath}
+              >
+                {a.accountPath}
+              </Link>
+              <span className="text-[11px] font-mono text-right text-foreground-muted shrink-0" style={{ fontFeatureSettings: "'tnum'" }}>
+                {formatCurrency(a.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
