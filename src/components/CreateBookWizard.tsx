@@ -1,21 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { CurrencySelect } from '@/components/CurrencySelect';
-
-interface TemplateFile {
-  locale: string;
-  id: string;
-  name: string;
-  description: string;
-  currency: string;
-}
-
-interface TemplateLocale {
-  code: string;
-  name: string;
-  templates: TemplateFile[];
-}
+import NewBookForm from '@/components/books/NewBookForm';
 
 interface CreateBookWizardProps {
   onBookCreated: (bookGuid: string) => void;
@@ -23,45 +10,13 @@ interface CreateBookWizardProps {
 }
 
 export function CreateBookWizard({ onBookCreated, isOnboarding = false }: CreateBookWizardProps) {
-  const [step, setStep] = useState<'choose' | 'template' | 'import'>('choose');
-  const [locales, setLocales] = useState<TemplateLocale[]>([]);
-  const [selectedLocale, setSelectedLocale] = useState('en_US');
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [step, setStep] = useState<'choose' | 'create' | 'import'>('choose');
   const [bookName, setBookName] = useState('');
   const [currency, setCurrency] = useState('USD');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [templatesLoading, setTemplatesLoading] = useState(false);
 
-  useEffect(() => {
-    if (step === 'template') {
-      setTemplatesLoading(true);
-      fetch('/api/books/templates')
-        .then(res => res.json())
-        .then((data: TemplateLocale[]) => {
-          setLocales(data);
-          if (data.length > 0 && data[0].templates.length > 0) {
-            setSelectedTemplate(data[0].templates[0].id);
-            setCurrency(data[0].templates[0].currency);
-          }
-        })
-        .catch(() => setError('Failed to load templates'))
-        .finally(() => setTemplatesLoading(false));
-    }
-  }, [step]);
-
-  const currentLocale = locales.find(l => l.code === selectedLocale);
-  const currentTemplate = currentLocale?.templates.find(t => t.id === selectedTemplate);
-
-  const handleTemplateSelect = (templateId: string) => {
-    setSelectedTemplate(templateId);
-    const template = currentLocale?.templates.find(t => t.id === templateId);
-    if (template) {
-      setCurrency(template.currency);
-    }
-  };
-
-  const handleCreate = async () => {
+  const handleCreateForImport = async () => {
     if (!bookName.trim()) {
       setError('Please enter a book name');
       return;
@@ -77,8 +32,6 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         body: JSON.stringify({
           name: bookName.trim(),
           currency,
-          locale: selectedTemplate ? selectedLocale : undefined,
-          templateId: selectedTemplate || undefined,
         }),
       });
 
@@ -114,7 +67,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <button
-            onClick={() => setStep('template')}
+            onClick={() => setStep('create')}
             className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group"
           >
             <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
@@ -123,10 +76,10 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
               </svg>
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
-              Start from Template
+              Start Fresh
             </h3>
             <p className="text-sm text-foreground-muted">
-              Choose from personal, business, or non-profit account structures to get started quickly.
+              Pick your organization type — household, business, or nonprofit — and get a recommended account structure.
             </p>
           </button>
 
@@ -197,7 +150,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           </div>
 
           <button
-            onClick={handleCreate}
+            onClick={handleCreateForImport}
             disabled={loading || !bookName.trim()}
             className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
           >
@@ -215,7 +168,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
     );
   }
 
-  // step === 'template'
+  // step === 'create'
   return (
     <div>
       <button
@@ -228,102 +181,11 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         Back
       </button>
 
-      <h2 className="text-2xl font-bold text-foreground mb-6">Create from Template</h2>
+      <h2 className="text-2xl font-bold text-foreground mb-6">Create a New Book</h2>
 
-      {error && (
-        <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
-          {error}
-        </div>
-      )}
-
-      {templatesLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {locales.length > 1 && (
-            <div>
-              <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
-                Locale
-              </label>
-              <select
-                value={selectedLocale}
-                onChange={e => {
-                  setSelectedLocale(e.target.value);
-                  const loc = locales.find(l => l.code === e.target.value);
-                  if (loc && loc.templates.length > 0) {
-                    setSelectedTemplate(loc.templates[0].id);
-                    setCurrency(loc.templates[0].currency);
-                  }
-                }}
-                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
-              >
-                {locales.map(l => (
-                  <option key={l.code} value={l.code}>{l.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-3">
-              Template
-            </label>
-            <div className="space-y-3">
-              {currentLocale?.templates.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => handleTemplateSelect(t.id)}
-                  className={`w-full text-left p-4 rounded-lg border transition-colors ${
-                    selectedTemplate === t.id
-                      ? 'border-primary/50 bg-primary/5'
-                      : 'border-border bg-surface/30 hover:border-border-hover'
-                  }`}
-                >
-                  <div className="font-medium text-foreground">{t.name}</div>
-                  <div className="text-sm text-foreground-muted mt-1">{t.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
-              Book Name
-            </label>
-            <input
-              type="text"
-              value={bookName}
-              onChange={e => setBookName(e.target.value)}
-              className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-colors"
-              placeholder={currentTemplate ? `e.g., My ${currentTemplate.name}` : 'Enter a name'}
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
-              Currency
-            </label>
-            <CurrencySelect value={currency} onChange={setCurrency} />
-          </div>
-
-          <button
-            onClick={handleCreate}
-            disabled={loading || !bookName.trim() || !selectedTemplate}
-            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Creating...
-              </span>
-            ) : (
-              'Create Book'
-            )}
-          </button>
-        </div>
-      )}
+      <div className="max-w-xl">
+        <NewBookForm onSuccess={onBookCreated} />
+      </div>
     </div>
   );
 }

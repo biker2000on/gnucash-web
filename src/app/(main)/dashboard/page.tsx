@@ -14,6 +14,8 @@ import { DashboardPeriodProvider, useDashboardPeriod, PERIOD_OPTIONS } from '@/c
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { DATE_PRESETS } from '@/lib/datePresets';
+import { Modal } from '@/components/ui/Modal';
+import NewBookForm from '@/components/books/NewBookForm';
 import {
     WidgetId,
     WidgetLayoutItem,
@@ -713,7 +715,7 @@ function DashboardContent() {
 export default function DashboardPage() {
     // Book states
     const [hasBooks, setHasBooks] = useState(true);
-    const [creatingBook, setCreatingBook] = useState(false);
+    const [newBookOpen, setNewBookOpen] = useState(false);
     const [checkingBooks, setCheckingBooks] = useState(true);
 
     // Check if books exist
@@ -736,30 +738,19 @@ export default function DashboardPage() {
         checkBooks();
     }, []);
 
-    const handleCreateDefault = async () => {
-        setCreatingBook(true);
+    const handleBookCreated = async (bookGuid: string) => {
         try {
-            const res = await fetch('/api/books/default', {
-                method: 'POST',
+            // Switch to new book
+            await fetch('/api/books/active', {
+                method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: 'My Finances' }),
+                body: JSON.stringify({ bookGuid }),
             });
-            if (res.ok) {
-                const data = await res.json();
-                // Switch to new book
-                await fetch('/api/books/active', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ bookGuid: data.bookGuid }),
-                });
-                // Reload to show dashboard with new book
-                window.location.reload();
-            }
         } catch (err) {
-            console.error('Error creating default book:', err);
-        } finally {
-            setCreatingBook(false);
+            console.error('Error switching to new book:', err);
         }
+        // Reload to show dashboard with new book
+        window.location.reload();
     };
 
     // Show welcome screen if no books exist
@@ -778,11 +769,10 @@ export default function DashboardPage() {
                 <p className="text-foreground-secondary mb-8">Get started by creating a new book or importing an existing one.</p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl w-full">
-                    {/* Create Default Book Card */}
+                    {/* Create New Book Card */}
                     <button
-                        onClick={handleCreateDefault}
-                        disabled={creatingBook}
-                        className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={() => setNewBookOpen(true)}
+                        className="bg-surface border border-border rounded-xl p-6 text-left hover:border-primary/50 transition-colors group"
                     >
                         <div className="flex items-center gap-3 mb-3">
                             <div className="flex items-center justify-center w-10 h-10 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
@@ -790,10 +780,10 @@ export default function DashboardPage() {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
                                 </svg>
                             </div>
-                            <h3 className="text-lg font-semibold text-foreground">Create Default Book</h3>
+                            <h3 className="text-lg font-semibold text-foreground">Create New Book</h3>
                         </div>
                         <p className="text-sm text-foreground-secondary">
-                            Start with a pre-configured account hierarchy including Assets, Liabilities, Income, Expenses, and Equity with common sub-accounts.
+                            Pick your organization type — household, business, or nonprofit — and start with a recommended account hierarchy.
                         </p>
                     </button>
 
@@ -812,6 +802,15 @@ export default function DashboardPage() {
                         </p>
                     </Link>
                 </div>
+
+                <Modal isOpen={newBookOpen} onClose={() => setNewBookOpen(false)} title="Create New Book" size="lg">
+                    <div className="p-6">
+                        <NewBookForm
+                            onSuccess={handleBookCreated}
+                            onCancel={() => setNewBookOpen(false)}
+                        />
+                    </div>
+                </Modal>
             </div>
         );
     }

@@ -1,102 +1,37 @@
 /**
  * Default Book Creation
  *
- * Creates a default book with a standard GnuCash account hierarchy.
+ * Creates a new book seeded with the account hierarchy recommended for the
+ * chosen entity type (household, sole proprietorship, LLC, corporation, or
+ * nonprofit). Templates live in src/lib/book-templates.ts.
  */
 
 import prisma from './prisma';
 import { generateGuid } from './gnucash';
+import { getCurrencyName } from './currencies';
+import { getEntityAccountTemplate, type TemplateAccountDef } from './book-templates';
+import type { EntityType } from '@/lib/services/entity.service';
 
-interface DefaultAccountDef {
-  name: string;
-  type: string;
-  children?: DefaultAccountDef[];
-}
+export async function createDefaultBook(
+  bookName: string = 'My Finances',
+  bookDescription?: string,
+  entityType: EntityType = 'household',
+  currency: string = 'USD'
+): Promise<string> {
+  const mnemonic = currency.toUpperCase();
 
-const DEFAULT_HIERARCHY: DefaultAccountDef[] = [
-  {
-    name: 'Assets',
-    type: 'ASSET',
-    children: [
-      {
-        name: 'Current Assets',
-        type: 'ASSET',
-        children: [
-          { name: 'Checking Account', type: 'BANK' },
-          { name: 'Savings Account', type: 'BANK' },
-          { name: 'Cash in Wallet', type: 'CASH' },
-        ],
-      },
-      {
-        name: 'Investments',
-        type: 'ASSET',
-        children: [
-          { name: 'Brokerage Account', type: 'ASSET' },
-        ],
-      },
-    ],
-  },
-  {
-    name: 'Liabilities',
-    type: 'LIABILITY',
-    children: [
-      { name: 'Credit Card', type: 'CREDIT' },
-      { name: 'Mortgage', type: 'LIABILITY' },
-    ],
-  },
-  {
-    name: 'Income',
-    type: 'INCOME',
-    children: [
-      { name: 'Salary', type: 'INCOME' },
-      { name: 'Interest Income', type: 'INCOME' },
-      { name: 'Other Income', type: 'INCOME' },
-    ],
-  },
-  {
-    name: 'Expenses',
-    type: 'EXPENSE',
-    children: [
-      { name: 'Groceries', type: 'EXPENSE' },
-      { name: 'Utilities', type: 'EXPENSE' },
-      { name: 'Rent/Mortgage', type: 'EXPENSE' },
-      { name: 'Transportation', type: 'EXPENSE' },
-      { name: 'Entertainment', type: 'EXPENSE' },
-      { name: 'Healthcare', type: 'EXPENSE' },
-      { name: 'Insurance', type: 'EXPENSE' },
-      { name: 'Dining Out', type: 'EXPENSE' },
-      { name: 'Clothing', type: 'EXPENSE' },
-      { name: 'Taxes', type: 'EXPENSE', children: [
-        { name: 'Federal Tax', type: 'EXPENSE' },
-        { name: 'State Tax', type: 'EXPENSE' },
-        { name: 'Social Security', type: 'EXPENSE' },
-        { name: 'Medicare', type: 'EXPENSE' },
-      ]},
-      { name: 'Miscellaneous', type: 'EXPENSE' },
-    ],
-  },
-  {
-    name: 'Equity',
-    type: 'EQUITY',
-    children: [
-      { name: 'Opening Balances', type: 'EQUITY' },
-    ],
-  },
-];
-
-export async function createDefaultBook(bookName: string = 'My Finances', bookDescription?: string): Promise<string> {
-  // Ensure USD commodity exists
-  let usdCommodity = await prisma.commodities.findFirst({
-    where: { namespace: 'CURRENCY', mnemonic: 'USD' },
+  // Ensure the currency commodity exists
+  let currencyCommodity = await prisma.commodities.findFirst({
+    where: { namespace: 'CURRENCY', mnemonic },
   });
 
-  if (!usdCommodity) {
-    usdCommodity = await prisma.commodities.create({
+  if (!currencyCommodity) {
+    currencyCommodity = await prisma.commodities.create({
       data: {
         guid: generateGuid(),
         namespace: 'CURRENCY',
-        mnemonic: 'USD',
-        fullname: 'US Dollar',
+        mnemonic,
+        fullname: getCurrencyName(mnemonic),
         cusip: '',
         fraction: 100,
         quote_flag: 1,
@@ -105,6 +40,9 @@ export async function createDefaultBook(bookName: string = 'My Finances', bookDe
       },
     });
   }
+
+  const commodityScu = Number(currencyCommodity.fraction) || 100;
+  const hierarchy = getEntityAccountTemplate(entityType);
 
   const bookGuid = generateGuid();
   const rootGuid = generateGuid();
@@ -117,8 +55,8 @@ export async function createDefaultBook(bookName: string = 'My Finances', bookDe
         guid: rootGuid,
         name: bookName,
         account_type: 'ROOT',
-        commodity_guid: usdCommodity!.guid,
-        commodity_scu: 100,
+        commodity_guid: currencyCommodity!.guid,
+        commodity_scu: commodityScu,
         non_std_scu: 0,
         parent_guid: null,
         code: '',
@@ -134,8 +72,8 @@ export async function createDefaultBook(bookName: string = 'My Finances', bookDe
         guid: templateRootGuid,
         name: 'Template Root',
         account_type: 'ROOT',
-        commodity_guid: usdCommodity!.guid,
-        commodity_scu: 100,
+        commodity_guid: currencyCommodity!.guid,
+        commodity_scu: commodityScu,
         non_std_scu: 0,
         parent_guid: null,
         code: '',
@@ -158,7 +96,7 @@ export async function createDefaultBook(bookName: string = 'My Finances', bookDe
 
     // Recursively create accounts
     async function createAccounts(
-      defs: DefaultAccountDef[],
+      defs: TemplateAccountDef[],
       parentGuid: string
     ) {
       for (const def of defs) {
@@ -168,8 +106,8 @@ export async function createDefaultBook(bookName: string = 'My Finances', bookDe
             guid: accountGuid,
             name: def.name,
             account_type: def.type,
-            commodity_guid: usdCommodity!.guid,
-            commodity_scu: 100,
+            commodity_guid: currencyCommodity!.guid,
+            commodity_scu: commodityScu,
             non_std_scu: 0,
             parent_guid: parentGuid,
             code: '',
@@ -185,7 +123,7 @@ export async function createDefaultBook(bookName: string = 'My Finances', bookDe
       }
     }
 
-    await createAccounts(DEFAULT_HIERARCHY, rootGuid);
+    await createAccounts(hierarchy, rootGuid);
   });
 
   return bookGuid;
