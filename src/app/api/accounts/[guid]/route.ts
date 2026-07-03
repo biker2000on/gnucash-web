@@ -47,8 +47,8 @@ export async function GET(
         `;
 
         // Fetch preferences
-        const prefs = await prisma.$queryRaw<{ tax_related: boolean; is_retirement: boolean; retirement_account_type: string | null }[]>`
-            SELECT tax_related, is_retirement, retirement_account_type
+        const prefs = await prisma.$queryRaw<{ tax_related: boolean; is_retirement: boolean; retirement_account_type: string | null; owner: string | null }[]>`
+            SELECT tax_related, is_retirement, retirement_account_type, owner
             FROM gnucash_web_account_preferences
             WHERE account_guid = ${guid}
         `;
@@ -59,6 +59,7 @@ export async function GET(
             tax_related: prefs[0]?.tax_related ?? false,
             is_retirement: prefs[0]?.is_retirement ?? false,
             retirement_account_type: prefs[0]?.retirement_account_type ?? null,
+            owner: prefs[0]?.owner ?? null,
         });
     } catch (error) {
         console.error('Error fetching account:', error);

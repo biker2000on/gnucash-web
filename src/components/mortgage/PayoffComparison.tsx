@@ -99,17 +99,17 @@ export function PayoffComparison({
           <ComparisonCard
             label="Payoff Term"
             current={formatMonthsToYearsMonths(originalSchedule.length)}
-            plan={<span className="text-emerald-400">{formatMonthsToYearsMonths(acceleratedSchedule.length)}</span>}
+            plan={<span className="text-positive">{formatMonthsToYearsMonths(acceleratedSchedule.length)}</span>}
           />
           <ComparisonCard
             label="Total Interest"
             current={fmt.format(originalInterest)}
-            plan={<span className="text-emerald-400">{fmt.format(acceleratedInterest)}</span>}
+            plan={<span className="text-positive">{fmt.format(acceleratedInterest)}</span>}
           />
           <ComparisonCard
             label="Total Paid"
             current={fmt.format(originalTotal)}
-            plan={<span className="text-emerald-400">{fmt.format(acceleratedTotal)}</span>}
+            plan={<span className="text-positive">{fmt.format(acceleratedTotal)}</span>}
           />
           {/* Savings summary card */}
           <div className="p-4 border-t-2 border-primary/30 bg-primary/10">
@@ -154,17 +154,17 @@ export function PayoffComparison({
           <tr className="border-t border-border/50 bg-surface/20">
             <td className="py-3 px-4 text-foreground-muted font-medium">Payoff Term</td>
             <td className="py-3 px-4 text-right text-foreground">{formatMonthsToYearsMonths(originalSchedule.length)}</td>
-            <td className="py-3 px-4 text-right text-emerald-400 font-semibold">{formatMonthsToYearsMonths(acceleratedSchedule.length)}</td>
+            <td className="py-3 px-4 text-right text-positive font-semibold">{formatMonthsToYearsMonths(acceleratedSchedule.length)}</td>
           </tr>
           <tr className="border-t border-border/50">
             <td className="py-3 px-4 text-foreground-muted font-medium">Total Interest</td>
             <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmt.format(originalInterest)}</td>
-            <td className="py-3 px-4 text-right text-emerald-400 font-semibold tabular-nums">{fmt.format(acceleratedInterest)}</td>
+            <td className="py-3 px-4 text-right text-positive font-semibold tabular-nums">{fmt.format(acceleratedInterest)}</td>
           </tr>
           <tr className="border-t border-border/50 bg-surface/20">
             <td className="py-3 px-4 text-foreground-muted font-medium">Total Paid</td>
             <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmt.format(originalTotal)}</td>
-            <td className="py-3 px-4 text-right text-emerald-400 font-semibold tabular-nums">{fmt.format(acceleratedTotal)}</td>
+            <td className="py-3 px-4 text-right text-positive font-semibold tabular-nums">{fmt.format(acceleratedTotal)}</td>
           </tr>
           {/* Delta row */}
           <tr className="border-t-2 border-primary/30 bg-primary/10">

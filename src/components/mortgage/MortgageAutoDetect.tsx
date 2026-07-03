@@ -305,16 +305,16 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
 
       {/* Error state */}
       {error && !loading && (
-        <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-5">
+        <div className="bg-error/10 border border-error/30 rounded-xl p-5">
           <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-negative shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
             <div>
-              <p className="text-sm text-rose-400 font-medium">
+              <p className="text-sm text-negative font-medium">
                 Couldn&apos;t analyze payments. Enter values manually below.
               </p>
-              <p className="text-xs text-rose-400/70 mt-1">{error}</p>
+              <p className="text-xs text-negative/70 mt-1">{error}</p>
               <div className="flex gap-3 mt-3">
                 <button
                   type="button"
@@ -351,10 +351,10 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
         <div className="space-y-4">
           {/* Warnings */}
           {result.warnings.length > 0 && (
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+            <div className="bg-warning/10 border border-warning/30 rounded-xl p-4">
               <ul className="space-y-1">
                 {result.warnings.map((w, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs text-amber-400">
+                  <li key={i} className="flex items-start gap-2 text-xs text-warning">
                     <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01" />
                     </svg>
@@ -422,7 +422,7 @@ export function MortgageAutoDetect({ onDetectionComplete }: MortgageAutoDetectPr
               Confidence:{' '}
               <span className={
                 result.confidence === 'high' ? 'text-primary' :
-                result.confidence === 'medium' ? 'text-amber-400' : 'text-rose-400'
+                result.confidence === 'medium' ? 'text-warning' : 'text-negative'
               }>
                 {result.confidence}
               </span>

@@ -19,6 +19,7 @@ interface SplitLike {
   value_denom: bigint;
   quantity_num: bigint;
   quantity_denom: bigint;
+  memo?: string | null;
 }
 
 interface OtherSplitLike extends SplitLike {
@@ -26,7 +27,19 @@ interface OtherSplitLike extends SplitLike {
     account_type?: string | null;
     commodity_guid?: string | null;
     name?: string | null;
+    /** Full account path (from account_hierarchy), e.g. "Income:Employer:Match" */
+    fullname?: string | null;
   } | null;
+}
+
+export interface ClassifyOptions {
+  /**
+   * Account GUIDs (already expanded to descendants) mapped to the
+   * 'employer_match' tax category. Money arriving from these accounts is
+   * ALWAYS classified EMPLOYER_MATCH — a durable user override for books
+   * where the match comes from accounts named e.g. 'Salary' or 'non-taxable'.
+   */
+  employerMatchGuids?: Set<string>;
 }
 
 const MATCH_KEYWORDS = ['match', 'employer'];
@@ -37,7 +50,9 @@ export function classifyContribution(
   otherSplits: OtherSplitLike[],
   retirementGuids: Set<string>,
   description?: string,
+  options?: ClassifyOptions,
 ): ContributionType {
+  const employerMatchGuids = options?.employerMatchGuids;
   const value = toDecimalNumber(split.value_num, split.value_denom);
   const quantity = toDecimalNumber(split.quantity_num, split.quantity_denom);
 
@@ -60,6 +75,11 @@ export function classifyContribution(
       });
     if (destinations.length > 0 && retirementGuids.has(destinations[0].account_guid)) {
       return ContributionType.TRANSFER;
+    }
+    // Money leaving to an EXPENSE account (recordkeeping/advisory fees) is a
+    // fee, not a withdrawal — tracked separately and excluded from net.
+    if (destinations.length > 0 && destinations[0].account?.account_type === 'EXPENSE') {
+      return ContributionType.FEE;
     }
     return ContributionType.WITHDRAWAL;
   }
@@ -91,12 +111,24 @@ export function classifyContribution(
   const sourceType = primarySource.account?.account_type ?? '';
   const sourceName = (primarySource.account?.name ?? '').toLowerCase();
 
+  // User override: accounts mapped to the 'employer_match' tax category are
+  // always employer money, regardless of naming or account type.
+  if (employerMatchGuids?.has(primarySource.account_guid)) {
+    return ContributionType.EMPLOYER_MATCH;
+  }
+
   if (retirementGuids.has(primarySource.account_guid)) {
     return ContributionType.TRANSFER;
   }
 
   if (sourceType === 'INCOME') {
-    if (MATCH_KEYWORDS.some(kw => sourceName.includes(kw))) {
+    // Match keywords may appear in the account name, its full path
+    // (e.g. "Income:Employer Benefits:401k"), or the split memos.
+    const sourceFullname = (primarySource.account?.fullname ?? '').toLowerCase();
+    const memos = `${split.memo ?? ''} ${primarySource.memo ?? ''}`.toLowerCase();
+    if (MATCH_KEYWORDS.some(kw =>
+      sourceName.includes(kw) || sourceFullname.includes(kw) || memos.includes(kw)
+    )) {
       return ContributionType.EMPLOYER_MATCH;
     }
     const desc = (description ?? '').toLowerCase();
@@ -203,5 +235,7 @@ export async function resolveContributionTaxYear(
   });
 
   if (override) return override.tax_year;
-  return postDate.getFullYear();
+  // post_dates are stored in UTC (05:59-10:59Z) — bucket by UTC year so
+  // Jan 1 transactions don't fall into the prior year in western timezones.
+  return postDate.getUTCFullYear();
 }

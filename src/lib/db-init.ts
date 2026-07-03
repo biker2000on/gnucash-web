@@ -490,6 +490,9 @@ async function createExtensionTables() {
 
         ALTER TABLE gnucash_web_account_preferences
         ADD COLUMN IF NOT EXISTS lot_assignment_method VARCHAR(20);
+
+        ALTER TABLE gnucash_web_account_preferences
+        ADD COLUMN IF NOT EXISTS owner VARCHAR(10);
     `;
 
     const contributionLimitsTableDDL = `
@@ -736,6 +739,32 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_tax_mappings_category ON gnucash_web_tax_mappings(tax_category);
     `;
 
+    // Entity/household profile per book: consumed by the tax estimator
+    // (filing mode per entity type) and contribution tracking (per-spouse limits)
+    const entityProfilesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_entity_profiles (
+            book_guid VARCHAR(32) PRIMARY KEY,
+            entity_type VARCHAR(20) NOT NULL DEFAULT 'household',
+            entity_name VARCHAR(255),
+            tax_state VARCHAR(10),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_entity_members (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            role VARCHAR(20) NOT NULL,
+            name VARCHAR(255),
+            birthday DATE,
+            covered_by_employer_plan BOOLEAN NOT NULL DEFAULT false,
+            ownership_percent DOUBLE PRECISION,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_members_book ON gnucash_web_entity_members(book_guid);
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -823,6 +852,7 @@ async function createExtensionTables() {
         await query(notificationsTableDDL);
         await query(tagsTableDDL);
         await query(taxMappingsTableDDL);
+        await query(entityProfilesTableDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

@@ -33,6 +33,63 @@ const INTERVAL_OPTIONS = [
   { value: 6, label: 'Every 6 Hours' },
 ];
 
+type EntityType =
+  | 'household'
+  | 'sole_prop'
+  | 'llc_single'
+  | 'llc_partnership'
+  | 's_corp'
+  | 'c_corp'
+  | 'nonprofit_501c3';
+
+const ENTITY_TYPE_OPTIONS: { value: EntityType; label: string }[] = [
+  { value: 'household', label: 'Household' },
+  { value: 'sole_prop', label: 'Sole Proprietorship' },
+  { value: 'llc_single', label: 'Single-Member LLC' },
+  { value: 'llc_partnership', label: 'Partnership LLC' },
+  { value: 's_corp', label: 'S-Corp' },
+  { value: 'c_corp', label: 'C-Corp' },
+  { value: 'nonprofit_501c3', label: '501(c)(3) Nonprofit' },
+];
+
+const HOUSEHOLD_ROLE_OPTIONS = [
+  { value: 'self', label: 'Self' },
+  { value: 'spouse', label: 'Spouse' },
+  { value: 'dependent', label: 'Child / Dependent' },
+];
+
+/** Full years of age from a YYYY-MM-DD birthday, or null when unset/invalid. */
+function computeMemberAge(birthday: string): number | null {
+  if (!birthday) return null;
+  const [y, m, d] = birthday.slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age -= 1;
+  return age >= 0 ? age : null;
+}
+
+const BUSINESS_ROLE_OPTIONS = [
+  { value: 'owner', label: 'Owner' },
+  { value: 'officer', label: 'Officer' },
+];
+
+interface EntityMemberForm {
+  role: string;
+  name: string;
+  birthday: string; // YYYY-MM-DD or ''
+  coveredByEmployerPlan: boolean;
+  ownershipPercent: string; // raw input value
+}
+
+interface EntityProfileForm {
+  entityType: EntityType;
+  entityName: string;
+  taxState: string;
+  notes: string | null;
+  members: EntityMemberForm[];
+}
+
 const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; description: string }[] = [
   {
     value: 'none',
@@ -66,6 +123,8 @@ export default function SettingsPage() {
   const [simplefinSyncEnabled, setSimplefinSyncEnabled] = useState(false);
   const [simplefinConnected, setSimplefinConnected] = useState(false);
   const [savingBalance, setSavingBalance] = useState(false);
+  const [entity, setEntity] = useState<EntityProfileForm | null>(null);
+  const [savingEntity, setSavingEntity] = useState(false);
 
   // Sync tax rate input from context (mount only)
   useEffect(() => {
@@ -111,6 +170,42 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSimplefinStatus();
   }, [fetchSimplefinStatus]);
+
+  // Load household & entity profile
+  useEffect(() => {
+    async function loadEntity() {
+      try {
+        const res = await fetch('/api/entity');
+        if (res.ok) {
+          const data = await res.json();
+          setEntity({
+            entityType: data.entityType ?? 'household',
+            entityName: data.entityName ?? '',
+            taxState: data.taxState ?? '',
+            notes: data.notes ?? null,
+            members: (data.members ?? []).map(
+              (m: {
+                role: string;
+                name: string | null;
+                birthday: string | null;
+                coveredByEmployerPlan: boolean;
+                ownershipPercent: number | null;
+              }) => ({
+                role: m.role,
+                name: m.name ?? '',
+                birthday: m.birthday ?? '',
+                coveredByEmployerPlan: !!m.coveredByEmployerPlan,
+                ownershipPercent: m.ownershipPercent != null ? String(m.ownershipPercent) : '',
+              })
+            ),
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load entity profile:', err);
+      }
+    }
+    loadEntity();
+  }, []);
 
   // Load index coverage
   useEffect(() => {
@@ -323,6 +418,72 @@ export default function SettingsPage() {
     }
   };
 
+  const updateEntityMember = (index: number, patch: Partial<EntityMemberForm>) => {
+    setEntity((prev) =>
+      prev
+        ? { ...prev, members: prev.members.map((m, i) => (i === index ? { ...m, ...patch } : m)) }
+        : prev
+    );
+  };
+
+  const handleAddEntityMember = (role: string) => {
+    setEntity((prev) =>
+      prev
+        ? {
+            ...prev,
+            members: [
+              ...prev.members,
+              { role, name: '', birthday: '', coveredByEmployerPlan: false, ownershipPercent: '' },
+            ],
+          }
+        : prev
+    );
+  };
+
+  const handleRemoveEntityMember = (index: number) => {
+    setEntity((prev) =>
+      prev ? { ...prev, members: prev.members.filter((_, i) => i !== index) } : prev
+    );
+  };
+
+  const handleSaveEntity = async () => {
+    if (!entity) return;
+    setSavingEntity(true);
+    try {
+      const res = await fetch('/api/entity', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityType: entity.entityType,
+          entityName: entity.entityName.trim() || null,
+          taxState: entity.taxState.trim() || null,
+          notes: entity.notes,
+          members: entity.members.map((m, i) => {
+            const pct = parseFloat(m.ownershipPercent);
+            return {
+              role: m.role,
+              name: m.name.trim() || null,
+              birthday: m.birthday || null,
+              coveredByEmployerPlan: m.coveredByEmployerPlan,
+              ownershipPercent: m.ownershipPercent !== '' && !isNaN(pct) ? pct : null,
+              sortOrder: i,
+            };
+          }),
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to save entity profile');
+      }
+      success('Household & entity profile saved');
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Failed to save entity profile');
+    } finally {
+      setSavingEntity(false);
+    }
+  };
+
   // One-line summaries shown while each section is collapsed
   const scheduleSummary = schedule.enabled
     ? `${INTERVAL_OPTIONS.find((o) => o.value === schedule.intervalHours)?.label ?? 'Daily'} at ${utcToLocal(schedule.refreshTime)}${simplefinConnected && simplefinSyncEnabled ? ' · SimpleFin sync' : ''}`
@@ -338,6 +499,14 @@ export default function SettingsPage() {
     ? `Carry over · ${COST_BASIS_METHOD_OPTIONS.find((o) => o.value === costBasisMethod)?.label ?? costBasisMethod}`
     : 'No carry over';
   const displayPrefsSummary = `${dateFormat} · ${defaultLedgerMode === 'edit' ? 'Edit mode' : 'Read-only'} · ${homeScreen === 'accounts' ? 'Account Hierarchy' : 'Dashboard'}`;
+  const entityTypeLabel = ENTITY_TYPE_OPTIONS.find((o) => o.value === entity?.entityType)?.label;
+  const entitySummary = entity
+    ? entity.entityType === 'household' || !entity.entityName.trim()
+      ? `${entityTypeLabel} · ${entity.members.length} member${entity.members.length === 1 ? '' : 's'}`
+      : `${entityTypeLabel} · ${entity.entityName.trim()}`
+    : undefined;
+  const entityRoleOptions =
+    entity?.entityType === 'household' ? HOUSEHOLD_ROLE_OPTIONS : BUSINESS_ROLE_OPTIONS;
 
   if (loading) {
     return (
@@ -367,6 +536,23 @@ export default function SettingsPage() {
             className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
           >
             Open Commodity Settings
+          </Link>
+        </div>
+      </div>
+
+      <div className="bg-surface rounded-xl border border-border px-4 py-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">IRS Contribution Limits</h2>
+            <p className="text-sm text-foreground-muted mt-0.5">
+              Review and update annual contribution limits used by the tax estimator and contribution tracking.
+            </p>
+          </div>
+          <Link
+            href="/settings/limits"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
+          >
+            Open Limits Editor
           </Link>
         </div>
       </div>
@@ -769,6 +955,216 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
+      </CollapsibleConfigSection>
+
+      {/* Household & Entity */}
+      <CollapsibleConfigSection
+        title="Household & entity"
+        summary={entitySummary}
+        configured
+        storageKey="settings.entityOpen"
+      >
+        {!entity ? (
+          <div className="flex items-center gap-3 py-2">
+            <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+            <span className="text-sm text-foreground-secondary">Loading entity profile...</span>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-foreground-muted">
+              Describe who this book belongs to — a household or a business. Used by the tax
+              estimator and contribution tracking (per-spouse IRA limits).
+            </p>
+
+            {/* Entity Type */}
+            <div className="space-y-2">
+              <label className="block text-sm text-foreground-secondary">Entity Type</label>
+              <select
+                value={entity.entityType}
+                onChange={(e) => setEntity({ ...entity, entityType: e.target.value as EntityType })}
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+              >
+                {ENTITY_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Entity Name + State */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1 space-y-2">
+                <label className="block text-sm text-foreground-secondary">Entity Name</label>
+                <input
+                  type="text"
+                  value={entity.entityName}
+                  onChange={(e) => setEntity({ ...entity, entityName: e.target.value })}
+                  placeholder={entity.entityType === 'household' ? 'Smith Household' : 'Acme LLC'}
+                  className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                />
+              </div>
+              <div className="sm:w-32 space-y-2">
+                <label className="block text-sm text-foreground-secondary">Tax State</label>
+                <input
+                  type="text"
+                  value={entity.taxState}
+                  onChange={(e) => setEntity({ ...entity, taxState: e.target.value.toUpperCase() })}
+                  placeholder="CO"
+                  maxLength={10}
+                  className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                />
+              </div>
+            </div>
+
+            {/* Members */}
+            <div className="space-y-2">
+              <label className="block text-sm text-foreground-secondary">
+                {entity.entityType === 'household' ? 'Household Members' : 'Owners & Officers'}
+              </label>
+              <div className="space-y-2">
+                {entity.members.map((member, index) => {
+                  const age = computeMemberAge(member.birthday);
+                  return (
+                  <div
+                    key={index}
+                    className="flex flex-wrap items-center gap-2 p-3 bg-background-tertiary rounded-lg"
+                  >
+                    <select
+                      value={member.role}
+                      onChange={(e) => updateEntityMember(index, { role: e.target.value })}
+                      className="bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                      aria-label="Member role"
+                    >
+                      {!entityRoleOptions.some((o) => o.value === member.role) && (
+                        <option value={member.role}>{member.role}</option>
+                      )}
+                      {entityRoleOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={member.name}
+                      onChange={(e) => updateEntityMember(index, { name: e.target.value })}
+                      placeholder="Name"
+                      className="flex-1 min-w-32 bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                      aria-label="Member name"
+                    />
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-foreground-secondary shrink-0">Birthday</label>
+                      <input
+                        type="date"
+                        value={member.birthday}
+                        onChange={(e) => updateEntityMember(index, { birthday: e.target.value })}
+                        className="bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                        aria-label="Member birthday"
+                      />
+                      <span
+                        className={`text-xs rounded-full px-2 py-0.5 shrink-0 border ${
+                          age !== null
+                            ? 'font-medium text-foreground-secondary bg-surface-elevated border-border'
+                            : 'text-foreground-muted border-dashed border-border'
+                        }`}
+                      >
+                        {age !== null ? `Age ${age}` : 'No birthday'}
+                      </span>
+                    </div>
+                    {(member.role === 'self' || member.role === 'spouse') && (
+                      <label className="flex items-center gap-1.5 cursor-pointer text-xs text-foreground-secondary">
+                        <input
+                          type="checkbox"
+                          checked={member.coveredByEmployerPlan}
+                          onChange={(e) =>
+                            updateEntityMember(index, { coveredByEmployerPlan: e.target.checked })
+                          }
+                          className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+                        />
+                        Covered by employer plan
+                      </label>
+                    )}
+                    {member.role === 'owner' && (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={member.ownershipPercent}
+                          onChange={(e) =>
+                            updateEntityMember(index, { ownershipPercent: e.target.value })
+                          }
+                          placeholder="100"
+                          className="w-20 bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                          aria-label="Ownership percent"
+                        />
+                        <span className="text-xs text-foreground-muted">%</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleRemoveEntityMember(index)}
+                      className="ml-auto text-foreground-muted hover:text-rose-500 transition-colors p-1"
+                      aria-label="Remove member"
+                      title="Remove member"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  );
+                })}
+              </div>
+              {entity.entityType === 'household' ? (
+                <div className="flex flex-wrap gap-2">
+                  {!entity.members.some((m) => m.role === 'self') && (
+                    <button
+                      onClick={() => handleAddEntityMember('self')}
+                      className="text-sm text-primary hover:text-primary-hover border border-primary/40 rounded-lg px-3 py-1.5 transition-colors"
+                    >
+                      + Add self
+                    </button>
+                  )}
+                  {!entity.members.some((m) => m.role === 'spouse') && (
+                    <button
+                      onClick={() => handleAddEntityMember('spouse')}
+                      className="text-sm text-primary hover:text-primary-hover border border-primary/40 rounded-lg px-3 py-1.5 transition-colors"
+                    >
+                      + Add spouse
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleAddEntityMember('dependent')}
+                    className="text-sm text-primary hover:text-primary-hover border border-primary/40 rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    + Add child
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => handleAddEntityMember('owner')}
+                  className="text-sm text-primary hover:text-primary-hover transition-colors"
+                >
+                  + Add member
+                </button>
+              )}
+            </div>
+
+            {/* Save */}
+            <button
+              onClick={handleSaveEntity}
+              disabled={savingEntity}
+              className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {savingEntity && (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              )}
+              <span>{savingEntity ? 'Saving...' : 'Save Household & Entity'}</span>
+            </button>
+          </div>
+        )}
       </CollapsibleConfigSection>
     </div>
   );

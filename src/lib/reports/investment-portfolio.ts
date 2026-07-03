@@ -7,6 +7,7 @@
 
 import prisma from '@/lib/prisma';
 import { getLatestPrice, calculateShares, calculateCostBasis, calculateMarketValue, calculateGainLoss, calculateGainLossPercent } from '@/lib/commodities';
+import { getBaseCurrency } from '@/lib/currency';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
 
 /**
@@ -20,6 +21,10 @@ export async function generateInvestmentPortfolio(
     showZeroShares: boolean = false
 ): Promise<InvestmentPortfolioData> {
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
+
+    // Report currency: price lookups must be filtered to it so a newer quote
+    // in some other currency is never used as the report-currency price.
+    const baseCurrency = await getBaseCurrency();
 
     // Get all STOCK and MUTUAL accounts (include hidden - investment accounts may be hidden)
     const accounts = await prisma.accounts.findMany({
@@ -66,9 +71,9 @@ export async function generateInvestmentPortfolio(
             const costBasis = isZeroShares ? 0 : calculateCostBasis(splits);
             const symbol = account.commodity?.mnemonic || '???';
 
-            // Get latest price up to endDate
+            // Get latest price up to endDate (in the report currency)
             const priceData = account.commodity_guid
-                ? await getLatestPrice(account.commodity_guid, undefined, endDate)
+                ? await getLatestPrice(account.commodity_guid, baseCurrency?.guid, endDate)
                 : null;
             const latestPrice = priceData?.value || 0;
             const priceDate = priceData?.date

@@ -2,7 +2,11 @@
 
 import { useState } from 'react';
 import { formatCurrency } from '@/lib/format';
-import { AccountContributionSummary, ContributionLineItem } from '@/lib/reports/types';
+import {
+  AccountContributionSummary,
+  AccountTypeContributionSummary,
+  ContributionLineItem,
+} from '@/lib/reports/types';
 import { ContributionLimitBar } from './ContributionLimitBar';
 
 const TYPE_LABELS: Record<string, string> = {
@@ -33,12 +37,19 @@ const RETIREMENT_TYPE_LABELS: Record<string, string> = {
   '401k': '401K',
   roth_401k: 'ROTH 401K',
   '403b': '403B',
+  // Account preferences store '457' (see VALID_RETIREMENT_TYPES); keep the
+  // legacy '457b' key too so either spelling renders correctly.
+  '457': '457B',
   '457b': '457B',
   sep_ira: 'SEP IRA',
   simple_ira: 'SIMPLE IRA',
   hsa: 'HSA',
   hra: 'HRA',
   fsa: 'FSA',
+  brokerage: 'BROKERAGE',
+  education_529: '529 PLAN',
+  coverdell_esa: 'COVERDELL ESA',
+  unspecified: 'UNSPECIFIED',
 };
 
 interface ContributionTableProps {
@@ -178,9 +189,9 @@ function AccountCard({
           )}
         </div>
         <div className="flex items-center gap-6 text-xs flex-shrink-0">
-          {account.contributions !== 0 && (
+          {(account.contributions !== 0 || account.incomeContributions !== 0) && (
             <span className="text-green-400">
-              Contributions: {formatCurrency(account.contributions)}
+              Contributions: {formatCurrency(account.contributions + account.incomeContributions)}
             </span>
           )}
           {account.employerMatch !== 0 && (
@@ -190,7 +201,12 @@ function AccountCard({
           )}
           {account.transfers !== 0 && (
             <span className="text-foreground-secondary">
-              Transfers: {formatCurrency(account.transfers)}
+              Transfers (net): {formatCurrency(account.transfers)}
+            </span>
+          )}
+          {account.fees !== 0 && (
+            <span className="text-red-400">
+              Fees: {formatCurrency(account.fees)}
             </span>
           )}
           {account.withdrawals !== 0 && (
@@ -251,6 +267,106 @@ function AccountCard({
         </div>
       )}
     </div>
+  );
+}
+
+export function ContributionByTypeTable({
+  byAccountType,
+}: {
+  byAccountType: Record<string, AccountTypeContributionSummary>;
+}) {
+  const entries = Object.entries(byAccountType).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="border border-border rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 bg-background-secondary/50 text-sm font-medium text-foreground">
+        Contributions by account type
+      </div>
+      <div className="overflow-x-auto border-t border-border/50">
+        <table className="w-full">
+          <thead>
+            <tr className="text-xs text-foreground-tertiary">
+              <th className="px-4 py-2 text-left font-medium">Type</th>
+              <th className="px-4 py-2 text-right font-medium">Contributions</th>
+              <th className="px-4 py-2 text-right font-medium">Employer Match</th>
+              <th className="px-4 py-2 text-right font-medium">Transfers (net)</th>
+              <th className="px-4 py-2 text-right font-medium">Withdrawals</th>
+              <th className="px-4 py-2 text-right font-medium">Fees</th>
+              <th className="px-4 py-2 text-right font-medium">Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(([typeKey, t]) => {
+              // Employee deferrals only — employer match never counts toward
+              // the IRS limit.
+              const employeeContributions = t.contributions + t.incomeContributions;
+              return (
+                <FragmentRow
+                  key={typeKey}
+                  typeKey={typeKey}
+                  summary={t}
+                  employeeContributions={employeeContributions}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FragmentRow({
+  typeKey,
+  summary: t,
+  employeeContributions,
+}: {
+  typeKey: string;
+  summary: AccountTypeContributionSummary;
+  employeeContributions: number;
+}) {
+  const label = RETIREMENT_TYPE_LABELS[typeKey] || typeKey.toUpperCase();
+  return (
+    <>
+      <tr className="border-t border-border/50">
+        <td className="px-4 py-2 text-sm">
+          <span className="text-xs px-2 py-0.5 bg-primary/20 text-primary rounded-full">
+            {label}
+          </span>
+        </td>
+        <td className="px-4 py-2 text-sm text-right font-mono text-green-400">
+          {formatCurrency(employeeContributions)}
+        </td>
+        <td className="px-4 py-2 text-sm text-right font-mono text-primary">
+          {t.employerMatch !== 0 ? formatCurrency(t.employerMatch) : '—'}
+        </td>
+        <td className="px-4 py-2 text-sm text-right font-mono text-foreground-secondary">
+          {t.transfers !== 0 ? formatCurrency(t.transfers) : '—'}
+        </td>
+        <td className="px-4 py-2 text-sm text-right font-mono text-red-400">
+          {t.withdrawals !== 0 ? formatCurrency(t.withdrawals) : '—'}
+        </td>
+        <td className="px-4 py-2 text-sm text-right font-mono text-red-400">
+          {t.fees !== 0 ? formatCurrency(t.fees) : '—'}
+        </td>
+        <td className="px-4 py-2 text-sm text-right font-mono font-medium text-foreground">
+          {formatCurrency(t.net)}
+        </td>
+      </tr>
+      {t.irsLimit && (
+        <tr>
+          <td colSpan={7} className="px-4 pb-3 pt-0">
+            <ContributionLimitBar
+              current={employeeContributions}
+              limit={t.irsLimit.total}
+              label="IRS Contribution Limit"
+              catchUp={t.irsLimit.catchUp > 0 ? t.irsLimit.catchUp : undefined}
+            />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

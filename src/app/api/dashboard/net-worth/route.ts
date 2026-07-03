@@ -172,6 +172,9 @@ export async function GET(request: NextRequest) {
                 commodity_guid: {
                     in: investmentCommodityGuids,
                 },
+                // Only prices quoted in the base/report currency — a newer
+                // quote in another currency must not be used as the base price
+                ...(baseCurrency ? { currency_guid: baseCurrency.guid } : {}),
                 // Skip implied $0 prices from zero-value transfer transactions
                 value_num: { gt: 0 },
             },

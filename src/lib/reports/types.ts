@@ -427,6 +427,13 @@ export interface ContributionLineItem {
   sourceAccountName: string;
 }
 
+export interface ContributionIrsLimit {
+  base: number;
+  catchUp: number;
+  total: number;
+  percentUsed: number;
+}
+
 export interface AccountContributionSummary {
   accountGuid: string;
   accountName: string;
@@ -437,14 +444,30 @@ export interface AccountContributionSummary {
   incomeContributions: number;
   transfers: number;
   withdrawals: number;
+  /** Fees paid out of the account (negative). Excluded from netContributions. */
+  fees: number;
+  /**
+   * contributions + employerMatch + incomeContributions + withdrawals.
+   * Transfers/rollovers and fees are excluded so a rollover never inflates
+   * (or deflates) contributions.
+   */
   netContributions: number;
-  irsLimit: {
-    base: number;
-    catchUp: number;
-    total: number;
-    percentUsed: number;
-  } | null;
+  irsLimit: ContributionIrsLimit | null;
   transactions: ContributionLineItem[];
+}
+
+/** Rollup of contribution activity for one retirement account type (401k, hsa, ...) */
+export interface AccountTypeContributionSummary {
+  contributions: number;
+  employerMatch: number;
+  incomeContributions: number;
+  transfers: number;
+  withdrawals: number;
+  fees: number;
+  /** Same convention as per-account netContributions (transfers/fees excluded) */
+  net: number;
+  /** Employee-deferral limit for this type (null where no federal limit exists) */
+  irsLimit: ContributionIrsLimit | null;
 }
 
 export interface ContributionSummaryData extends ReportDataBase {
@@ -453,14 +476,20 @@ export interface ContributionSummaryData extends ReportDataBase {
   periods: Array<{
     year: number;
     accounts: AccountContributionSummary[];
+    /** Keyed by retirement_account_type ('401k', 'traditional_ira', 'hsa', ...) */
+    byAccountType: Record<string, AccountTypeContributionSummary>;
     totalContributions: number;
+    totalIncomeContributions: number;
     totalEmployerMatch: number;
     totalTransfers: number;
     totalWithdrawals: number;
+    totalFees: number;
     totalNetContributions: number;
   }>;
   grandTotalContributions: number;
+  grandTotalIncomeContributions: number;
   grandTotalEmployerMatch: number;
+  grandTotalTransfers: number;
   grandTotalNetContributions: number;
 }
 

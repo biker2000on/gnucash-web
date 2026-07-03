@@ -29,6 +29,27 @@ const ACCOUNT_TYPES = [
   'TRADING',
 ] as const;
 
+// Valid retirement account types for account preferences
+// (kept consistent with RETIREMENT_ACCOUNT_TYPES in src/lib/reports/irs-limits.ts)
+const RETIREMENT_ACCOUNT_TYPE_VALUES = [
+  '401k',
+  '403b',
+  '457',
+  'traditional_ira',
+  'roth_ira',
+  'hsa',
+  'hra',
+  'fsa',
+  'brokerage',
+  'sep_ira',
+  'simple_ira',
+  'education_529',
+  'coverdell_esa',
+] as const;
+
+// Account owner attribution for per-spouse tax tracking
+const OWNER_VALUES = ['self', 'spouse'] as const;
+
 // Validation schemas
 export const CreateAccountSchema = z.object({
   name: z.string().min(1, 'Name is required').max(2048),
@@ -44,7 +65,8 @@ export const CreateAccountSchema = z.object({
   notes: z.string().max(4096).optional(),
   tax_related: z.boolean().optional(),
   is_retirement: z.boolean().optional(),
-  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa', 'brokerage']).nullable().optional(),
+  retirement_account_type: z.enum(RETIREMENT_ACCOUNT_TYPE_VALUES).nullable().optional(),
+  owner: z.enum(OWNER_VALUES).nullable().optional(),
 });
 
 export const UpdateAccountSchema = z.object({
@@ -59,7 +81,8 @@ export const UpdateAccountSchema = z.object({
   notes: z.string().max(4096).optional(),
   tax_related: z.boolean().optional(),
   is_retirement: z.boolean().optional(),
-  retirement_account_type: z.enum(['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa', 'brokerage']).nullable().optional(),
+  retirement_account_type: z.enum(RETIREMENT_ACCOUNT_TYPE_VALUES).nullable().optional(),
+  owner: z.enum(OWNER_VALUES).nullable().optional(),
 });
 
 export type CreateAccountInput = z.infer<typeof CreateAccountSchema>;
@@ -130,14 +153,15 @@ export class AccountService {
       }
 
       // Write preferences if any preference fields are provided
-      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined) {
+      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined || data.owner !== undefined) {
         await tx.$executeRaw`
-          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type)
+          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type, owner)
           VALUES (
             ${accountGuid},
             ${data.tax_related ?? false},
             ${data.is_retirement ?? false},
-            ${data.retirement_account_type ?? null}
+            ${data.retirement_account_type ?? null},
+            ${data.owner ?? null}
           )
         `;
       }
@@ -265,27 +289,31 @@ export class AccountService {
       // Upsert preferences if any preference fields are provided
       // Uses CASE WHEN to only update fields present in the request,
       // preserving existing values for fields not included
-      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined) {
+      if (data.tax_related !== undefined || data.is_retirement !== undefined || data.retirement_account_type !== undefined || data.owner !== undefined) {
         const taxRelated = data.tax_related;
         const isRetirement = data.is_retirement;
         const retirementType = data.retirement_account_type;
+        const owner = data.owner;
         const hasTaxRelated = data.tax_related !== undefined;
         const hasIsRetirement = data.is_retirement !== undefined;
         const hasRetirementType = data.retirement_account_type !== undefined;
+        const hasOwner = data.owner !== undefined;
 
         await tx.$executeRaw`
-          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type)
+          INSERT INTO gnucash_web_account_preferences (account_guid, tax_related, is_retirement, retirement_account_type, owner)
           VALUES (
             ${guid},
             ${taxRelated ?? false},
             ${isRetirement ?? false},
-            ${retirementType ?? null}
+            ${retirementType ?? null},
+            ${owner ?? null}
           )
           ON CONFLICT (account_guid)
           DO UPDATE SET
             tax_related = CASE WHEN ${hasTaxRelated}::boolean THEN ${taxRelated ?? false} ELSE gnucash_web_account_preferences.tax_related END,
             is_retirement = CASE WHEN ${hasIsRetirement}::boolean THEN ${isRetirement ?? false} ELSE gnucash_web_account_preferences.is_retirement END,
-            retirement_account_type = CASE WHEN ${hasRetirementType}::boolean THEN ${retirementType ?? null} ELSE gnucash_web_account_preferences.retirement_account_type END
+            retirement_account_type = CASE WHEN ${hasRetirementType}::boolean THEN ${retirementType ?? null} ELSE gnucash_web_account_preferences.retirement_account_type END,
+            owner = CASE WHEN ${hasOwner}::boolean THEN ${owner ?? null} ELSE gnucash_web_account_preferences.owner END
         `;
       }
 

@@ -104,25 +104,14 @@ interface ResultCardProps {
 }
 
 function ResultCard({ label, value, sublabel, color }: ResultCardProps) {
-  const backgrounds: Record<string, string> = {
-    primary: 'bg-primary/10',
-    emerald: 'bg-primary/10',
-    purple: 'bg-purple-500/10',
-    amber: 'bg-amber-500/10',
-    rose: 'bg-rose-500/10',
-  };
-  const accents: Record<string, string> = {
-    primary: 'text-primary',
-    emerald: 'text-primary',
-    purple: 'text-purple-400',
-    amber: 'text-amber-400',
-    rose: 'text-rose-400',
-  };
+  // Restrained palette per DESIGN.md: neutral surface cards, teal accent
+  // reserved for the primary metric only.
+  const accent = color === 'primary' || color === 'emerald' ? 'text-primary' : 'text-foreground';
 
   return (
-    <div className={`${backgrounds[color]} backdrop-blur-xl border border-border rounded-xl p-5`}>
+    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-5">
       <p className="text-xs font-medium text-foreground-muted uppercase tracking-wider">{label}</p>
-      <p className={`text-2xl font-bold mt-1 ${accents[color]}`}>{value}</p>
+      <p className={`text-2xl font-bold mt-1 font-mono ${accent}`} style={{ fontFeatureSettings: "'tnum'" }}>{value}</p>
       <p className="text-xs text-foreground-muted mt-1">{sublabel}</p>
     </div>
   );
@@ -164,7 +153,7 @@ function SavedMortgageCard({ config, onLoad, onDelete, isDeleting }: SavedCardPr
         type="button"
         onClick={() => onDelete(config.id)}
         disabled={isDeleting}
-        className="shrink-0 p-1.5 text-foreground-muted hover:text-rose-400 transition-colors disabled:opacity-50"
+        className="shrink-0 p-1.5 text-foreground-muted hover:text-negative transition-colors disabled:opacity-50"
         title="Delete saved mortgage"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -853,7 +842,7 @@ export default function MortgageCalculatorPage() {
                 <span className="text-sm text-primary">Saved successfully</span>
               )}
               {saveStatus === 'error' && (
-                <span className="text-sm text-rose-400">Failed to save</span>
+                <span className="text-sm text-negative">Failed to save</span>
               )}
             </div>
           </div>
@@ -1030,11 +1019,11 @@ export default function MortgageCalculatorPage() {
             </div>
 
             {payoffTargetCalc.error ? (
-              <div className="flex items-center gap-3 p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl">
-                <svg className="w-5 h-5 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex items-center gap-3 p-4 bg-error/10 border border-error/30 rounded-xl">
+                <svg className="w-5 h-5 text-negative shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <span className="text-sm text-rose-400">{payoffTargetCalc.error}</span>
+                <span className="text-sm text-negative">{payoffTargetCalc.error}</span>
               </div>
             ) : payoffTargetCalc.noExtraNeeded ? (
               <div className="flex items-center gap-3 p-4 bg-primary/10 border border-primary/30 rounded-xl">

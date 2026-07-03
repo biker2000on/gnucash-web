@@ -375,9 +375,11 @@ function seedBase(stockOrder: string[]) {
 
 /**
  * Add a balanced transaction. Splits: [splitGuid, accountGuid, qty, value].
- * Sign convention follows the engine's existing tests:
- * buy = stock value negative; sell/transfer-out = stock value positive;
- * transfer-in = value negative (mirrors the out-split so the tx balances).
+ * NATIVE GnuCash sign convention (value follows the debit/credit of the
+ * account in transaction currency):
+ * buy = stock value positive (debit), cash negative;
+ * sell/transfer-out = stock value negative (credit), cash positive;
+ * transfer-in = value positive (mirrors the out-split so the tx balances).
  */
 function addTx(guid: string, date: string, splits: Array<[string, string, number, number]>) {
   db.t.transactions.push({
@@ -399,16 +401,16 @@ function addTx(guid: string, date: string, splits: Array<[string, string, number
 function seedFullTransfer() {
   seedBase(['A', 'B']);
   addTx('tx-buy', '2022-01-10', [
-    ['a-buy', STOCK_A, 100, -1000],
-    ['a-buy-cash', CASH, 1000, 1000],
+    ['a-buy', STOCK_A, 100, 1000],
+    ['a-buy-cash', CASH, -1000, -1000],
   ]);
   addTx('tx-xfer', '2024-06-15', [
-    ['a-out', STOCK_A, -100, 1000],
-    ['b-in', STOCK_B, 100, -1000],
+    ['a-out', STOCK_A, -100, -1000],
+    ['b-in', STOCK_B, 100, 1000],
   ]);
   addTx('tx-sell', '2024-11-02', [
-    ['b-sell', STOCK_B, -100, 1500],
-    ['b-sell-cash', CASH, -1500, -1500],
+    ['b-sell', STOCK_B, -100, -1500],
+    ['b-sell-cash', CASH, 1500, 1500],
   ]);
 }
 
@@ -416,20 +418,20 @@ function seedFullTransfer() {
 function seedPartialTransfer() {
   seedBase(['A', 'B']);
   addTx('tx-buy', '2023-01-05', [
-    ['a-buy', STOCK_A, 100, -1000],
-    ['a-buy-cash', CASH, 1000, 1000],
+    ['a-buy', STOCK_A, 100, 1000],
+    ['a-buy-cash', CASH, -1000, -1000],
   ]);
   addTx('tx-xfer', '2024-01-10', [
-    ['a-out', STOCK_A, -60, 600],
-    ['b-in', STOCK_B, 60, -600],
+    ['a-out', STOCK_A, -60, -600],
+    ['b-in', STOCK_B, 60, 600],
   ]);
   addTx('tx-sell-a', '2024-02-15', [
-    ['a-sell', STOCK_A, -40, 480],
-    ['a-sell-cash', CASH, -480, -480],
+    ['a-sell', STOCK_A, -40, -480],
+    ['a-sell-cash', CASH, 480, 480],
   ]);
   addTx('tx-sell-b', '2024-03-20', [
-    ['b-sell', STOCK_B, -60, 720],
-    ['b-sell-cash', CASH, -720, -720],
+    ['b-sell', STOCK_B, -60, -720],
+    ['b-sell-cash', CASH, 720, 720],
   ]);
 }
 
@@ -438,20 +440,20 @@ function seedChain() {
   // Insert stock accounts in C,B,A order so a naive scrub order would be wrong.
   seedBase(['C', 'B', 'A']);
   addTx('tx-buy', '2022-03-01', [
-    ['a-buy', STOCK_A, 50, -500],
-    ['a-buy-cash', CASH, 500, 500],
+    ['a-buy', STOCK_A, 50, 500],
+    ['a-buy-cash', CASH, -500, -500],
   ]);
   addTx('tx-ab', '2023-05-01', [
-    ['a-out', STOCK_A, -50, 500],
-    ['b-in', STOCK_B, 50, -500],
+    ['a-out', STOCK_A, -50, -500],
+    ['b-in', STOCK_B, 50, 500],
   ]);
   addTx('tx-bc', '2024-04-01', [
-    ['b-out', STOCK_B, -50, 500],
-    ['c-in', STOCK_C, 50, -500],
+    ['b-out', STOCK_B, -50, -500],
+    ['c-in', STOCK_C, 50, 500],
   ]);
   addTx('tx-sell', '2024-09-01', [
-    ['c-sell', STOCK_C, -50, 1000],
-    ['c-sell-cash', CASH, -1000, -1000],
+    ['c-sell', STOCK_C, -50, -1000],
+    ['c-sell-cash', CASH, 1000, 1000],
   ]);
 }
 
@@ -459,16 +461,16 @@ function seedChain() {
 function seedTwoLots(transferQty: number, transferVal: number) {
   seedBase(['A', 'B']);
   addTx('tx-buy1', '2023-01-05', [
-    ['d-buy1', STOCK_A, 100, -1000],
-    ['d-buy1-cash', CASH, 1000, 1000],
+    ['d-buy1', STOCK_A, 100, 1000],
+    ['d-buy1-cash', CASH, -1000, -1000],
   ]);
   addTx('tx-buy2', '2023-06-05', [
-    ['d-buy2', STOCK_A, 100, -2000],
-    ['d-buy2-cash', CASH, 2000, 2000],
+    ['d-buy2', STOCK_A, 100, 2000],
+    ['d-buy2-cash', CASH, -2000, -2000],
   ]);
   addTx('tx-xfer', '2024-05-01', [
-    ['d-out', STOCK_A, -transferQty, transferVal],
-    ['d-in', STOCK_B, transferQty, -transferVal],
+    ['d-out', STOCK_A, -transferQty, -transferVal],
+    ['d-in', STOCK_B, transferQty, transferVal],
   ]);
 }
 
@@ -522,11 +524,12 @@ describe('cross-account lot scrubbing', () => {
     // Acquisition date carries the ORIGINAL purchase date (2022), not the transfer date
     expect(slotVal(bLot, 'acquisition_date')).toBe('2022-01-10T00:00:00.000Z');
 
-    // Holding period spans from original purchase => Long Term gains account used
+    // Holding period spans from original purchase => Long Term gains account used.
+    // A $500 gain CREDITS the income account: value -50000n (native signs).
     const ltAccount = db.t.accounts.find(a => a.name === 'Long Term');
     expect(ltAccount).toBeDefined();
     const gainSplits = db.t.splits.filter(
-      s => s.account_guid === ltAccount!.guid && s.value_num === 50000n,
+      s => s.account_guid === ltAccount!.guid && s.value_num === -50000n,
     );
     expect(gainSplits).toHaveLength(1);
 
@@ -539,12 +542,12 @@ describe('cross-account lot scrubbing', () => {
     seedPartialTransfer();
 
     const resA = await autoAssignLots(STOCK_A, 'fifo');
-    // A lot: buy -1000, transfer-out +600, sell +480 => gain 80 (40 sh x $2)
+    // A lot: buy +1000, transfer-out -600, sell -480 => gain 80 (40 sh x $2)
     expect(resA.totalRealizedGain).toBeCloseTo(80);
     expect(resA.gainsTransactions).toBe(1);
 
     const resB = await autoAssignLots(STOCK_B, 'fifo');
-    // B lot: transfer-in -600, sell +720 => gain 120 (60 sh x $2)
+    // B lot: transfer-in +600, sell -720 => gain 120 (60 sh x $2)
     expect(resB.totalRealizedGain).toBeCloseTo(120);
     expect(resB.gainsTransactions).toBe(1);
 
@@ -657,7 +660,7 @@ describe('cross-account lot scrubbing', () => {
     // B: transfer-in restored to a single split with the original quantity
     expect(db.t.splits.filter(s => s.account_guid === STOCK_B)).toHaveLength(1);
     expect(split('d-in').quantity_num).toBe(15000n);
-    expect(split('d-in').value_num).toBe(-200000n);
+    expect(split('d-in').value_num).toBe(200000n);
     expect(split('d-in').lot_guid).toBeNull();
     expect(lotsOf(STOCK_B)).toHaveLength(0);
 
@@ -672,7 +675,7 @@ describe('cross-account lot scrubbing', () => {
     await revertScrubRun(resA.runId);
 
     expect(split('d-out').quantity_num).toBe(-15000n);
-    expect(split('d-out').value_num).toBe(200000n);
+    expect(split('d-out').value_num).toBe(-200000n);
     expect(split('d-out').lot_guid).toBeNull();
     expect(lotsOf(STOCK_A)).toHaveLength(0);
     // Gains transactions removed, split/tx counts back to the seeded state
@@ -764,6 +767,9 @@ describe('getAccountLots transfer metadata', () => {
     // Holding period computed from the ORIGINAL acquisition, so long_term
     expect(lot.holdingPeriod).toBe('long_term');
     expect(Math.abs(lot.totalShares)).toBeLessThan(0.0001);
+    // Realized gain = proceeds 1500 - carried basis 1000 = +500, even though
+    // the scrubbed lot's splits (incl. the gains offset) sum to zero.
+    expect(lot.realizedGain).toBeCloseTo(500);
   });
 });
 

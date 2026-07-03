@@ -64,20 +64,32 @@ export async function generateIncomeStatementByPeriod(
   grouping: PeriodGrouping
 ): Promise<PeriodicReportData> {
   const now = new Date();
+  // UTC parsing for all split query/bucket boundaries so this report agrees
+  // with the plain income statement (which parses dates as UTC) at period edges.
   const startDate = filters.startDate
+    ? new Date(filters.startDate + 'T00:00:00Z')
+    : new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const endDate = filters.endDate
+    ? new Date(filters.endDate + 'T23:59:59Z')
+    : now;
+
+  // generatePeriods walks the calendar with local-time getters and returns
+  // plain YYYY-MM-DD strings, so feed it locally-parsed anchors to keep the
+  // period windows/labels timezone-independent.
+  const anchorStart = filters.startDate
     ? new Date(filters.startDate + 'T00:00:00')
     : new Date(now.getFullYear(), 0, 1);
-  const endDate = filters.endDate
+  const anchorEnd = filters.endDate
     ? new Date(filters.endDate + 'T23:59:59')
     : now;
 
-  const periodWindows = generatePeriods(startDate, endDate, grouping);
+  const periodWindows = generatePeriods(anchorStart, anchorEnd, grouping);
   const periods: PeriodColumn[] = periodWindows;
   const periodCount = periods.length;
 
-  // Precompute numeric boundaries for fast bucketing
-  const periodStarts = periods.map(p => new Date(p.startDate + 'T00:00:00').getTime());
-  const periodEnds = periods.map(p => new Date(p.endDate + 'T23:59:59').getTime());
+  // Precompute numeric boundaries for fast bucketing (UTC, matching the query)
+  const periodStarts = periods.map(p => new Date(p.startDate + 'T00:00:00Z').getTime());
+  const periodEnds = periods.map(p => new Date(p.endDate + 'T23:59:59Z').getTime());
 
   const rootGuid = await resolveRootGuid(filters.bookAccountGuids);
 

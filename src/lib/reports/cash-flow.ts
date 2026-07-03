@@ -110,27 +110,38 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
     const financingChanges = await getAccountChanges(financingAccounts);
     const cashChanges = await getAccountChanges(cashAccounts);
 
+    // Non-cash splits carry the opposite sign of their cash impact (e.g.
+    // income that brings cash in is recorded as a negative split). Flip the
+    // line items so inflows display as positive, and derive each section
+    // total from the flipped items so items always sum to their section total.
+    const flipItems = (items: LineItem[]): LineItem[] =>
+        items.map(item => ({ ...item, amount: -item.amount }));
+
+    const operatingItems = flipItems(operatingChanges);
+    const investingItems = flipItems(investingChanges);
+    const financingItems = flipItems(financingChanges);
+
     // Calculate totals
-    const totalOperating = operatingChanges.reduce((sum, item) => sum + item.amount, 0);
-    const totalInvesting = investingChanges.reduce((sum, item) => sum + item.amount, 0);
-    const totalFinancing = financingChanges.reduce((sum, item) => sum + item.amount, 0);
+    const totalOperating = operatingItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalInvesting = investingItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalFinancing = financingItems.reduce((sum, item) => sum + item.amount, 0);
     const totalCashChange = cashChanges.reduce((sum, item) => sum + item.amount, 0);
 
     const sections: ReportSection[] = [
         {
             title: 'Cash Flows from Operating Activities',
-            items: operatingChanges,
-            total: -totalOperating, // Negate because income decreases cash in splits
+            items: operatingItems,
+            total: totalOperating,
         },
         {
             title: 'Cash Flows from Investing Activities',
-            items: investingChanges,
-            total: -totalInvesting,
+            items: investingItems,
+            total: totalInvesting,
         },
         {
             title: 'Cash Flows from Financing Activities',
-            items: financingChanges,
-            total: -totalFinancing,
+            items: financingItems,
+            total: totalFinancing,
         },
     ];
 

@@ -1,10 +1,17 @@
 import prisma from '@/lib/prisma';
 
 export const RETIREMENT_ACCOUNT_TYPES = [
-  '401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa',
+  '401k', '403b', '457', 'traditional_ira', 'roth_ira', 'sep_ira', 'simple_ira',
+  'hsa', 'hra', 'fsa', 'education_529', 'coverdell_esa',
 ] as const;
 
 export type RetirementAccountType = typeof RETIREMENT_ACCOUNT_TYPES[number] | 'brokerage';
+
+/**
+ * Types with no federal annual contribution limit — the limit resolver
+ * returns null for these (529 plans have state-level aggregate caps only).
+ */
+const NO_FEDERAL_LIMIT_TYPES = new Set(['brokerage', 'education_529']);
 
 interface LimitDefaults {
   account_type: string;
@@ -13,6 +20,10 @@ interface LimitDefaults {
   catch_up_age: number;
 }
 
+// Sources: 2024 Notice 2023-75 / Rev. Proc. 2023-23; 2025 Notice 2024-80 /
+// Rev. Proc. 2024-25; 2026 Rev. Proc. 2025-32, Notice 2025-67, and
+// Rev. Proc. 2025-19 (HSA). sep_ira is the employer/self-employed cap
+// (IRC §415(c)) with no catch-up; coverdell_esa is a fixed $2,000/beneficiary.
 const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
   2024: [
     { account_type: '401k', base_limit: 23000, catch_up_limit: 7500, catch_up_age: 50 },
@@ -20,8 +31,11 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: '457', base_limit: 23000, catch_up_limit: 7500, catch_up_age: 50 },
     { account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'roth_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
+    { account_type: 'sep_ira', base_limit: 69000, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: 'simple_ira', base_limit: 16000, catch_up_limit: 3500, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4150, catch_up_limit: 1000, catch_up_age: 55 },
     { account_type: 'fsa', base_limit: 3200, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0, catch_up_age: 50 },
   ],
   2025: [
     { account_type: '401k', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
@@ -29,17 +43,25 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: '457', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
     { account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
     { account_type: 'roth_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
+    { account_type: 'sep_ira', base_limit: 70000, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: 'simple_ira', base_limit: 16500, catch_up_limit: 3500, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4300, catch_up_limit: 1000, catch_up_age: 55 },
     { account_type: 'fsa', base_limit: 3300, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0, catch_up_age: 50 },
   ],
+  // 2026 per Rev. Proc. 2025-32 / Notice 2025-67 (retirement) and
+  // Rev. Proc. 2025-19 (HSA)
   2026: [
-    { account_type: '401k', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
-    { account_type: '403b', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
-    { account_type: '457', base_limit: 23500, catch_up_limit: 7500, catch_up_age: 50 },
-    { account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
-    { account_type: 'roth_ira', base_limit: 7000, catch_up_limit: 1000, catch_up_age: 50 },
-    { account_type: 'hsa', base_limit: 4300, catch_up_limit: 1000, catch_up_age: 55 },
-    { account_type: 'fsa', base_limit: 3300, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: '401k', base_limit: 24500, catch_up_limit: 8000, catch_up_age: 50 },
+    { account_type: '403b', base_limit: 24500, catch_up_limit: 8000, catch_up_age: 50 },
+    { account_type: '457', base_limit: 24500, catch_up_limit: 8000, catch_up_age: 50 },
+    { account_type: 'traditional_ira', base_limit: 7500, catch_up_limit: 1100, catch_up_age: 50 },
+    { account_type: 'roth_ira', base_limit: 7500, catch_up_limit: 1100, catch_up_age: 50 },
+    { account_type: 'sep_ira', base_limit: 72000, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: 'simple_ira', base_limit: 17000, catch_up_limit: 4000, catch_up_age: 50 },
+    { account_type: 'hsa', base_limit: 4400, catch_up_limit: 1000, catch_up_age: 55 },
+    { account_type: 'fsa', base_limit: 3400, catch_up_limit: 0, catch_up_age: 50 },
+    { account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0, catch_up_age: 50 },
   ],
 };
 
@@ -72,7 +94,7 @@ export async function getContributionLimit(
   accountType: string,
   birthday: string | null,
 ): Promise<ContributionLimitResult | null> {
-  if (accountType === 'brokerage') return null;
+  if (NO_FEDERAL_LIMIT_TYPES.has(accountType)) return null;
 
   const dbLimit = await prisma.gnucash_web_contribution_limits.findFirst({
     where: { tax_year: taxYear, account_type: accountType },

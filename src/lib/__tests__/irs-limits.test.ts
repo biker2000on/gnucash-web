@@ -28,6 +28,13 @@ describe('IRS Contribution Limits', () => {
       expect(RETIREMENT_ACCOUNT_TYPES).toContain('403b');
       expect(RETIREMENT_ACCOUNT_TYPES).toContain('457');
     });
+
+    it('should include SEP/SIMPLE IRA and education account types', () => {
+      expect(RETIREMENT_ACCOUNT_TYPES).toContain('sep_ira');
+      expect(RETIREMENT_ACCOUNT_TYPES).toContain('simple_ira');
+      expect(RETIREMENT_ACCOUNT_TYPES).toContain('education_529');
+      expect(RETIREMENT_ACCOUNT_TYPES).toContain('coverdell_esa');
+    });
   });
 
   describe('calculateAge', () => {
@@ -64,6 +71,55 @@ describe('IRS Contribution Limits', () => {
       expect(limits).toContainEqual(
         expect.objectContaining({ account_type: 'traditional_ira', base_limit: 7000, catch_up_limit: 1000 })
       );
+    });
+
+    it('should return SEP/SIMPLE/ESA limits for 2025', () => {
+      const limits = getDefaultLimits(2025);
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'sep_ira', base_limit: 70000, catch_up_limit: 0 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'simple_ira', base_limit: 16500, catch_up_limit: 3500 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0 })
+      );
+    });
+
+    it('should return 2026 limits per Rev. Proc. 2025-32 / 2025-19', () => {
+      const limits = getDefaultLimits(2026);
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: '401k', base_limit: 24500, catch_up_limit: 8000 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: '403b', base_limit: 24500, catch_up_limit: 8000 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: '457', base_limit: 24500, catch_up_limit: 8000 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'traditional_ira', base_limit: 7500, catch_up_limit: 1100 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'roth_ira', base_limit: 7500, catch_up_limit: 1100 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'sep_ira', base_limit: 72000, catch_up_limit: 0 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'simple_ira', base_limit: 17000, catch_up_limit: 4000 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'hsa', base_limit: 4400, catch_up_limit: 1000, catch_up_age: 55 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'fsa', base_limit: 3400, catch_up_limit: 0 })
+      );
+      expect(limits).toContainEqual(
+        expect.objectContaining({ account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0 })
+      );
+      // 529 plans have no federal annual limit — no default row
+      expect(limits.find(l => l.account_type === 'education_529')).toBeUndefined();
     });
 
     it('should return empty array for unknown year', () => {
@@ -112,6 +168,26 @@ describe('IRS Contribution Limits', () => {
 
       const limit = await getContributionLimit(2025, 'brokerage', null);
       expect(limit).toBeNull();
+    });
+
+    it('should return null for 529 plans (no federal annual limit)', async () => {
+      const limit = await getContributionLimit(2026, 'education_529', null);
+      expect(limit).toBeNull();
+      expect(mockContributionLimitsFindFirst).not.toHaveBeenCalled();
+    });
+
+    it('should not add catch-up for sep_ira even when over 50', async () => {
+      mockContributionLimitsFindFirst.mockResolvedValue(null);
+
+      const limit = await getContributionLimit(2026, 'sep_ira', '1970-06-15');
+      expect(limit).toEqual({ base: 72000, catchUp: 0, total: 72000, catchUpAge: 50 });
+    });
+
+    it('should add SIMPLE IRA catch-up when over 50 (2026: 17,000 + 4,000)', async () => {
+      mockContributionLimitsFindFirst.mockResolvedValue(null);
+
+      const limit = await getContributionLimit(2026, 'simple_ira', '1970-06-15');
+      expect(limit).toEqual({ base: 17000, catchUp: 4000, total: 21000, catchUpAge: 50 });
     });
   });
 });

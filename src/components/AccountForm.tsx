@@ -37,6 +37,7 @@ interface AccountFormData {
     tax_related: boolean;
     is_retirement: boolean;
     retirement_account_type: string | null;
+    owner: string | null; // 'self' | 'spouse' | null (null = self)
 }
 
 interface FlatAccount {
@@ -85,6 +86,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
         tax_related: initialData?.tax_related ?? false,
         is_retirement: initialData?.is_retirement ?? false,
         retirement_account_type: initialData?.retirement_account_type ?? null,
+        owner: initialData?.owner ?? null,
     });
 
     const [accounts, setAccounts] = useState<FlatAccount[]>([]);
@@ -112,6 +114,23 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             .catch(() => { /* tags are optional; leave empty */ });
         return () => { cancelled = true; };
     }, [mode, accountGuid]);
+
+    // In edit mode, seed the owner from account preferences when the caller
+    // didn't provide it in initialData (older callers only pass retirement fields).
+    const initialOwnerProvided = initialData?.owner !== undefined;
+    useEffect(() => {
+        if (mode !== 'edit' || !accountGuid || initialOwnerProvided) return;
+        let cancelled = false;
+        fetch(`/api/accounts/${accountGuid}/preferences`)
+            .then(res => (res.ok ? res.json() : null))
+            .then((prefs: { owner?: string | null } | null) => {
+                if (cancelled || !prefs) return;
+                const owner = prefs.owner === 'spouse' ? 'spouse' : prefs.owner === 'self' ? 'self' : null;
+                setFormData(prev => ({ ...prev, owner }));
+            })
+            .catch(() => { /* owner is optional; leave default */ });
+        return () => { cancelled = true; };
+    }, [mode, accountGuid, initialOwnerProvided]);
 
     const isSecurityAccount = SECURITY_ACCOUNT_TYPES.has(formData.account_type);
 
@@ -557,6 +576,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                 ...prev,
                                 is_retirement: e.target.checked,
                                 retirement_account_type: e.target.checked ? prev.retirement_account_type : null,
+                                owner: e.target.checked ? prev.owner : null,
                             }))}
                             className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
                         />
@@ -578,16 +598,38 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             <option value="457">457</option>
                             <option value="traditional_ira">Traditional IRA</option>
                             <option value="roth_ira">Roth IRA</option>
+                            <option value="sep_ira">SEP IRA</option>
+                            <option value="simple_ira">SIMPLE IRA</option>
                             <option value="hsa">HSA</option>
                             <option value="hra">HRA</option>
                             <option value="fsa">FSA</option>
+                            <option value="education_529">529 Plan</option>
+                            <option value="coverdell_esa">Coverdell ESA</option>
                             <option value="brokerage">Brokerage (taxable)</option>
                         </select>
+                    )}
+
+                    {formData.is_retirement && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <span className="text-sm text-foreground-secondary">Owner</span>
+                            <select
+                                value={formData.owner ?? 'self'}
+                                onChange={e => setFormData(prev => ({
+                                    ...prev,
+                                    owner: e.target.value === 'spouse' ? 'spouse' : 'self',
+                                }))}
+                                className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            >
+                                <option value="self">Self</option>
+                                <option value="spouse">Spouse</option>
+                            </select>
+                        </label>
                     )}
                 </div>
                 <p className="text-xs text-foreground-muted">
                     Retirement flags drive the Contribution Summary report, IRS limit tracking,
                     and the Tax Estimator. Flag the top-level account; children inherit it.
+                    Owner attributes the account to you or your spouse for per-person limit tracking.
                 </p>
             </div>
 

@@ -71,7 +71,7 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
                 <MobileCard
                   key={row.month}
                   className={`${
-                    isFirstProjected ? 'border-t-2 border-t-cyan-500/50' : ''
+                    isFirstProjected ? 'border-t-2 border-t-secondary/50' : ''
                   } ${
                     isPayoffMonth
                       ? 'bg-primary/10 font-semibold'
@@ -88,14 +88,14 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
                             ? fmtDate.format(new Date(row.date + 'T00:00:00'))
                             : row.month}
                           {isFirstProjected && (
-                            <span className="ml-2 text-[10px] text-cyan-400 uppercase tracking-wider font-medium">projected</span>
+                            <span className="ml-2 text-[10px] text-secondary uppercase tracking-wider font-medium">projected</span>
                           )}
                         </span>
                       ),
                     },
                     { label: 'Payment', value: <span className="font-mono tabular-nums">{fmtFull.format(row.payment)}</span> },
-                    { label: 'Principal', value: <span className="font-mono tabular-nums text-emerald-400">{fmtFull.format(row.principal)}</span> },
-                    { label: 'Interest', value: <span className="font-mono tabular-nums text-rose-400">{fmtFull.format(row.interest)}</span> },
+                    { label: 'Principal', value: <span className="font-mono tabular-nums text-positive">{fmtFull.format(row.principal)}</span> },
+                    { label: 'Interest', value: <span className="font-mono tabular-nums text-negative">{fmtFull.format(row.interest)}</span> },
                     ...(hasExtra && row.extra > 0
                       ? [{ label: 'Extra', value: <span className="font-mono tabular-nums text-primary">{fmtFull.format(row.extra)}</span> }]
                       : []),
@@ -109,8 +109,8 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
               className="border-t-2 border-t-border bg-surface/30 font-bold"
               fields={[
                 { label: 'Total Payment', value: <span className="font-mono tabular-nums font-bold">{fmtFull.format(totals.payment)}</span> },
-                { label: 'Total Principal', value: <span className="font-mono tabular-nums font-bold text-emerald-400">{fmtFull.format(totals.principal)}</span> },
-                { label: 'Total Interest', value: <span className="font-mono tabular-nums font-bold text-rose-400">{fmtFull.format(totals.interest)}</span> },
+                { label: 'Total Principal', value: <span className="font-mono tabular-nums font-bold text-positive">{fmtFull.format(totals.principal)}</span> },
+                { label: 'Total Interest', value: <span className="font-mono tabular-nums font-bold text-negative">{fmtFull.format(totals.interest)}</span> },
                 ...(hasExtra
                   ? [{ label: 'Total Extra', value: <span className="font-mono tabular-nums font-bold text-primary">{fmtFull.format(totals.extra)}</span> }]
                   : []),
@@ -140,7 +140,7 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
                   key={row.month}
                   className={`border-t border-border/50 ${
                     isFirstProjected
-                      ? 'border-t-2 border-t-cyan-500/50'
+                      ? 'border-t-2 border-t-secondary/50'
                       : ''
                   } ${
                     isPayoffMonth
@@ -155,12 +155,12 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
                       ? fmtDate.format(new Date(row.date + 'T00:00:00'))
                       : row.month}
                     {isFirstProjected && (
-                      <span className="ml-2 text-[10px] text-cyan-400 uppercase tracking-wider font-medium">projected</span>
+                      <span className="ml-2 text-[10px] text-secondary uppercase tracking-wider font-medium">projected</span>
                     )}
                   </td>
                   <td className="py-2 px-4 text-right text-foreground tabular-nums">{fmtFull.format(row.payment)}</td>
-                  <td className="py-2 px-4 text-right text-emerald-400 tabular-nums">{fmtFull.format(row.principal)}</td>
-                  <td className="py-2 px-4 text-right text-rose-400 tabular-nums">{fmtFull.format(row.interest)}</td>
+                  <td className="py-2 px-4 text-right text-positive tabular-nums">{fmtFull.format(row.principal)}</td>
+                  <td className="py-2 px-4 text-right text-negative tabular-nums">{fmtFull.format(row.interest)}</td>
                   {hasExtra && <td className="py-2 px-4 text-right text-primary tabular-nums">{fmtFull.format(row.extra)}</td>}
                   <td className="py-2 px-4 text-right text-foreground tabular-nums">{fmtFull.format(row.balance)}</td>
                 </tr>
@@ -170,8 +170,8 @@ export function AmortizationTable({ schedule, showExtraPayment = true, showDates
             <tr className="border-t-2 border-border bg-surface/30 font-bold">
               <td className="py-3 px-4 text-foreground sticky left-0 bg-surface/30">Total</td>
               <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmtFull.format(totals.payment)}</td>
-              <td className="py-3 px-4 text-right text-emerald-400 tabular-nums">{fmtFull.format(totals.principal)}</td>
-              <td className="py-3 px-4 text-right text-rose-400 tabular-nums">{fmtFull.format(totals.interest)}</td>
+              <td className="py-3 px-4 text-right text-positive tabular-nums">{fmtFull.format(totals.principal)}</td>
+              <td className="py-3 px-4 text-right text-negative tabular-nums">{fmtFull.format(totals.interest)}</td>
               {hasExtra && <td className="py-3 px-4 text-right text-primary tabular-nums">{fmtFull.format(totals.extra)}</td>}
               <td className="py-3 px-4 text-right text-foreground tabular-nums">{fmtFull.format(0)}</td>
             </tr>

@@ -88,9 +88,10 @@ export async function fetchPeriodTransactions(
   const inScopeGuids = inScope.map(a => a.guid);
   const nameByGuid = new Map(inScope.map(a => [a.guid, a.name]));
 
-  // 3. Fetch every matching split.
-  const rangeStart = new Date(startDate + 'T00:00:00');
-  const rangeEnd = new Date(endDate + 'T23:59:59');
+  // 3. Fetch every matching split. UTC parsing matches the by-period report's
+  //    bucket boundaries (and the plain income statement's date handling).
+  const rangeStart = new Date(startDate + 'T00:00:00Z');
+  const rangeEnd = new Date(endDate + 'T23:59:59Z');
 
   const splits = await prisma.splits.findMany({
     where: {

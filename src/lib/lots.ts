@@ -29,7 +29,7 @@ export interface LotSummary {
     closeDate: string | null; // latest split date (if closed)
     totalShares: number;     // sum of quantity_decimal for all splits in lot
     totalCost: number;       // sum of value_decimal for buy splits (positive qty)
-    realizedGain: number;    // sum of all values when lot is closed
+    realizedGain: number;    // proceeds - basis (positive = gain); see computeRealizedGain
     unrealizedGain: number | null; // (currentPrice * shares) - costBasis (null if no price)
     holdingPeriod: 'short_term' | 'long_term' | null; // based on open date vs today (1 year threshold)
     currentPrice: number | null;
@@ -76,6 +76,52 @@ function buildLotSplits(
             shareBalance,
         };
     });
+}
+
+/**
+ * Compute the realized gain for a lot from its splits.
+ *
+ * Native GnuCash sign convention: a buy split on the stock account has
+ * POSITIVE value (debit) and a sell split has NEGATIVE value (credit),
+ * so summing the trading splits of a closed lot yields basis - proceeds.
+ * The true realized gain is therefore the NEGATION of that sum.
+ *
+ * Gains offset splits (created by the scrub engine or GnuCash desktop)
+ * have zero quantity and non-zero value; they record the gain inside the
+ * lot so it sums to zero. They must be EXCLUDED from the basis/proceeds
+ * sum — for a balanced scrubbed lot, -(sum of non-gain splits) equals the
+ * value of the gains offset split itself.
+ *
+ * For open (partial) lots, only the realized portion is returned:
+ * proceeds from shares sold so far minus their pro-rata share of the buy
+ * cost. Returns 0 when nothing has been sold.
+ */
+export function computeRealizedGain(
+    splits: Array<{ shares: number; value: number }>,
+    isClosed: boolean,
+): number {
+    const EPS = 0.0001;
+    if (isClosed) {
+        // Exclude zero-quantity gains offset splits, negate basis - proceeds
+        return -splits
+            .filter(s => Math.abs(s.shares) > EPS)
+            .reduce((sum, s) => sum + s.value, 0);
+    }
+
+    // Open lot: realized portion only (shares sold so far)
+    const buys = splits.filter(s => s.shares > EPS);
+    const sells = splits.filter(s => s.shares < -EPS);
+    if (sells.length === 0) return 0;
+
+    const boughtShares = buys.reduce((sum, s) => sum + s.shares, 0);
+    const buyCost = buys.reduce((sum, s) => sum + Math.abs(s.value), 0);
+    const costPerShare = boughtShares > EPS ? buyCost / boughtShares : 0;
+
+    const soldShares = sells.reduce((sum, s) => sum + Math.abs(s.shares), 0);
+    // Native: sell values are negative, so proceeds = -(sum of sell values)
+    const proceeds = -sells.reduce((sum, s) => sum + s.value, 0);
+
+    return proceeds - soldShares * costPerShare;
 }
 
 /**
@@ -167,16 +213,23 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             .filter(s => s.shares > 0)
             .reduce((sum, s) => sum + Math.abs(s.value), 0);
 
-        // Realized gain: sum of ALL split values (GnuCash double-balance)
-        const realizedGain = isClosed
-            ? lotSplits.reduce((sum, s) => sum + s.value, 0)
-            : 0;
+        // Realized gain: proceeds - basis, excluding zero-qty gains offset
+        // splits (native GnuCash convention; see computeRealizedGain)
+        const realizedGain = computeRealizedGain(lotSplits, isClosed);
 
         // Unrealized gain: (currentPrice * remaining shares) - cost basis of remaining shares
         let unrealizedGain: number | null = null;
         if (!isClosed && latestPrice !== null && Math.abs(totalShares) > 0.0001) {
             const marketValue = latestPrice * totalShares;
-            unrealizedGain = marketValue - totalCost;
+            // Pro-rate the buy cost over the remaining (unsold) shares so
+            // partially-sold lots don't count the sold shares' basis twice.
+            const boughtShares = lotSplits
+                .filter(s => s.shares > 0)
+                .reduce((sum, s) => sum + s.shares, 0);
+            const remainingBasis = boughtShares > 0.0001
+                ? totalCost * (totalShares / boughtShares)
+                : totalCost;
+            unrealizedGain = marketValue - remainingBasis;
         }
 
         // Holding period based on acquisition date (from transfer) or open date

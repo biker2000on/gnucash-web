@@ -793,19 +793,21 @@ export async function detectWashSales(
 
       const val = toDecimalNumber(s.value_num, s.value_denom);
 
-      // If sell is assigned to a lot, check lot-level realized gain
+      // If sell is assigned to a lot, check lot-level realized gain.
+      // Native GnuCash signs: trading splits sum to basis - proceeds, so
+      // gain = -(sum). Zero-quantity gains offset splits are excluded.
       if (s.lot_guid) {
         const lot = lotMap.get(s.lot_guid);
         if (lot) {
-          const totalValue = lot.splits.reduce(
-            (sum, ls) => sum + toDecimalNumber(ls.value_num, ls.value_denom), 0
-          );
+          const realizedGain = -lot.splits
+            .filter(ls => Math.abs(toDecimalNumber(ls.quantity_num, ls.quantity_denom)) > 0.0001)
+            .reduce((sum, ls) => sum + toDecimalNumber(ls.value_num, ls.value_denom), 0);
           const totalQty = lot.splits.reduce(
             (sum, ls) => sum + toDecimalNumber(ls.quantity_num, ls.quantity_denom), 0
           );
-          // Closed lot with negative total value = realized loss
-          if (Math.abs(totalQty) < 0.0001 && totalValue < 0) {
-            sells.push({ ...s, realizedLoss: totalValue });
+          // Closed lot with negative realized gain = realized loss
+          if (Math.abs(totalQty) < 0.0001 && realizedGain < 0) {
+            sells.push({ ...s, realizedLoss: realizedGain });
             continue;
           }
         }

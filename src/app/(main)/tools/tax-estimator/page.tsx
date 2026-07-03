@@ -19,6 +19,7 @@ import {
   type TaxCategory,
   type TaxYear,
 } from '@/lib/tax/types';
+import { computeIraDeductionLimit, computeRothIraContributionLimit } from '@/lib/tax/phaseouts';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
@@ -48,13 +49,35 @@ interface EstimatePayload {
     stateFlatRate: number;
     birthday: string | null;
     ageAtYearEnd: number | null;
+    spouseBirthday: string | null;
+    spouseAgeAtYearEnd: number | null;
+    coveredByEmployerPlan: boolean;
+    spouseCoveredByEmployerPlan: boolean;
+  };
+  entity?: {
+    entityType: string;
+    entityName: string | null;
+    synthesized: boolean;
+    memberCount: number;
+    dependentsUnder17: number;
+    owners: Array<{ name: string | null; ownershipPercent: number | null }>;
   };
   limits: {
     '401k': LimitInfo | null;
     ira: LimitInfo | null;
     hsa: LimitInfo | null;
+    spouseIra: LimitInfo | null;
   };
 }
+
+const BUSINESS_ENTITY_LABELS: Record<string, string> = {
+  sole_prop: 'Sole Proprietorship',
+  llc_single: 'Single-Member LLC',
+  llc_partnership: 'Partnership LLC',
+  s_corp: 'S-Corp',
+  c_corp: 'C-Corp',
+  nonprofit_501c3: '501(c)(3) Nonprofit',
+};
 
 interface MappingsPayload {
   mappings: Record<string, TaxCategory>;
@@ -103,6 +126,8 @@ function buildInputs(
   );
   const tradIra = Math.max(c['traditional_ira'] ?? 0, categoryTotal(bookData, 'trad_ira_contribution'));
   const hsa = Math.max(c['hsa'] ?? 0, categoryTotal(bookData, 'hsa_contribution'));
+  const sepIra = Math.max(c['sep_ira'] ?? 0, categoryTotal(bookData, 'sep_ira_contribution'));
+  const simpleIra = Math.max(c['simple_ira'] ?? 0, categoryTotal(bookData, 'simple_ira_contribution'));
 
   const inputs: FederalTaxInputs = {
     ...emptyFederalInputs(year, filingStatus),
@@ -120,6 +145,8 @@ function buildInputs(
     traditional401kContributions: trad401k,
     traditionalIraContributions: tradIra,
     hsaContributions: hsa,
+    sepIraContributions: sepIra,
+    simpleIraContributions: simpleIra,
     charitableDonations: get('charitable_donation'),
     mortgageInterest: get('mortgage_interest'),
     stateLocalTaxesPaid: get('state_withholding') + get('property_tax') + get('state_local_tax_paid'),
@@ -196,6 +223,9 @@ export default function TaxEstimatorPage() {
   const [filersAge65Plus, setFilersAge65Plus] = useState(0);
   const [priorYearTax, setPriorYearTax] = useState<number | ''>('');
   const [priorYearAgi, setPriorYearAgi] = useState<number | ''>('');
+  const [spouseBirthday, setSpouseBirthday] = useState('');
+  const [coveredByPlan, setCoveredByPlan] = useState(true);
+  const [spouseCovered, setSpouseCovered] = useState(false);
 
   const [estimate, setEstimate] = useState<EstimatePayload | null>(null);
   const [mappingsData, setMappingsData] = useState<MappingsPayload | null>(null);
@@ -236,8 +266,13 @@ export default function TaxEstimatorPage() {
           setFilingStatus(est.preferences.filingStatus);
           setStateCode(est.preferences.state);
           setStateFlatRate(est.preferences.stateFlatRate);
-          if (est.preferences.ageAtYearEnd !== null && est.preferences.ageAtYearEnd >= 65) {
-            setFilersAge65Plus(1);
+          setSpouseBirthday(est.preferences.spouseBirthday ?? '');
+          setCoveredByPlan(est.preferences.coveredByEmployerPlan ?? true);
+          setSpouseCovered(est.preferences.spouseCoveredByEmployerPlan ?? false);
+          const selfIs65 = est.preferences.ageAtYearEnd !== null && est.preferences.ageAtYearEnd >= 65;
+          const spouseIs65 = est.preferences.spouseAgeAtYearEnd !== null && est.preferences.spouseAgeAtYearEnd >= 65;
+          if (selfIs65 || spouseIs65) {
+            setFilersAge65Plus((selfIs65 ? 1 : 0) + (spouseIs65 ? 1 : 0));
           }
           setPrefsLoaded(true);
         }
@@ -274,11 +309,21 @@ export default function TaxEstimatorPage() {
 
   /* ---- Persist preferences ---- */
   const savePreferences = useCallback(
-    (patch: Partial<{ filingStatus: FilingStatus; state: string; flatRate: number }>) => {
+    (patch: Partial<{
+      filingStatus: FilingStatus;
+      state: string;
+      flatRate: number;
+      spouseBirthday: string | null;
+      coveredByPlan: boolean;
+      spouseCovered: boolean;
+    }>) => {
       const preferences: Record<string, unknown> = {};
       if (patch.filingStatus) preferences.tax_filing_status = patch.filingStatus;
       if (patch.state) preferences.tax_state = patch.state;
       if (patch.flatRate !== undefined) preferences.tax_state_flat_rate = patch.flatRate;
+      if (patch.spouseBirthday !== undefined) preferences.spouse_birthday = patch.spouseBirthday || null;
+      if (patch.coveredByPlan !== undefined) preferences.tax_covered_by_employer_plan = patch.coveredByPlan;
+      if (patch.spouseCovered !== undefined) preferences.tax_spouse_covered_by_employer_plan = patch.spouseCovered;
       fetch('/api/user/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -348,10 +393,77 @@ export default function TaxEstimatorPage() {
 
   const computed = useMemo(() => {
     if (!estimate) return null;
-    const { inputs, withholding, stateWithholding } = buildInputs(
+    const { inputs: baseInputs, withholding, stateWithholding } = buildInputs(
       estimate.bookData, year, filingStatus, annualize, filersAge65Plus,
     );
-    const federal = computeFederalTax(inputs);
+    // Child Tax Credit: qualifying children come from the household profile
+    // (dependents under 17 at year end).
+    const inputs: FederalTaxInputs = {
+      ...baseInputs,
+      qualifyingChildrenUnder17: estimate.entity?.dependentsUnder17 ?? 0,
+    };
+
+    // ---- Income-based IRA deduction phase-out ----
+    // MAGI for IRA purposes is computed WITHOUT the IRA deduction itself, so
+    // run a first pass with zero traditional IRA contributions.
+    const magiPass = computeFederalTax({ ...inputs, traditionalIraContributions: 0 });
+    const magi = magiPass.agi;
+
+    const isJoint = filingStatus === 'mfj' || filingStatus === 'qss';
+    const byOwner = estimate.bookData.contributionsByTypeAndOwner;
+    const tradIraSelf = isJoint && byOwner
+      ? byOwner['traditional_ira']?.self ?? 0
+      : inputs.traditionalIraContributions;
+    const tradIraSpouse = isJoint && byOwner ? byOwner['traditional_ira']?.spouse ?? 0 : 0;
+    // Owner attribution may not cover category-mapped contributions; put any
+    // remainder on self so nothing is silently dropped.
+    const attributed = tradIraSelf + tradIraSpouse;
+    const remainder = Math.max(0, inputs.traditionalIraContributions - attributed);
+
+    const selfIraLimit = estimate.limits.ira?.total ?? null;
+    const spouseIraLimit = estimate.limits.spouseIra?.total ?? null;
+
+    const selfPhaseOut = selfIraLimit !== null
+      ? computeIraDeductionLimit({
+          year, filingStatus, magi,
+          coveredByEmployerPlan: coveredByPlan,
+          spouseCoveredByEmployerPlan: spouseCovered,
+          iraLimit: selfIraLimit,
+        })
+      : null;
+    const spousePhaseOut = isJoint && spouseIraLimit !== null
+      ? computeIraDeductionLimit({
+          year, filingStatus, magi,
+          coveredByEmployerPlan: spouseCovered,
+          spouseCoveredByEmployerPlan: coveredByPlan,
+          iraLimit: spouseIraLimit,
+        })
+      : null;
+
+    const selfRoth = selfIraLimit !== null
+      ? computeRothIraContributionLimit({ year, filingStatus, magi, iraLimit: selfIraLimit })
+      : null;
+    const spouseRoth = isJoint && spouseIraLimit !== null
+      ? computeRothIraContributionLimit({ year, filingStatus, magi, iraLimit: spouseIraLimit })
+      : null;
+
+    const deductibleSelf = selfPhaseOut
+      ? Math.min(tradIraSelf + remainder, selfPhaseOut.deductibleLimit)
+      : tradIraSelf + remainder;
+    const deductibleSpouse = spousePhaseOut
+      ? Math.min(tradIraSpouse, spousePhaseOut.deductibleLimit)
+      : tradIraSpouse;
+    const deductibleIra = Math.round((deductibleSelf + deductibleSpouse) * 100) / 100;
+    const nonDeductibleIra = Math.max(0, inputs.traditionalIraContributions - deductibleIra);
+
+    const cappedInputs: FederalTaxInputs = { ...inputs, traditionalIraContributions: deductibleIra };
+    const federal = computeFederalTax(cappedInputs);
+    const phaseOuts = {
+      magi,
+      self: { deduction: selfPhaseOut, roth: selfRoth, tradContrib: tradIraSelf + remainder },
+      spouse: isJoint ? { deduction: spousePhaseOut, roth: spouseRoth, tradContrib: tradIraSpouse } : null,
+      nonDeductibleIra,
+    };
     const state = computeStateTax(stateCode, {
       year,
       filingStatus,
@@ -369,18 +481,24 @@ export default function TaxEstimatorPage() {
       priorYearAgi: priorYearAgi === '' ? null : priorYearAgi,
       withholding,
     });
-    return { inputs, federal, state, totalLiability, withholding, stateWithholding, totalWithheld, balance, safeHarbor };
-  }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi]);
+    return { inputs: cappedInputs, federal, state, totalLiability, withholding, stateWithholding, totalWithheld, balance, safeHarbor, phaseOuts };
+  }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi, coveredByPlan, spouseCovered]);
 
   const scenarioLimits: ScenarioLimits | null = useMemo(() => {
     if (!estimate || !computed) return null;
     const c = estimate.bookData.contributionsByType;
+    // For joint filers each spouse has their own IRA limit (with their own
+    // catch-up); the household headroom is the sum.
+    const isJoint = filingStatus === 'mfj' || filingStatus === 'qss';
+    const iraLimit = estimate.limits.ira !== null
+      ? estimate.limits.ira.total + (isJoint ? (estimate.limits.spouseIra?.total ?? 0) : 0)
+      : null;
     return {
       limits: {
         trad401k: estimate.limits['401k']?.total ?? null,
         roth401k: estimate.limits['401k']?.total ?? null,
-        tradIra: estimate.limits.ira?.total ?? null,
-        rothIra: estimate.limits.ira?.total ?? null,
+        tradIra: iraLimit,
+        rothIra: iraLimit,
         hsa: estimate.limits.hsa?.total ?? null,
       },
       actuals: {
@@ -391,10 +509,27 @@ export default function TaxEstimatorPage() {
         hsa: c['hsa'] ?? 0,
       },
     };
-  }, [estimate, computed]);
+  }, [estimate, computed, filingStatus]);
 
   const hasMappings = (estimate?.bookData.mappedAccountCount ?? 0) > 0;
   const isCurrentYear = year === currentYear;
+
+  /* ---- Entity type (from the book's entity profile) ---- */
+  const entityType = estimate?.entity?.entityType ?? 'household';
+  const isScheduleC = entityType === 'sole_prop' || entityType === 'llc_single';
+  // Pass-through entities (S-Corp/partnership) and exempt orgs don't get a
+  // personal 1040 estimate on this book; C-Corps get an entity-level estimate.
+  const showPersonalEstimate = entityType === 'household' || isScheduleC;
+
+  const businessSummary = useMemo(() => {
+    if (!estimate || showPersonalEstimate) return null;
+    const rev = (['self_employment_income', 'rental_income', 'interest_income', 'ordinary_dividends', 'other_income'] as TaxCategory[])
+      .reduce((s, cat) => s + categoryTotal(estimate.bookData, cat), 0);
+    const exp = (['business_expense', 'other_deduction'] as TaxCategory[])
+      .reduce((s, cat) => s + categoryTotal(estimate.bookData, cat), 0);
+    const net = rev - exp;
+    return { revenue: rev, expenses: exp, net };
+  }, [estimate, showPersonalEstimate]);
 
   const settingsSummary = [
     String(year),
@@ -523,6 +658,72 @@ export default function TaxEstimatorPage() {
             </label>
           </div>
         </div>
+
+        {/* Retirement plan coverage & spouse (drives IRA deduction phase-outs) */}
+        <div className="mt-3 pt-3 border-t border-border/60 flex flex-wrap items-center gap-x-4 gap-y-2">
+          {estimate?.entity && !estimate.entity.synthesized ? (
+            <span className="text-xs text-foreground-muted">
+              Household details (spouse, workplace-plan coverage, children) are managed in{' '}
+              <Link href="/settings" className="text-primary hover:text-primary-hover underline underline-offset-2">
+                Settings → Household &amp; entity
+              </Link>
+              . {estimate.entity.dependentsUnder17 > 0 && (
+                <>Counting {estimate.entity.dependentsUnder17} qualifying child{estimate.entity.dependentsUnder17 === 1 ? '' : 'ren'} under 17 for the Child Tax Credit.</>
+              )}
+            </span>
+          ) : (
+          <>
+          <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={coveredByPlan}
+              onChange={e => {
+                setCoveredByPlan(e.target.checked);
+                savePreferences({ coveredByPlan: e.target.checked });
+              }}
+              className="accent-[var(--primary)]"
+            />
+            Covered by a workplace plan
+          </label>
+          {(filingStatus === 'mfj' || filingStatus === 'qss') && (
+            <>
+              <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={spouseCovered}
+                  onChange={e => {
+                    setSpouseCovered(e.target.checked);
+                    savePreferences({ spouseCovered: e.target.checked });
+                  }}
+                  className="accent-[var(--primary)]"
+                />
+                Spouse covered by a workplace plan
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
+                Spouse birthday
+                <input
+                  type="date"
+                  value={spouseBirthday}
+                  onChange={e => {
+                    setSpouseBirthday(e.target.value);
+                    savePreferences({ spouseBirthday: e.target.value });
+                  }}
+                  onBlur={() => {
+                    // Spouse limits are resolved server-side from the birthday
+                    fetchEstimate(year).then(setEstimate).catch(() => {});
+                  }}
+                  className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                />
+              </label>
+              <span className="text-[11px] text-foreground-muted">
+                Enables the spouse&apos;s own IRA limit and catch-up. Mark retirement accounts as
+                yours or your spouse&apos;s when editing the account.
+              </span>
+            </>
+          )}
+          </>
+          )}
+        </div>
       </CollapsibleConfigSection>
 
       {/* Onboarding empty state */}
@@ -541,7 +742,105 @@ export default function TaxEstimatorPage() {
         </Section>
       )}
 
-      {hasMappings && computed && estimate && (
+      {/* Schedule C note for pass-through single-owner businesses */}
+      {hasMappings && estimate && isScheduleC && (
+        <div className="bg-secondary-light border border-border rounded-lg px-4 py-3 text-xs text-foreground-secondary">
+          This book is a <span className="font-medium text-foreground">{BUSINESS_ENTITY_LABELS[entityType]}</span> —
+          its activity is reported on Schedule C of your personal return. The estimate below includes
+          self-employment tax on mapped self-employment income.
+        </div>
+      )}
+
+      {/* Business entity mode: S-Corp / Partnership / C-Corp / 501(c)(3) */}
+      {hasMappings && estimate && !showPersonalEstimate && businessSummary && (
+        <Section
+          title={estimate.entity?.entityName
+            ? `${estimate.entity.entityName} — ${BUSINESS_ENTITY_LABELS[entityType] ?? entityType}`
+            : BUSINESS_ENTITY_LABELS[entityType] ?? entityType}
+          subtitle={`Mapped book activity, ${estimate.bookData.startDate} → ${estimate.bookData.asOfDate}`}
+        >
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+            <SummaryCard label="Revenue (mapped)" value={formatCurrency(businessSummary.revenue)} />
+            <SummaryCard label="Expenses (mapped)" value={formatCurrency(businessSummary.expenses)} />
+            <SummaryCard
+              label="Net income"
+              value={formatCurrency(businessSummary.net)}
+              tone={businessSummary.net >= 0 ? 'positive' : 'negative'}
+            />
+            {entityType === 'c_corp' ? (
+              <SummaryCard
+                label="Est. federal tax (21%)"
+                value={formatCurrency(Math.max(0, businessSummary.net) * 0.21)}
+                tone="negative"
+                sub="Flat corporate rate on net income"
+              />
+            ) : entityType === 'nonprofit_501c3' ? (
+              <SummaryCard label="Federal income tax" value="$0" tone="positive" sub="Exempt under 501(c)(3)" />
+            ) : (
+              <SummaryCard label="Entity-level federal tax" value="$0" sub="Income passes through to owners (K-1)" />
+            )}
+          </div>
+
+          {(entityType === 's_corp' || entityType === 'llc_partnership') && (
+            <>
+              {(estimate.entity?.owners.length ?? 0) > 0 ? (
+                <div className="space-y-1 mb-3">
+                  <p className="text-xs font-medium text-foreground-secondary">Distributive shares (by ownership %)</p>
+                  {estimate.entity!.owners.map((o, i) => (
+                    <div key={i} className="flex items-baseline justify-between text-xs border-t border-border/60 py-1">
+                      <span className="text-foreground-secondary">
+                        {o.name || `Owner ${i + 1}`}{o.ownershipPercent != null ? ` · ${o.ownershipPercent}%` : ''}
+                      </span>
+                      <span className="font-mono text-foreground">
+                        {o.ownershipPercent != null
+                          ? formatCurrency(businessSummary.net * (o.ownershipPercent / 100))
+                          : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-foreground-muted mb-3">
+                  Add owners with ownership percentages in Settings → Household &amp; entity to see distributive shares.
+                </p>
+              )}
+              <p className="text-[11px] text-foreground-muted">
+                {entityType === 's_corp'
+                  ? 'S-Corps file Form 1120-S; income passes through to shareholders via Schedule K-1 and is taxed on their personal returns. Officer wages must be reasonable compensation and are already reflected in mapped W-2/withholding categories.'
+                  : 'Partnerships file Form 1065; income passes through to partners via Schedule K-1 and is taxed on their personal returns (including self-employment tax for general partners).'}
+              </p>
+            </>
+          )}
+          {entityType === 'nonprofit_501c3' && (
+            <p className="text-[11px] text-foreground-muted">
+              501(c)(3) organizations are generally exempt from federal income tax but must file Form 990
+              (or 990-EZ/990-N). Unrelated business income (UBIT) is not modeled here.
+            </p>
+          )}
+          <p className="text-[11px] text-foreground-muted mt-2">
+            Revenue/expenses come from accounts mapped to income and business-expense tax categories —
+            adjust mappings below if these totals look incomplete.
+          </p>
+        </Section>
+      )}
+
+      {/* Business books keep mapping access outside the personal-estimate block */}
+      {hasMappings && estimate && !showPersonalEstimate && mappingsData && (
+        <Section
+          title="Account mapping"
+          subtitle="Map book accounts to tax categories to drive the business summary above."
+        >
+          <TaxMappingPanel
+            accounts={mappingsData.accounts}
+            mappings={mappingsData.mappings}
+            suggestions={mappingsData.suggestions}
+            saving={savingMappings}
+            onSave={handleSaveMappings}
+          />
+        </Section>
+      )}
+
+      {hasMappings && computed && estimate && showPersonalEstimate && (
         <>
           {/* (b) Summary cards */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -567,6 +866,86 @@ export default function TaxEstimatorPage() {
               sub="Federal ordinary marginal · effective on AGI"
             />
           </div>
+
+          {/* IRA limits & income phase-outs */}
+          <Section
+            title="IRA limits & income phase-outs"
+            subtitle={`MAGI (before IRA deduction): ${formatCurrency(computed.phaseOuts.magi)} · based on your workplace-plan coverage settings`}
+          >
+            {computed.phaseOuts.nonDeductibleIra > 0.004 && (
+              <div className="mb-3 bg-warning/10 border border-warning/30 rounded-md px-3 py-2 text-xs text-warning">
+                Only {formatCurrency(computed.inputs.traditionalIraContributions ?? 0)} of your{' '}
+                {formatCurrency((computed.inputs.traditionalIraContributions ?? 0) + computed.phaseOuts.nonDeductibleIra)}{' '}
+                traditional IRA contributions are deductible at this income level. The remaining{' '}
+                {formatCurrency(computed.phaseOuts.nonDeductibleIra)} would be a non-deductible (Form 8606) contribution.
+              </div>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {[
+                { label: 'You', data: computed.phaseOuts.self, limit: estimate.limits.ira },
+                ...(computed.phaseOuts.spouse
+                  ? [{ label: 'Spouse', data: computed.phaseOuts.spouse, limit: estimate.limits.spouseIra }]
+                  : []),
+              ].map(({ label, data, limit }) => (
+                <div key={label} className="bg-surface border border-border rounded-lg p-4 space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-sm font-semibold text-foreground">{label}</span>
+                    {limit && (
+                      <span className="text-xs text-foreground-muted font-mono">
+                        IRA limit {formatCurrency(limit.total)}
+                        {limit.catchUp > 0 && limit.total > limit.base ? ' incl. catch-up' : ''}
+                      </span>
+                    )}
+                  </div>
+                  {label === 'Spouse' && !limit && (
+                    <p className="text-xs text-foreground-muted">
+                      Set the spouse birthday in Tax settings to resolve the spouse&apos;s IRA limit and catch-up.
+                    </p>
+                  )}
+                  {data.deduction && (
+                    <div className="flex items-baseline justify-between text-xs">
+                      <span className="text-foreground-secondary">Traditional IRA deduction</span>
+                      <span className={`font-mono ${
+                        data.deduction.status === 'full' ? 'text-positive'
+                          : data.deduction.status === 'partial' ? 'text-warning' : 'text-negative'
+                      }`}>
+                        {data.deduction.status === 'full'
+                          ? 'Fully deductible'
+                          : data.deduction.status === 'partial'
+                            ? `Up to ${formatCurrency(data.deduction.deductibleLimit)}`
+                            : 'Not deductible'}
+                      </span>
+                    </div>
+                  )}
+                  {data.deduction && data.deduction.phaseOutStart !== null && (
+                    <p className="text-[11px] text-foreground-muted">
+                      Deduction phases out {formatCurrency(data.deduction.phaseOutStart)} – {formatCurrency(data.deduction.phaseOutEnd ?? 0)} MAGI
+                    </p>
+                  )}
+                  {data.roth && (
+                    <div className="flex items-baseline justify-between text-xs">
+                      <span className="text-foreground-secondary">Roth IRA contribution</span>
+                      <span className={`font-mono ${
+                        data.roth.status === 'full' ? 'text-positive'
+                          : data.roth.status === 'partial' ? 'text-warning' : 'text-negative'
+                      }`}>
+                        {data.roth.status === 'none' ? 'Ineligible' : `Up to ${formatCurrency(data.roth.deductibleLimit)}`}
+                      </span>
+                    </div>
+                  )}
+                  {data.roth && data.roth.phaseOutStart !== null && (
+                    <p className="text-[11px] text-foreground-muted">
+                      Roth eligibility phases out {formatCurrency(data.roth.phaseOutStart)} – {formatCurrency(data.roth.phaseOutEnd ?? 0)} MAGI
+                    </p>
+                  )}
+                  <div className="flex items-baseline justify-between text-xs pt-1 border-t border-border/60">
+                    <span className="text-foreground-secondary">Traditional contributions so far</span>
+                    <span className="font-mono text-foreground">{formatCurrency(data.tradContrib)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
 
           {/* (c) Income & deduction breakdown */}
           <Section

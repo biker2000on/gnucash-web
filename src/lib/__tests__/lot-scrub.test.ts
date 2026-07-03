@@ -113,6 +113,8 @@ beforeEach(() => {
 // Helper factories
 // ---------------------------------------------------------------------------
 
+// Native GnuCash sign convention: a sell credits the stock account, so the
+// stock split has NEGATIVE quantity and NEGATIVE value; the cash side is positive.
 function makeSplit(overrides: Record<string, unknown> = {}) {
   return {
     guid: 'sell-split-guid-00000000000000',
@@ -122,7 +124,7 @@ function makeSplit(overrides: Record<string, unknown> = {}) {
     action: '',
     reconcile_state: 'n',
     reconcile_date: null,
-    value_num: 10000n,   // +$100 (sell proceeds)
+    value_num: -10000n,  // -$100 (sell credit)
     value_denom: 100n,
     quantity_num: -100n, // -1 share
     quantity_denom: 100n,
@@ -151,7 +153,7 @@ describe('splitSellAcrossLots', () => {
     const sellSplit = makeSplit({
       quantity_num: -100n, // -1 share
       quantity_denom: 100n,
-      value_num: 15000n,   // +$150
+      value_num: -15000n,  // -$150 (credit)
       value_denom: 100n,
     });
     mockSplitsFindUnique.mockResolvedValue(sellSplit);
@@ -177,7 +179,7 @@ describe('splitSellAcrossLots', () => {
     const sellSplit = makeSplit({
       quantity_num: -300n, // -3 shares
       quantity_denom: 100n,
-      value_num: 45000n,   // +$450
+      value_num: -45000n,  // -$450 (credit)
       value_denom: 100n,
     });
     mockSplitsFindUnique.mockResolvedValue(sellSplit);
@@ -186,9 +188,9 @@ describe('splitSellAcrossLots', () => {
     mockSplitsUpdate.mockResolvedValue({});
     // Transaction balance check — return splits that sum to zero
     mockSplitsFindMany.mockResolvedValue([
-      { value_num: 22500n, value_denom: 100n },  // first alloc: 1.5 shares * $150 = $225
-      { value_num: 22500n, value_denom: 100n },  // sub-split: 1.5 shares * $150 = $225
-      { value_num: -45000n, value_denom: 100n },  // cash side
+      { value_num: -22500n, value_denom: 100n }, // first alloc: 1.5 shares * $150 = -$225
+      { value_num: -22500n, value_denom: 100n }, // sub-split: 1.5 shares * $150 = -$225
+      { value_num: 45000n, value_denom: 100n },  // cash side (debit)
     ]);
 
     const lots = [
@@ -206,13 +208,16 @@ describe('splitSellAcrossLots', () => {
     expect(result.warning).toBeUndefined();
     // Original split updated for first lot
     expect(mockSplitsUpdate).toHaveBeenCalled();
-    // Sub-split created for second lot
+    // Sub-split created for second lot with native signs
+    // (negative quantity AND negative value — a credit on the stock account)
     expect(mockSplitsCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           tx_guid: sellSplit.tx_guid,
           account_guid: sellSplit.account_guid,
           lot_guid: 'lot-b-guid-00000000000000000',
+          quantity_num: -150n,   // -1.5 shares
+          value_num: -22500n,    // -$225 (remainder of -$450)
         }),
       }),
     );
@@ -234,7 +239,7 @@ describe('splitSellAcrossLots', () => {
     const sellSplit = makeSplit({
       quantity_num: -500n, // -5 shares
       quantity_denom: 100n,
-      value_num: 50000n,
+      value_num: -50000n,
       value_denom: 100n,
     });
     mockSplitsFindUnique.mockResolvedValue(sellSplit);
@@ -266,7 +271,7 @@ describe('splitSellAcrossLots', () => {
     const sellSplit = makeSplit({
       quantity_num: -1000n, // -10 shares
       quantity_denom: 100n,
-      value_num: 100000n,
+      value_num: -100000n,
       value_denom: 100n,
     });
     mockSplitsFindUnique.mockResolvedValue(sellSplit);
@@ -301,7 +306,7 @@ describe('splitSellAcrossLots', () => {
     const sellSplit = makeSplit({
       quantity_num: -300n,
       quantity_denom: 100n,
-      value_num: 30000n,
+      value_num: -30000n,
       value_denom: 100n,
     });
     mockSplitsFindUnique.mockResolvedValue(sellSplit);
@@ -310,9 +315,9 @@ describe('splitSellAcrossLots', () => {
     mockSplitsUpdate.mockResolvedValue({});
     // Return imbalanced transaction
     mockSplitsFindMany.mockResolvedValue([
-      { value_num: 15000n, value_denom: 100n },
-      { value_num: 15000n, value_denom: 100n },
-      { value_num: -20000n, value_denom: 100n }, // $100 imbalance
+      { value_num: -15000n, value_denom: 100n },
+      { value_num: -15000n, value_denom: 100n },
+      { value_num: 20000n, value_denom: 100n }, // $100 imbalance
     ]);
 
     const lots = [
@@ -838,12 +843,14 @@ describe('generateCapitalGains', () => {
   }
 
   it('C1: Taxable closed lot — generates gains transaction with ST/LT', async () => {
-    // Buy: 10 shares at $100 = -$1000, Sell: 10 shares at $150 = +$1500
-    // Gain = -1000 + 1500 = $500
+    // Native GnuCash signs: buy debits the stock account (+value),
+    // sell credits it (-value).
+    // Buy: 10 shares at $100 = +$1000, Sell: 10 shares at $150 = -$1500
+    // Gain = proceeds - basis = 1500 - 1000 = $500
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 1000n, qtyDenom: 100n, valNum: -100000n, valDenom: 100n, postDate: new Date('2024-01-01') },
-        { qtyNum: -1000n, qtyDenom: 100n, valNum: 150000n, valDenom: 100n, postDate: new Date('2024-07-01') },
+        { qtyNum: 1000n, qtyDenom: 100n, valNum: 100000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+        { qtyNum: -1000n, qtyDenom: 100n, valNum: -150000n, valDenom: 100n, postDate: new Date('2024-07-01') },
       ],
     });
 
@@ -877,6 +884,22 @@ describe('generateCapitalGains', () => {
     expect(mockTransactionsCreate).toHaveBeenCalledTimes(1);
     // Two splits created (invest + gains)
     expect(mockSplitsCreate).toHaveBeenCalledTimes(2);
+    // Invest split zeroes the lot: lot sums to -500 (basis - proceeds), so +$500
+    const investCall = mockSplitsCreate.mock.calls[0][0] as { data: { value_num: bigint; quantity_num: bigint } };
+    expect(investCall.data.value_num).toBe(50000n);
+    expect(investCall.data.quantity_num).toBe(0n);
+    // Income split credits Capital Gains: -$500 (negative = income in GnuCash)
+    const incomeCall = mockSplitsCreate.mock.calls[1][0] as { data: { value_num: bigint; quantity_num: bigint } };
+    expect(incomeCall.data.value_num).toBe(-50000n);
+    expect(incomeCall.data.quantity_num).toBe(0n);
+    // Description reflects a GAIN
+    expect(mockTransactionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          description: expect.stringContaining('Realized Gain'),
+        }),
+      }),
+    );
     // Lot closed
     expect(mockLotsUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -887,10 +910,11 @@ describe('generateCapitalGains', () => {
   });
 
   it('C2: Tax-deferred — gains to Tax-Deferred account path', async () => {
+    // Native signs: buy +$50, sell -$60 => gain $10
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n, postDate: new Date('2024-01-01') },
-        { qtyNum: -100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n, postDate: new Date('2024-07-01') },
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-07-01') },
       ],
     });
 
@@ -927,8 +951,8 @@ describe('generateCapitalGains', () => {
   it('C3: Tax-exempt — skip gains, just close lot', async () => {
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n },
-        { qtyNum: -100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n },
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n },
       ],
     });
 
@@ -958,10 +982,10 @@ describe('generateCapitalGains', () => {
   it('C4: Pre-existing gains split — skip', async () => {
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n },
-        { qtyNum: -100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n },
-        // Pre-existing gains split (zero qty, non-zero value)
-        { qtyNum: 0n, qtyDenom: 100n, valNum: -1000n, valDenom: 100n },
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n },
+        // Pre-existing gains split (zero qty, non-zero value): +$10 gain offset
+        { qtyNum: 0n, qtyDenom: 100n, valNum: 1000n, valDenom: 100n },
       ],
     });
 
@@ -977,8 +1001,8 @@ describe('generateCapitalGains', () => {
   it('C5: Short-term classification (< 1 year)', async () => {
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n, postDate: new Date('2024-06-01') },
-        { qtyNum: -100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n, postDate: new Date('2024-11-01') },
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2024-06-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-11-01') },
       ],
     });
 
@@ -1004,8 +1028,8 @@ describe('generateCapitalGains', () => {
   it('C6: Long-term classification (> 1 year)', async () => {
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n, postDate: new Date('2022-01-01') },
-        { qtyNum: -100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n, postDate: new Date('2024-06-01') },
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2022-01-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-06-01') },
       ],
     });
 
@@ -1035,12 +1059,53 @@ describe('generateCapitalGains', () => {
     );
   });
 
+  it('C7: Loss lot — posts loss with correct signs and description', async () => {
+    // Native signs: buy +$60, sell -$50 => loss of $10
+    const lot = makeLotWithSplits({
+      splits: [
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n, postDate: new Date('2024-07-01') },
+      ],
+    });
+
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'brokerage-guid' });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindFirst
+      .mockResolvedValueOnce({ guid: 'income-guid' })
+      .mockResolvedValueOnce({ guid: 'capgains-guid' })
+      .mockResolvedValueOnce({ guid: 'st-guid' });
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainLoss).toBeCloseTo(-10);
+    // Invest split: lot sums to +10 (basis - proceeds), so -$10 zeroes it
+    const investCall = mockSplitsCreate.mock.calls[0][0] as { data: { value_num: bigint } };
+    expect(investCall.data.value_num).toBe(-1000n);
+    // Income split: +$10 (debit = loss reduces income)
+    const incomeCall = mockSplitsCreate.mock.calls[1][0] as { data: { value_num: bigint } };
+    expect(incomeCall.data.value_num).toBe(1000n);
+    expect(mockTransactionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          description: expect.stringContaining('Realized Loss'),
+        }),
+      }),
+    );
+  });
+
   it('should use commodity_scu from account, not hardcoded 100', async () => {
     const lot = makeLotWithSplits({
       commodityScu: 10000, // 4 decimal places
       splits: [
-        { qtyNum: 10000n, qtyDenom: 10000n, valNum: -5000n, valDenom: 100n, postDate: new Date('2024-01-01') },
-        { qtyNum: -10000n, qtyDenom: 10000n, valNum: 6000n, valDenom: 100n, postDate: new Date('2024-07-01') },
+        { qtyNum: 10000n, qtyDenom: 10000n, valNum: 5000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+        { qtyNum: -10000n, qtyDenom: 10000n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-07-01') },
       ],
     });
 
@@ -1069,8 +1134,8 @@ describe('generateCapitalGains', () => {
     // Lot splits say 2024, but acquisition_date slot says 2022 (transferred from old lot)
     const lot = makeLotWithSplits({
       splits: [
-        { qtyNum: 100n, qtyDenom: 100n, valNum: -5000n, valDenom: 100n, postDate: new Date('2024-06-01') },
-        { qtyNum: -100n, qtyDenom: 100n, valNum: 6000n, valDenom: 100n, postDate: new Date('2024-11-01') },
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2024-06-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-11-01') },
       ],
     });
 

@@ -120,9 +120,14 @@ export async function generateGeneralLedger(filters: ReportFilters): Promise<Gen
     let totalCredits = 0;
 
     for (const account of accounts) {
-        const openingBalance = openingBalances.get(account.guid) || 0;
         const splits = splitsByAccount.get(account.guid) || [];
         const isCreditNormal = CREDIT_NORMAL_TYPES.has(account.account_type);
+
+        // Opening balance uses the same normal-balance convention as the
+        // running balance below: raw split sums are debit-positive, so
+        // credit-normal accounts (income/liability/equity) flip the sign.
+        const rawOpeningBalance = openingBalances.get(account.guid) || 0;
+        const openingBalance = isCreditNormal ? -rawOpeningBalance : rawOpeningBalance;
 
         // Skip accounts with no activity and zero opening balance (unless showZeroBalances)
         if (splits.length === 0 && Math.abs(openingBalance) < 0.005 && !filters.showZeroBalances) {

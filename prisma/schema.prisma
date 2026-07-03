@@ -540,6 +540,7 @@ model gnucash_web_account_preferences {
   is_retirement           Boolean  @default(false)
   retirement_account_type String?  @db.VarChar(20)
   tax_related             Boolean  @default(false)
+  owner                   String?  @db.VarChar(10) // 'self', 'spouse'
 
   @@map("gnucash_web_account_preferences")
 }
@@ -885,4 +886,32 @@ model gnucash_web_amazon_orders {
   @@index([book_guid, match_status], map: "idx_amazon_orders_match")
   @@index([order_date], map: "idx_amazon_orders_date")
   @@index([transaction_guid], map: "idx_amazon_orders_tx")
+}
+
+// Entity/household profile per book: consumed by the tax estimator and
+// contribution tracking. Kept in sync with the raw DDL in src/lib/db-init.ts.
+model gnucash_web_entity_profiles {
+  book_guid   String   @id @db.VarChar(32)
+  entity_type String   @default("household") @db.VarChar(20)
+  entity_name String?  @db.VarChar(255)
+  tax_state   String?  @db.VarChar(10)
+  notes       String?  @db.Text
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  @@map("gnucash_web_entity_profiles")
+}
+
+model gnucash_web_entity_members {
+  id                       Int       @id @default(autoincrement())
+  book_guid                String    @db.VarChar(32)
+  role                     String    @db.VarChar(20)
+  name                     String?   @db.VarChar(255)
+  birthday                 DateTime? @db.Date
+  covered_by_employer_plan Boolean   @default(false)
+  ownership_percent        Float?
+  sort_order               Int       @default(0)
+
+  @@index([book_guid], map: "idx_entity_members_book")
+  @@map("gnucash_web_entity_members")
 }

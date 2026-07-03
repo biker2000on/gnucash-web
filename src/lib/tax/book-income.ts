@@ -184,12 +184,21 @@ export async function aggregateBookTaxData(
   }
 
   /* --- Retirement contributions from contribution summary (tax-year aware) --- */
+  // NOTE: all retirement account types flow through here keyed by
+  // retirement_account_type (401k, traditional_ira, sep_ira, simple_ira,
+  // education_529, coverdell_esa, ...). Only 'brokerage' is skipped.
+  // Education types (529/ESA) are included so the UI can display them, but
+  // they must NOT feed AGI adjustments — that mapping decision happens in
+  // the page's buildInputs, not here.
   const contributionsByType: Record<string, number> = {};
+  const contributionsByTypeAndOwner: Record<string, { self: number; spouse: number }> = {};
   try {
     const summary = await generateContributionSummary(
       {
         // widen the window so prior-year IRA contributions made Jan-Apr with
-        // tax-year overrides are captured
+        // tax-year overrides are captured. The end date is INCLUSIVE (the
+        // report parses it as end-of-day UTC), so April 30 — the IRA
+        // contribution deadline day — is covered.
         startDate: `${taxYear - 1}-01-01`,
         endDate: `${taxYear + 1}-04-30`,
         bookAccountGuids,
@@ -199,15 +208,54 @@ export async function aggregateBookTaxData(
     );
     const period = summary.periods.find(p => p.year === taxYear);
     if (period) {
+      // Employee contributions only (employer match doesn't count toward limits)
+      const perAccount: Array<{ guid: string; type: string; employee: number }> = [];
       for (const acct of period.accounts) {
         if (!acct.retirementAccountType || acct.retirementAccountType === 'brokerage') continue;
-        // Employee contributions only (employer match doesn't count toward limits)
-        const employee = acct.contributions + acct.incomeContributions;
-        contributionsByType[acct.retirementAccountType] =
-          (contributionsByType[acct.retirementAccountType] ?? 0) + employee;
+        perAccount.push({
+          guid: acct.accountGuid,
+          type: acct.retirementAccountType,
+          employee: acct.contributions + acct.incomeContributions,
+        });
+      }
+
+      /* --- Per-owner attribution ('self' | 'spouse') --- */
+      // The owner column on gnucash_web_account_preferences is added by a
+      // separate migration; query it defensively and fall back to all-'self'
+      // when the column (or $queryRaw itself, in mocked tests) is unavailable.
+      let ownerMap = new Map<string, 'self' | 'spouse'>();
+      if (perAccount.length > 0) {
+        try {
+          const guids = perAccount.map(a => a.guid);
+          const ownerRows = await prisma.$queryRaw<Array<{
+            account_guid: string;
+            owner: string;
+          }>>`
+            SELECT account_guid, COALESCE(owner, 'self') AS owner
+            FROM gnucash_web_account_preferences
+            WHERE account_guid = ANY(${guids})
+          `;
+          ownerMap = new Map(
+            ownerRows.map(r => [r.account_guid, r.owner === 'spouse' ? 'spouse' : 'self']),
+          );
+        } catch {
+          // owner column doesn't exist yet — attribute everything to 'self'
+        }
+      }
+
+      for (const { guid, type, employee } of perAccount) {
+        contributionsByType[type] = (contributionsByType[type] ?? 0) + employee;
+        const owner = ownerMap.get(guid) ?? 'self';
+        const slot = contributionsByTypeAndOwner[type] ?? { self: 0, spouse: 0 };
+        slot[owner] += employee;
+        contributionsByTypeAndOwner[type] = slot;
       }
       for (const key of Object.keys(contributionsByType)) {
         contributionsByType[key] = Math.round(contributionsByType[key] * 100) / 100;
+      }
+      for (const slot of Object.values(contributionsByTypeAndOwner)) {
+        slot.self = Math.round(slot.self * 100) / 100;
+        slot.spouse = Math.round(slot.spouse * 100) / 100;
       }
     }
   } catch (error) {
@@ -227,6 +275,7 @@ export async function aggregateBookTaxData(
       accounts: gainAccounts,
     },
     contributionsByType,
+    contributionsByTypeAndOwner,
     mappedAccountCount: directMappings.size,
   };
 }

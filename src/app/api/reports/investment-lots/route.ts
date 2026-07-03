@@ -3,6 +3,7 @@ import prisma, { toDecimal } from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { getLatestPrice } from '@/lib/commodities';
+import { getBaseCurrency } from '@/lib/currency';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 
 interface LotReportRow {
@@ -74,6 +75,9 @@ export async function GET(request: NextRequest) {
         });
 
         const accountPathMap = await buildAccountPathMap(bookAccountGuids);
+        // Price lookups are filtered to the base/report currency so a newer
+        // quote in another currency is never used for unrealized gains.
+        const baseCurrency = await getBaseCurrency();
         const now = new Date();
         const rows: LotReportRow[] = [];
 
@@ -86,7 +90,7 @@ export async function GET(request: NextRequest) {
             let currentPrice: number | null = null;
             if (commodityGuid) {
                 try {
-                    const priceData = await getLatestPrice(commodityGuid);
+                    const priceData = await getLatestPrice(commodityGuid, baseCurrency?.guid);
                     if (priceData) currentPrice = priceData.value;
                 } catch {
                     // No price available
@@ -109,16 +113,22 @@ export async function GET(request: NextRequest) {
                 const splits = lot.splits;
                 if (splits.length === 0) continue;
 
-                // Calculate lot metrics
+                // Calculate lot metrics.
+                // Native GnuCash convention: buy splits have positive value
+                // (debit), sell splits negative (credit). Zero-quantity splits
+                // are gains offsets (scrub-generated or GnuCash desktop) and
+                // are excluded from the basis/proceeds sum.
                 let totalShares = 0;
                 let buyCost = 0;
-                let totalValue = 0;
+                let tradeValue = 0; // basis - proceeds (non-gain splits only)
 
                 for (const split of splits) {
                     const qty = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
                     const val = parseFloat(toDecimal(split.value_num, split.value_denom));
                     totalShares += qty;
-                    totalValue += val;
+                    if (Math.abs(qty) > 0.0001) {
+                        tradeValue += val;
+                    }
                     if (qty > 0) {
                         buyCost += Math.abs(val);
                     }
@@ -137,8 +147,9 @@ export async function GET(request: NextRequest) {
                     ? new Date(lastSplitDate).toISOString().split('T')[0]
                     : null;
 
-                // Realized gain for closed lots: sum of all split values
-                const realizedGain = isClosed ? totalValue : 0;
+                // Realized gain for closed lots: proceeds - basis, i.e. the
+                // NEGATION of the trading splits' sum (native GnuCash signs)
+                const realizedGain = isClosed ? -tradeValue : 0;
 
                 // Unrealized gain for open lots
                 const unrealizedGain = !isClosed && currentPrice !== null && totalShares !== 0

@@ -21,13 +21,28 @@ export interface AccountWithBalance {
 }
 
 /**
- * Build hierarchical line items from flat account list
+ * Build hierarchical line items from flat account list.
+ *
+ * Accounts whose parent is not present in the provided list (e.g. because the
+ * parent is hidden and was filtered out upstream, or belongs to another
+ * section) would otherwise be unreachable and their balances silently dropped.
+ * Such accounts are re-attached to the requested root so no balance is lost.
  */
-export function buildHierarchy(accounts: AccountWithBalance[], parentGuid: string | null = null, depth = 0): LineItem[] {
+export function buildHierarchy(accounts: AccountWithBalance[], parentGuid: string | null = null): LineItem[] {
+    const guids = new Set(accounts.map(a => a.guid));
+    const attachable = accounts.map(account =>
+        account.parent_guid === parentGuid || (account.parent_guid !== null && guids.has(account.parent_guid))
+            ? account
+            : { ...account, parent_guid: parentGuid }
+    );
+    return buildHierarchyLevel(attachable, parentGuid, 0);
+}
+
+function buildHierarchyLevel(accounts: AccountWithBalance[], parentGuid: string | null, depth: number): LineItem[] {
     const children = accounts.filter(a => a.parent_guid === parentGuid);
 
     return children.map(account => {
-        const childItems = buildHierarchy(accounts, account.guid, depth + 1);
+        const childItems = buildHierarchyLevel(accounts, account.guid, depth + 1);
         const childrenTotal = childItems.reduce((sum, item) => sum + item.amount, 0);
 
         return {

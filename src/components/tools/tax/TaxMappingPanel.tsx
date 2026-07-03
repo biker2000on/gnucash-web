@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   TAX_CATEGORY_GROUPS,
   TAX_CATEGORY_LABELS,
@@ -74,10 +74,67 @@ export default function TaxMappingPanel({
   const [showOnlyMapped, setShowOnlyMapped] = useState(false);
   /** Pending local edits not yet saved */
   const [pending, setPending] = useState<Record<string, TaxCategory | null>>({});
+  /** Suggestions the user has dismissed (persisted per user). */
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+
+  // Load persisted dismissed suggestions
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/user/preferences?key=tax.dismissed_suggestions')
+      .then(res => (res.ok ? res.json() : null))
+      .then(json => {
+        if (cancelled) return;
+        const stored = json?.preferences?.['tax.dismissed_suggestions'];
+        if (Array.isArray(stored)) {
+          setDismissed(new Set(stored.filter((g): g is string => typeof g === 'string')));
+        }
+      })
+      .catch(() => {
+        // non-fatal; suggestions just show undismissed
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistDismissed = (next: Set<string>) => {
+    fetch('/api/user/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferences: { 'tax.dismissed_suggestions': [...next] } }),
+    }).catch(() => {
+      // non-fatal; dismissal still applies for this session
+    });
+  };
+
+  const dismissSuggestion = (accountGuid: string) => {
+    setDismissed(prev => {
+      const next = new Set(prev);
+      next.add(accountGuid);
+      persistDismissed(next);
+      return next;
+    });
+  };
+
+  const restoreDismissed = () => {
+    setDismissed(() => {
+      persistDismissed(new Set());
+      return new Set();
+    });
+  };
+
+  const activeSuggestions = useMemo(
+    () => suggestions.filter(s => !dismissed.has(s.accountGuid)),
+    [suggestions, dismissed],
+  );
+  const dismissedCount = useMemo(
+    () => suggestions.filter(s => dismissed.has(s.accountGuid)).length,
+    [suggestions, dismissed],
+  );
 
   const suggestionByGuid = useMemo(
-    () => new Map(suggestions.map(s => [s.accountGuid, s])),
-    [suggestions],
+    () => new Map(activeSuggestions.map(s => [s.accountGuid, s])),
+    [activeSuggestions],
   );
 
   const effectiveCategory = (guid: string): TaxCategory | '' => {
@@ -97,7 +154,7 @@ export default function TaxMappingPanel({
   }, [accounts, search, showOnlyMapped, pending, mappings, suggestionByGuid]);
 
   const pendingCount = Object.keys(pending).length;
-  const unacceptedSuggestions = suggestions.filter(
+  const unacceptedSuggestions = activeSuggestions.filter(
     s => !(s.accountGuid in pending) && !mappings[s.accountGuid],
   );
 
@@ -140,18 +197,36 @@ export default function TaxMappingPanel({
   return (
     <div className="space-y-3">
       {/* Suggestions banner */}
-      {unacceptedSuggestions.length > 0 && (
-        <div className="flex items-center justify-between gap-3 bg-secondary-light border border-border rounded-md px-3 py-2">
+      {(unacceptedSuggestions.length > 0 || dismissedCount > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-secondary-light border border-border rounded-md px-3 py-2">
           <p className="text-xs text-foreground-secondary">
-            <span className="text-secondary font-medium">{unacceptedSuggestions.length} suggested mappings</span>{' '}
-            based on account names, types, and retirement flags.
+            {unacceptedSuggestions.length > 0 ? (
+              <>
+                <span className="text-secondary font-medium">{unacceptedSuggestions.length} suggested mappings</span>{' '}
+                based on account names, types, and retirement flags.
+              </>
+            ) : (
+              <>All remaining suggestions dismissed.</>
+            )}
           </p>
-          <button
-            onClick={acceptAllSuggestions}
-            className="shrink-0 text-xs font-medium text-secondary hover:text-secondary-hover border border-border rounded-md px-2.5 py-1 transition-colors"
-          >
-            Accept all
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {dismissedCount > 0 && (
+              <button
+                onClick={restoreDismissed}
+                className="text-xs text-foreground-muted hover:text-foreground-secondary underline underline-offset-2 transition-colors"
+              >
+                Restore {dismissedCount} dismissed
+              </button>
+            )}
+            {unacceptedSuggestions.length > 0 && (
+              <button
+                onClick={acceptAllSuggestions}
+                className="text-xs font-medium text-secondary hover:text-secondary-hover border border-border rounded-md px-2.5 py-1 transition-colors"
+              >
+                Accept all
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -229,13 +304,23 @@ export default function TaxMappingPanel({
                       className={`w-full ${dirty ? 'border-primary' : ''}`}
                     />
                     {showSuggestion && (
-                      <button
-                        onClick={() => acceptSuggestion(suggestion)}
-                        title={suggestion.reason}
-                        className="w-full text-left text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-1 transition-colors"
-                      >
-                        Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
-                      </button>
+                      <div className="flex items-stretch gap-1.5">
+                        <button
+                          onClick={() => acceptSuggestion(suggestion)}
+                          title={suggestion.reason}
+                          className="flex-1 text-left text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-1 transition-colors"
+                        >
+                          Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
+                        </button>
+                        <button
+                          onClick={() => dismissSuggestion(a.guid)}
+                          title="Dismiss this suggestion"
+                          aria-label="Dismiss suggestion"
+                          className="shrink-0 px-2 text-[11px] text-foreground-muted hover:text-negative border border-border rounded transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     )}
                   </div>
                 </MobileCard>
@@ -279,13 +364,23 @@ export default function TaxMappingPanel({
                   </td>
                   <td className="px-3 py-1.5">
                     {showSuggestion && (
-                      <button
-                        onClick={() => acceptSuggestion(suggestion)}
-                        title={suggestion.reason}
-                        className="text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-0.5 transition-colors"
-                      >
-                        Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
-                      </button>
+                      <span className="inline-flex items-center gap-1">
+                        <button
+                          onClick={() => acceptSuggestion(suggestion)}
+                          title={suggestion.reason}
+                          className="text-[11px] text-secondary hover:text-secondary-hover border border-border rounded px-2 py-0.5 transition-colors"
+                        >
+                          Suggest: {TAX_CATEGORY_LABELS[suggestion.category]}
+                        </button>
+                        <button
+                          onClick={() => dismissSuggestion(a.guid)}
+                          title="Dismiss this suggestion"
+                          aria-label="Dismiss suggestion"
+                          className="text-[11px] text-foreground-muted hover:text-negative border border-border rounded px-1.5 py-0.5 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </span>
                     )}
                     {dirty && (
                       <span className="ml-1 text-[10px] uppercase text-warning">edited</span>

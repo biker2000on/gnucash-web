@@ -288,6 +288,11 @@ async function main() {
           await handleExtractPayslip(job);
           break;
         }
+        case 'check-limit-coverage': {
+          const { handleCheckLimitCoverage } = await import('./src/lib/queue/jobs/check-limit-coverage');
+          await handleCheckLimitCoverage(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -324,6 +329,26 @@ async function main() {
       console.error('Nightly thumbnail regeneration failed:', err);
     }
   });
+
+  // Weekly IRS contribution-limit coverage check (Mondays 05:00 UTC).
+  // setScheduleGeneric fires daily, so gate on the weekday inside the callback.
+  const runLimitCoverage = async (trigger: string) => {
+    try {
+      const { handleCheckLimitCoverage } = await import('./src/lib/queue/jobs/check-limit-coverage');
+      const fakeJob = { id: `${trigger}-limit-coverage-${Date.now()}`, name: 'check-limit-coverage', data: {} } as Job;
+      await handleCheckLimitCoverage(fakeJob);
+    } catch (err) {
+      console.error(`Limit coverage check (${trigger}) failed:`, err);
+    }
+  };
+  setScheduleGeneric('limit-coverage', '05:00', async () => {
+    if (new Date().getUTCDay() !== 1) return; // only act on Mondays
+    console.log(`[${new Date().toISOString()}] Running weekly contribution-limit coverage check`);
+    await runLimitCoverage('weekly');
+  });
+  // Also run once at startup so missing coverage surfaces promptly
+  // (deduped against unread notifications, so restarts don't spam).
+  void runLimitCoverage('startup');
 
   workerReady = true;
   const healthServer = startHealthServer(healthPort);

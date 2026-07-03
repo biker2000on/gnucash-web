@@ -6,6 +6,7 @@ const mockAccountsFindMany = vi.fn();
 const mockAccountPreferencesFindMany = vi.fn();
 const mockTaxYearFindMany = vi.fn();
 const mockContributionLimitsFindFirst = vi.fn();
+const mockTaxMappingsFindMany = vi.fn();
 const mockQueryRaw = vi.fn();
 
 vi.mock('../prisma', () => ({
@@ -21,6 +22,9 @@ vi.mock('../prisma', () => ({
     },
     gnucash_web_contribution_limits: {
       findFirst: (...args: unknown[]) => mockContributionLimitsFindFirst(...args),
+    },
+    gnucash_web_tax_mappings: {
+      findMany: (...args: unknown[]) => mockTaxMappingsFindMany(...args),
     },
     $queryRaw: (...args: unknown[]) => mockQueryRaw(...args),
   },
@@ -100,9 +104,10 @@ function setupRetirementMocks(
 describe('generateContributionSummary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: no tax year overrides, no IRS limit overrides
+    // Default: no tax year overrides, no IRS limit overrides, no tax mappings
     mockTaxYearFindMany.mockResolvedValue([]);
     mockContributionLimitsFindFirst.mockResolvedValue(null);
+    mockTaxMappingsFindMany.mockResolvedValue([]);
   });
 
   // ---- 1. Empty cases ----
@@ -233,6 +238,275 @@ describe('generateContributionSummary', () => {
     expect(acct.contributions).toBe(6500);    // $6500 from bank
     expect(acct.employerMatch).toBe(3250);     // $3250 employer match
     expect(acct.transfers).toBe(1000);         // $1000 transfer
+
+    // Net excludes transfers/rollovers: 6500 + 3250, NOT + 1000
+    expect(acct.netContributions).toBe(9750);
+    expect(period.totalNetContributions).toBe(9750);
+    expect(period.totalTransfers).toBe(1000);
+    expect(result.grandTotalTransfers).toBe(1000);
+  });
+
+  it('should pass an inclusive end-of-day UTC end date to the split query', async () => {
+    setupRetirementMocks(
+      [{ account_guid: 'acct-401k', is_retirement: true, retirement_account_type: '401k' }],
+      [
+        { guid: 'acct-401k', parent_guid: 'root' },
+        { guid: 'acct-checking', parent_guid: 'root' },
+        { guid: 'root', parent_guid: null },
+      ],
+    );
+
+    mockQueryRaw.mockImplementation(() => {
+      if (mockQueryRaw.mock.calls.length <= 1) {
+        // A contribution posted late on the end date (post_dates are 05:59-10:59Z)
+        return Promise.resolve([
+          makeSplitRow({ post_date: new Date('2025-12-31T10:59:00Z') }),
+        ]);
+      }
+      return Promise.resolve([{ guid: 'acct-401k', fullname: 'Assets:Retirement:401k' }]);
+    });
+
+    const result = await generateContributionSummary(
+      baseFilters({ startDate: '2025-01-01', endDate: '2025-12-31' }),
+      'calendar_year',
+      null,
+    );
+
+    // $queryRaw is a tagged template: (strings, guidArray, startDate, endDate)
+    const splitQueryArgs = mockQueryRaw.mock.calls[0];
+    const endDateParam = splitQueryArgs[3] as Date;
+    expect(endDateParam.toISOString()).toBe('2025-12-31T23:59:59.000Z');
+
+    // The end-date transaction is included
+    expect(result.periods.length).toBe(1);
+    expect(result.periods[0].accounts[0].contributions).toBe(6500);
+  });
+
+  it('should bucket years by UTC, not local time', async () => {
+    setupRetirementMocks(
+      [{ account_guid: 'acct-401k', is_retirement: true, retirement_account_type: '401k' }],
+      [
+        { guid: 'acct-401k', parent_guid: 'root' },
+        { guid: 'acct-checking', parent_guid: 'root' },
+        { guid: 'root', parent_guid: null },
+      ],
+    );
+
+    // Jan 1 2026 05:59 UTC is still Dec 31 2025 in US timezones —
+    // getFullYear() would misbucket this into 2025.
+    mockQueryRaw.mockImplementation(() => {
+      if (mockQueryRaw.mock.calls.length <= 1) {
+        return Promise.resolve([
+          makeSplitRow({ post_date: new Date('2026-01-01T05:59:00Z') }),
+        ]);
+      }
+      return Promise.resolve([{ guid: 'acct-401k', fullname: 'Assets:Retirement:401k' }]);
+    });
+
+    const result = await generateContributionSummary(
+      baseFilters({ startDate: '2025-01-01', endDate: '2026-12-31' }),
+      'calendar_year',
+      null,
+    );
+
+    expect(result.periods.length).toBe(1);
+    expect(result.periods[0].year).toBe(2026);
+  });
+
+  it('should classify money leaving to an EXPENSE account as a fee, excluded from net', async () => {
+    setupRetirementMocks(
+      [{ account_guid: 'acct-401k', is_retirement: true, retirement_account_type: '401k' }],
+      [
+        { guid: 'acct-401k', parent_guid: 'root' },
+        { guid: 'acct-checking', parent_guid: 'root' },
+        { guid: 'root', parent_guid: null },
+      ],
+    );
+
+    mockQueryRaw.mockImplementation(() => {
+      if (mockQueryRaw.mock.calls.length <= 1) {
+        return Promise.resolve([
+          // Regular $6500 contribution
+          makeSplitRow(),
+          // $50 recordkeeping fee leaving the account to an EXPENSE account
+          makeSplitRow({
+            split_guid: 'split-fee',
+            value_num: -5000n,
+            value_denom: 100n,
+            quantity_num: -5000n,
+            quantity_denom: 100n,
+            other_split_guid: 'split-fee-other',
+            other_account_guid: 'acct-expense-fees',
+            other_value_num: 5000n,
+            other_value_denom: 100n,
+            other_quantity_num: 5000n,
+            other_quantity_denom: 100n,
+            other_account_type: 'EXPENSE',
+            other_account_name: 'Recordkeeping Fees',
+            description: 'Quarterly recordkeeping fee',
+          }),
+        ]);
+      }
+      return Promise.resolve([{ guid: 'acct-401k', fullname: 'Assets:Retirement:401k' }]);
+    });
+
+    const result = await generateContributionSummary(
+      baseFilters(),
+      'calendar_year',
+      null,
+    );
+
+    const acct = result.periods[0].accounts[0];
+    expect(acct.fees).toBe(-50);
+    expect(acct.withdrawals).toBe(0); // NOT a withdrawal
+    // Net excludes fees: 6500, not 6450
+    expect(acct.netContributions).toBe(6500);
+  });
+
+  it('should always classify sources mapped to employer_match as EMPLOYER_MATCH (descendants included)', async () => {
+    setupRetirementMocks(
+      [{ account_guid: 'acct-401k', is_retirement: true, retirement_account_type: '401k' }],
+      [
+        { guid: 'acct-401k', parent_guid: 'root' },
+        { guid: 'acct-income-parent', parent_guid: 'root' },
+        { guid: 'acct-income-salary', parent_guid: 'acct-income-parent' },
+        { guid: 'root', parent_guid: null },
+      ],
+    );
+
+    // The parent income account is mapped to 'employer_match'; the actual
+    // source is its CHILD account named 'Salary' (no match/employer keywords).
+    mockTaxMappingsFindMany.mockResolvedValue([
+      { account_guid: 'acct-income-parent' },
+    ]);
+
+    mockQueryRaw.mockImplementation(() => {
+      if (mockQueryRaw.mock.calls.length <= 1) {
+        return Promise.resolve([
+          makeSplitRow({
+            split_guid: 'split-match',
+            value_num: 325000n,
+            value_denom: 100n,
+            quantity_num: 325000n,
+            quantity_denom: 100n,
+            other_split_guid: 'split-match-other',
+            other_account_guid: 'acct-income-salary',
+            other_value_num: -325000n,
+            other_value_denom: 100n,
+            other_quantity_num: -325000n,
+            other_quantity_denom: 100n,
+            other_account_type: 'INCOME',
+            other_account_name: 'Salary',
+            description: 'Payroll deposit',
+          }),
+        ]);
+      }
+      return Promise.resolve([{ guid: 'acct-401k', fullname: 'Assets:Retirement:401k' }]);
+    });
+
+    const result = await generateContributionSummary(
+      baseFilters({
+        bookAccountGuids: ['acct-401k', 'acct-income-parent', 'acct-income-salary', 'acct-checking', 'root'],
+      }),
+      'calendar_year',
+      null,
+    );
+
+    const acct = result.periods[0].accounts[0];
+    expect(acct.employerMatch).toBe(3250);
+    expect(acct.incomeContributions).toBe(0);
+    // Employer match must NOT count toward the IRS limit
+    expect(acct.irsLimit).not.toBeNull();
+    expect(acct.irsLimit!.percentUsed).toBe(0);
+  });
+
+  it('should build a per-account-type rollup with limits where applicable', async () => {
+    mockAccountPreferencesFindMany.mockResolvedValue([
+      { account_guid: 'acct-401k', is_retirement: true, retirement_account_type: '401k' },
+      { account_guid: 'acct-roth', is_retirement: true, retirement_account_type: 'roth_ira' },
+    ]);
+
+    mockAccountsFindMany.mockImplementation((args: Record<string, unknown>) => {
+      const select = (args as { select?: Record<string, unknown> }).select ?? {};
+      if (select && (select as Record<string, unknown>).name) {
+        return Promise.resolve([
+          { guid: 'acct-401k', name: '401k' },
+          { guid: 'acct-roth', name: 'Roth IRA' },
+        ]);
+      }
+      return Promise.resolve([
+        { guid: 'acct-401k', parent_guid: 'root' },
+        { guid: 'acct-roth', parent_guid: 'root' },
+        { guid: 'acct-checking', parent_guid: 'root' },
+        { guid: 'root', parent_guid: null },
+      ]);
+    });
+
+    mockQueryRaw.mockImplementation(() => {
+      if (mockQueryRaw.mock.calls.length <= 1) {
+        return Promise.resolve([
+          // 401k: $5000 direct contribution
+          makeSplitRow({
+            split_guid: 'split-401k',
+            account_guid: 'acct-401k',
+            value_num: 500000n, value_denom: 100n,
+            quantity_num: 500000n, quantity_denom: 100n,
+            other_value_num: -500000n, other_value_denom: 100n,
+            other_quantity_num: -500000n, other_quantity_denom: 100n,
+          }),
+          // 401k: $2350 payroll deferral (income contribution)
+          makeSplitRow({
+            split_guid: 'split-401k-payroll',
+            account_guid: 'acct-401k',
+            value_num: 235000n, value_denom: 100n,
+            quantity_num: 235000n, quantity_denom: 100n,
+            other_split_guid: 'split-payroll-other',
+            other_account_guid: 'acct-income-salary',
+            other_value_num: -235000n, other_value_denom: 100n,
+            other_quantity_num: -235000n, other_quantity_denom: 100n,
+            other_account_type: 'INCOME',
+            other_account_name: 'Salary',
+          }),
+          // Roth IRA: $3000 contribution
+          makeSplitRow({
+            split_guid: 'split-roth',
+            account_guid: 'acct-roth',
+            value_num: 300000n, value_denom: 100n,
+            quantity_num: 300000n, quantity_denom: 100n,
+            other_value_num: -300000n, other_value_denom: 100n,
+            other_quantity_num: -300000n, other_quantity_denom: 100n,
+          }),
+        ]);
+      }
+      return Promise.resolve([
+        { guid: 'acct-401k', fullname: 'Assets:Retirement:401k' },
+        { guid: 'acct-roth', fullname: 'Assets:Retirement:Roth IRA' },
+      ]);
+    });
+
+    const result = await generateContributionSummary(
+      baseFilters({ bookAccountGuids: ['acct-401k', 'acct-roth', 'acct-checking', 'root'] }),
+      'calendar_year',
+      null,
+    );
+
+    const period = result.periods[0];
+    expect(Object.keys(period.byAccountType).sort()).toEqual(['401k', 'roth_ira']);
+
+    const k401 = period.byAccountType['401k'];
+    expect(k401.contributions).toBe(5000);
+    expect(k401.incomeContributions).toBe(2350);
+    expect(k401.net).toBe(7350);
+    // 2025 401k limit: 23500; employee deferrals 7350 => ~31.28%
+    expect(k401.irsLimit).not.toBeNull();
+    expect(k401.irsLimit!.total).toBe(23500);
+    expect(k401.irsLimit!.percentUsed).toBeCloseTo((7350 / 23500) * 100, 1);
+
+    const roth = period.byAccountType['roth_ira'];
+    expect(roth.contributions).toBe(3000);
+    expect(roth.net).toBe(3000);
+    expect(roth.irsLimit).not.toBeNull();
+    expect(roth.irsLimit!.total).toBe(7000);
   });
 
   // ---- 3. Tax year grouping vs calendar year grouping ----

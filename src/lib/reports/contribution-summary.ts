@@ -10,6 +10,7 @@ import type {
   ReportFilters,
   ContributionSummaryData,
   AccountContributionSummary,
+  AccountTypeContributionSummary,
   ContributionLineItem,
 } from './types';
 import { ReportType } from './types';
@@ -27,6 +28,7 @@ interface SplitRow {
   value_denom: bigint;
   quantity_num: bigint;
   quantity_denom: bigint;
+  memo: string | null;
   post_date: Date;
   description: string | null;
   other_split_guid: string;
@@ -35,8 +37,10 @@ interface SplitRow {
   other_value_denom: bigint;
   other_quantity_num: bigint;
   other_quantity_denom: bigint;
+  other_memo: string | null;
   other_account_type: string;
   other_account_name: string;
+  other_account_fullname: string | null;
   other_commodity_guid: string;
 }
 
@@ -57,9 +61,48 @@ function emptyReport(
     groupBy,
     periods: [],
     grandTotalContributions: 0,
+    grandTotalIncomeContributions: 0,
     grandTotalEmployerMatch: 0,
+    grandTotalTransfers: 0,
     grandTotalNetContributions: 0,
   };
+}
+
+/**
+ * Resolve accounts mapped to the 'employer_match' tax category, expanded to
+ * descendants (a mapped account covers its whole subtree). Mirrors
+ * expandMappingsToDescendants in @/lib/tax/book-income — not imported from
+ * there to avoid a circular dependency (book-income imports this module).
+ */
+async function getEmployerMatchGuids(
+  bookAccountGuids: string[],
+  accounts: Array<{ guid: string; parent_guid: string | null }>,
+): Promise<Set<string>> {
+  const mappingRows = await prisma.gnucash_web_tax_mappings.findMany({
+    where: { account_guid: { in: bookAccountGuids }, tax_category: 'employer_match' },
+    select: { account_guid: true },
+  });
+  const result = new Set<string>(mappingRows.map(r => r.account_guid));
+  if (result.size === 0) return result;
+
+  const childrenOf = new Map<string, string[]>();
+  for (const a of accounts) {
+    if (!a.parent_guid) continue;
+    const arr = childrenOf.get(a.parent_guid) ?? [];
+    arr.push(a.guid);
+    childrenOf.set(a.parent_guid, arr);
+  }
+  const queue = [...result];
+  while (queue.length > 0) {
+    const guid = queue.pop()!;
+    for (const child of childrenOf.get(guid) ?? []) {
+      if (!result.has(child)) {
+        result.add(child);
+        queue.push(child);
+      }
+    }
+  }
+  return result;
 }
 
 export async function generateContributionSummary(
@@ -80,7 +123,10 @@ export async function generateContributionSummary(
 
   const retirementGuidArray = [...retirementGuids];
   const startDate = filters.startDate ? new Date(filters.startDate) : new Date('1970-01-01');
-  const endDate = filters.endDate ? new Date(filters.endDate) : new Date();
+  // Parse the end date as end-of-day UTC so the entire end date is included
+  // (post_dates are stored with UTC times of day, e.g. 05:59-10:59Z; a bare
+  // `new Date('YYYY-MM-DD')` is midnight UTC and would exclude the whole day).
+  const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
 
   // Step 2: Batch-load all splits for retirement accounts in the date range
   const rows = await prisma.$queryRaw<SplitRow[]>`
@@ -89,18 +135,22 @@ export async function generateContributionSummary(
       s.account_guid,
       s.value_num, s.value_denom,
       s.quantity_num, s.quantity_denom,
+      s.memo,
       t.post_date, t.description,
       s2.guid as other_split_guid,
       s2.account_guid as other_account_guid,
       s2.value_num as other_value_num, s2.value_denom as other_value_denom,
       s2.quantity_num as other_quantity_num, s2.quantity_denom as other_quantity_denom,
+      s2.memo as other_memo,
       a2.account_type as other_account_type,
       a2.name as other_account_name,
+      ah2.fullname as other_account_fullname,
       a2.commodity_guid as other_commodity_guid
     FROM splits s
     JOIN transactions t ON s.tx_guid = t.guid
     JOIN splits s2 ON s2.tx_guid = t.guid AND s2.guid != s.guid
     JOIN accounts a2 ON s2.account_guid = a2.guid
+    LEFT JOIN account_hierarchy ah2 ON ah2.guid = s2.account_guid
     WHERE s.account_guid = ANY(${retirementGuidArray})
       AND t.post_date >= ${startDate}
       AND t.post_date <= ${endDate}
@@ -116,6 +166,7 @@ export async function generateContributionSummary(
       value_denom: bigint;
       quantity_num: bigint;
       quantity_denom: bigint;
+      memo?: string | null;
     };
     postDate: Date;
     description: string;
@@ -126,10 +177,12 @@ export async function generateContributionSummary(
       value_denom: bigint;
       quantity_num: bigint;
       quantity_denom: bigint;
+      memo?: string | null;
       account?: {
         account_type?: string | null;
         commodity_guid?: string | null;
         name?: string | null;
+        fullname?: string | null;
       } | null;
     }>;
   }>();
@@ -145,6 +198,7 @@ export async function generateContributionSummary(
           value_denom: row.value_denom,
           quantity_num: row.quantity_num,
           quantity_denom: row.quantity_denom,
+          memo: row.memo,
         },
         postDate: row.post_date,
         description: row.description ?? '',
@@ -159,10 +213,12 @@ export async function generateContributionSummary(
       value_denom: row.other_value_denom,
       quantity_num: row.other_quantity_num,
       quantity_denom: row.other_quantity_denom,
+      memo: row.other_memo,
       account: {
         account_type: row.other_account_type,
         commodity_guid: row.other_commodity_guid,
         name: row.other_account_name,
+        fullname: row.other_account_fullname,
       },
     });
   }
@@ -182,14 +238,33 @@ export async function generateContributionSummary(
     : [];
   const taxYearMap = new Map(taxYearOverrides.map(o => [o.split_guid, o.tax_year]));
 
+  // Load account parentage once — used for the employer-match mapping
+  // expansion here and for retirement-parent resolution in step 6.
+  const allBookAccounts = await prisma.accounts.findMany({
+    where: { guid: { in: bookAccountGuids } },
+    select: { guid: true, parent_guid: true },
+  });
+
+  // User override: accounts mapped to the 'employer_match' tax category
+  // (expanded to descendants) are always classified EMPLOYER_MATCH.
+  const employerMatchGuids = await getEmployerMatchGuids(bookAccountGuids, allBookAccounts);
+
   // Classify each split and resolve tax year
   // Keyed by accountGuid -> year -> array of line items
   const accountYearItems = new Map<string, Map<number, ContributionLineItem[]>>();
 
   for (const [splitGuid, entry] of splitMap) {
-    const classification = classifyContribution(entry.split, entry.otherSplits, retirementGuids, entry.description);
-    const taxYear = taxYearMap.get(splitGuid) ?? entry.postDate.getFullYear();
-    const year = groupBy === 'tax_year' ? taxYear : entry.postDate.getFullYear();
+    const classification = classifyContribution(
+      entry.split,
+      entry.otherSplits,
+      retirementGuids,
+      entry.description,
+      { employerMatchGuids },
+    );
+    // post_dates are UTC — bucket by UTC year so early-January transactions
+    // don't fall into the prior year when the server runs west of UTC.
+    const taxYear = taxYearMap.get(splitGuid) ?? entry.postDate.getUTCFullYear();
+    const year = groupBy === 'tax_year' ? taxYear : entry.postDate.getUTCFullYear();
 
     const amount = toDecimalNumber(entry.split.value_num, entry.split.value_denom);
 
@@ -236,12 +311,8 @@ export async function generateContributionSummary(
   const retirementPrefMap = new Map(retirementPrefs.map(p => [p.account_guid, p.retirement_account_type]));
   const flaggedGuids = new Set(retirementPrefs.map(p => p.account_guid));
 
-  // Build parent map for hierarchy walking
-  const allAccountsForType = await prisma.accounts.findMany({
-    where: { guid: { in: bookAccountGuids } },
-    select: { guid: true, parent_guid: true },
-  });
-  const parentOfMap = new Map(allAccountsForType.map(a => [a.guid, a.parent_guid]));
+  // Build parent map for hierarchy walking (reuses the earlier account load)
+  const parentOfMap = new Map(allBookAccounts.map(a => [a.guid, a.parent_guid]));
 
   // Map each leaf account to its flagged parent retirement account
   const parentAccountMap = new Map<string, string>(); // leaf guid -> flagged parent guid
@@ -320,8 +391,11 @@ export async function generateContributionSummary(
       const incomeContributions = sumCents(byType(ContributionType.INCOME_CONTRIBUTION));
       const transfers = sumCents(byType(ContributionType.TRANSFER));
       const withdrawals = sumCents(byType(ContributionType.WITHDRAWAL));
+      const fees = sumCents(byType(ContributionType.FEE));
 
-      const netContributions = sumCents([contributions, employerMatch, incomeContributions, transfers, withdrawals]);
+      // Net contributions exclude transfers/rollovers (a Roth conversion must
+      // not show as +$X new money) and fees (tracked separately).
+      const netContributions = sumCents([contributions, employerMatch, incomeContributions, withdrawals]);
       const retirementAccountType = accountTypeMap.get(accountGuid) ?? null;
 
       // IRS limit: employee contributions only (not employer match) count toward limits
@@ -351,6 +425,7 @@ export async function generateContributionSummary(
         incomeContributions,
         transfers,
         withdrawals,
+        fees,
         netContributions,
         irsLimit,
         transactions: items,
@@ -360,25 +435,72 @@ export async function generateContributionSummary(
     // Sort accounts by accountPath
     accounts.sort((a, b) => a.accountPath.localeCompare(b.accountPath));
 
+    // Per-retirement-account-type rollup (401k, traditional_ira, hsa, ...)
+    const byAccountType: Record<string, AccountTypeContributionSummary> = {};
+    for (const acct of accounts) {
+      const typeKey = acct.retirementAccountType ?? 'unspecified';
+      const slot = byAccountType[typeKey] ?? {
+        contributions: 0,
+        employerMatch: 0,
+        incomeContributions: 0,
+        transfers: 0,
+        withdrawals: 0,
+        fees: 0,
+        net: 0,
+        irsLimit: null,
+      };
+      slot.contributions = sumCents([slot.contributions, acct.contributions]);
+      slot.employerMatch = sumCents([slot.employerMatch, acct.employerMatch]);
+      slot.incomeContributions = sumCents([slot.incomeContributions, acct.incomeContributions]);
+      slot.transfers = sumCents([slot.transfers, acct.transfers]);
+      slot.withdrawals = sumCents([slot.withdrawals, acct.withdrawals]);
+      slot.fees = sumCents([slot.fees, acct.fees]);
+      slot.net = sumCents([slot.net, acct.netContributions]);
+      byAccountType[typeKey] = slot;
+    }
+    for (const [typeKey, slot] of Object.entries(byAccountType)) {
+      if (typeKey === 'unspecified' || typeKey === 'brokerage') continue;
+      const limit = await getContributionLimit(year, typeKey, birthday);
+      if (limit) {
+        // Employee deferrals only — employer match never counts toward limits
+        const employeeContributions = sumCents([slot.contributions, slot.incomeContributions]);
+        slot.irsLimit = {
+          base: limit.base,
+          catchUp: limit.catchUp,
+          total: limit.total,
+          percentUsed: limit.total > 0
+            ? Math.round((employeeContributions / limit.total) * 10000) / 100
+            : 0,
+        };
+      }
+    }
+
     const totalContributions = sumCents(accounts.map(a => a.contributions));
+    const totalIncomeContributions = sumCents(accounts.map(a => a.incomeContributions));
     const totalEmployerMatch = sumCents(accounts.map(a => a.employerMatch));
     const totalTransfers = sumCents(accounts.map(a => a.transfers));
     const totalWithdrawals = sumCents(accounts.map(a => a.withdrawals));
+    const totalFees = sumCents(accounts.map(a => a.fees));
     const totalNetContributions = sumCents(accounts.map(a => a.netContributions));
 
     periods.push({
       year,
       accounts,
+      byAccountType,
       totalContributions,
+      totalIncomeContributions,
       totalEmployerMatch,
       totalTransfers,
       totalWithdrawals,
+      totalFees,
       totalNetContributions,
     });
   }
 
   const grandTotalContributions = sumCents(periods.map(p => p.totalContributions));
+  const grandTotalIncomeContributions = sumCents(periods.map(p => p.totalIncomeContributions));
   const grandTotalEmployerMatch = sumCents(periods.map(p => p.totalEmployerMatch));
+  const grandTotalTransfers = sumCents(periods.map(p => p.totalTransfers));
   const grandTotalNetContributions = sumCents(periods.map(p => p.totalNetContributions));
 
   return {
@@ -389,7 +511,9 @@ export async function generateContributionSummary(
     groupBy,
     periods,
     grandTotalContributions,
+    grandTotalIncomeContributions,
     grandTotalEmployerMatch,
+    grandTotalTransfers,
     grandTotalNetContributions,
   };
 }

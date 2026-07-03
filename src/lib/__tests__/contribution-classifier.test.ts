@@ -99,6 +99,57 @@ describe('Contribution Classifier', () => {
       expect(result).toBe(ContributionType.INCOME_CONTRIBUTION);
     });
 
+    it('should detect EMPLOYER_MATCH from the account fullname path', () => {
+      const split = mockSplit();
+      const otherSplits = [mockOtherSplit({
+        account: {
+          account_type: 'INCOME',
+          commodity_guid: 'usd-guid',
+          name: 'Salary',
+          fullname: 'Income:Employer Benefits:Salary',
+        },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids);
+      expect(result).toBe(ContributionType.EMPLOYER_MATCH);
+    });
+
+    it('should detect EMPLOYER_MATCH from the split memo', () => {
+      const split = mockSplit({ memo: '401k match 50% up to 6%' });
+      const otherSplits = [mockOtherSplit({
+        account: { account_type: 'INCOME', commodity_guid: 'usd-guid', name: 'Salary' },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids);
+      expect(result).toBe(ContributionType.EMPLOYER_MATCH);
+    });
+
+    it('should detect EMPLOYER_MATCH from the source split memo', () => {
+      const split = mockSplit();
+      const otherSplits = [mockOtherSplit({
+        memo: 'Employer contribution',
+        account: { account_type: 'INCOME', commodity_guid: 'usd-guid', name: 'non-taxable' },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids);
+      expect(result).toBe(ContributionType.EMPLOYER_MATCH);
+    });
+
+    it('should always classify sources in employerMatchGuids as EMPLOYER_MATCH', () => {
+      const split = mockSplit();
+      const otherSplits = [mockOtherSplit({
+        account_guid: 'acct-income-nontaxable',
+        account: { account_type: 'INCOME', commodity_guid: 'usd-guid', name: 'non-taxable' },
+      })];
+
+      // Without the override this would be INCOME_CONTRIBUTION
+      expect(classifyContribution(split, otherSplits, retirementGuids))
+        .toBe(ContributionType.INCOME_CONTRIBUTION);
+
+      // With the account mapped to the employer_match tax category
+      const result = classifyContribution(split, otherSplits, retirementGuids, undefined, {
+        employerMatchGuids: new Set(['acct-income-nontaxable']),
+      });
+      expect(result).toBe(ContributionType.EMPLOYER_MATCH);
+    });
+
     it('should classify cash from EXPENSE as FEE', () => {
       const split = mockSplit();
       const otherSplits = [mockOtherSplit({
@@ -113,6 +164,23 @@ describe('Contribution Classifier', () => {
       const otherSplits = [mockOtherSplit({ value_num: 650000n })];
       const result = classifyContribution(split, otherSplits, retirementGuids);
       expect(result).toBe(ContributionType.WITHDRAWAL);
+    });
+
+    it('should classify money leaving to an EXPENSE account as FEE, not WITHDRAWAL', () => {
+      // Recordkeeping fee: retirement cash decreases, expense account increases
+      const split = mockSplit({
+        account_guid: 'acct-retirement-cash',
+        value_num: -5000n,
+        quantity_num: -5000n,
+      });
+      const otherSplits = [mockOtherSplit({
+        account_guid: 'acct-expense-fees',
+        value_num: 5000n,
+        quantity_num: 5000n,
+        account: { account_type: 'EXPENSE', commodity_guid: 'usd-guid', name: 'Recordkeeping Fees' },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids);
+      expect(result).toBe(ContributionType.FEE);
     });
 
     it('should classify genuine withdrawal to checking as WITHDRAWAL', () => {

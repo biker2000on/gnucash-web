@@ -17,7 +17,7 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
         where: {
             ...(filters.bookAccountGuids ? { guid: { in: filters.bookAccountGuids } } : {}),
             account_type: {
-                in: ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'LIABILITY', 'CREDIT', 'EQUITY'],
+                in: ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE', 'LIABILITY', 'CREDIT', 'PAYABLE', 'EQUITY'],
             },
             hidden: 0,
         },
@@ -79,9 +79,9 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
         })
     );
 
-    // Separate by account type category
-    const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL'];
-    const liabilityTypes = ['LIABILITY', 'CREDIT'];
+    // Separate by account type category (RECEIVABLE is an asset, PAYABLE a liability)
+    const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE'];
+    const liabilityTypes = ['LIABILITY', 'CREDIT', 'PAYABLE'];
     const equityTypes = ['EQUITY'];
 
     const assetAccounts = accountBalances.filter(a => assetTypes.includes(a.account_type));
@@ -93,10 +93,14 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
     const liabilityItems = buildHierarchy(liabilityAccounts, rootGuid);
     const equityItems = buildHierarchy(equityAccounts, rootGuid);
 
-    // Calculate totals
+    // Calculate totals. Liabilities and equity are credit-normal: their raw
+    // GnuCash balances are negative when normal, so negate the signed sum to
+    // display a positive total. Using the signed sum (instead of Math.abs per
+    // item) means a contra balance — e.g. an overpaid credit card carrying a
+    // debit balance — correctly reduces the section total rather than adding to it.
     const totalAssets = assetItems.reduce((sum, item) => sum + item.amount, 0);
-    const totalLiabilities = liabilityItems.reduce((sum, item) => sum + Math.abs(item.amount), 0);
-    const totalEquity = equityItems.reduce((sum, item) => sum + Math.abs(item.amount), 0);
+    const totalLiabilities = -liabilityItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalEquity = -equityItems.reduce((sum, item) => sum + item.amount, 0);
 
     const sections: ReportSection[] = [
         {

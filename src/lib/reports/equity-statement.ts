@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
+import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
 import { toDecimal, buildHierarchy, resolveRootGuid } from './utils';
 
 /**
@@ -183,7 +183,21 @@ export async function generateEquityStatement(filters: ReportFilters): Promise<R
     // Calculate totals
     const totalOpeningEquity = openingItems.reduce((sum, item) => sum + item.amount, 0);
     const totalOtherChanges = otherChangesItems.reduce((sum, item) => sum + item.amount, 0);
-    const totalClosingEquity = closingItems.reduce((sum, item) => sum + item.amount, 0);
+
+    // GnuCash does not close income/expense into equity accounts, so equity
+    // splits alone omit retained earnings. Include the current period's net
+    // income as a retained-earnings line so closing equity satisfies the
+    // identity: Closing = Opening + Net Income + Other Changes.
+    const closingItemsWithRetained: LineItem[] = [
+        ...closingItems,
+        {
+            guid: 'retained-earnings-current-period',
+            name: 'Retained Earnings (Current Period)',
+            amount: netIncome,
+            depth: 0,
+        },
+    ];
+    const totalClosingEquity = closingItems.reduce((sum, item) => sum + item.amount, 0) + netIncome;
 
     const sections: ReportSection[] = [
         {
@@ -210,7 +224,7 @@ export async function generateEquityStatement(filters: ReportFilters): Promise<R
         },
         {
             title: 'Closing Equity',
-            items: closingItems,
+            items: closingItemsWithRetained,
             total: totalClosingEquity,
         },
     ];

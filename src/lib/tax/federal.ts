@@ -352,10 +352,16 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     inputs.otherIncome;
 
   /* --- Adjustments (above the line) --- */
+  // SEP (self-employed employer contribution) and SIMPLE elective deferrals
+  // both reduce AGI in this estimator model. Note: W-2 SIMPLE deferrals are
+  // usually already excluded from box 1 wages — users should map these only
+  // when the contributions are NOT already excluded from wages.
   const adjustments =
     Math.max(0, inputs.traditional401kContributions) +
     Math.max(0, inputs.traditionalIraContributions) +
     Math.max(0, inputs.hsaContributions) +
+    Math.max(0, inputs.sepIraContributions ?? 0) +
+    Math.max(0, inputs.simpleIraContributions ?? 0) +
     se.halfDeduction;
 
   /* --- Taxable Social Security (worksheet uses income net of adjustments) --- */
@@ -441,7 +447,28 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
   const medicareEarnings = Math.max(0, inputs.wages) + se.netEarningsFromSe;
   const additionalMedicareTax = ADDL_MEDICARE_RATE * Math.max(0, medicareEarnings - p.niitThreshold);
 
-  const credits = 0; // placeholder for v1
+  /* --- Child Tax Credit (non-refundable portion only) ---
+   * 2024: $2,000/qualifying child under 17 (TCJA); 2025-2026: $2,200 (OBBBA).
+   * Reduced $50 per $1,000 (or fraction) of MAGI over $400k (MFJ/QSS) /
+   * $200k (others). The refundable ACTC portion is not modeled — this
+   * estimator only offsets income tax (not SE/NIIT/Additional Medicare).
+   */
+  const CTC_PER_CHILD: Record<number, number> = { 2024: 2000, 2025: 2200, 2026: 2200 };
+  const qualifyingChildren = Math.max(0, Math.floor(inputs.qualifyingChildrenUnder17 ?? 0));
+  let childTaxCredit = 0;
+  if (qualifyingChildren > 0) {
+    const ctcThreshold =
+      inputs.filingStatus === 'mfj' || inputs.filingStatus === 'qss' ? 400000 : 200000;
+    const excess = Math.max(0, magi - ctcThreshold);
+    const reduction = Math.ceil(excess / 1000) * 50;
+    const gross = qualifyingChildren * (CTC_PER_CHILD[inputs.year] ?? 2000);
+    childTaxCredit = Math.min(
+      Math.max(0, gross - reduction),
+      ordinaryTax + capitalGainsTax, // non-refundable: cannot exceed income tax
+    );
+  }
+
+  const credits = round2(childTaxCredit);
   const totalTax = Math.max(
     0,
     ordinaryTax + capitalGainsTax + niit + additionalMedicareTax + se.total - credits,
@@ -561,6 +588,9 @@ export function emptyFederalInputs(year: TaxYear, filingStatus: FilingStatus): F
     traditional401kContributions: 0,
     traditionalIraContributions: 0,
     hsaContributions: 0,
+    sepIraContributions: 0,
+    simpleIraContributions: 0,
+    qualifyingChildrenUnder17: 0,
     charitableDonations: 0,
     mortgageInterest: 0,
     stateLocalTaxesPaid: 0,

@@ -25,6 +25,16 @@ export const TAX_CATEGORIES = [
   'roth_401k_contribution',
   'trad_ira_contribution',
   'roth_ira_contribution',
+  'sep_ira_contribution',
+  'simple_ira_contribution',
+  // Marks INCOME accounts whose flows into retirement accounts are employer
+  // money (match / profit sharing). The contribution report always classifies
+  // money arriving from these accounts as EMPLOYER_MATCH, regardless of
+  // account naming — a durable user override for books where the match is
+  // booked from e.g. 'Salary' or 'non-taxable' income accounts.
+  'employer_match',
+  'education_529_contribution',
+  'esa_contribution',
   'charitable_donation',
   'mortgage_interest',
   'property_tax',
@@ -62,6 +72,11 @@ export const TAX_CATEGORY_LABELS: Record<TaxCategory, string> = {
   roth_401k_contribution: 'Roth 401(k) Contribution',
   trad_ira_contribution: 'Traditional IRA Contribution',
   roth_ira_contribution: 'Roth IRA Contribution',
+  sep_ira_contribution: 'SEP IRA Contribution',
+  simple_ira_contribution: 'SIMPLE IRA Contribution',
+  employer_match: 'Employer Match (income)',
+  education_529_contribution: '529 Plan Contribution',
+  esa_contribution: 'Coverdell ESA Contribution',
   charitable_donation: 'Charitable Donation',
   mortgage_interest: 'Mortgage Interest',
   property_tax: 'Property Tax',
@@ -94,7 +109,8 @@ export const TAX_CATEGORY_GROUPS: Array<{ label: string; categories: TaxCategory
     label: 'Pre-Tax Contributions',
     categories: [
       'trad_401k_contribution', 'roth_401k_contribution', 'trad_ira_contribution',
-      'roth_ira_contribution', 'hsa_contribution',
+      'roth_ira_contribution', 'sep_ira_contribution', 'simple_ira_contribution',
+      'hsa_contribution', 'employer_match',
     ],
   },
   {
@@ -103,6 +119,13 @@ export const TAX_CATEGORY_GROUPS: Array<{ label: string; categories: TaxCategory
       'charitable_donation', 'mortgage_interest', 'medical_expense',
       'education_expense', 'business_expense', 'other_deduction',
     ],
+  },
+  {
+    // 529 and Coverdell ESA contributions have NO federal deduction — they
+    // are informational (some states offer a state-level deduction/credit).
+    // They must NOT feed federal AGI adjustments.
+    label: 'Education Savings',
+    categories: ['education_529_contribution', 'esa_contribution'],
   },
   { label: 'Other', categories: ['exclude'] },
 ];
@@ -163,6 +186,12 @@ export interface FederalTaxInputs {
   traditional401kContributions: number;
   traditionalIraContributions: number;
   hsaContributions: number;
+  /** SEP IRA contributions (self-employed employer contribution) — optional, defaults to 0 */
+  sepIraContributions?: number;
+  /** SIMPLE IRA elective deferrals — optional, defaults to 0 */
+  simpleIraContributions?: number;
+  /** Qualifying children under 17 at year end (Child Tax Credit) — optional, defaults to 0 */
+  qualifyingChildrenUnder17?: number;
 
   /** Itemized deduction components */
   charitableDonations: number;
@@ -345,6 +374,12 @@ export interface BookTaxData {
   };
   /** Employee retirement contributions by account type from contribution summary */
   contributionsByType: Record<string, number>;
+  /**
+   * Same contributions split by account owner ('self' | 'spouse') from the
+   * gnucash_web_account_preferences.owner column. Accounts without an owner
+   * (or when the column doesn't exist yet) are attributed to 'self'.
+   */
+  contributionsByTypeAndOwner?: Record<string, { self: number; spouse: number }>;
   mappedAccountCount: number;
 }
 

@@ -153,7 +153,7 @@ export async function splitSellAcrossLots(
   }
 
   const sellQty = toDecimalNumber(sellSplit.quantity_num, sellSplit.quantity_denom); // negative
-  const sellVal = toDecimalNumber(sellSplit.value_num, sellSplit.value_denom);       // positive
+  const sellVal = toDecimalNumber(sellSplit.value_num, sellSplit.value_denom);       // negative (credit) in native GnuCash data
   const remainingSell = Math.abs(sellQty);
 
   if (remainingSell < 0.0001) {
@@ -243,6 +243,10 @@ export async function splitSellAcrossLots(
   });
 
   const pricePerShare = Math.abs(sellVal) / remainingSell;
+  // Preserve the original split's value sign. Native GnuCash sells carry a
+  // NEGATIVE value (credit on the stock account); the sub-splits must too,
+  // or the last (remainder) sub-split absorbs a wildly wrong value.
+  const valueSign = sellVal < 0 ? -1 : 1;
   const subSplitsCreated: string[] = [];
   const lotsUsed: string[] = [];
   const qtyDenom = Number(sellSplit.quantity_denom);
@@ -251,7 +255,7 @@ export async function splitSellAcrossLots(
   // Assign the first allocation to the original split, create sub-splits for the rest
   const firstAlloc = allocations[0];
   const firstQty = fromDecimal(-firstAlloc.shares, qtyDenom);
-  const firstVal = fromDecimal(firstAlloc.shares * pricePerShare, valDenom);
+  const firstVal = fromDecimal(valueSign * firstAlloc.shares * pricePerShare, valDenom);
 
   await tx.splits.update({
     where: { guid: sellSplitGuid },
@@ -282,7 +286,7 @@ export async function splitSellAcrossLots(
         return sum + q.num;
       }, 0n);
       const usedValNum = allocations.slice(0, i).reduce((sum, a) => {
-        const v = fromDecimal(a.shares * pricePerShare, valDenom);
+        const v = fromDecimal(valueSign * a.shares * pricePerShare, valDenom);
         return sum + v.num;
       }, 0n);
 
@@ -290,7 +294,7 @@ export async function splitSellAcrossLots(
       subVal = { num: sellSplit.value_num - usedValNum, denom: BigInt(valDenom) };
     } else {
       subQty = fromDecimal(-alloc.shares, qtyDenom);
-      subVal = fromDecimal(alloc.shares * pricePerShare, valDenom);
+      subVal = fromDecimal(valueSign * alloc.shares * pricePerShare, valDenom);
     }
 
     const subGuid = generateGuid();
@@ -813,8 +817,10 @@ export async function splitTransferAcrossSourceLots(
 
 /**
  * For a closed lot (shares sum to ~0), create a GnuCash double-balance gains transaction:
- * - Adjusting split in investment account (zero shares, -gainLoss value)
- * - Corresponding entry in Income:Capital Gains account (zero shares, +gainLoss value)
+ * - Adjusting split in investment account (zero shares, +gainLoss value —
+ *   offsets the lot's basis-minus-proceeds so the lot totals to zero)
+ * - Corresponding entry in Income:Capital Gains account (zero shares, -gainLoss
+ *   value — a credit, i.e. income, for a gain)
  *
  * Uses `commodity_scu` from parent account (not hardcoded 100).
  * Classifies ST/LT by holding period; handles TAX_EXEMPT (skip) and TAX_DEFERRED.
@@ -883,9 +889,11 @@ export async function generateCapitalGains(
     };
   }
 
-  // Calculate gain/loss: sum of all split values in lot
-  // Positive = gain (buy was negative value, sell was positive value; net positive = gain)
-  const gainLoss = lot.splits.reduce(
+  // Calculate gain/loss. Native GnuCash sign convention: a buy split has
+  // POSITIVE value (debit) and a sell split NEGATIVE value (credit), so the
+  // lot's splits sum to basis - proceeds. The realized gain is the negation:
+  // gain = proceeds - basis. Positive = gain, negative = loss.
+  const gainLoss = -lot.splits.reduce(
     (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
     0,
   );
@@ -989,10 +997,11 @@ export async function generateCapitalGains(
     },
   });
 
-  // Investment account split: zero shares, -gainLoss value
-  // (Offsets the lot's net value so the lot totals to zero after gains)
+  // Investment account split: zero shares, +gainLoss value.
+  // The lot's splits sum to basis - proceeds = -gainLoss, so adding a split
+  // valued +gainLoss makes the lot total zero after gains.
   const investSplitGuid = generateGuid();
-  const investValNum = gainLoss >= 0 ? -valFrac.num : valFrac.num;
+  const investValNum = gainLoss >= 0 ? valFrac.num : -valFrac.num;
   await tx.splits.create({
     data: {
       guid: investSplitGuid,
@@ -1017,9 +1026,10 @@ export async function generateCapitalGains(
     },
   });
 
-  // Income account split: zero shares, +gainLoss value (opposite of invest split)
+  // Income account split: zero shares, -gainLoss value (opposite of invest
+  // split). A gain credits the income account (negative value = income).
   const gainsSplitGuid = generateGuid();
-  const gainsValNum = gainLoss >= 0 ? valFrac.num : -valFrac.num;
+  const gainsValNum = gainLoss >= 0 ? -valFrac.num : valFrac.num;
   await tx.splits.create({
     data: {
       guid: gainsSplitGuid,
