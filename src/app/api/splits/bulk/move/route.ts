@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 /**
  * @openapi
@@ -72,7 +73,10 @@ export async function POST(request: Request) {
         // Verify all splits exist and have the same commodity_guid as target
         const splits = await prisma.splits.findMany({
             where: { guid: { in: splitGuids } },
-            include: { account: { select: { commodity_guid: true } } },
+            include: {
+                account: { select: { commodity_guid: true } },
+                transaction: { select: { post_date: true } },
+            },
         });
 
         if (splits.length !== splitGuids.length) {
@@ -97,6 +101,21 @@ export async function POST(request: Request) {
             where: { guid: { in: splitGuids } },
             data: { account_guid: targetAccountGuid },
         });
+
+        // Invalidate dashboard metric caches from the earliest affected
+        // transaction date (moving splits changes account-scoped metrics)
+        try {
+            const postDates = splits
+                .map(s => s.transaction?.post_date)
+                .filter((d): d is Date => d != null);
+            if (postDates.length > 0) {
+                const earliest = postDates.reduce((a, b) => (a < b ? a : b));
+                await cacheInvalidateFrom(roleResult.bookGuid, earliest);
+            }
+        } catch (err) {
+            // Cache invalidation failure should not break the move operation
+            console.warn('Cache invalidation failed:', err);
+        }
 
         return NextResponse.json({
             success: true,

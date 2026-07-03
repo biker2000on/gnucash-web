@@ -10,6 +10,7 @@ import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFin
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 import { createNotification } from '@/lib/notifications';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
 
@@ -226,6 +227,10 @@ export async function syncSimpleFin(
   // Build a map of SimpleFin account id -> account data
   const sfAccountMap = new Map(accountSet.accounts.map(a => [a.id, a]));
 
+  // Track the earliest post date of any imported transaction so cached
+  // dashboard metrics can be invalidated from that date forward.
+  let earliestImportedPostDate: Date | null = null;
+
   // Process each mapped account
   for (const mappedAccount of mappedAccounts) {
     const sfAccount = sfAccountMap.get(mappedAccount.simplefin_account_id);
@@ -379,6 +384,11 @@ export async function syncSimpleFin(
           }
           result.transactionsImported++;
           existingIds.add(sfTxn.id); // Prevent re-import within same sync
+
+          const importedPostDate = normalizePostDate(sfTxn.posted);
+          if (!earliestImportedPostDate || importedPostDate < earliestImportedPostDate) {
+            earliestImportedPostDate = importedPostDate;
+          }
         } catch (err) {
           result.errors.push({
             account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
@@ -409,6 +419,17 @@ export async function syncSimpleFin(
         account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
         error: `Sync failed: ${err}`,
       });
+    }
+  }
+
+  // Invalidate dashboard metric caches from the earliest imported transaction
+  // date forward. Runs regardless of sync status: even a partially failed sync
+  // may have imported transactions. Failures must never fail the sync.
+  if (earliestImportedPostDate) {
+    try {
+      await cacheInvalidateFrom(bookGuid, earliestImportedPostDate);
+    } catch (err) {
+      console.warn('SimpleFin sync cache invalidation failed:', err);
     }
   }
 

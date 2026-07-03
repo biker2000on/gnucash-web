@@ -513,27 +513,44 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
     });
     if (taggedTxs.length > 0) {
       const txGuids = taggedTxs.map(t => t.guid);
+      // Also delete the slots attached to those transactions' splits
+      // (the generated gains splits are tagged), not just the tx slots.
+      const txSplits = await tx.splits.findMany({
+        where: { tx_guid: { in: txGuids } },
+        select: { guid: true },
+      });
+      if (txSplits.length > 0) {
+        await tx.slots.deleteMany({ where: { obj_guid: { in: txSplits.map(s => s.guid) } } });
+      }
       await tx.splits.deleteMany({ where: { tx_guid: { in: txGuids } } });
       await tx.slots.deleteMany({ where: { obj_guid: { in: txGuids } } });
       await tx.transactions.deleteMany({ where: { guid: { in: txGuids } } });
     }
 
-    // Delete tagged sub-splits
+    // Splits modified IN-PLACE by this run (sell/transfer splits that were
+    // sub-split) are tagged with the runId AND carry original_* slots.
+    // They are the user's original splits — they must be RESTORED, never deleted.
+    // Scope to taggedGuids so other runs' modified splits are left alone.
+    const originalQtySlots = await tx.slots.findMany({
+      where: { name: 'original_quantity_num', obj_guid: { in: taggedGuids } },
+      select: { obj_guid: true, string_val: true },
+    });
+    const modifiedOriginalGuids = new Set(originalQtySlots.map(s => s.obj_guid));
+
+    // Delete tagged sub-splits (excluding the modified originals)
     const taggedSplits = await tx.splits.findMany({
       where: { guid: { in: taggedGuids } },
       select: { guid: true },
     });
-    if (taggedSplits.length > 0) {
-      const splitGuids = taggedSplits.map(s => s.guid);
-      await tx.slots.deleteMany({ where: { obj_guid: { in: splitGuids } } });
-      await tx.splits.deleteMany({ where: { guid: { in: splitGuids } } });
+    const subSplitGuids = taggedSplits
+      .map(s => s.guid)
+      .filter(g => !modifiedOriginalGuids.has(g));
+    if (subSplitGuids.length > 0) {
+      await tx.slots.deleteMany({ where: { obj_guid: { in: subSplitGuids } } });
+      await tx.splits.deleteMany({ where: { guid: { in: subSplitGuids } } });
     }
 
-    // Restore original sell splits from stored slots
-    const originalQtySlots = await tx.slots.findMany({
-      where: { name: 'original_quantity_num' },
-      select: { obj_guid: true, string_val: true },
-    });
+    // Restore original sell/transfer splits from stored slots
     for (const slot of originalQtySlots) {
       const denomSlot = await tx.slots.findFirst({ where: { obj_guid: slot.obj_guid, name: 'original_quantity_denom' } });
       const valNumSlot = await tx.slots.findFirst({ where: { obj_guid: slot.obj_guid, name: 'original_value_num' } });

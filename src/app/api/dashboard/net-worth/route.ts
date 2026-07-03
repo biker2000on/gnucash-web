@@ -112,11 +112,16 @@ export async function GET(request: NextRequest) {
         );
         const investmentAccountGuids = investmentAccounts.map(a => a.guid);
 
-        // Fetch ALL splits for asset + liability accounts (value-based)
+        // Fetch splits for asset + liability accounts (value-based).
+        // History from inception is needed for cumulative balances, but splits
+        // after the last date point can never be consumed by the pointer loop.
         const cashSplits = await prisma.splits.findMany({
             where: {
                 account_guid: {
                     in: [...assetAccountGuids, ...liabilityAccountGuids],
+                },
+                transaction: {
+                    post_date: { lte: endDate },
                 },
             },
             select: {
@@ -131,11 +136,14 @@ export async function GET(request: NextRequest) {
             },
         });
 
-        // Fetch ALL splits for investment accounts (quantity-based for shares)
+        // Fetch splits for investment accounts (quantity-based for shares)
         const investmentSplits = await prisma.splits.findMany({
             where: {
                 account_guid: {
                     in: investmentAccountGuids,
+                },
+                transaction: {
+                    post_date: { lte: endDate },
                 },
             },
             select: {

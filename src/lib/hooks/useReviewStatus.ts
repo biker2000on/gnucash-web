@@ -10,5 +10,10 @@ export function useReviewStatus() {
             return res.json();
         },
         staleTime: 1000 * 30, // 30 seconds
+        // Counts can change from server-side paths too (SimpleFin sync, payslip
+        // posting), so always refresh in the background when the tree mounts.
+        // Cached data still renders instantly; the badge updates when fresh
+        // counts arrive.
+        refetchOnMount: 'always',
     });
 }

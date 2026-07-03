@@ -186,22 +186,28 @@ export async function traceCostBasis(
       return qty > 0; // Only count shares coming in
     });
 
-    const totalCost = purchaseSplits.reduce((sum, s) => {
-      const val = Math.abs(toDecimalNumber(s.value_num, s.value_denom));
-      return sum + val;
-    }, 0);
-
     const totalShares = purchaseSplits.reduce((sum, s) => {
       return sum + toDecimalNumber(s.quantity_num, s.quantity_denom);
     }, 0);
 
-    const result: CostBasisResult = {
-      totalCost: totalShares > 0 ? (totalCost / totalShares) * transferredShares : 0,
-      perShareCost: totalShares > 0 ? totalCost / totalShares : 0,
-      method,
-    };
-    internalCache.set(cacheKey, result);
-    return result;
+    // Only use the lot when it actually contains other purchase splits.
+    // Destination lots created by the scrub engine contain ONLY the
+    // transfer-in split (excluded above) plus sells, so totalShares would
+    // be 0 — in that case fall through to transfer-chain tracing below.
+    if (totalShares > 0.0001) {
+      const totalCost = purchaseSplits.reduce((sum, s) => {
+        const val = Math.abs(toDecimalNumber(s.value_num, s.value_denom));
+        return sum + val;
+      }, 0);
+
+      const result: CostBasisResult = {
+        totalCost: (totalCost / totalShares) * transferredShares,
+        perShareCost: totalCost / totalShares,
+        method,
+      };
+      internalCache.set(cacheKey, result);
+      return result;
+    }
   }
 
   // Step 2: Trace transfer chain (no lots)
@@ -224,7 +230,10 @@ export async function traceCostBasis(
 
   const sourceAccountGuid = sourceSplit.account_guid;
 
-  // Step 3: Get all purchase history from source account
+  // Step 3: Get all purchase history from source account.
+  // Exclude the transfer transaction itself from the replay — otherwise the
+  // transfer-out split is treated as a prior sale and consumes the very
+  // shares whose basis we are tracing (double-counting).
   const result = await getAccountCostBasis(
     sourceAccountGuid,
     commodityGuid,
@@ -232,6 +241,7 @@ export async function traceCostBasis(
     transferredShares,
     transferSplit.transaction?.post_date || new Date(),
     internalCache as unknown as CostBasisCache,
+    transferSplit.tx_guid,
   );
 
   result.tracedFromAccount = sourceSplit.account?.name ?? undefined;
@@ -242,6 +252,9 @@ export async function traceCostBasis(
 /**
  * Get the cost basis for a given number of shares from an account,
  * considering all purchases and prior transfers up to a given date.
+ *
+ * @param excludeTxGuid - Transaction to skip during replay (the transfer
+ *   being traced), so its outbound splits are not counted as prior sales.
  */
 async function getAccountCostBasis(
   accountGuid: string,
@@ -250,6 +263,7 @@ async function getAccountCostBasis(
   sharesNeeded: number,
   asOfDate: Date,
   cache: CostBasisCache,
+  excludeTxGuid?: string,
 ): Promise<CostBasisResult> {
   // Cache query results per account+commodity+date to avoid re-fetching
   // Use a separate namespace to avoid collision with split-level cache
@@ -267,8 +281,13 @@ async function getAccountCostBasis(
     internalCache.set(queryCacheKey, { _splits: splits } as unknown as CostBasisResult);
   }
 
+  // Exclude the transfer transaction being traced (see excludeTxGuid docs)
+  const replaySplits = excludeTxGuid
+    ? splits.filter(s => s.tx_guid !== excludeTxGuid)
+    : splits;
+
   // Sort in JS for reliability across Prisma versions
-  const sortedSplits = [...splits].sort((a, b) => {
+  const sortedSplits = [...replaySplits].sort((a, b) => {
     const dateA = a.transaction?.post_date?.getTime() || 0;
     const dateB = b.transaction?.post_date?.getTime() || 0;
     return method === 'lifo' ? dateB - dateA : dateA - dateB;

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getPayslip, getMappingsForEmployer } from '@/lib/payslips';
 import { postPayslipTransaction } from '@/lib/services/payslip-post.service';
+import { cacheInvalidateFrom } from '@/lib/cache';
 import type { PayslipLineItem } from '@/lib/types';
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -74,6 +75,14 @@ export async function POST(request: Request, { params }: RouteParams) {
       payslip.employer_name,
       imbalance_account_guid
     );
+
+    // Invalidate dashboard metric caches from the posted transaction date forward
+    try {
+      await cacheInvalidateFrom(bookGuid, new Date(payslip.pay_date));
+    } catch (err) {
+      // Cache invalidation failure should not break the payslip post
+      console.warn('Cache invalidation failed:', err);
+    }
 
     return NextResponse.json({ transaction_guid: transactionGuid });
   } catch (error) {

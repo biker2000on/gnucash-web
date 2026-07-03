@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getLatestPrice } from '@/lib/commodities';
+import { toDecimalNumber } from '@/lib/gnucash';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
@@ -58,15 +58,39 @@ export async function GET() {
         const investmentTypes = ['STOCK', 'MUTUAL'];
         const priceCache = new Map<string, number>();
 
-        for (const result of results) {
-            const isInvestment =
-                investmentTypes.includes(result.account_type) &&
-                result.commodity_guid &&
-                result.commodity_namespace !== 'CURRENCY';
+        // Bulk-fetch the latest price per investment commodity in a single query.
+        // Mirrors getLatestPrice() semantics: date <= now, value_num > 0 (GnuCash's
+        // split register records implied $0 prices for zero-value transfers; never
+        // value holdings with them), no currency filter, latest date wins.
+        const investmentCommodityGuids = [
+            ...new Set(
+                results
+                    .filter(
+                        (r) =>
+                            investmentTypes.includes(r.account_type) &&
+                            r.commodity_guid &&
+                            r.commodity_namespace !== 'CURRENCY'
+                    )
+                    .map((r) => r.commodity_guid as string)
+            ),
+        ];
 
-            if (isInvestment && result.commodity_guid && !priceCache.has(result.commodity_guid)) {
-                const price = await getLatestPrice(result.commodity_guid);
-                priceCache.set(result.commodity_guid, price?.value || 0);
+        if (investmentCommodityGuids.length > 0) {
+            const priceRows = await prisma.$queryRaw<{
+                commodity_guid: string;
+                value_num: bigint;
+                value_denom: bigint;
+            }[]>`
+                SELECT DISTINCT ON (commodity_guid)
+                    commodity_guid, value_num, value_denom
+                FROM prices
+                WHERE commodity_guid = ANY(${investmentCommodityGuids}::text[])
+                  AND date <= ${new Date()}
+                  AND value_num > 0
+                ORDER BY commodity_guid, date DESC
+            `;
+            for (const row of priceRows) {
+                priceCache.set(row.commodity_guid, toDecimalNumber(row.value_num, row.value_denom));
             }
         }
 

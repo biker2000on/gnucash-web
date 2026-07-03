@@ -46,6 +46,34 @@ export interface FetchAndStoreResult {
   results: PriceFetchResult[];
 }
 
+/**
+ * Compute the earliest date affected by a fetchAndStorePrices run so cached
+ * dashboard metrics can be invalidated from that date forward. Per-symbol
+ * dateRange covers backfilled prices; gap fills are not date-tracked but are
+ * bounded by the 3-month lookback window, so fall back to 3 months ago when
+ * gaps were filled (or when prices were stored without a tracked range).
+ * Returns null when nothing was stored.
+ */
+export function earliestBackfilledDate(result: FetchAndStoreResult): Date | null {
+  if (result.stored <= 0) return null;
+
+  let earliest: Date | null = null;
+  for (const r of result.results) {
+    if (r.success && r.dateRange) {
+      const from = new Date(r.dateRange.from);
+      if (!earliest || from < earliest) earliest = from;
+    }
+  }
+
+  if (result.gapsFilled > 0 || !earliest) {
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setUTCMonth(threeMonthsAgo.getUTCMonth() - 3);
+    if (!earliest || threeMonthsAgo < earliest) earliest = threeMonthsAgo;
+  }
+
+  return earliest;
+}
+
 export interface AuditPricesResult {
   stored: number;
   audited: number;

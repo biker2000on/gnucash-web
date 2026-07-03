@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { executeOccurrence } from '@/lib/services/scheduled-tx-execute';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 export async function POST(
   request: NextRequest,
@@ -27,6 +28,14 @@ export async function POST(
     if (!result.success) {
       const status = result.error?.includes('not found') ? 404 : 400;
       return NextResponse.json({ error: result.error }, { status });
+    }
+
+    // Invalidate dashboard metric caches from the executed occurrence date forward
+    try {
+      await cacheInvalidateFrom(roleResult.bookGuid, new Date(occurrenceDate));
+    } catch (err) {
+      // Cache invalidation failure should not break the execute operation
+      console.warn('Cache invalidation failed:', err);
     }
 
     return NextResponse.json(result);

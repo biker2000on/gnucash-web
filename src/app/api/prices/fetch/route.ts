@@ -3,6 +3,8 @@ import { fetchAndStorePrices, ensureIndexCommodities, fetchIndexPrices } from '@
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { enqueueJob } from '@/lib/queue/queues';
+import { cacheInvalidateFrom } from '@/lib/cache';
+import { earliestBackfilledDate } from '@/lib/yahoo-price-service';
 
 /**
  * POST /api/prices/fetch
@@ -74,6 +76,18 @@ export async function POST(request: NextRequest) {
 
     // Fetch and store historical prices
     const result = await fetchAndStorePrices(symbols, force);
+
+    // Invalidate dashboard metric caches from the earliest backfilled price
+    // date forward (prices affect net-worth/kpis valuations)
+    try {
+      const fromDate = earliestBackfilledDate(result);
+      if (fromDate) {
+        await cacheInvalidateFrom(roleResult.bookGuid, fromDate);
+      }
+    } catch (err) {
+      // Cache invalidation failure should not break the price fetch
+      console.warn('Cache invalidation failed:', err);
+    }
 
     // Fetch market index prices (S&P 500, DJIA) in the background
     let indexWarning: string | undefined;

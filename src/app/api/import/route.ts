@@ -4,6 +4,22 @@ import { importGnuCashData, BookAlreadyExistsError } from '@/lib/gnucash-xml/imp
 import type { ImportProgress } from '@/lib/gnucash-xml/importer';
 import { requireRole } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
+import { cacheInvalidateFrom } from '@/lib/cache';
+
+/**
+ * Invalidate dashboard metric caches for the imported book. An import can
+ * touch any period (and overwrite replaces an existing book), so invalidate
+ * everything from the epoch. Failures must never fail the import.
+ */
+async function invalidateImportCaches(bookGuid: string | undefined) {
+  if (!bookGuid) return;
+  try {
+    await cacheInvalidateFrom(bookGuid, new Date(0));
+  } catch (err) {
+    // Cache invalidation failure should not break the import
+    console.warn('Cache invalidation failed:', err);
+  }
+}
 
 /**
  * POST /api/import
@@ -70,6 +86,7 @@ export async function POST(request: NextRequest) {
       if (summary.bookGuid) {
         await grantRole(roleResult.user.id, summary.bookGuid, 'admin', roleResult.user.id);
       }
+      await invalidateImportCaches(summary.bookGuid);
       return NextResponse.json({ success: true, summary });
     }
 
@@ -98,6 +115,8 @@ export async function POST(request: NextRequest) {
           if (summary.bookGuid) {
             await grantRole(userId, summary.bookGuid, 'admin', userId);
           }
+
+          await invalidateImportCaches(summary.bookGuid);
 
           send('complete', { success: true, summary });
         } catch (error) {

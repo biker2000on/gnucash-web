@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { toDecimal, fromDecimal, generateGuid } from '@/lib/prisma';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 // Schema for creating a new price
 const CreatePriceSchema = z.object({
@@ -140,6 +141,15 @@ export async function POST(request: NextRequest) {
                 type: data.type,
             },
         });
+
+        // Invalidate dashboard metric caches from the price date forward
+        // (prices affect net-worth/kpis valuations)
+        try {
+            await cacheInvalidateFrom(roleResult.bookGuid, price.date);
+        } catch (err) {
+            // Cache invalidation failure should not break the price creation
+            console.warn('Cache invalidation failed:', err);
+        }
 
         return NextResponse.json({
             guid: price.guid,

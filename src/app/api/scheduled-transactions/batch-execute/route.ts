@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { batchExecuteSkip, BatchItem } from '@/lib/services/scheduled-tx-execute';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,6 +24,22 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await batchExecuteSkip(items as BatchItem[]);
+
+    // Invalidate dashboard metric caches from the earliest successfully
+    // executed occurrence date forward (skips create no transactions).
+    const executedDates = result.results
+      .filter(r => r.action === 'execute' && r.success)
+      .map(r => r.occurrenceDate)
+      .sort();
+    if (executedDates.length > 0) {
+      try {
+        await cacheInvalidateFrom(roleResult.bookGuid, new Date(executedDates[0]));
+      } catch (err) {
+        // Cache invalidation failure should not break the batch operation
+        console.warn('Cache invalidation failed:', err);
+      }
+    }
+
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error batch executing:', error);

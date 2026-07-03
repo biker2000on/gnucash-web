@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { toDecimal, fromDecimal } from '@/lib/prisma';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateFrom } from '@/lib/cache';
 
 // Schema for updating a price
 const UpdatePriceSchema = z.object({
@@ -133,6 +134,16 @@ export async function PUT(
             data: updateData,
         });
 
+        // Invalidate dashboard metric caches from the earliest affected date
+        // (old date and new date both change valuations from that point on)
+        try {
+            const fromDate = existingPrice.date < updatedPrice.date ? existingPrice.date : updatedPrice.date;
+            await cacheInvalidateFrom(roleResult.bookGuid, fromDate);
+        } catch (err) {
+            // Cache invalidation failure should not break the price update
+            console.warn('Cache invalidation failed:', err);
+        }
+
         return NextResponse.json({
             guid: updatedPrice.guid,
             commodity_guid: updatedPrice.commodity_guid,
@@ -176,6 +187,14 @@ export async function DELETE(
         await prisma.prices.delete({
             where: { guid },
         });
+
+        // Invalidate dashboard metric caches from the deleted price date forward
+        try {
+            await cacheInvalidateFrom(roleResult.bookGuid, existingPrice.date);
+        } catch (err) {
+            // Cache invalidation failure should not break the price deletion
+            console.warn('Cache invalidation failed:', err);
+        }
 
         return new NextResponse(null, { status: 204 });
     } catch (error) {

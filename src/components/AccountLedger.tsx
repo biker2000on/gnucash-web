@@ -42,6 +42,7 @@ import { TransactionContextMenu, type TransactionContextMenuItem } from '@/compo
 import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
+import { useQueryClient } from '@tanstack/react-query';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -106,6 +107,7 @@ export default function AccountLedger({
 }: AccountLedgerProps) {
     const { balanceReversal, defaultLedgerMode, ledgerViewStyle, setLedgerViewStyle, costBasisCarryOver, costBasisMethod } = useUserPreferences();
     const { success, error } = useToast();
+    const queryClient = useQueryClient();
     const { isReadonly } = useCurrentUser();
     const isMobile = useIsMobile();
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
@@ -789,11 +791,13 @@ export default function AccountLedger({
             setTransactions(prev => prev.map(tx =>
                 tx.guid === transactionGuid ? { ...tx, reviewed } : tx
             ));
+            // Keep the account hierarchy's "to review" badges in sync
+            queryClient.invalidateQueries({ queryKey: ['accounts', 'review-status'] });
         } catch (err) {
             console.error('Failed to toggle reviewed:', err);
             error('Failed to toggle reviewed status');
         }
-    }, [error]);
+    }, [error, queryClient]);
 
     // Duplicate a transaction
     const handleDuplicate = useCallback(async (transactionGuid: string) => {
@@ -995,8 +999,10 @@ export default function AccountLedger({
         }
         setEditReviewedCount(prev => prev + guids.length);
         setEditSelectedGuids(new Set());
+        // Keep the account hierarchy's "to review" badges in sync
+        queryClient.invalidateQueries({ queryKey: ['accounts', 'review-status'] });
         await fetchTransactions();
-    }, [editSelectedGuids, fetchTransactions]);
+    }, [editSelectedGuids, fetchTransactions, queryClient]);
 
     // Bulk delete handler
     const handleBulkDelete = useCallback(async () => {

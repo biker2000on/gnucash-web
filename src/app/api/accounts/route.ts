@@ -8,17 +8,6 @@ import { getBookAccountGuids, getActiveBookRootGuid, invalidateBookAccountGuidsC
 import { requireRole } from '@/lib/auth';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 
-type AccountWithCommodityAndSplits = Prisma.accountsGetPayload<{
-    include: {
-        commodity: true;
-        splits: {
-            include: {
-                transaction: true;
-            };
-        };
-    };
-}>;
-
 /**
  * @openapi
  * /api/accounts:
@@ -135,19 +124,34 @@ export async function GET(request: NextRequest) {
                 period_balance_usd: undefined,
             }));
         } else {
-            const accountsData: AccountWithCommodityAndSplits[] = await prisma.accounts.findMany({
+            const accountsData = await prisma.accounts.findMany({
                 where: {
                     guid: { in: bookAccountGuids },
                 },
                 include: {
                     commodity: true,
-                    splits: {
-                        include: {
-                            transaction: true,
-                        },
-                    },
                 },
             });
+
+            // Aggregate total and period balances per account in SQL instead of
+            // fetching every split (with its transaction) into JS
+            const balanceRows = await prisma.$queryRaw<Array<{
+                account_guid: string;
+                total_balance: number;
+                period_balance: number;
+            }>>`
+                SELECT s.account_guid,
+                    COALESCE(SUM(s.quantity_num::float8 / s.quantity_denom::float8), 0)::float8 AS total_balance,
+                    COALESCE(SUM(CASE WHEN t.post_date IS NOT NULL
+                        ${startDate ? Prisma.sql`AND t.post_date >= ${new Date(startDate)}` : Prisma.empty}
+                        ${endDate ? Prisma.sql`AND t.post_date <= ${new Date(endDate)}` : Prisma.empty}
+                        THEN s.quantity_num::float8 / s.quantity_denom::float8 ELSE 0 END), 0)::float8 AS period_balance
+                FROM splits s
+                JOIN transactions t ON t.guid = s.tx_guid
+                WHERE s.account_guid = ANY(${bookAccountGuids}::text[])
+                GROUP BY s.account_guid
+            `;
+            const balancesByGuid = new Map(balanceRows.map(r => [r.account_guid, r]));
 
             const valuation = await buildAccountValuationContext(
                 accountsData.map(acc => ({
@@ -165,25 +169,9 @@ export async function GET(request: NextRequest) {
                     commodityNamespace: acc.commodity?.namespace,
                 });
 
-                // Calculate total balance from all splits
-                let totalBalance = 0;
-                let periodBalance = 0;
-
-                for (const split of acc.splits) {
-                    const qty = Number(split.quantity_num) / Number(split.quantity_denom);
-                    totalBalance += qty;
-
-                    // Check if split's transaction falls within period
-                    const postDate = split.transaction.post_date;
-                    if (postDate) {
-                        const inPeriod =
-                            (!startDate || postDate >= new Date(startDate)) &&
-                            (!endDate || postDate <= new Date(endDate));
-                        if (inPeriod) {
-                            periodBalance += qty;
-                        }
-                    }
-                }
+                const balances = balancesByGuid.get(acc.guid);
+                const totalBalance = balances?.total_balance ?? 0;
+                const periodBalance = balances?.period_balance ?? 0;
 
                 return {
                     guid: acc.guid,

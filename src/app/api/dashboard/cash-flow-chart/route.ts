@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getEffectiveStartDate } from '@/lib/date-utils';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+import { cacheGet, cacheSet } from '@/lib/cache';
 import { requireRole } from '@/lib/auth';
 
 type GroupBy = 'month' | 'quarter' | 'year';
@@ -40,6 +41,15 @@ export async function GET(request: NextRequest) {
             startDate = new Date(startDateParam + 'T00:00:00Z');
         } else {
             startDate = await getEffectiveStartDate(null, bookAccountGuids);
+        }
+
+        // Cache key: groupBy sits before the date range so the invalidation
+        // index (which parses the trailing ":START-END") still works
+        const bookGuid = await getActiveBookGuid();
+        const cacheKey = `cache:${bookGuid}:cash-flow:${groupBy}:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+        const cached = await cacheGet(cacheKey);
+        if (cached) {
+            return NextResponse.json(cached);
         }
 
         // Fetch all accounts in active book
@@ -181,7 +191,12 @@ export async function GET(request: NextRequest) {
             current.setUTCMonth(current.getUTCMonth() + monthStep);
         }
 
-        return NextResponse.json({ months, income, expenses, netCashFlow });
+        const responseData = { months, income, expenses, netCashFlow };
+
+        // Cache the result (24 hour TTL)
+        await cacheSet(cacheKey, responseData, 86400);
+
+        return NextResponse.json(responseData);
     } catch (error) {
         console.error('Error fetching cash flow data:', error);
         return NextResponse.json(
