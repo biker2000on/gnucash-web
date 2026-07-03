@@ -93,6 +93,7 @@ export default function ExpandableChart({
                                 {controls && (
                                     <div className="flex flex-wrap items-center gap-3 pb-4">
                                         <DateRangePicker
+                                            align="left"
                                             startDate={view.startDate}
                                             endDate={view.endDate}
                                             onChange={(range) =>

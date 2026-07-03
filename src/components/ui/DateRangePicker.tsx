@@ -10,9 +10,16 @@ interface DateRangePickerProps {
     endDate: string | null;
     onChange: (range: DateRange) => void;
     className?: string;
+    /**
+     * Dropdown alignment relative to the trigger button. 'auto' (default)
+     * right-aligns on sm+ screens; use 'left' when the picker sits near the
+     * left edge of a clipping container (e.g. expanded-chart modals) so the
+     * panel opens rightward instead of being cut off.
+     */
+    align?: 'auto' | 'left';
 }
 
-export function DateRangePicker({ startDate, endDate, onChange, className = '' }: DateRangePickerProps) {
+export function DateRangePicker({ startDate, endDate, onChange, className = '', align = 'auto' }: DateRangePickerProps) {
     const pickerKey = `${startDate ?? ''}|${endDate ?? ''}`;
 
     return (
@@ -22,11 +29,12 @@ export function DateRangePicker({ startDate, endDate, onChange, className = '' }
             endDate={endDate}
             onChange={onChange}
             className={className}
+            align={align}
         />
     );
 }
 
-function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: DateRangePickerProps) {
+function DateRangePickerInner({ startDate, endDate, onChange, className = '', align = 'auto' }: DateRangePickerProps) {
     const { dateFormat } = useUserPreferences();
     const [isOpen, setIsOpen] = useState(false);
     const [customStart, setCustomStart] = useState(startDate || '');
@@ -99,7 +107,9 @@ function DateRangePickerInner({ startDate, endDate, onChange, className = '' }: 
             </button>
 
             {isOpen && (
-                <div className="absolute top-full left-0 sm:right-0 sm:left-auto mt-2 w-80 max-w-[calc(100vw-2rem)] bg-background-secondary border border-border rounded-xl shadow-xl z-50">
+                <div className={`absolute top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-background-secondary border border-border rounded-xl shadow-xl z-50 ${
+                    align === 'left' ? 'left-0' : 'left-0 sm:right-0 sm:left-auto'
+                }`}>
                     {/* Presets */}
                     <div className="p-2 border-b border-border">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider px-2 py-1">Quick Select</div>
