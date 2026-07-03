@@ -150,67 +150,119 @@ function IconInvestment() {
 export default function KPIGrid({ data, loading }: KPIGridProps) {
     if (loading) {
         return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-                {Array.from({ length: 5 }).map((_, i) => (
-                    <KPICardSkeleton key={i} />
-                ))}
-            </div>
+            <>
+                <div className="sm:hidden bg-surface border border-border rounded-xl divide-y divide-border/40 animate-pulse">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                            <div className="w-8 h-8 bg-background-secondary rounded-lg shrink-0" />
+                            <div className="h-3 w-24 bg-background-secondary rounded" />
+                            <div className="h-4 w-20 bg-background-secondary rounded ml-auto" />
+                        </div>
+                    ))}
+                </div>
+                <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <KPICardSkeleton key={i} />
+                    ))}
+                </div>
+            </>
         );
     }
 
     if (!data) {
         return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-                {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="bg-surface border border-border rounded-xl p-6">
-                        <p className="text-foreground-muted text-sm text-center">No data</p>
-                    </div>
-                ))}
-            </div>
+            <>
+                <div className="sm:hidden bg-surface border border-border rounded-xl p-6">
+                    <p className="text-foreground-muted text-sm text-center">No data</p>
+                </div>
+                <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="bg-surface border border-border rounded-xl p-6">
+                            <p className="text-foreground-muted text-sm text-center">No data</p>
+                        </div>
+                    ))}
+                </div>
+            </>
         );
     }
 
-    return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            <KPICard
-                icon={<IconNetWorth />}
-                label="Net Worth"
-                value={formatCurrency(data.netWorth)}
-                change={
-                    <div className="flex items-center gap-2">
-                        <ChangeIndicator value={data.netWorthChange} />
-                        <span className="text-xs text-foreground-muted">
-                            ({formatPercent(data.netWorthChangePercent)})
-                        </span>
-                    </div>
-                }
-            />
-            <KPICard
-                icon={<IconIncome />}
-                label="Total Income"
-                value={formatCurrency(data.totalIncome)}
-            />
-            <KPICard
-                icon={<IconExpense />}
-                label="Total Expenses"
-                value={formatCurrency(data.totalExpenses)}
-                sublabel={data.topExpenseCategory ? `Top: ${data.topExpenseCategory}` : undefined}
-            />
-            <KPICard
-                icon={<IconSavings />}
-                label="Savings Rate"
-                value={`${data.savingsRate.toFixed(1)}%`}
-                change={
-                    <span className={`text-xs font-medium ${data.savingsRate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {data.savingsRate >= 20 ? 'Healthy' : data.savingsRate >= 0 ? 'Low' : 'Negative'}
+    const cards: KPICardProps[] = [
+        {
+            icon: <IconNetWorth />,
+            label: 'Net Worth',
+            value: formatCurrency(data.netWorth),
+            change: (
+                <div className="flex items-center gap-2">
+                    <ChangeIndicator value={data.netWorthChange} />
+                    <span className="text-xs text-foreground-muted">
+                        ({formatPercent(data.netWorthChangePercent)})
                     </span>
-                }
-            />
-            <KPICard
-                icon={<IconInvestment />}
-                label="Investment Value"
-                value={formatCurrency(data.investmentValue)}
-            />
-        </div>
+                </div>
+            ),
+        },
+        {
+            icon: <IconIncome />,
+            label: 'Total Income',
+            value: formatCurrency(data.totalIncome),
+        },
+        {
+            icon: <IconExpense />,
+            label: 'Total Expenses',
+            value: formatCurrency(data.totalExpenses),
+            sublabel: data.topExpenseCategory ? `Top: ${data.topExpenseCategory}` : undefined,
+        },
+        {
+            icon: <IconSavings />,
+            label: 'Savings Rate',
+            value: `${data.savingsRate.toFixed(1)}%`,
+            change: (
+                <span className={`text-xs font-medium ${data.savingsRate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {data.savingsRate >= 20 ? 'Healthy' : data.savingsRate >= 0 ? 'Low' : 'Negative'}
+                </span>
+            ),
+        },
+        {
+            icon: <IconInvestment />,
+            label: 'Investment Value',
+            value: formatCurrency(data.investmentValue),
+        },
+    ];
+
+    return (
+        <>
+            {/* Phone: one condensed card with a row per KPI */}
+            <div className="sm:hidden bg-surface border border-border rounded-xl divide-y divide-border/40">
+                {cards.map(card => (
+                    <div key={card.label} className="flex items-center gap-3 px-4 py-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-background-secondary flex items-center justify-center text-foreground-secondary shrink-0">
+                            {card.icon}
+                        </div>
+                        <div className="text-xs text-foreground-secondary font-medium flex-1 min-w-0 truncate">
+                            {card.label}
+                        </div>
+                        <div className="text-right min-w-0">
+                            <div className="text-sm font-bold text-foreground font-mono" style={{ fontFeatureSettings: "'tnum'" }}>
+                                {card.value}
+                            </div>
+                            {(card.change || card.sublabel) && (
+                                <div className="flex items-center gap-2 justify-end">
+                                    {card.change}
+                                    {card.sublabel && (
+                                        <span className="text-[11px] text-foreground-muted truncate max-w-36">{card.sublabel}</span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* Tablet/desktop: card grid */}
+            <div className="hidden sm:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                {cards.map(card => (
+                    <KPICard key={card.label} {...card} />
+                ))}
+            </div>
+        </>
     );
 }

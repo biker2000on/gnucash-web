@@ -23,6 +23,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
 import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
+import { FilterBar } from './ui/FilterBar';
 import { AccountForm } from './AccountForm';
 import TagChip from './tags/TagChip';
 import type { Tag } from '@/lib/tags';
@@ -86,6 +87,17 @@ const MOBILE_DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
     accountName: true,
     periodBalance: false,
     totalBalanceUsd: false,
+    totalBalanceCommodity: false,
+    lastReconcileDate: false,
+    reconciledUsd: false,
+    placeholderBadge: false,
+};
+// Condensed phone view: account name + total balance only, regardless of the
+// user's (desktop-oriented) saved column preferences.
+const MOBILE_CONDENSED_COLUMN_VISIBILITY: VisibilityState = {
+    accountName: true,
+    periodBalance: false,
+    totalBalanceUsd: true,
     totalBalanceCommodity: false,
     lastReconcileDate: false,
     reconciledUsd: false,
@@ -676,7 +688,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
                 return (
                     <div
-                        className={`group flex w-full min-w-[18rem] items-center gap-1.5 py-2.5 sm:py-1 px-2 sm:px-1.5 rounded-l-lg transition-colors ${
+                        className={`group flex w-full min-w-0 md:min-w-[18rem] items-center gap-1.5 py-2.5 sm:py-1 px-2 sm:px-1.5 rounded-l-lg transition-colors ${
                             account.hidden ? 'opacity-50 grayscale' : ''
                         }`}
                         style={{ paddingLeft: `${indent}px` }}
@@ -698,7 +710,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         )}
                         <Link
                             href={`/accounts/${account.guid}`}
-                            className={`text-foreground-secondary font-medium truncate hover:text-primary transition-colors ${
+                            className={`min-w-0 max-md:text-sm text-foreground-secondary font-medium truncate hover:text-primary transition-colors ${
                                 filterText && account.name.toLowerCase().includes(filterText.toLowerCase())
                                     ? 'text-primary underline underline-offset-4 decoration-primary/50'
                                     : ''
@@ -735,7 +747,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         )}
                         <Link
                             href={`/accounts/${account.guid}`}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 min-h-[24px] min-w-[24px] flex items-center justify-center hover:bg-border-hover rounded text-foreground-muted hover:text-primary ml-0.5"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 min-h-[24px] min-w-[24px] hidden md:flex items-center justify-center hover:bg-border-hover rounded text-foreground-muted hover:text-primary ml-0.5"
                             title="View Ledger"
                             onClick={(event) => event.stopPropagation()}
                         >
@@ -743,7 +755,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                             </svg>
                         </Link>
-                        <div className="opacity-0 group-hover:opacity-100 flex gap-0 ml-0.5 transition-opacity">
+                        <div className="opacity-0 group-hover:opacity-100 hidden md:flex gap-0 ml-0.5 transition-opacity">
                             <button
                                 onClick={(event) => {
                                     event.stopPropagation();
@@ -798,11 +810,17 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         },
         {
             id: 'totalBalanceUsd',
-            header: 'Total Balance $',
+            header: isMobile ? 'Balance' : 'Total Balance $',
             cell: ({ row }) => (
-                <div className="text-right py-1 px-3 font-mono leading-tight">
-                    <span className={`text-sm font-bold ${row.original.totalBalanceUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                        {formatCurrency(row.original.totalBalanceUsd, 'USD')}
+                <div className="text-right py-1 px-2 md:px-3 font-mono leading-tight whitespace-nowrap">
+                    <span className={`text-xs md:text-sm font-bold ${row.original.totalBalanceUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {isMobile
+                            ? new Intl.NumberFormat('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                maximumFractionDigits: 0,
+                            }).format(row.original.totalBalanceUsd)
+                            : formatCurrency(row.original.totalBalanceUsd, 'USD')}
                     </span>
                 </div>
             ),
@@ -857,13 +875,20 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
     const normalizedVisibility = useMemo(() => normalizeVisibility(columnVisibility), [columnVisibility]);
     const normalizedOrder = useMemo(() => normalizeColumnOrder(columnOrder), [columnOrder]);
+    // On phones, force the condensed name+balance view so the table fits the
+    // viewport without horizontal scrolling. Saved column prefs still apply on
+    // desktop.
+    const effectiveVisibility = useMemo(
+        () => (isMobile ? { ...MOBILE_CONDENSED_COLUMN_VISIBILITY } : normalizedVisibility),
+        [isMobile, normalizedVisibility]
+    );
 
     const table = useReactTable({
         data: filteredAccounts,
         columns,
         state: {
             expanded,
-            columnVisibility: normalizedVisibility,
+            columnVisibility: effectiveVisibility,
             columnOrder: normalizedOrder,
         },
         getRowId: (row) => row.guid,
@@ -1021,63 +1046,65 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
     return (
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-3 sm:p-6 shadow-2xl">
-            <div className="flex flex-col gap-6 mb-8 pb-4 border-b border-border/50">
-                <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
-                    <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
-                        <span className="w-2 h-6 bg-primary rounded-full" />
-                        Account Assets & Liabilities
+            <div className="flex flex-col gap-4 mb-6 sm:mb-8 pb-4 border-b border-border/50">
+                <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-lg sm:text-xl font-semibold text-foreground flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-6 bg-primary rounded-full shrink-0" />
+                        <span className="truncate">Account Assets & Liabilities</span>
                     </h2>
-                    <div className="flex flex-wrap items-center gap-4">
-                        <button
-                            onClick={handleNewAccount}
-                            disabled={isReadonly}
-                            title={isReadonly ? READONLY_TOOLTIP : undefined}
-                            className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                            New Account
-                        </button>
-                        <div className="flex items-center gap-3">
-                            <span className="text-sm text-foreground-secondary">To Review</span>
-                            <button
-                                onClick={() => setShowToReview(!showToReview)}
-                                className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showToReview ? 'bg-amber-500' : 'bg-border-hover'}`}
-                            >
-                                <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showToReview ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className="text-sm text-foreground-secondary">Show Hidden</span>
-                            <button
-                                onClick={() => setShowHidden(!showHidden)}
-                                className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-primary' : 'bg-border-hover'}`}
-                            >
-                                <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                    </div>
+                    <button
+                        onClick={handleNewAccount}
+                        disabled={isReadonly}
+                        title={isReadonly ? READONLY_TOOLTIP : undefined}
+                        className="shrink-0 flex items-center justify-center gap-2 px-3 sm:px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        New<span className="hidden sm:inline"> Account</span>
+                    </button>
                 </div>
 
-                <div className="flex flex-col md:flex-row gap-4">
-                    <div className="relative flex-1">
-                        <input
-                            ref={filterInputRef}
-                            type="text"
-                            placeholder="Filter accounts... (press / to focus)"
-                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
-                            value={filterText}
-                            onChange={(event) => setFilterText(event.target.value)}
-                        />
-                        {filterText && (
-                            <button
-                                onClick={() => setFilterText('')}
-                                className="absolute right-1 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary min-h-[44px] min-w-[44px] flex items-center justify-center"
-                            >
-                                ✕
-                            </button>
-                        )}
+                <FilterBar
+                    activeCount={(showToReview ? 1 : 0) + (showHidden ? 1 : 0)}
+                    primary={
+                        <div className="relative flex-1">
+                            <input
+                                ref={filterInputRef}
+                                type="text"
+                                placeholder="Filter accounts... (press / to focus)"
+                                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all"
+                                value={filterText}
+                                onChange={(event) => setFilterText(event.target.value)}
+                            />
+                            {filterText && (
+                                <button
+                                    onClick={() => setFilterText('')}
+                                    className="absolute right-1 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                >
+                                    ✕
+                                </button>
+                            )}
+                        </div>
+                    }
+                >
+                    <div className="flex items-center justify-between md:justify-start gap-3">
+                        <span className="text-sm text-foreground-secondary">To Review</span>
+                        <button
+                            onClick={() => setShowToReview(!showToReview)}
+                            className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showToReview ? 'bg-amber-500' : 'bg-border-hover'}`}
+                        >
+                            <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showToReview ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
+                    </div>
+                    <div className="flex items-center justify-between md:justify-start gap-3">
+                        <span className="text-sm text-foreground-secondary">Show Hidden</span>
+                        <button
+                            onClick={() => setShowHidden(!showHidden)}
+                            className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-primary' : 'bg-border-hover'}`}
+                        >
+                            <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1136,7 +1163,8 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         </select>
                     </div>
 
-                    <div className="relative" ref={columnsMenuRef}>
+                    {/* Column customization targets the desktop table; the phone view is a fixed condensed layout */}
+                    <div className="relative hidden md:block" ref={columnsMenuRef}>
                         <button
                             type="button"
                             onClick={() => setIsColumnsMenuOpen((prev) => !prev)}
@@ -1188,11 +1216,11 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         </div>
                         )}
                     </div>
-                </div>
+                </FilterBar>
             </div>
 
             <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] table-auto">
+                <table className="w-full md:min-w-[980px] table-auto">
                     <thead className="border-b border-border/60">
                         {table.getHeaderGroups().map((headerGroup) => (
                             <tr key={headerGroup.id}>
