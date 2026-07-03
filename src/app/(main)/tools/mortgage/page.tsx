@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { AmortizationTable } from '@/components/mortgage/AmortizationTable';
 import { PayoffComparison } from '@/components/mortgage/PayoffComparison';
 import { MortgageAutoDetect } from '@/components/mortgage/MortgageAutoDetect';
@@ -584,6 +585,13 @@ export default function MortgageCalculatorPage() {
     return d;
   }, [startDate, loanTermMonths]);
 
+  // Loan config section: collapse to a summary once a loan is selected/detected
+  const loanConfigured = Boolean(accountGuid || editingId);
+  const loanTermLabel = loanTermMonths > 0 && loanTermMonths % 12 === 0
+    ? `${loanTermMonths / 12}yr`
+    : `${loanTermMonths}mo`;
+  const loanSummary = `Loan: ${accountName || name} · ${annualRate.toFixed(2)}% · ${loanTermLabel}`;
+
   /* ---------------------------------------------------------------- */
   /* Render                                                            */
   /* ---------------------------------------------------------------- */
@@ -671,7 +679,12 @@ export default function MortgageCalculatorPage() {
       {/* Section 2: Mode Toggle & Calculator Form                      */}
       {/* ============================================================ */}
 
-      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
+      <CollapsibleConfigSection
+        title="Loan configuration"
+        summary={loanSummary}
+        configured={loanConfigured}
+        storageKey="mortgage.loanConfigOpen"
+      >
         {/* Mode toggle */}
         <div className="flex gap-1 bg-input-bg border border-border rounded-lg p-1 mb-6 max-w-md">
           <button
@@ -845,7 +858,7 @@ export default function MortgageCalculatorPage() {
             </div>
           </div>
         )}
-      </section>
+      </CollapsibleConfigSection>
 
       {/* ============================================================ */}
       {/* Calculator Output / Results                                   */}

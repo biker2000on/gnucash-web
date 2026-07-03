@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { formatAccountPath } from '@/lib/account-utils';
 
 interface DepreciationScheduleInfo {
@@ -213,6 +214,13 @@ export default function AssetsPage() {
 
   const hasSelection = selectionMode === 'parent' ? !!parentGuid : selectedGuids.length > 0;
 
+  const parentAccount = accounts.find((account) => account.guid === parentGuid);
+  const sourceSummary = selectionMode === 'parent'
+    ? (parentGuid
+      ? `Parent: ${parentAccount ? formatAccountPath(parentAccount.fullname, parentAccount.name) : 'Selected account'}`
+      : undefined)
+    : `${selectedGuids.length} account${selectedGuids.length === 1 ? '' : 's'} selected`;
+
   const filteredAssets = assets.filter((asset) => {
     const query = assetSearch.trim().toLowerCase();
     if (!query) return true;
@@ -244,117 +252,121 @@ export default function AssetsPage() {
         </div>
       </header>
 
-      <section className="bg-surface rounded-lg border border-border p-5 space-y-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-foreground">Fixed Asset Source</h2>
+      <CollapsibleConfigSection
+        title="Fixed asset source"
+        summary={sourceSummary}
+        configured={hasSelection}
+        storageKey="assets.sourceOpen"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <p className="text-sm text-foreground-muted">
+              Choose the accounts that represent fixed assets. The list starts empty so cash, bank, and other asset accounts are not included accidentally.
+            </p>
             {savingSelection && (
-              <span className="text-xs text-foreground-muted">Saving...</span>
+              <span className="text-xs text-foreground-muted shrink-0">Saving...</span>
             )}
           </div>
-          <p className="text-sm text-foreground-muted mt-1">
-            Choose the accounts that represent fixed assets. The list starts empty so cash, bank, and other asset accounts are not included accidentally.
-          </p>
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${
-            selectionMode === 'parent' ? 'border-primary/50 bg-primary/10' : 'border-border hover:border-border-hover'
-          }`}>
-            <div className="flex items-start gap-3">
-              <input
-                type="radio"
-                name="assetSelectionMode"
-                checked={selectionMode === 'parent'}
-                onChange={() => setSelectionMode('parent')}
-                className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
-              />
-              <div>
-                <div className="text-sm font-medium text-foreground">Parent fixed asset account</div>
-                <p className="text-xs text-foreground-muted mt-1">Include non-placeholder asset accounts under one parent.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${
+              selectionMode === 'parent' ? 'border-primary/50 bg-primary/10' : 'border-border hover:border-border-hover'
+            }`}>
+              <div className="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="assetSelectionMode"
+                  checked={selectionMode === 'parent'}
+                  onChange={() => setSelectionMode('parent')}
+                  className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
+                />
+                <div>
+                  <div className="text-sm font-medium text-foreground">Parent fixed asset account</div>
+                  <p className="text-xs text-foreground-muted mt-1">Include non-placeholder asset accounts under one parent.</p>
+                </div>
               </div>
-            </div>
-          </label>
+            </label>
 
-          <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${
-            selectionMode === 'manual' ? 'border-primary/50 bg-primary/10' : 'border-border hover:border-border-hover'
-          }`}>
-            <div className="flex items-start gap-3">
-              <input
-                type="radio"
-                name="assetSelectionMode"
-                checked={selectionMode === 'manual'}
-                onChange={() => setSelectionMode('manual')}
-                className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
-              />
-              <div>
-                <div className="text-sm font-medium text-foreground">Manual account selection</div>
-                <p className="text-xs text-foreground-muted mt-1">Add only the specific fixed asset accounts you want analyzed.</p>
+            <label className={`block rounded-lg border p-4 cursor-pointer transition-colors ${
+              selectionMode === 'manual' ? 'border-primary/50 bg-primary/10' : 'border-border hover:border-border-hover'
+            }`}>
+              <div className="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="assetSelectionMode"
+                  checked={selectionMode === 'manual'}
+                  onChange={() => setSelectionMode('manual')}
+                  className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
+                />
+                <div>
+                  <div className="text-sm font-medium text-foreground">Manual account selection</div>
+                  <p className="text-xs text-foreground-muted mt-1">Add only the specific fixed asset accounts you want analyzed.</p>
+                </div>
               </div>
-            </div>
-          </label>
-        </div>
-
-        {selectionMode === 'parent' ? (
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">Parent Account</label>
-            <AccountSelector
-              value={parentGuid}
-              onChange={(guid) => setParentGuid(guid)}
-              placeholder="Select a fixed asset parent account..."
-              accountTypes={['ASSET']}
-            />
+            </label>
           </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-              <label className="block text-sm text-foreground-secondary">
-                Fixed Asset Accounts ({selectedGuids.length} selected)
-              </label>
-              {selectedGuids.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedGuids([])}
-                  className="text-sm text-foreground-muted hover:text-foreground transition-colors"
-                >
-                  Clear selection
-                </button>
-              )}
+
+          {selectionMode === 'parent' ? (
+            <div className="space-y-2">
+              <label className="block text-sm text-foreground-secondary">Parent Account</label>
+              <AccountSelector
+                value={parentGuid}
+                onChange={(guid) => setParentGuid(guid)}
+                placeholder="Select a fixed asset parent account..."
+                accountTypes={['ASSET']}
+              />
             </div>
-            <input
-              type="text"
-              value={manualSearch}
-              onChange={(event) => setManualSearch(event.target.value)}
-              placeholder="Search asset accounts..."
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-            />
-            <div className="max-h-80 overflow-y-auto rounded-lg border border-border divide-y divide-border">
-              {accountsLoading ? (
-                <div className="p-4 text-sm text-foreground-muted">Loading accounts...</div>
-              ) : filteredAssetAccounts.length === 0 ? (
-                <div className="p-4 text-sm text-foreground-muted">No asset accounts match your search.</div>
-              ) : (
-                filteredAssetAccounts.map((account) => (
-                  <label
-                    key={account.guid}
-                    className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-surface-hover transition-colors"
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                <label className="block text-sm text-foreground-secondary">
+                  Fixed Asset Accounts ({selectedGuids.length} selected)
+                </label>
+                {selectedGuids.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGuids([])}
+                    className="text-sm text-foreground-muted hover:text-foreground transition-colors"
                   >
-                    <input
-                      type="checkbox"
-                      checked={selectedAccountSet.has(account.guid)}
-                      onChange={() => toggleSelectedAccount(account.guid)}
-                      className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
-                    />
-                    <span className="text-sm text-foreground-secondary">
-                      {formatAccountPath(account.fullname, account.name)}
-                    </span>
-                  </label>
-                ))
-              )}
+                    Clear selection
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                value={manualSearch}
+                onChange={(event) => setManualSearch(event.target.value)}
+                placeholder="Search asset accounts..."
+                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+              />
+              <div className="max-h-80 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                {accountsLoading ? (
+                  <div className="p-4 text-sm text-foreground-muted">Loading accounts...</div>
+                ) : filteredAssetAccounts.length === 0 ? (
+                  <div className="p-4 text-sm text-foreground-muted">No asset accounts match your search.</div>
+                ) : (
+                  filteredAssetAccounts.map((account) => (
+                    <label
+                      key={account.guid}
+                      className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-surface-hover transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedAccountSet.has(account.guid)}
+                        onChange={() => toggleSelectedAccount(account.guid)}
+                        className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+                      />
+                      <span className="text-sm text-foreground-secondary">
+                        {formatAccountPath(account.fullname, account.name)}
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </section>
+          )}
+        </div>
+      </CollapsibleConfigSection>
 
       {/* Error State */}
       {!loading && fetchError && (

@@ -8,6 +8,8 @@ import { InlineAmountEditor } from '@/components/budget/InlineAmountEditor';
 import { AccountPickerModal } from '@/components/budget/AccountPickerModal';
 import { BatchEditModal } from '@/components/budget/BatchEditModal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { FilterBar } from '@/components/ui/FilterBar';
 import { useToast } from '@/contexts/ToastContext';
 
 interface BudgetAmount {
@@ -624,39 +626,41 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         <>
             {/* Header - stays in normal container */}
             <div className="space-y-6 mb-6">
-                <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                        <Link
-                            href="/budgets"
-                            className="p-2 rounded-lg hover:bg-surface-hover text-foreground-secondary hover:text-foreground transition-colors"
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
-                        </Link>
-                        <div>
-                            <h1 className="text-3xl font-bold text-foreground">{budget.name}</h1>
-                            {budget.description && (
-                                <p className="text-foreground-muted">{budget.description}</p>
-                            )}
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary/10 text-primary border border-primary/20">
-                            {budget.num_periods === 12 ? 'Monthly' : budget.num_periods === 4 ? 'Quarterly' : `${budget.num_periods} Periods`}
-                        </span>
-                        <span className="text-foreground-muted text-sm">
-                            {flattenedNodes.length} accounts
-                        </span>
-                        <button
-                            onClick={() => setShowAccountPicker(true)}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                            Add Account
-                        </button>
+                <header className="flex items-start gap-3">
+                    <Link
+                        href="/budgets"
+                        className="p-2 mt-0.5 rounded-lg hover:bg-surface-hover text-foreground-secondary hover:text-foreground transition-colors shrink-0"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                    </Link>
+                    <div className="flex-1 min-w-0">
+                        <PageHeader
+                            title={budget.name}
+                            subtitle={budget.description ?? undefined}
+                            actions={
+                                <button
+                                    onClick={() => setShowAccountPicker(true)}
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                    </svg>
+                                    Add Account
+                                </button>
+                            }
+                            toolbar={
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-primary/10 text-primary border border-primary/20">
+                                        {budget.num_periods === 12 ? 'Monthly' : budget.num_periods === 4 ? 'Quarterly' : `${budget.num_periods} Periods`}
+                                    </span>
+                                    <span className="text-foreground-muted text-sm">
+                                        {flattenedNodes.length} accounts
+                                    </span>
+                                </div>
+                            }
+                        />
                     </div>
                 </header>
 
@@ -720,48 +724,52 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 ) : (
                     <div className="bg-surface/30 backdrop-blur-xl border-y border-border">
                         {/* Expand/Collapse Controls */}
-                        <div className="px-4 py-2 bg-surface-hover/50 border-b border-border flex items-center gap-2">
-                            <button
-                                onClick={expandAll}
-                                className="text-xs text-foreground-secondary hover:text-foreground px-2 py-1 rounded hover:bg-surface-hover transition-colors"
+                        <div className="px-4 py-2 bg-surface-hover/50 border-b border-border">
+                            <FilterBar
+                                primary={
+                                    <button
+                                        onClick={() => setShowAllAccounts(!showAllAccounts)}
+                                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                            showAllAccounts
+                                                ? 'bg-primary/20 text-primary border border-primary/30'
+                                                : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
+                                        }`}
+                                    >
+                                        {showAllAccounts ? 'All Accounts' : 'Budgeted Only'}
+                                    </button>
+                                }
                             >
-                                Expand All
-                            </button>
-                            <button
-                                onClick={collapseAll}
-                                className="text-xs text-foreground-secondary hover:text-foreground px-2 py-1 rounded hover:bg-surface-hover transition-colors"
-                            >
-                                Collapse All
-                            </button>
-                            <button
-                                onClick={autoExpandBudgeted}
-                                className="text-xs text-primary hover:text-primary-hover px-2 py-1 rounded hover:bg-primary/10 transition-colors"
-                                title="Expand only branches that contain budgeted accounts"
-                            >
-                                Auto-expand
-                            </button>
-                            <select
-                                value={expandLevel}
-                                onChange={(e) => handleLevelChange(parseInt(e.target.value))}
-                                className="text-xs bg-surface text-foreground-secondary border border-border rounded px-2 py-1"
-                            >
-                                <option value="0">Collapse All</option>
-                                <option value="1">Level 1</option>
-                                <option value="2">Level 2</option>
-                                <option value="3">Level 3</option>
-                                <option value="99">Expand All</option>
-                            </select>
-                            <div className="w-px h-4 bg-border mx-1" />
-                            <button
-                                onClick={() => setShowAllAccounts(!showAllAccounts)}
-                                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                                    showAllAccounts
-                                        ? 'bg-primary/20 text-primary border border-primary/30'
-                                        : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
-                                }`}
-                            >
-                                {showAllAccounts ? 'All Accounts' : 'Budgeted Only'}
-                            </button>
+                                <button
+                                    onClick={expandAll}
+                                    className="text-xs text-foreground-secondary hover:text-foreground px-2 py-1 rounded hover:bg-surface-hover transition-colors"
+                                >
+                                    Expand All
+                                </button>
+                                <button
+                                    onClick={collapseAll}
+                                    className="text-xs text-foreground-secondary hover:text-foreground px-2 py-1 rounded hover:bg-surface-hover transition-colors"
+                                >
+                                    Collapse All
+                                </button>
+                                <button
+                                    onClick={autoExpandBudgeted}
+                                    className="text-xs text-primary hover:text-primary-hover px-2 py-1 rounded hover:bg-primary/10 transition-colors"
+                                    title="Expand only branches that contain budgeted accounts"
+                                >
+                                    Auto-expand
+                                </button>
+                                <select
+                                    value={expandLevel}
+                                    onChange={(e) => handleLevelChange(parseInt(e.target.value))}
+                                    className="text-xs bg-surface text-foreground-secondary border border-border rounded px-2 py-1"
+                                >
+                                    <option value="0">Collapse All</option>
+                                    <option value="1">Level 1</option>
+                                    <option value="2">Level 2</option>
+                                    <option value="3">Level 3</option>
+                                    <option value="99">Expand All</option>
+                                </select>
+                            </FilterBar>
                         </div>
                         <div className="overflow-auto max-h-[calc(100vh-300px)]">
                             <table className="w-full text-sm">

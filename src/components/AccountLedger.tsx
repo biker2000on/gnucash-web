@@ -26,6 +26,8 @@ import { MobileCard } from './ui/MobileCard';
 import { parseTransactionsResponse, transformToInvestmentRow, isMultiSplitTransaction, InvestmentRowData } from './ledger/investment-utils';
 import { toLocalDateString } from '@/lib/datePresets';
 import { FilterPanel, AmountFilter, ReconcileFilter } from './filters';
+import { FilterBar } from './ui/FilterBar';
+import { ActionMenu, type ActionMenuItem } from './ui/ActionMenu';
 import ViewMenu from './ViewMenu';
 import SplitRows from './ledger/SplitRows';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
@@ -1714,51 +1716,170 @@ export default function AccountLedger({
         }
     };
 
+    // Shared toolbar elements (rendered inline on desktop, inside FilterBar on mobile)
+    const filterControls = (
+        <>
+            <AmountFilter
+                minAmount={filters.minAmount}
+                maxAmount={filters.maxAmount}
+                onMinChange={(val) => setFilters(f => ({ ...f, minAmount: val }))}
+                onMaxChange={(val) => setFilters(f => ({ ...f, maxAmount: val }))}
+            />
+            <ReconcileFilter
+                selectedStates={filters.reconcileStates}
+                onChange={(states) => setFilters(f => ({ ...f, reconcileStates: states }))}
+            />
+        </>
+    );
+
+    const searchBox = (
+        <div className="relative flex-1 min-w-0">
+            <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search or #tag... (press / to focus)"
+                className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+            />
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {searchText && (
+                <button
+                    onClick={() => setSearchText('')}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary min-h-[44px] min-w-[44px] flex items-center justify-center"
+                >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            )}
+        </div>
+    );
+
+    const costBasisSelect = isInvestmentAccount ? (
+        <select
+            value={accountCostBasisMethod || costBasisMethod}
+            onChange={async (e) => {
+                const method = e.target.value;
+                setAccountCostBasisMethod(method);
+                try {
+                    await fetch(`/api/accounts/${accountGuid}/preferences`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cost_basis_method: method }),
+                    });
+                } catch {}
+            }}
+            className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-background-secondary text-foreground hover:text-foreground transition-colors"
+            title="Cost basis method for this account"
+        >
+            <option value="fifo">FIFO</option>
+            <option value="lifo">LIFO</option>
+            <option value="average">Average</option>
+        </select>
+    ) : null;
+
+    // Filter badge count on mobile includes the view toggles that act as filters
+    const mobileFilterCount = activeFilterCount
+        + (showUnreviewedOnly ? 1 : 0)
+        + (hasChildren && showSubaccounts ? 1 : 0);
+
+    // Overflow actions on mobile (edit mode is desktop-only)
+    const mobileActions: ActionMenuItem[] = [
+        ...(!isReconciling ? [{
+            label: 'Reconcile',
+            onSelect: () => { setIsEditMode(false); setIsReconciling(true); },
+        }] : []),
+        ...(isInvestmentAccount ? [{
+            label: showLotsView ? 'Hide Lots' : 'Show Lots',
+            onSelect: () => setShowLotsView(!showLotsView),
+        }] : []),
+        { label: `${ledgerViewStyle === 'basic' ? '●' : '○'} Basic Ledger`, onSelect: () => setLedgerViewStyle('basic') },
+        { label: `${ledgerViewStyle === 'journal' ? '●' : '○'} Transaction Journal`, onSelect: () => setLedgerViewStyle('journal') },
+        { label: `${ledgerViewStyle === 'autosplit' ? '●' : '○'} Auto-Split`, onSelect: () => setLedgerViewStyle('autosplit') },
+    ];
+
     return (
         <>
         <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-clip shadow-2xl">
-            {/* Top Bar: Filters + Search left, Buttons right */}
+            {/* Top Bar: mobile = search + Filters + overflow menu; desktop = inline toolbar */}
             <div className="p-4 border-b border-border flex flex-col md:flex-row gap-3">
+                {isMobile ? (
+                    <div className="flex items-start gap-2 flex-1 min-w-0">
+                        <FilterBar
+                            className="flex-1 min-w-0"
+                            activeCount={mobileFilterCount}
+                            primary={searchBox}
+                        >
+                            {filterControls}
+                            {hasChildren && (
+                                <button
+                                    onClick={() => setShowSubaccounts(prev => !prev)}
+                                    className={`flex items-center gap-2 px-3 py-2 min-h-[44px] text-sm rounded-lg border text-left transition-colors ${
+                                        showSubaccounts
+                                            ? 'bg-primary/10 border-primary/30 text-primary'
+                                            : 'border-border text-foreground-secondary'
+                                    }`}
+                                >
+                                    <span>{showSubaccounts ? '☑' : '☐'}</span>
+                                    Sub-Accounts
+                                </button>
+                            )}
+                            <button
+                                onClick={() => setShowUnreviewedOnly(prev => !prev)}
+                                className={`flex items-center gap-2 px-3 py-2 min-h-[44px] text-sm rounded-lg border text-left transition-colors ${
+                                    showUnreviewedOnly
+                                        ? 'bg-primary/10 border-primary/30 text-primary'
+                                        : 'border-border text-foreground-secondary'
+                                }`}
+                            >
+                                <span>{showUnreviewedOnly ? '☑' : '☐'}</span>
+                                Unreviewed Only
+                            </button>
+                            {isInvestmentAccount && (
+                                <div className="[&>select]:w-full">
+                                    <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
+                                        Cost Basis Method
+                                    </label>
+                                    {costBasisSelect}
+                                </div>
+                            )}
+                            {activeFilterCount > 0 && (
+                                <button
+                                    onClick={clearAllFilters}
+                                    className="min-h-[44px] text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
+                                >
+                                    Clear all filters
+                                </button>
+                            )}
+                        </FilterBar>
+                        <button
+                            onClick={() => {
+                                setEditingTransaction(null);
+                                setIsEditModalOpen(true);
+                            }}
+                            disabled={isReadonly}
+                            title={isReadonly ? READONLY_TOOLTIP : 'New Transaction'}
+                            aria-label="New Transaction"
+                            className="flex items-center justify-center w-9 h-9 shrink-0 rounded-lg border border-border bg-surface/50 text-foreground-secondary text-lg hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            +
+                        </button>
+                        <ActionMenu items={mobileActions} />
+                    </div>
+                ) : (
+                <>
                 {/* Filters and Search */}
                 <div className="flex gap-2 items-center flex-1 min-w-0">
                     <FilterPanel
                         activeFilterCount={activeFilterCount}
                         onClearAll={clearAllFilters}
                     >
-                        <AmountFilter
-                            minAmount={filters.minAmount}
-                            maxAmount={filters.maxAmount}
-                            onMinChange={(val) => setFilters(f => ({ ...f, minAmount: val }))}
-                            onMaxChange={(val) => setFilters(f => ({ ...f, maxAmount: val }))}
-                        />
-                        <ReconcileFilter
-                            selectedStates={filters.reconcileStates}
-                            onChange={(states) => setFilters(f => ({ ...f, reconcileStates: states }))}
-                        />
+                        {filterControls}
                     </FilterPanel>
-                    <div className="relative flex-1 min-w-0">
-                        <input
-                            ref={searchInputRef}
-                            type="text"
-                            placeholder="Search or #tag... (press / to focus)"
-                            className="w-full bg-input-bg border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-all pl-10"
-                            value={searchText}
-                            onChange={(e) => setSearchText(e.target.value)}
-                        />
-                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        {searchText && (
-                            <button
-                                onClick={() => setSearchText('')}
-                                className="absolute right-1 top-1/2 -translate-y-1/2 text-foreground-muted hover:text-foreground-secondary min-h-[44px] min-w-[44px] flex items-center justify-center"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        )}
-                    </div>
+                    {searchBox}
                 </div>
 
                 {/* Action buttons - right aligned */}
@@ -1793,28 +1914,7 @@ export default function AccountLedger({
                             Lots
                         </button>
                     )}
-                    {isInvestmentAccount && (
-                        <select
-                            value={accountCostBasisMethod || costBasisMethod}
-                            onChange={async (e) => {
-                                const method = e.target.value;
-                                setAccountCostBasisMethod(method);
-                                try {
-                                    await fetch(`/api/accounts/${accountGuid}/preferences`, {
-                                        method: 'PATCH',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ cost_basis_method: method }),
-                                    });
-                                } catch {}
-                            }}
-                            className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border bg-background-secondary text-foreground hover:text-foreground transition-colors"
-                            title="Cost basis method for this account"
-                        >
-                            <option value="fifo">FIFO</option>
-                            <option value="lifo">LIFO</option>
-                            <option value="average">Average</option>
-                        </select>
-                    )}
+                    {costBasisSelect}
                     <button
                         onClick={handleToggleEditMode}
                         disabled={isReadonly}
@@ -1894,6 +1994,8 @@ export default function AccountLedger({
                         />
                     )}
                 </div>
+                </>
+                )}
             </div>
 
             {showLotsView && isInvestmentAccount ? (

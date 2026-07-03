@@ -10,6 +10,7 @@ import { HoldingsTable } from '@/components/investments/HoldingsTable';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
 import { ScrubAllButton } from '@/components/investments/ScrubAllButton';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'cashAcct' | 'sector';
 
@@ -70,10 +71,7 @@ export default function HoldingsPage() {
   if (!portfolio || portfolio.holdings.length === 0) {
     return (
       <div className="space-y-6">
-        <header>
-          <h1 className="text-3xl font-bold text-foreground">Investments</h1>
-          <p className="text-foreground-muted mt-1">Portfolio overview and performance</p>
-        </header>
+        <PageHeader title="Investments" subtitle="Portfolio overview and performance" />
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
           <p className="text-foreground-secondary text-lg mb-2">No investment accounts found</p>
           <p className="text-foreground-muted">
@@ -102,30 +100,28 @@ export default function HoldingsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Investments</h1>
-          <p className="text-foreground-muted mt-1">Portfolio overview and performance</p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <ScrubAllButton />
-          <button
-            onClick={handleFetchAllPrices}
-            disabled={fetchingPrices}
-            className="flex items-center gap-2 px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors disabled:opacity-50 font-medium"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            {fetchingPrices ? 'Fetching...' : 'Refresh All Prices'}
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Investments"
+        subtitle="Portfolio overview and performance"
+        actions={<ScrubAllButton />}
+        menuActions={[
+          {
+            label: fetchingPrices ? 'Fetching prices...' : 'Refresh All Prices',
+            onSelect: handleFetchAllPrices,
+            disabled: fetchingPrices,
+            icon: (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            ),
+          },
+        ]}
+      />
 
       {/* API Not Configured Warning */}
       {!apiConfigured && (
@@ -155,12 +151,12 @@ export default function HoldingsPage() {
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
         <div className="flex flex-col gap-0">
           {/* Allocation tab selector */}
-          <div className="flex flex-wrap gap-1 mb-2">
+          <div className="flex gap-1 mb-2 overflow-x-auto [scrollbar-width:thin]">
             {allocationTabs.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setAllocationTab(tab.key)}
-                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
                   allocationTab === tab.key
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'

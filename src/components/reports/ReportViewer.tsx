@@ -4,6 +4,7 @@ import { ReactNode, useRef } from 'react';
 import { ReportFilters as ReportFiltersType, ReportData } from '@/lib/reports/types';
 import { ReportFilters } from './ReportFilters';
 import { generateCSV, downloadCSV } from '@/lib/reports/csv-export';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 
 interface ReportViewerProps {
     title: string;
@@ -124,33 +125,37 @@ export function ReportViewer({
     return (
         <div className="space-y-6">
             {/* Header */}
-            <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-                <div>
+            <header className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
                     <h1 className="text-3xl font-bold text-foreground">{title}</h1>
                     {description && (
                         <p className="text-foreground-muted mt-1">{description}</p>
                     )}
                 </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={() => handleExport('csv')}
-                        className="flex items-center gap-2 px-3 py-2 text-sm bg-background-tertiary hover:bg-surface-hover text-foreground-secondary rounded-lg transition-colors"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        CSV
-                    </button>
-                    <button
-                        onClick={handlePrint}
-                        className="flex items-center gap-2 px-3 py-2 text-sm bg-background-tertiary hover:bg-surface-hover text-foreground-secondary rounded-lg transition-colors"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                        </svg>
-                        Print
-                    </button>
-                </div>
+                <ActionMenu
+                    label="Report actions"
+                    className="shrink-0"
+                    items={[
+                        {
+                            label: 'Export CSV',
+                            onSelect: () => handleExport('csv'),
+                            icon: (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                            ),
+                        },
+                        {
+                            label: 'Print',
+                            onSelect: handlePrint,
+                            icon: (
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                                </svg>
+                            ),
+                        },
+                    ]}
+                />
             </header>
 
             {/* Filters */}

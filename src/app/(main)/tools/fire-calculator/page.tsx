@@ -30,6 +30,7 @@ import {
   type KPIData,
   type FireConfig,
 } from './shared';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import MonteCarloChart from './MonteCarloChart';
 import AssumptionsPanel from './AssumptionsPanel';
 import { FiAgeHistogram, SensitivityRow } from './FiInsights';
@@ -628,6 +629,14 @@ export default function FireCalculatorPage() {
   // Subtle dimming while results are stale (per DESIGN.md: 150ms, ease-out)
   const recalcDim = `transition-opacity duration-150 ease-out ${isRecalculating ? 'opacity-60' : 'opacity-100'}`;
 
+  // One-line summaries shown when the config sections are collapsed
+  const parametersSummary = `Age ${currentAge} → ${targetRetirementAge} · ${safeWithdrawalRate}% SWR · $${Math.round(annualExpenses / 1000)}k/yr expenses`;
+  const assumptionsSummary = `${
+    assumptions.returnMode === 'historical'
+      ? `Monte Carlo · ${assumptions.numSimulations.toLocaleString()} runs · ${assumptions.stockAllocationPct}/${100 - assumptions.stockAllocationPct} stocks/bonds`
+      : `Fixed ${expectedReturn}% return`
+  } · ${assumptions.inflationMode === 'historical' ? 'historical inflation' : `${assumptions.fixedInflationPct}% inflation`} · to age ${assumptions.endAge}`;
+
   /* ---------------------------------------------------------------- */
   /* Render                                                            */
   /* ---------------------------------------------------------------- */
@@ -843,8 +852,12 @@ export default function FireCalculatorPage() {
 
       {/* Parameters with inline override */}
       {!isLoading && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4">Parameters</h2>
+        <CollapsibleConfigSection
+          title="Parameters"
+          summary={parametersSummary}
+          configured={!isLoading}
+          storageKey="fire.parametersOpen"
+        >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
             <DataDrivenInputField
               label="Current Savings / Investments"
@@ -968,37 +981,49 @@ export default function FireCalculatorPage() {
               type="percent"
             />
           </div>
-        </section>
+        </CollapsibleConfigSection>
       )}
 
       {/* Assumptions */}
       {!isLoading && (
-        <AssumptionsPanel
-          assumptions={assumptions}
-          onChange={patchAssumptions}
-          fixedReturnPct={expectedReturn}
-          ssa={{
-            state: ssaState,
-            estimates: ssaEstimates,
-            yearsWithEarnings: ssaData?.yearsWithEarnings ?? 0,
-            source: ssaData?.source ?? null,
-            assumedFutureEarnings: ssaData?.assumedFutureEarnings ?? null,
-            ddv: ssBenefitDDV,
-          }}
-          editingField={editingField}
-          editingValue={editingValue}
-          onStartEdit={startEditing}
-          onEditChange={setEditingValue}
-          onCommit={commitEdit}
-          onReset={resetOverride}
-        />
+        <CollapsibleConfigSection
+          title="Assumptions"
+          summary={assumptionsSummary}
+          configured={!isLoading}
+          storageKey="fire.assumptionsOpen"
+        >
+          <AssumptionsPanel
+            assumptions={assumptions}
+            onChange={patchAssumptions}
+            fixedReturnPct={expectedReturn}
+            ssa={{
+              state: ssaState,
+              estimates: ssaEstimates,
+              yearsWithEarnings: ssaData?.yearsWithEarnings ?? 0,
+              source: ssaData?.source ?? null,
+              assumedFutureEarnings: ssaData?.assumedFutureEarnings ?? null,
+              ddv: ssBenefitDDV,
+            }}
+            editingField={editingField}
+            editingValue={editingValue}
+            onStartEdit={startEditing}
+            onEditChange={setEditingValue}
+            onCommit={commitEdit}
+            onReset={resetOverride}
+          />
+        </CollapsibleConfigSection>
       )}
 
       {/* Save / Load Configurations */}
       {!isLoading && (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4">Saved Configurations</h2>
-
+        <CollapsibleConfigSection
+          title="Saved Configurations"
+          summary={savedConfigs.length > 0
+            ? `${savedConfigs.length} saved configuration${savedConfigs.length === 1 ? '' : 's'}`
+            : 'No saved configurations yet'}
+          configured={savedConfigs.length > 0}
+          storageKey="fire.savedConfigsOpen"
+        >
           {/* Save form */}
           <div className="flex flex-col sm:flex-row gap-3 mb-6">
             <input
@@ -1048,7 +1073,7 @@ export default function FireCalculatorPage() {
               ))}
             </div>
           )}
-        </section>
+        </CollapsibleConfigSection>
       )}
 
       {/* Methodology footnote */}

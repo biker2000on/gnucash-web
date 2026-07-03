@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
@@ -321,6 +323,22 @@ export default function SettingsPage() {
     }
   };
 
+  // One-line summaries shown while each section is collapsed
+  const scheduleSummary = schedule.enabled
+    ? `${INTERVAL_OPTIONS.find((o) => o.value === schedule.intervalHours)?.label ?? 'Daily'} at ${utcToLocal(schedule.refreshTime)}${simplefinConnected && simplefinSyncEnabled ? ' · SimpleFin sync' : ''}`
+    : 'Disabled';
+  const indexDataSummary = indexCoverage
+    ? indexCoverage.isUpToDate
+      ? 'Up to date'
+      : 'Backfill available'
+    : undefined;
+  const taxRateSummary = taxRateInput ? `${taxRateInput}%` : 'Not set';
+  const balanceDisplaySummary = `Reversal: ${BALANCE_REVERSAL_OPTIONS.find((o) => o.value === balanceReversal)?.label ?? balanceReversal}`;
+  const costBasisSummary = costBasisCarryOver
+    ? `Carry over · ${COST_BASIS_METHOD_OPTIONS.find((o) => o.value === costBasisMethod)?.label ?? costBasisMethod}`
+    : 'No carry over';
+  const displayPrefsSummary = `${dateFormat} · ${defaultLedgerMode === 'edit' ? 'Edit mode' : 'Read-only'} · ${homeScreen === 'accounts' ? 'Account Hierarchy' : 'Dashboard'}`;
+
   if (loading) {
     return (
       <div className="max-w-3xl mx-auto">
@@ -333,20 +351,20 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+    <div className="max-w-3xl mx-auto space-y-4">
+      <PageHeader title="Settings" />
 
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div className="bg-surface rounded-xl border border-border px-4 py-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">Commodity Quote Settings</h2>
-            <p className="text-sm text-foreground-muted mt-1">
+            <h2 className="text-sm font-semibold text-foreground">Commodity Quote Settings</h2>
+            <p className="text-sm text-foreground-muted mt-0.5">
               Manage quote flags and price source configuration for all commodities.
             </p>
           </div>
           <Link
             href="/settings/commodities"
-            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
           >
             Open Commodity Settings
           </Link>
@@ -354,9 +372,12 @@ export default function SettingsPage() {
       </div>
 
       {/* Price Refresh Schedule */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Price Refresh Schedule</h2>
-
+      <CollapsibleConfigSection
+        title="Price Refresh Schedule"
+        summary={scheduleSummary}
+        configured
+        storageKey="settings.priceRefreshOpen"
+      >
         <div className="space-y-4">
           {/* Enable/Disable Toggle */}
           <label className="flex items-center gap-3 cursor-pointer">
@@ -428,12 +449,15 @@ export default function SettingsPage() {
             <span>{refreshing ? 'Refreshing...' : 'Refresh Now'}</span>
           </button>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Index Data */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Index Data</h2>
-
+      <CollapsibleConfigSection
+        title="Index Data"
+        summary={indexDataSummary}
+        configured
+        storageKey="settings.indexDataOpen"
+      >
         <div className="space-y-4">
           <p className="text-sm text-foreground-muted">
             Historical price data for market indices (S&P 500, DJIA) used in performance charts.
@@ -487,12 +511,15 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Cache Management */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Cache Management</h2>
-
+      <CollapsibleConfigSection
+        title="Cache Management"
+        summary="Redis cache"
+        configured
+        storageKey="settings.cacheOpen"
+      >
         <div className="space-y-4">
           <p className="text-sm text-foreground-muted">
             Clears all cached dashboard calculations. Data will be recalculated on next visit.
@@ -509,12 +536,15 @@ export default function SettingsPage() {
             <span>{clearing ? 'Clearing...' : 'Clear All Caches'}</span>
           </button>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Tax Rate */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Tax Rate</h2>
-
+      <CollapsibleConfigSection
+        title="Default Tax Rate"
+        summary={taxRateSummary}
+        configured
+        storageKey="settings.taxRateOpen"
+      >
         <div className="space-y-4">
           <p className="text-sm text-foreground-muted">
             Set a default tax rate to quickly apply to transaction amounts using the T keyboard shortcut.
@@ -552,11 +582,15 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Balance Display */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-2">Balance Display</h2>
+      <CollapsibleConfigSection
+        title="Balance Display"
+        summary={balanceDisplaySummary}
+        configured
+        storageKey="settings.balanceDisplayOpen"
+      >
         <p className="text-sm text-foreground-muted mb-4">
           Choose how account balances are displayed throughout the app.
         </p>
@@ -614,11 +648,15 @@ export default function SettingsPage() {
             </p>
           </div>
         </details>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Cost Basis */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-2">Cost Basis</h2>
+      <CollapsibleConfigSection
+        title="Cost Basis"
+        summary={costBasisSummary}
+        configured
+        storageKey="settings.costBasisOpen"
+      >
         <p className="text-sm text-foreground-muted mb-4">
           Control how cost basis is calculated when shares are transferred between investment accounts.
         </p>
@@ -672,12 +710,15 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Display Preferences */}
-      <div className="bg-surface rounded-xl border border-border p-6">
-        <h2 className="text-lg font-semibold text-foreground mb-4">Display Preferences</h2>
-
+      <CollapsibleConfigSection
+        title="Display Preferences"
+        summary={displayPrefsSummary}
+        configured
+        storageKey="settings.displayPrefsOpen"
+      >
         <div className="space-y-4">
           {/* Date Format */}
           <div className="space-y-2">
@@ -728,7 +769,7 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
-      </div>
+      </CollapsibleConfigSection>
     </div>
   );
 }

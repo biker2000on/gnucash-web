@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useInvestmentData } from '@/contexts/InvestmentDataContext';
 import { CashAllocationCard } from '@/components/investments/CashAllocationCard';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 type SortMode = 'percent' | 'amount';
 
@@ -22,10 +23,7 @@ export default function CashDetailsPage() {
   if (!portfolio || !portfolio.cashByAccount || portfolio.cashByAccount.length === 0) {
     return (
       <div className="space-y-6">
-        <header>
-          <h1 className="text-3xl font-bold text-foreground">Cash Details</h1>
-          <p className="text-foreground-muted mt-1">Cash allocation across investment accounts</p>
-        </header>
+        <PageHeader title="Cash Details" subtitle="Cash allocation across investment accounts" />
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
           <p className="text-foreground-secondary text-lg mb-2">No cash data available</p>
           <p className="text-foreground-muted">
@@ -44,34 +42,34 @@ export default function CashDetailsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Cash Details</h1>
-          <p className="text-foreground-muted mt-1">Cash allocation across investment accounts</p>
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => setSortMode('percent')}
-            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-              sortMode === 'percent'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
-            }`}
-          >
-            Sort by %
-          </button>
-          <button
-            onClick={() => setSortMode('amount')}
-            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-              sortMode === 'amount'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
-            }`}
-          >
-            Sort by $
-          </button>
-        </div>
-      </header>
+      <PageHeader
+        title="Cash Details"
+        subtitle="Cash allocation across investment accounts"
+        actions={
+          <div className="flex gap-1">
+            <button
+              onClick={() => setSortMode('percent')}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                sortMode === 'percent'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+              }`}
+            >
+              Sort by %
+            </button>
+            <button
+              onClick={() => setSortMode('amount')}
+              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                sortMode === 'amount'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+              }`}
+            >
+              Sort by $
+            </button>
+          </div>
+        }
+      />
 
       <CashAllocationCard
         cashByAccount={sortedCash}

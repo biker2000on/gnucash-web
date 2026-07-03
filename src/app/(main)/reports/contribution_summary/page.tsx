@@ -70,7 +70,7 @@ function ContributionSummaryContent() {
     return (
         <div className="space-y-6">
             {/* Group-by toggle */}
-            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4 flex items-center gap-4">
+            <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                 <span className="text-sm text-foreground-secondary">Group by:</span>
                 <div className="inline-flex rounded-lg border border-border overflow-hidden">
                     <button

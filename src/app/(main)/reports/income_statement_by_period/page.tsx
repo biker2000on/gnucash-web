@@ -10,6 +10,8 @@ import {
 } from '@/lib/reports/types';
 import { formatCurrency } from '@/lib/format';
 import { TransactionDrilldownModal, DrilldownTarget } from '@/components/reports/TransactionDrilldownModal';
+import { FilterBar } from '@/components/ui/FilterBar';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -144,28 +146,32 @@ export default function IncomeStatementByPeriodPage() {
             showCompare={false}
         >
             {/* Grouping + display controls */}
-            <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-border bg-background-tertiary/30">
-                <div className="flex items-center gap-2">
-                    <label className="text-xs text-foreground-muted uppercase tracking-wider">Grouping</label>
-                    <div className="inline-flex rounded-lg border border-border overflow-hidden">
-                        {(['month', 'quarter', 'year'] as PeriodGrouping[]).map(g => (
-                            <button
-                                key={g}
-                                onClick={() => setGrouping(g)}
-                                className={`px-3 py-1.5 text-xs capitalize transition-colors ${
-                                    grouping === g
-                                        ? 'bg-primary text-primary-foreground'
-                                        : 'bg-surface text-foreground-secondary hover:bg-surface-hover'
-                                }`}
-                            >
-                                {g}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="flex items-center gap-2 ml-4">
-                    <label className="inline-flex items-center gap-1.5 text-xs text-foreground-secondary cursor-pointer">
+            <div className="flex items-start gap-2 px-4 py-3 border-b border-border bg-background-tertiary/30">
+                <FilterBar
+                    className="flex-1 min-w-0"
+                    activeCount={hideZero ? 1 : 0}
+                    primary={
+                        <div className="flex items-center gap-2">
+                            <label className="hidden sm:block text-xs text-foreground-muted uppercase tracking-wider">Grouping</label>
+                            <div className="inline-flex rounded-lg border border-border overflow-hidden">
+                                {(['month', 'quarter', 'year'] as PeriodGrouping[]).map(g => (
+                                    <button
+                                        key={g}
+                                        onClick={() => setGrouping(g)}
+                                        className={`px-3 py-1.5 text-xs capitalize transition-colors ${
+                                            grouping === g
+                                                ? 'bg-primary text-primary-foreground'
+                                                : 'bg-surface text-foreground-secondary hover:bg-surface-hover'
+                                        }`}
+                                    >
+                                        {g}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    }
+                >
+                    <label className="inline-flex items-center gap-1.5 text-xs text-foreground-secondary cursor-pointer md:ml-2">
                         <input
                             type="checkbox"
                             checked={hideZero}
@@ -174,11 +180,8 @@ export default function IncomeStatementByPeriodPage() {
                         />
                         Hide zero rows
                     </label>
-                </div>
-
-                <div className="flex items-center gap-2 ml-auto">
                     {maxDepth > 0 && (
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 md:ml-auto">
                             <label className="text-xs text-foreground-muted">Level:</label>
                             <select
                                 onChange={e => {
@@ -198,19 +201,15 @@ export default function IncomeStatementByPeriodPage() {
                             </select>
                         </div>
                     )}
-                    <button
-                        onClick={expandAll}
-                        className="text-xs px-2 py-1 rounded border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover"
-                    >
-                        Expand all
-                    </button>
-                    <button
-                        onClick={collapseAll}
-                        className="text-xs px-2 py-1 rounded border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover"
-                    >
-                        Collapse all
-                    </button>
-                </div>
+                </FilterBar>
+                <ActionMenu
+                    label="Expand or collapse rows"
+                    className="shrink-0"
+                    items={[
+                        { label: 'Expand all', onSelect: expandAll },
+                        { label: 'Collapse all', onSelect: collapseAll },
+                    ]}
+                />
             </div>
 
             {reportData && (

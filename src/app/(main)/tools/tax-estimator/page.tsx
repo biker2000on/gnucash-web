@@ -19,6 +19,7 @@ import {
   type TaxCategory,
   type TaxYear,
 } from '@/lib/tax/types';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import BracketFillChart from '@/components/tools/tax/BracketFillChart';
 import TaxMappingPanel, {
   type MappingAccount,
@@ -392,6 +393,13 @@ export default function TaxEstimatorPage() {
   const hasMappings = (estimate?.bookData.mappedAccountCount ?? 0) > 0;
   const isCurrentYear = year === currentYear;
 
+  const settingsSummary = [
+    String(year),
+    FILING_STATUS_LABELS[filingStatus],
+    stateCode === 'OTHER' ? `Flat ${(stateFlatRate * 100).toFixed(1)}%` : stateCode,
+    annualize && isCurrentYear ? 'Annualized' : null,
+  ].filter(Boolean).join(' · ');
+
   /* ---- Render ---- */
 
   if (loading && !estimate) {
@@ -413,13 +421,20 @@ export default function TaxEstimatorPage() {
   return (
     <div className="space-y-6 max-w-[1400px]">
       {/* (a) Header */}
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Tax Estimator</h1>
-          <p className="text-foreground-muted mt-1 text-sm">
-            Federal + state estimates from your book data, with contribution scenario modeling.
-          </p>
-        </div>
+      <header>
+        <h1 className="text-3xl font-bold text-foreground">Tax Estimator</h1>
+        <p className="text-foreground-muted mt-1 text-sm">
+          Federal + state estimates from your book data, with contribution scenario modeling.
+        </p>
+      </header>
+
+      {/* Tax settings */}
+      <CollapsibleConfigSection
+        title="Tax settings"
+        summary={settingsSummary}
+        configured={!!estimate}
+        storageKey="taxEstimator.settingsOpen"
+      >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -505,7 +520,7 @@ export default function TaxEstimatorPage() {
             </label>
           </div>
         </div>
-      </header>
+      </CollapsibleConfigSection>
 
       {/* Onboarding empty state */}
       {!hasMappings && mappingsData && (
@@ -762,10 +777,17 @@ export default function TaxEstimatorPage() {
 
           {/* (f) Contribution scenarios */}
           {scenarioLimits && (
-            <Section
+            <CollapsibleConfigSection
               title="Contribution scenarios"
-              subtitle="Model additional tax-advantaged contributions on top of your actuals. Each scenario is validated against remaining IRS limits."
+              summary={scenarios.length > 0
+                ? `${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} saved`
+                : 'No scenarios yet'}
+              configured={scenarios.length > 0}
+              storageKey="taxEstimator.scenariosOpen"
             >
+              <p className="text-xs text-foreground-muted mb-4">
+                Model additional tax-advantaged contributions on top of your actuals. Each scenario is validated against remaining IRS limits.
+              </p>
               <ScenarioPanel
                 baseInputs={computed.inputs}
                 limits={scenarioLimits}
@@ -777,7 +799,7 @@ export default function TaxEstimatorPage() {
                 onSaveScenarios={handleSaveScenarios}
                 saveStatus={scenarioSaveStatus}
               />
-            </Section>
+            </CollapsibleConfigSection>
           )}
         </>
       )}

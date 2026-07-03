@@ -9,6 +9,7 @@ import { HoldingsTable } from '@/components/investments/HoldingsTable';
 import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummaryCards';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
+import { PageHeader } from '@/components/ui/PageHeader';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'sector';
 
@@ -174,10 +175,7 @@ export default function AccountsPage() {
   if (!portfolio || portfolio.holdings.length === 0) {
     return (
       <div className="space-y-6">
-        <header>
-          <h1 className="text-3xl font-bold text-foreground">Account View</h1>
-          <p className="text-foreground-muted mt-1">Per-account investment breakdown</p>
-        </header>
+        <PageHeader title="Account View" subtitle="Per-account investment breakdown" />
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
           <p className="text-foreground-secondary text-lg mb-2">No investment accounts found</p>
           <p className="text-foreground-muted">
@@ -202,21 +200,21 @@ export default function AccountsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Account View</h1>
-          <p className="text-foreground-muted mt-1">Per-account investment breakdown</p>
-        </div>
-        <select
-          value={effectiveSelectedAccount}
-          onChange={(e) => setSelectedAccount(e.target.value)}
-          className="px-4 py-2 bg-background-secondary border border-border rounded-lg text-foreground"
-        >
-          {parentAccounts.map(a => (
-            <option key={a.key} value={a.key}>{a.name}</option>
-          ))}
-        </select>
-      </header>
+      <PageHeader
+        title="Account View"
+        subtitle="Per-account investment breakdown"
+        actions={
+          <select
+            value={effectiveSelectedAccount}
+            onChange={(e) => setSelectedAccount(e.target.value)}
+            className="px-4 py-2 bg-background-secondary border border-border rounded-lg text-foreground max-w-full"
+          >
+            {parentAccounts.map(a => (
+              <option key={a.key} value={a.key}>{a.name}</option>
+            ))}
+          </select>
+        }
+      />
 
       {/* Filtered summary cards */}
       <PortfolioSummaryCards
@@ -232,12 +230,12 @@ export default function AccountsPage() {
       {/* Charts */}
       <div className="grid md:grid-cols-2 gap-6 items-stretch">
         <div className="flex flex-col gap-0">
-          <div className="flex flex-wrap gap-1 mb-2">
+          <div className="flex gap-1 mb-2 overflow-x-auto [scrollbar-width:thin]">
             {allocationTabs.map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setAllocationTab(tab.key)}
-                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
                   allocationTab === tab.key
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'

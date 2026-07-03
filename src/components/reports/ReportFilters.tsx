@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ReportFilters as ReportFiltersType } from '@/lib/reports/types';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
+import { FilterBar } from '@/components/ui/FilterBar';
 
 interface ReportFiltersProps {
     filters: ReportFiltersType;
@@ -117,61 +118,81 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
         return localFilters.startDate === startDate && localFilters.endDate === endDate;
     };
 
+    const applyResetButtons = (
+        <>
+            <button
+                onClick={handleReset}
+                className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
+            >
+                Reset
+            </button>
+            <button
+                onClick={handleApply}
+                className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
+            >
+                Apply
+            </button>
+        </>
+    );
+
     return (
         <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl p-4">
-            <div className="flex flex-col sm:flex-row flex-wrap gap-4 items-stretch sm:items-end">
-                {/* Date Range */}
-                <div className="flex flex-col sm:flex-row gap-3">
-                    <div>
-                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                            Start Date
-                        </label>
-                        <input
-                            type="text"
-                            value={startDateDisplay}
-                            onChange={e => setStartDateDisplay(e.target.value)}
-                            onFocus={(e) => e.target.select()}
-                            onBlur={() => {
-                                const parsed = parseDateInput(startDateDisplay);
-                                if (parsed) {
-                                    setLocalFilters(prev => ({ ...prev, startDate: parsed }));
-                                    setStartDateDisplay(formatDateForDisplay(parsed, dateFormat));
-                                } else if (!startDateDisplay.trim()) {
-                                    setLocalFilters(prev => ({ ...prev, startDate: null }));
-                                } else {
-                                    setStartDateDisplay(localFilters.startDate ? formatDateForDisplay(localFilters.startDate, dateFormat) : '');
-                                }
-                            }}
-                            placeholder="MM/DD/YYYY"
-                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                        />
+            <FilterBar
+                activeCount={showCompare && localFilters.compareToPrevious ? 1 : 0}
+                primary={
+                    /* Date Range — always visible */
+                    <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 md:flex md:flex-none md:gap-3">
+                        <div className="min-w-0">
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                Start Date
+                            </label>
+                            <input
+                                type="text"
+                                value={startDateDisplay}
+                                onChange={e => setStartDateDisplay(e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={() => {
+                                    const parsed = parseDateInput(startDateDisplay);
+                                    if (parsed) {
+                                        setLocalFilters(prev => ({ ...prev, startDate: parsed }));
+                                        setStartDateDisplay(formatDateForDisplay(parsed, dateFormat));
+                                    } else if (!startDateDisplay.trim()) {
+                                        setLocalFilters(prev => ({ ...prev, startDate: null }));
+                                    } else {
+                                        setStartDateDisplay(localFilters.startDate ? formatDateForDisplay(localFilters.startDate, dateFormat) : '');
+                                    }
+                                }}
+                                placeholder="MM/DD/YYYY"
+                                className="w-full md:w-auto bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            />
+                        </div>
+                        <div className="min-w-0">
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                End Date
+                            </label>
+                            <input
+                                type="text"
+                                value={endDateDisplay}
+                                onChange={e => setEndDateDisplay(e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={() => {
+                                    const parsed = parseDateInput(endDateDisplay);
+                                    if (parsed) {
+                                        setLocalFilters(prev => ({ ...prev, endDate: parsed }));
+                                        setEndDateDisplay(formatDateForDisplay(parsed, dateFormat));
+                                    } else if (!endDateDisplay.trim()) {
+                                        setLocalFilters(prev => ({ ...prev, endDate: null }));
+                                    } else {
+                                        setEndDateDisplay(localFilters.endDate ? formatDateForDisplay(localFilters.endDate, dateFormat) : '');
+                                    }
+                                }}
+                                placeholder="MM/DD/YYYY"
+                                className="w-full md:w-auto bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                            End Date
-                        </label>
-                        <input
-                            type="text"
-                            value={endDateDisplay}
-                            onChange={e => setEndDateDisplay(e.target.value)}
-                            onFocus={(e) => e.target.select()}
-                            onBlur={() => {
-                                const parsed = parseDateInput(endDateDisplay);
-                                if (parsed) {
-                                    setLocalFilters(prev => ({ ...prev, endDate: parsed }));
-                                    setEndDateDisplay(formatDateForDisplay(parsed, dateFormat));
-                                } else if (!endDateDisplay.trim()) {
-                                    setLocalFilters(prev => ({ ...prev, endDate: null }));
-                                } else {
-                                    setEndDateDisplay(localFilters.endDate ? formatDateForDisplay(localFilters.endDate, dateFormat) : '');
-                                }
-                            }}
-                            placeholder="MM/DD/YYYY"
-                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                        />
-                    </div>
-                </div>
-
+                }
+            >
                 {/* Quick Presets */}
                 <div className="flex flex-wrap gap-1">
                     {PRESETS.map(preset => (
@@ -202,22 +223,12 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                     </label>
                 )}
 
-                {/* Apply/Reset */}
-                <div className="flex gap-2 w-full sm:w-auto sm:ml-auto">
-                    <button
-                        onClick={handleReset}
-                        className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
-                    >
-                        Reset
-                    </button>
-                    <button
-                        onClick={handleApply}
-                        className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
-                    >
-                        Apply
-                    </button>
-                </div>
-            </div>
+                {/* Apply/Reset — inline on desktop */}
+                <div className="hidden md:flex gap-2 md:ml-auto">{applyResetButtons}</div>
+            </FilterBar>
+
+            {/* Apply/Reset — always visible on mobile, below the bar */}
+            <div className="flex md:hidden justify-end gap-2 mt-3">{applyResetButtons}</div>
         </div>
     );
 }
