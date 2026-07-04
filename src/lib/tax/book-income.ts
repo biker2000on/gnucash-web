@@ -114,13 +114,12 @@ export async function aggregateBookTaxData(
         -- non-zero-value offset split into the stock account (paired with a
         -- Short/Long-Term gains income split). No money enters the account, so
         -- these must not inflate contribution/income category totals. A real
-        -- cash or share split always has a non-zero quantity.
+        -- cash or share split always has a non-zero quantity, so this targets
+        -- ONLY the value-only gains offsets. (Do NOT exclude by the
+        -- gnucash_web_generated slot — the scrub engine also tags its resized
+        -- buy/sell sub-splits, which carry real quantities and legitimate
+        -- value flow.)
         AND NOT (s.quantity_num = 0 AND s.value_num <> 0)
-        -- Belt-and-suspenders: also drop anything the scrub engine generated.
-        AND NOT EXISTS (
-          SELECT 1 FROM slots sl
-          WHERE sl.obj_guid = s.guid AND sl.name = 'gnucash_web_generated'
-        )
       GROUP BY s.account_guid
     `;
 
