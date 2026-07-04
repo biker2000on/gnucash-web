@@ -5,7 +5,6 @@ import {
   ComposedChart,
   AreaChart,
   Area,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -176,10 +175,9 @@ export function MortgageCharts({
             <YAxis tickFormatter={compactCurrency} width={52} stroke="var(--foreground-secondary)" tick={{ fill: 'var(--foreground-secondary)', fontSize: 11 }} axisLine={{ stroke: 'var(--border)' }} tickLine={{ stroke: 'var(--border)' }} />
             <Tooltip content={<ChartTooltip suffix="Year " />} />
             <Legend wrapperStyle={{ paddingTop: 8 }} formatter={(v) => <span className="text-foreground-secondary text-xs">{v}</span>} />
-            <Area type="monotone" dataKey="interest" name="Interest" stackId="1" stroke="var(--negative)" fill="var(--negative)" fillOpacity={0.25} />
+            <Area type="monotone" dataKey="interest" name="Interest" stackId="1" stroke="var(--negative)" strokeWidth={2} fill="var(--negative)" fillOpacity={0.25} />
             <Area type="monotone" dataKey="principal" name="Principal" stackId="1" stroke="var(--positive)" fill="var(--positive)" fillOpacity={0.25} />
             <Area type="monotone" dataKey="extra" name="Extra principal" stackId="1" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.3} />
-            <Line type="monotone" dataKey="interest" name="Interest" stroke="var(--negative)" strokeWidth={2} dot={false} legendType="none" />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
