@@ -110,6 +110,17 @@ export async function aggregateBookTaxData(
       WHERE s.account_guid = ANY(${mappedGuids})
         AND t.post_date >= ${startDate}
         AND t.post_date <= ${endDate}
+        -- Exclude capital-gains bookkeeping: lot-scrub posts a zero-quantity,
+        -- non-zero-value offset split into the stock account (paired with a
+        -- Short/Long-Term gains income split). No money enters the account, so
+        -- these must not inflate contribution/income category totals. A real
+        -- cash or share split always has a non-zero quantity.
+        AND NOT (s.quantity_num = 0 AND s.value_num <> 0)
+        -- Belt-and-suspenders: also drop anything the scrub engine generated.
+        AND NOT EXISTS (
+          SELECT 1 FROM slots sl
+          WHERE sl.obj_guid = s.guid AND sl.name = 'gnucash_web_generated'
+        )
       GROUP BY s.account_guid
     `;
 
