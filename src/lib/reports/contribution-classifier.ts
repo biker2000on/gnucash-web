@@ -44,6 +44,7 @@ export interface ClassifyOptions {
 
 const MATCH_KEYWORDS = ['match', 'employer'];
 const DIVIDEND_KEYWORDS = ['dividend', 'distribution', 'interest'];
+const CAPITAL_GAINS_KEYWORDS = ['realized', 'capital gain', 'short term', 'long term', 'short-term', 'long-term'];
 
 export function classifyContribution(
   split: SplitLike,
@@ -57,6 +58,15 @@ export function classifyContribution(
   const quantity = toDecimalNumber(split.quantity_num, split.quantity_denom);
 
   if (value === 0 && quantity === 0) return ContributionType.OTHER;
+
+  // Capital-gains bookkeeping: lot-scrub (ours or GnuCash desktop's) posts a
+  // zero-quantity, non-zero-value offset split into the stock account, paired
+  // with a Short/Long-Term gains INCOME split. No money enters or leaves the
+  // plan — these must never count as contributions or withdrawals. The
+  // signature is exact: cash/currency splits always have quantity === value,
+  // so zero quantity with non-zero value only occurs on these entries.
+  if (quantity === 0 && value !== 0) return ContributionType.OTHER;
+
   if (value < 0) {
     // Money leaving this account: if the primary destination is itself within
     // the retirement umbrella (e.g. an investment buy moving cash -> stock
@@ -133,6 +143,14 @@ export function classifyContribution(
     }
     const desc = (description ?? '').toLowerCase();
     if (DIVIDEND_KEYWORDS.some(kw => sourceName.includes(kw) || desc.includes(kw))) {
+      return ContributionType.DIVIDEND;
+    }
+    // Realized capital-gains income (e.g. "Income:Investments:Long Term",
+    // "Realized Gain — ..." transactions) is investment income, not a
+    // contribution toward any limit.
+    if (CAPITAL_GAINS_KEYWORDS.some(kw =>
+      sourceName.includes(kw) || sourceFullname.includes(kw) || desc.includes(kw)
+    )) {
       return ContributionType.DIVIDEND;
     }
     return ContributionType.INCOME_CONTRIBUTION;

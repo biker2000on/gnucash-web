@@ -381,6 +381,47 @@ describe('Contribution Classifier', () => {
       const result = classifyContribution(split, otherSplits, retirementGuids);
       expect(result).toBe(ContributionType.OTHER);
     });
+
+    it('should classify a zero-quantity capital-gains offset (gain) as OTHER, not a contribution', () => {
+      // Lot-scrub gains transaction: +value/zero-quantity split in the stock
+      // account, offset by a Short/Long-Term gains INCOME split.
+      const split = mockSplit({ value_num: 517640n, quantity_num: 0n });
+      const otherSplits = [mockOtherSplit({
+        value_num: -517640n,
+        quantity_num: -517640n,
+        account: { account_type: 'INCOME', commodity_guid: 'usd-guid', name: 'Long Term' },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids, 'Realized Gain - Lot 3');
+      expect(result).toBe(ContributionType.OTHER);
+    });
+
+    it('should classify a zero-quantity capital-gains offset (loss) as OTHER, not a withdrawal', () => {
+      const split = mockSplit({ value_num: -123400n, quantity_num: 0n });
+      const otherSplits = [mockOtherSplit({
+        value_num: 123400n,
+        quantity_num: 123400n,
+        account: { account_type: 'INCOME', commodity_guid: 'usd-guid', name: 'Short Term' },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids, 'Realized Loss - Lot 7');
+      expect(result).toBe(ContributionType.OTHER);
+    });
+
+    it('should classify realized-gains INCOME sources as DIVIDEND, not INCOME_CONTRIBUTION', () => {
+      // Defense for gains recorded with real share quantities (e.g. GnuCash
+      // desktop conventions): capital-gains income is investment income.
+      const split = mockSplit({ value_num: 100000n, quantity_num: 5000n });
+      const otherSplits = [mockOtherSplit({
+        value_num: -100000n,
+        account: {
+          account_type: 'INCOME',
+          commodity_guid: 'usd-guid',
+          name: 'Long Term',
+          fullname: 'Income:Investments:Long Term',
+        },
+      })];
+      const result = classifyContribution(split, otherSplits, retirementGuids, 'Realized Gain - VTI');
+      expect(result).toBe(ContributionType.DIVIDEND);
+    });
   });
 
   describe('getRetirementAccountGuids', () => {
