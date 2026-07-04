@@ -9,6 +9,8 @@ import {
   calcMonthlyPayment,
   buildAmortizationSchedule,
   buildHybridSchedule,
+  buildScheduleForStrategy,
+  totalInterestFromSchedule,
 } from '../mortgage-schedule';
 import type { ActualPayment } from '@/components/mortgage/MortgageAutoDetect';
 
@@ -123,5 +125,71 @@ describe('buildAmortizationSchedule', () => {
     expect(base).toHaveLength(360);
     expect(extra.length).toBeLessThan(base.length);
     expect(extra.every(r => r.extra >= 0)).toBe(true);
+  });
+});
+
+describe('buildScheduleForStrategy', () => {
+  const P = 300000;
+  const R = 6.5 / 100 / 12;
+  const TERM_30 = 360;
+
+  it('none matches the plain no-extra schedule length', () => {
+    const none = buildScheduleForStrategy(P, R, TERM_30, { type: 'none' });
+    const plain = buildAmortizationSchedule(P, R, TERM_30, 0);
+    expect(none.length).toBe(plain.length);
+    expect(none.length).toBe(360);
+  });
+
+  it('fixed_monthly shortens the term and never over-pays the balance', () => {
+    const s = buildScheduleForStrategy(P, R, TERM_30, { type: 'fixed_monthly', fixedMonthly: 500 });
+    expect(s.length).toBeLessThan(360);
+    expect(s[s.length - 1].balance).toBe(0);
+    // Extra never draws the balance negative; final row extra is capped
+    expect(s.every(r => r.extra >= 0 && r.balance >= 0)).toBe(true);
+  });
+
+  it('extra_annual with 1/year ("13 payments") beats regular and saves interest', () => {
+    const none = buildScheduleForStrategy(P, R, TERM_30, { type: 'none' });
+    const s = buildScheduleForStrategy(P, R, TERM_30, { type: 'extra_annual', extraPaymentsPerYear: 1 });
+    expect(s.length).toBeLessThan(none.length);
+    expect(totalInterestFromSchedule(s)).toBeLessThan(totalInterestFromSchedule(none));
+    // ~1 extra payment/year on a 30yr 6.5% loan removes roughly 4-5 years
+    const yearsSaved = (none.length - s.length) / 12;
+    expect(yearsSaved).toBeGreaterThan(3);
+    expect(yearsSaved).toBeLessThan(7);
+  });
+
+  it('extra_annual with 4/year applies an extra payment every 3 months', () => {
+    const s = buildScheduleForStrategy(P, R, TERM_30, { type: 'extra_annual', extraPaymentsPerYear: 4 });
+    // Months 3,6,9,12 (before payoff) carry a big extra
+    expect(s[2].extra).toBeGreaterThan(0);
+    expect(s[5].extra).toBeGreaterThan(0);
+    expect(s[0].extra).toBe(0);
+    expect(s[1].extra).toBe(0);
+  });
+
+  it('roundup adds the rounding difference each month', () => {
+    const base = calcMonthlyPayment(P, R, TERM_30); // ~1896.20
+    const s = buildScheduleForStrategy(P, R, TERM_30, { type: 'roundup', roundUpTo: 100 });
+    const expectedExtra = Math.ceil(base / 100) * 100 - base; // ~3.80
+    expect(s[0].extra).toBeCloseTo(expectedExtra, 2);
+    expect(s.length).toBeLessThanOrEqual(360);
+  });
+
+  it('lump_sum applies once at the chosen month', () => {
+    const s = buildScheduleForStrategy(P, R, TERM_30, { type: 'lump_sum', lumpSum: 20000, lumpSumMonth: 12 });
+    expect(s[11].extra).toBeCloseTo(20000, 0);
+    expect(s.filter(r => r.extra > 0)).toHaveLength(1);
+    expect(s.length).toBeLessThan(360);
+  });
+
+  it('biweekly pays off faster than regular monthly and stays monthly-aggregated', () => {
+    const none = buildScheduleForStrategy(P, R, TERM_30, { type: 'none' });
+    const s = buildScheduleForStrategy(P, R, TERM_30, { type: 'biweekly' }, new Date('2026-01-01'));
+    expect(s.length).toBeLessThan(none.length);
+    expect(s[s.length - 1].balance).toBeLessThanOrEqual(0.01);
+    // Roughly one extra payment per year → ~4-6 years off a 30yr loan
+    const yearsSaved = (none.length - s.length) / 12;
+    expect(yearsSaved).toBeGreaterThan(3);
   });
 });

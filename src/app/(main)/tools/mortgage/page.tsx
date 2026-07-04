@@ -11,8 +11,21 @@ import {
   calcMonthlyPayment,
   buildAmortizationSchedule,
   buildHybridSchedule,
+  buildScheduleForStrategy,
+  describeStrategy,
   totalInterestFromSchedule,
+  type PayoffStrategyType,
+  type PayoffStrategy,
 } from '@/lib/mortgage-schedule';
+import { MortgageCharts } from '@/components/mortgage/MortgageCharts';
+
+const PAYOFF_STRATEGY_OPTIONS: { value: PayoffStrategyType; label: string }[] = [
+  { value: 'fixed_monthly', label: 'Fixed extra / month' },
+  { value: 'extra_annual', label: 'Extra payments / year' },
+  { value: 'biweekly', label: 'Accelerated bi-weekly' },
+  { value: 'roundup', label: 'Round up payment' },
+  { value: 'lump_sum', label: 'One-time lump sum' },
+];
 
 /* ------------------------------------------------------------------ */
 /* Formatters                                                          */
@@ -211,6 +224,13 @@ export default function MortgageCalculatorPage() {
   const [payoffMode, setPayoffMode] = useState<'extra-to-date' | 'date-to-payment'>('extra-to-date');
   const [payoffExtraPayment, setPayoffExtraPayment] = useState('500');
   const [targetYear, setTargetYear] = useState(() => String(new Date().getFullYear() + 15));
+
+  // ---- Payoff strategy ----
+  const [payoffStrategy, setPayoffStrategy] = useState<PayoffStrategyType>('fixed_monthly');
+  const [extraPerYear, setExtraPerYear] = useState('1');
+  const [roundUpTo, setRoundUpTo] = useState('100');
+  const [lumpSumAmount, setLumpSumAmount] = useState('10000');
+  const [lumpSumMonth, setLumpSumMonth] = useState('12');
 
   // ---- Derived values ----
   const loanTermMonths = loanTermPreset === 'custom' ? (parseInt(customMonths) || 0) : (parseInt(loanTermPreset) || 30) * 12;
@@ -452,15 +472,26 @@ export default function MortgageCalculatorPage() {
 
   const payoffExtraCalc = useMemo(() => {
     const payoffExtra = parseFloat(payoffExtraPayment) || 0;
+    const strategy: PayoffStrategy = {
+      type: payoffStrategy,
+      fixedMonthly: payoffExtra,
+      extraPaymentsPerYear: parseInt(extraPerYear) || 1,
+      roundUpTo: parseFloat(roundUpTo) || 100,
+      lumpSum: parseFloat(lumpSumAmount) || 0,
+      lumpSumMonth: parseInt(lumpSumMonth) || 1,
+    };
+    const start = startDate ? new Date(startDate + 'T00:00:00') : new Date();
 
-    // Use hybrid schedule (actual + projected) when payment history is available
-    const hasHistory = paymentHistory.length > 0;
-    const scheduleOriginal = hasHistory
+    // Linked-account payment history drives an actual+projected hybrid schedule,
+    // but only the flat monthly-extra strategy can be layered onto real history.
+    // The other strategies are planning models built from origination.
+    const useHybrid = paymentHistory.length > 0 && payoffStrategy === 'fixed_monthly';
+    const scheduleOriginal = useHybrid
       ? buildHybridSchedule(paymentHistory, principal, monthlyRate, loanTermMonths, 0, accountBalance)
-      : buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, 0);
-    const scheduleAccelerated = hasHistory
+      : buildScheduleForStrategy(principal, monthlyRate, loanTermMonths, { type: 'none' }, start);
+    const scheduleAccelerated = useHybrid
       ? buildHybridSchedule(paymentHistory, principal, monthlyRate, loanTermMonths, payoffExtra, accountBalance)
-      : buildAmortizationSchedule(principal, monthlyRate, loanTermMonths, payoffExtra);
+      : buildScheduleForStrategy(principal, monthlyRate, loanTermMonths, strategy, start);
 
     const originalMonths = scheduleOriginal.length;
     const newMonths = scheduleAccelerated.length;
@@ -473,7 +504,6 @@ export default function MortgageCalculatorPage() {
     // Compute payoff dates. When the schedule carries real dates (hybrid mode),
     // use the last row's date so the payoff estimate follows the actual balance
     // trajectory; otherwise fall back to start date + month count.
-    const start = startDate ? new Date(startDate + 'T00:00:00') : new Date();
     const lastOriginal = scheduleOriginal[scheduleOriginal.length - 1];
     const lastAccelerated = scheduleAccelerated[scheduleAccelerated.length - 1];
     const originalPayoffDate = lastOriginal?.date
@@ -482,6 +512,9 @@ export default function MortgageCalculatorPage() {
     const newPayoffDate = lastAccelerated?.date
       ? new Date(lastAccelerated.date + 'T00:00:00')
       : (() => { const d = new Date(start); d.setMonth(d.getMonth() + newMonths); return d; })();
+
+    const basePayment = calcMonthlyPayment(principal, monthlyRate, loanTermMonths);
+    const strategyInfo = describeStrategy(strategy, basePayment);
 
     return {
       scheduleOriginal,
@@ -494,8 +527,12 @@ export default function MortgageCalculatorPage() {
       interestSaved,
       originalPayoffDate,
       newPayoffDate,
+      strategyInfo,
+      startYear: start.getFullYear(),
+      startMonth: start.getMonth(),
     };
-  }, [principal, monthlyRate, loanTermMonths, payoffExtraPayment, startDate, paymentHistory, accountBalance]);
+  }, [principal, monthlyRate, loanTermMonths, payoffExtraPayment, startDate, paymentHistory, accountBalance,
+      payoffStrategy, extraPerYear, roundUpTo, lumpSumAmount, lumpSumMonth]);
 
   /* ---------------------------------------------------------------- */
   /* Payoff: Mode 2 - Target Date -> Required Payment                  */
@@ -934,14 +971,84 @@ export default function MortgageCalculatorPage() {
 
         {payoffMode === 'extra-to-date' && (
           <div className="space-y-6">
-            <div className="max-w-xs">
-              <InputField
-                label="Extra Monthly Payment"
-                value={payoffExtraPayment}
-                onChange={setPayoffExtraPayment}
-                type="currency"
-                ariaLabel="Extra monthly payment in dollars"
-              />
+            {/* Strategy selector */}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-foreground-muted mb-1.5">Payoff Strategy</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {PAYOFF_STRATEGY_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setPayoffStrategy(opt.value)}
+                      className={`text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                        payoffStrategy === opt.value
+                          ? 'bg-primary/10 border-primary/50 text-primary font-medium'
+                          : 'border-border text-foreground-secondary hover:border-border-hover'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Strategy-specific inputs */}
+              <div className="flex flex-wrap items-end gap-4">
+                {payoffStrategy === 'fixed_monthly' && (
+                  <div className="max-w-[12rem]">
+                    <InputField label="Extra Monthly Payment" value={payoffExtraPayment} onChange={setPayoffExtraPayment} type="currency" ariaLabel="Extra monthly payment in dollars" />
+                  </div>
+                )}
+                {payoffStrategy === 'extra_annual' && (
+                  <div className="max-w-[14rem]">
+                    <label className="block text-sm font-medium text-foreground-muted mb-1">Extra Payments per Year</label>
+                    <select
+                      value={extraPerYear}
+                      onChange={e => setExtraPerYear(e.target.value)}
+                      className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="1">1 per year (13 payments)</option>
+                      <option value="2">2 per year (semi-annual)</option>
+                      <option value="3">3 per year</option>
+                      <option value="4">4 per year (quarterly)</option>
+                      <option value="6">6 per year (every 2 months)</option>
+                    </select>
+                  </div>
+                )}
+                {payoffStrategy === 'roundup' && (
+                  <div className="max-w-[12rem]">
+                    <label className="block text-sm font-medium text-foreground-muted mb-1">Round Up To</label>
+                    <select
+                      value={roundUpTo}
+                      onChange={e => setRoundUpTo(e.target.value)}
+                      className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    >
+                      <option value="50">Next $50</option>
+                      <option value="100">Next $100</option>
+                      <option value="250">Next $250</option>
+                      <option value="500">Next $500</option>
+                      <option value="1000">Next $1,000</option>
+                    </select>
+                  </div>
+                )}
+                {payoffStrategy === 'lump_sum' && (
+                  <>
+                    <div className="max-w-[12rem]">
+                      <InputField label="Lump Sum Amount" value={lumpSumAmount} onChange={setLumpSumAmount} type="currency" ariaLabel="Lump sum amount in dollars" />
+                    </div>
+                    <div className="max-w-[10rem]">
+                      <InputField label="At Month #" value={lumpSumMonth} onChange={setLumpSumMonth} type="number" min={1} max={loanTermMonths} ariaLabel="Lump sum month" />
+                    </div>
+                  </>
+                )}
+                {payoffStrategy === 'biweekly' && (
+                  <p className="text-sm text-foreground-muted pb-2">
+                    Half your monthly payment is paid every two weeks — no extra input needed.
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-foreground-muted">{payoffExtraCalc.strategyInfo.description}</p>
             </div>
 
             {/* Results */}
@@ -980,9 +1087,27 @@ export default function MortgageCalculatorPage() {
                   originalSchedule={payoffExtraCalc.scheduleOriginal}
                   acceleratedSchedule={payoffExtraCalc.scheduleAccelerated}
                   originalPayment={calculations.monthlyPayment}
-                  acceleratedPayment={calculations.monthlyPayment + (parseFloat(payoffExtraPayment) || 0)}
+                  acceleratedPayment={
+                    payoffStrategy === 'fixed_monthly'
+                      ? calculations.monthlyPayment + (parseFloat(payoffExtraPayment) || 0)
+                      // For strategies without a constant extra, show the average
+                      // monthly outlay (total paid / number of months).
+                      : payoffExtraCalc.scheduleAccelerated.reduce((s, r) => s + r.payment, 0) /
+                        Math.max(1, payoffExtraCalc.scheduleAccelerated.length)
+                  }
                 />
               </div>
+            )}
+
+            {/* Charts: balance to zero + principal vs interest */}
+            {payoffExtraCalc.scheduleAccelerated.length > 0 && (
+              <MortgageCharts
+                baseline={payoffExtraCalc.scheduleOriginal}
+                accelerated={payoffExtraCalc.scheduleAccelerated}
+                startYear={payoffExtraCalc.startYear}
+                startMonth={payoffExtraCalc.startMonth}
+                acceleratedLabel={payoffExtraCalc.strategyInfo.label}
+              />
             )}
 
             {/* Amortization Table */}
