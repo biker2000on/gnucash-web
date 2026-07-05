@@ -8,7 +8,10 @@ export async function PATCH(
   { params }: { params: Promise<{ guid: string }> }
 ) {
   try {
-    const roleResult = await requireRole('edit');
+    // "Reviewed" is an app-level bookkeeping annotation stored in
+    // gnucash_web_transaction_meta, not GnuCash financial data, so any user
+    // with book access (including readonly) may toggle it from the register.
+    const roleResult = await requireRole('readonly');
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;

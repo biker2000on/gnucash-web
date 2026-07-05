@@ -1,6 +1,7 @@
 'use client';
 
 import { formatCurrency } from '@/lib/format';
+import { JumpToAccountButton } from './JumpToAccountButton';
 
 interface SplitDisplay {
   guid: string;
@@ -24,12 +25,14 @@ interface SplitRowsProps {
   /** If true, render investment-style columns: memo, account, shares, price, buy, sell */
   isInvestmentAccount?: boolean;
   sharePrecision?: number;
+  /** GUID of the account whose ledger is being viewed; its own split gets no jump button. */
+  currentAccountGuid?: string;
 }
 
 // IMPORTANT: Pass ALL splits including the account's own split.
 // Do NOT filter out splits where account_guid === current account.
 
-export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, sharePrecision: sp = 4 }: SplitRowsProps) {
+export default function SplitRows({ splits, currencyMnemonic, columns, trailingColumns, columnIds, isInvestmentAccount, sharePrecision: sp = 4, currentAccountGuid }: SplitRowsProps) {
   // Compute leading/trailing from columnIds when provided, falling back to arithmetic.
   // Content columns are what the split row renders body cells for.
   const splitContentColumns = isInvestmentAccount
@@ -70,7 +73,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
           const splitCommodity = split.commodity_mnemonic || currencyMnemonic;
 
           return (
-            <tr key={split.guid} className="bg-background-secondary/30 border-b border-border/30">
+            <tr key={split.guid} className="group bg-background-secondary/30 border-b border-border/30">
               {Array.from({ length: leadingEmpty }, (_, i) => (
                 <td key={`lead-${i}`} className="px-3 py-1.5" />
               ))}
@@ -80,7 +83,15 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
               </td>
               {/* Account (transfer col) */}
               <td className="px-3 py-1.5 text-xs text-primary">
-                {split.account_fullname || split.account_name}
+                <span className="inline-flex items-center gap-1">
+                  {split.account_fullname || split.account_name}
+                  {currentAccountGuid && split.account_guid !== currentAccountGuid && (
+                    <JumpToAccountButton
+                      accountGuid={split.account_guid}
+                      accountLabel={split.account_fullname || split.account_name}
+                    />
+                  )}
+                </span>
               </td>
               {/* Shares */}
               <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
@@ -127,7 +138,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
         const absValue = Math.abs(split.value_decimal);
 
         return (
-          <tr key={split.guid} className="bg-background-secondary/30 border-b border-border/30">
+          <tr key={split.guid} className="group bg-background-secondary/30 border-b border-border/30">
             {Array.from({ length: leadingEmpty }, (_, i) => (
               <td key={`lead-${i}`} className="px-3 py-1.5" />
             ))}
@@ -137,7 +148,15 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
             </td>
             {/* Account path in transfer column */}
             <td className="px-3 py-1.5 text-xs text-primary">
-              {split.account_fullname || split.account_name}
+              <span className="inline-flex items-center gap-1">
+                {split.account_fullname || split.account_name}
+                {currentAccountGuid && split.account_guid !== currentAccountGuid && (
+                  <JumpToAccountButton
+                    accountGuid={split.account_guid}
+                    accountLabel={split.account_fullname || split.account_name}
+                  />
+                )}
+              </span>
             </td>
             {/* Debit */}
             <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">

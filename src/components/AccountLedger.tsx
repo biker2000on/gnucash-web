@@ -2,6 +2,7 @@
 
 import { Transaction } from '@/lib/types';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -30,6 +31,7 @@ import { FilterBar } from './ui/FilterBar';
 import { ActionMenu, type ActionMenuItem } from './ui/ActionMenu';
 import ViewMenu from './ViewMenu';
 import SplitRows from './ledger/SplitRows';
+import { JumpToAccountButton } from './ledger/JumpToAccountButton';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import AccountPickerDialog from './AccountPickerDialog';
@@ -110,6 +112,7 @@ export default function AccountLedger({
     const { balanceReversal, defaultLedgerMode, ledgerViewStyle, setLedgerViewStyle, costBasisCarryOver, costBasisMethod } = useUserPreferences();
     const { success, error } = useToast();
     const queryClient = useQueryClient();
+    const router = useRouter();
     const { isReadonly } = useCurrentUser();
     const isMobile = useIsMobile();
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
@@ -800,6 +803,25 @@ export default function AccountLedger({
             error('Failed to toggle reviewed status');
         }
     }, [error, queryClient]);
+
+    // Jump to the "other" account of a transaction (GnuCash-style Jump).
+    // For a 2-split (or single counter-account) transaction, navigate straight
+    // to that account's ledger. For a multi-split transaction with several
+    // distinct counter-accounts there is no single target, so expand the row
+    // to reveal the per-line jump buttons and let the user pick a line.
+    const jumpToOtherAccount = useCallback((tx: AccountTransaction) => {
+        const others = (tx.splits || []).filter(s =>
+            s.account_guid &&
+            s.account_guid !== accountGuid &&
+            !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:'));
+        const distinct = Array.from(new Map(others.map(s => [s.account_guid, s])).values());
+        if (distinct.length === 1) {
+            router.push(`/accounts/${distinct[0].account_guid}`);
+        } else if (distinct.length > 1) {
+            setExpandedTxs(prev => ({ ...prev, [tx.guid]: true }));
+            setExpandedTransactions(prev => new Set(prev).add(tx.guid));
+        }
+    }, [accountGuid, router]);
 
     // Duplicate a transaction
     const handleDuplicate = useCallback(async (transactionGuid: string) => {
@@ -1507,6 +1529,12 @@ export default function AccountLedger({
                     toggleReviewed(displayTransactions[focusedRowIndex].guid);
                 }
                 break;
+            case 'o':
+                if (focusedRowIndex >= 0 && focusedRowIndex < displayTransactions.length) {
+                    e.preventDefault();
+                    jumpToOtherAccount(displayTransactions[focusedRowIndex]);
+                }
+                break;
             case 's':
                 if (hasChildren) {
                     e.preventDefault();
@@ -1543,7 +1571,7 @@ export default function AccountLedger({
                 }
                 break;
         }
-    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, showMoveDialog, imbalanceDialogTx, focusedRowIndex, focusedSplitIndex, displayTransactions, isEditMode, isSlimEditMode, handleRowClick, handleEditDirect, handleJournalSave, handleDuplicate, handleDeleteClick, createNewTransaction, toggleReviewed, handleBulkReview, onEscape, searchText, hasChildren, ledgerViewStyle, expandedTransactions, editSelectedGuids]);
+    }, [editingGuid, isEditModalOpen, isViewModalOpen, deleteConfirmOpen, showMoveDialog, imbalanceDialogTx, focusedRowIndex, focusedSplitIndex, displayTransactions, isEditMode, isSlimEditMode, handleRowClick, handleEditDirect, handleJournalSave, handleDuplicate, handleDeleteClick, createNewTransaction, toggleReviewed, jumpToOtherAccount, handleBulkReview, onEscape, searchText, hasChildren, ledgerViewStyle, expandedTransactions, editSelectedGuids]);
 
     // Attach keyboard listener
     useEffect(() => {
@@ -2665,10 +2693,17 @@ export default function AccountLedger({
                                             if (colId === 'transfer') {
                                                 if (isInvestmentAccount && !showSubaccounts) {
                                                     const invRow = investmentRowMap?.get(tx.guid);
+                                                    const jumpSplit = otherSplits[0];
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm text-foreground-secondary align-middle leading-tight">
-                                                            <span className="text-xs whitespace-normal break-words">
+                                                            <span className="flex items-center gap-1 text-xs whitespace-normal break-words min-w-0">
                                                                 {invRow?.transferAccount || '\u2014'}
+                                                                {jumpSplit && jumpSplit.account_guid !== accountGuid && (
+                                                                    <JumpToAccountButton
+                                                                        accountGuid={jumpSplit.account_guid}
+                                                                        accountLabel={jumpSplit.account_fullname || jumpSplit.account_name}
+                                                                    />
+                                                                )}
                                                             </span>
                                                         </td>
                                                     );
@@ -2681,8 +2716,14 @@ export default function AccountLedger({
                                                             <div className="space-y-1">
                                                                 {otherSplits.map((split) => (
                                                                     <div key={split.guid} className="flex justify-between items-center text-xs">
-                                                                        <span className="text-foreground-secondary whitespace-normal break-words">
+                                                                        <span className="flex items-center gap-1 text-foreground-secondary whitespace-normal break-words min-w-0">
                                                                             {formatDisplayAccountPath(split.account_fullname, split.account_name)}
+                                                                            {split.account_guid !== accountGuid && (
+                                                                                <JumpToAccountButton
+                                                                                    accountGuid={split.account_guid}
+                                                                                    accountLabel={split.account_fullname || split.account_name}
+                                                                                />
+                                                                            )}
                                                                         </span>
                                                                         <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
                                                                             {formatCurrency(split.value_decimal || split.quantity_decimal || '0', split.commodity_mnemonic || tx.commodity_mnemonic)}
@@ -2708,8 +2749,14 @@ export default function AccountLedger({
                                                             <div className="space-y-1">
                                                                 {otherSplits.map((split) => (
                                                                     <div key={split.guid} className="flex justify-between items-center text-xs">
-                                                                        <span className="text-foreground-secondary whitespace-normal break-words">
+                                                                        <span className="flex items-center gap-1 text-foreground-secondary whitespace-normal break-words min-w-0">
                                                                             {formatDisplayAccountPath(split.account_fullname, split.account_name)}
+                                                                            {split.account_guid !== accountGuid && (
+                                                                                <JumpToAccountButton
+                                                                                    accountGuid={split.account_guid}
+                                                                                    accountLabel={split.account_fullname || split.account_name}
+                                                                                />
+                                                                            )}
                                                                         </span>
                                                                         {isExpanded && (
                                                                             <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
@@ -2866,6 +2913,7 @@ export default function AccountLedger({
                                             trailingColumns={isInvestmentAccount ? 2 : undefined}
                                             isInvestmentAccount={isInvestmentAccount}
                                             sharePrecision={sharePrecision}
+                                            currentAccountGuid={accountGuid}
                                         />
                                     )}
                                     </React.Fragment>
