@@ -38,6 +38,7 @@ const RETIREMENT_ACCOUNT_TYPE_VALUES = [
   'traditional_ira',
   'roth_ira',
   'hsa',
+  'hsa_family',
   'hra',
   'fsa',
   'brokerage',

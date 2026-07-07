@@ -21,6 +21,7 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useInvalidateAccounts } from '@/lib/hooks/useAccounts';
 import { useToast } from '@/contexts/ToastContext';
 import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
+import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
 import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
 import { FilterBar } from './ui/FilterBar';
@@ -333,6 +334,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const invalidateAccounts = useInvalidateAccounts();
     const { success: toastSuccess, error: toastError } = useToast();
     const { isReadonly } = useCurrentUser();
+    const { selfName, spouseName } = useHouseholdNames();
     const { data: reviewStatusData } = useReviewStatus();
     const statusMap = useMemo<ReviewStatusMap>(() => reviewStatusData ?? {}, [reviewStatusData]);
 
@@ -913,7 +915,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             header: 'Owner',
             cell: ({ row }) => {
                 const owner = row.original.owner;
-                const label = owner ? OWNER_BADGE_LABELS[owner] : undefined;
+                const label = owner
+                    ? (owner === 'self' ? selfName : owner === 'spouse' ? spouseName : null)
+                        ?? OWNER_BADGE_LABELS[owner]
+                    : undefined;
                 return (
                     <div className="px-3 py-1 leading-tight text-right">
                         {label ? (
@@ -942,7 +947,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                 </div>
             ),
         },
-    ], [accountTagsMap, dateFormat, filterText, handleDeleteConfirm, handleEdit, handleNewChild, handleRowToggle, isMobile, router]);
+    ], [accountTagsMap, dateFormat, filterText, handleDeleteConfirm, handleEdit, handleNewChild, handleRowToggle, isMobile, router, selfName, spouseName]);
 
     const normalizedVisibility = useMemo(() => normalizeVisibility(columnVisibility), [columnVisibility]);
     const normalizedOrder = useMemo(() => normalizeColumnOrder(columnOrder), [columnOrder]);

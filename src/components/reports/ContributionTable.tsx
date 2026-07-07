@@ -44,6 +44,7 @@ const RETIREMENT_TYPE_LABELS: Record<string, string> = {
   sep_ira: 'SEP IRA',
   simple_ira: 'SIMPLE IRA',
   hsa: 'HSA',
+  hsa_family: 'HSA (family)',
   hra: 'HRA',
   fsa: 'FSA',
   brokerage: 'BROKERAGE',

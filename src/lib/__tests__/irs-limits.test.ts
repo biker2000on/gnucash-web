@@ -35,6 +35,10 @@ describe('IRS Contribution Limits', () => {
       expect(RETIREMENT_ACCOUNT_TYPES).toContain('education_529');
       expect(RETIREMENT_ACCOUNT_TYPES).toContain('coverdell_esa');
     });
+
+    it('should include the family-coverage HSA type', () => {
+      expect(RETIREMENT_ACCOUNT_TYPES).toContain('hsa_family');
+    });
   });
 
   describe('calculateAge', () => {
@@ -122,6 +126,20 @@ describe('IRS Contribution Limits', () => {
       expect(limits.find(l => l.account_type === 'education_529')).toBeUndefined();
     });
 
+    it('should return family-coverage HSA limits for all supported years', () => {
+      // Rev. Proc. 2023-23 (2024), 2024-25 (2025), 2025-19 (2026); the $1,000
+      // HSA catch-up (age 55+) applies to both coverage tiers.
+      expect(getDefaultLimits(2024)).toContainEqual(
+        expect.objectContaining({ account_type: 'hsa_family', base_limit: 8300, catch_up_limit: 1000, catch_up_age: 55 })
+      );
+      expect(getDefaultLimits(2025)).toContainEqual(
+        expect.objectContaining({ account_type: 'hsa_family', base_limit: 8550, catch_up_limit: 1000, catch_up_age: 55 })
+      );
+      expect(getDefaultLimits(2026)).toContainEqual(
+        expect.objectContaining({ account_type: 'hsa_family', base_limit: 8750, catch_up_limit: 1000, catch_up_age: 55 })
+      );
+    });
+
     it('should return empty array for unknown year', () => {
       const limits = getDefaultLimits(2010);
       expect(limits).toEqual([]);
@@ -181,6 +199,20 @@ describe('IRS Contribution Limits', () => {
 
       const limit = await getContributionLimit(2026, 'sep_ira', '1970-06-15');
       expect(limit).toEqual({ base: 72000, catchUp: 0, total: 72000, catchUpAge: 50 });
+    });
+
+    it('should add family HSA catch-up at 55+ (2026: 8,750 + 1,000)', async () => {
+      mockContributionLimitsFindFirst.mockResolvedValue(null);
+
+      const limit = await getContributionLimit(2026, 'hsa_family', '1968-06-15');
+      expect(limit).toEqual({ base: 8750, catchUp: 1000, total: 9750, catchUpAge: 55 });
+    });
+
+    it('should not add family HSA catch-up under 55', async () => {
+      mockContributionLimitsFindFirst.mockResolvedValue(null);
+
+      const limit = await getContributionLimit(2026, 'hsa_family', '1980-06-15');
+      expect(limit).toEqual({ base: 8750, catchUp: 1000, total: 8750, catchUpAge: 55 });
     });
 
     it('should add SIMPLE IRA catch-up when over 50 (2026: 17,000 + 4,000)', async () => {

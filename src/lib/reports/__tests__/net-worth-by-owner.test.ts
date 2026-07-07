@@ -174,6 +174,40 @@ describe('bucketAccountsByOwner', () => {
     expect(self.netWorth).toBe(200);
   });
 
+  it('resolves self/spouse labels from household names while keeping owner keys stable', () => {
+    const ownerMap = new Map<string, AccountOwner>([
+      ['his', 'self'],
+      ['hers', 'spouse'],
+      ['both', 'joint'],
+    ]);
+    const { buckets } = bucketAccountsByOwner(
+      [
+        row('his', 'BANK', 1),
+        row('hers', 'BANK', 2),
+        row('both', 'BANK', 3),
+        row('nobody', 'BANK', 4),
+      ],
+      ownerMap,
+      { self: 'Alice', spouse: 'Bob' },
+    );
+    expect(buckets.map(b => [b.owner, b.label])).toEqual([
+      ['self', 'Alice'],
+      ['spouse', 'Bob'],
+      ['joint', 'Joint'],
+      ['unassigned', 'Unassigned'],
+    ]);
+  });
+
+  it('falls back to generic labels when household names are unset', () => {
+    const ownerMap = new Map<string, AccountOwner>([['his', 'self']]);
+    const { buckets } = bucketAccountsByOwner(
+      [row('his', 'BANK', 1)],
+      ownerMap,
+      { self: null, spouse: null },
+    );
+    expect(buckets[0].label).toBe('Self');
+  });
+
   it('rounds balances and totals to cents', () => {
     const ownerMap = new Map<string, AccountOwner>([['fund', 'self']]);
     const { buckets, totals } = bucketAccountsByOwner(

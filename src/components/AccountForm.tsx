@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
+import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
 import type { Tag } from '@/lib/tags';
@@ -68,6 +69,10 @@ const OWNER_ELIGIBLE_ACCOUNT_TYPES = new Set([
 
 const OWNER_VALUES = new Set(['self', 'spouse', 'joint']);
 
+// HSAs are the one "retirement" type that can cover the whole family, so the
+// Owner select additionally offers Family (stored as 'joint') for them.
+const HSA_RETIREMENT_TYPES = new Set(['hsa', 'hsa_family']);
+
 function isCurrencyCommodity(c: Commodity): boolean {
     return c.namespace === 'CURRENCY' || c.namespace === 'ISO4217';
 }
@@ -108,6 +113,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
     const [saving, setSaving] = useState(false);
     const formRef = useRef<HTMLFormElement>(null);
     const queryClient = useQueryClient();
+    const { selfName, spouseName } = useHouseholdNames();
 
     // Tags (edit mode only -- new accounts don't have a guid yet)
     const [tags, setTags] = useState<SelectedTag[]>([]);
@@ -567,17 +573,15 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
 
             {/* Tax & retirement flags */}
             <div className="space-y-3 border-t border-border pt-4">
+                <p className="text-xs text-foreground-muted">
+                    Tax marking, in two places: tag an expense account with{' '}
+                    <span className="text-foreground-secondary font-medium">#taxes</span> (Tags below) to include
+                    it in the dashboard&rsquo;s Taxes chart; map accounts to{' '}
+                    <span className="text-foreground-secondary font-medium">tax categories</span> in the Tax
+                    Estimator (Edit account mapping) to drive tax calculations. The retirement flag here marks
+                    the account tax-sheltered.
+                </p>
                 <div className="flex flex-wrap gap-6">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={formData.tax_related}
-                            onChange={e => setFormData(prev => ({ ...prev, tax_related: e.target.checked }))}
-                            className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
-                        />
-                        <span className="text-sm text-foreground-secondary">Tax related</span>
-                    </label>
-
                     <label className="flex items-center gap-3 cursor-pointer">
                         <input
                             type="checkbox"
@@ -587,9 +591,14 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                 is_retirement: e.target.checked,
                                 retirement_account_type: e.target.checked ? prev.retirement_account_type : null,
                                 // Retirement accounts are individually owned; a joint
-                                // owner isn't valid there. Keep self/spouse as-is when
+                                // owner isn't valid there — except HSAs, which can
+                                // cover the whole family. Keep self/spouse as-is when
                                 // toggling either way.
-                                owner: e.target.checked && prev.owner === 'joint' ? 'self' : prev.owner,
+                                owner: e.target.checked
+                                    && prev.owner === 'joint'
+                                    && !HSA_RETIREMENT_TYPES.has(prev.retirement_account_type ?? '')
+                                    ? 'self'
+                                    : prev.owner,
                             }))}
                             className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
                         />
@@ -602,6 +611,11 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             onChange={e => setFormData(prev => ({
                                 ...prev,
                                 retirement_account_type: e.target.value || null,
+                                // Family (joint) ownership is only valid for HSA
+                                // types; reset to Self when switching away.
+                                owner: prev.owner === 'joint' && !HSA_RETIREMENT_TYPES.has(e.target.value)
+                                    ? 'self'
+                                    : prev.owner,
                             }))}
                             className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         >
@@ -613,7 +627,8 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             <option value="roth_ira">Roth IRA</option>
                             <option value="sep_ira">SEP IRA</option>
                             <option value="simple_ira">SIMPLE IRA</option>
-                            <option value="hsa">HSA</option>
+                            <option value="hsa">HSA (self-only)</option>
+                            <option value="hsa_family">HSA (family coverage)</option>
                             <option value="hra">HRA</option>
                             <option value="fsa">FSA</option>
                             <option value="education_529">529 Plan</option>
@@ -628,17 +643,29 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             {formData.is_retirement ? (
                                 // Retirement accounts are individually owned: no Joint,
                                 // and unset displays as Self (matching how the reports
-                                // attribute unset retirement owners).
+                                // attribute unset retirement owners). HSAs additionally
+                                // allow Family (stored as 'joint') since one HSA can
+                                // cover the whole household.
                                 <select
-                                    value={formData.owner === 'spouse' ? 'spouse' : 'self'}
+                                    value={
+                                        formData.owner === 'spouse'
+                                            ? 'spouse'
+                                            : formData.owner === 'joint'
+                                                && HSA_RETIREMENT_TYPES.has(formData.retirement_account_type ?? '')
+                                                ? 'joint'
+                                                : 'self'
+                                    }
                                     onChange={e => setFormData(prev => ({
                                         ...prev,
-                                        owner: e.target.value === 'spouse' ? 'spouse' : 'self',
+                                        owner: OWNER_VALUES.has(e.target.value) ? e.target.value : 'self',
                                     }))}
                                     className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 >
-                                    <option value="self">Self</option>
-                                    <option value="spouse">Spouse</option>
+                                    <option value="self">{selfName ?? 'Self'}</option>
+                                    <option value="spouse">{spouseName ?? 'Spouse'}</option>
+                                    {HSA_RETIREMENT_TYPES.has(formData.retirement_account_type ?? '') && (
+                                        <option value="joint">Family</option>
+                                    )}
                                 </select>
                             ) : (
                                 <select
@@ -650,8 +677,8 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                     className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 >
                                     <option value="">—</option>
-                                    <option value="self">Self</option>
-                                    <option value="spouse">Spouse</option>
+                                    <option value="self">{selfName ?? 'Self'}</option>
+                                    <option value="spouse">{spouseName ?? 'Spouse'}</option>
                                     <option value="joint">Joint</option>
                                 </select>
                             )}

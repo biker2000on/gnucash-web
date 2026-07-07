@@ -71,6 +71,7 @@ const RETIREMENT_TYPE_CATEGORY: Record<string, TaxCategory> = {
   traditional_ira: 'trad_ira_contribution',
   roth_ira: 'roth_ira_contribution',
   hsa: 'hsa_contribution',
+  hsa_family: 'hsa_contribution',
 };
 
 /**

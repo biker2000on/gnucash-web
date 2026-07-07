@@ -26,9 +26,12 @@ const mockSlotsFindMany = vi.fn();
 const mockSlotsCreate = vi.fn();
 const mockAccountsFindUnique = vi.fn();
 const mockAccountsFindFirst = vi.fn();
+const mockAccountsFindMany = vi.fn();
 const mockAccountsCreate = vi.fn();
 const mockBooksFindFirst = vi.fn();
 const mockTransactionsCreate = vi.fn();
+const mockCommoditiesFindUnique = vi.fn();
+const mockCommoditiesFindMany = vi.fn();
 
 vi.mock('../prisma', () => ({
   default: {
@@ -51,6 +54,7 @@ vi.mock('../prisma', () => ({
     accounts: {
       findUnique: (...args: unknown[]) => mockAccountsFindUnique(...args),
       findFirst: (...args: unknown[]) => mockAccountsFindFirst(...args),
+      findMany: (...args: unknown[]) => mockAccountsFindMany(...args),
       create: (...args: unknown[]) => mockAccountsCreate(...args),
     },
     books: {
@@ -58,6 +62,10 @@ vi.mock('../prisma', () => ({
     },
     transactions: {
       create: (...args: unknown[]) => mockTransactionsCreate(...args),
+    },
+    commodities: {
+      findUnique: (...args: unknown[]) => mockCommoditiesFindUnique(...args),
+      findMany: (...args: unknown[]) => mockCommoditiesFindMany(...args),
     },
   },
 }));
@@ -84,6 +92,7 @@ function createMockTx() {
     accounts: {
       findUnique: mockAccountsFindUnique,
       findFirst: mockAccountsFindFirst,
+      findMany: mockAccountsFindMany,
       create: mockAccountsCreate,
     },
     books: {
@@ -91,6 +100,10 @@ function createMockTx() {
     },
     transactions: {
       create: mockTransactionsCreate,
+    },
+    commodities: {
+      findUnique: mockCommoditiesFindUnique,
+      findMany: mockCommoditiesFindMany,
     },
   } as never;
 }
@@ -806,6 +819,33 @@ describe('generateCapitalGains', () => {
   const tx = createMockTx();
   const runId = 'run-003';
 
+  const USD_GUID = 'usd-guid-00000000000000000000';
+  const AAPL_GUID = 'aapl-guid-0000000000000000000';
+  const INVEST_GUID = 'invest-acct-guid-000000000000';
+  const PARENT_GUID = 'parent-guid-00000000000000000';
+  const ROOT_GUID = 'root-guid';
+
+  /** Minimal account hierarchy rows returned by accounts.findMany. */
+  function baseAccountRows(extra: Array<Record<string, unknown>> = []) {
+    return [
+      { guid: INVEST_GUID, name: 'AAPL', parent_guid: PARENT_GUID, account_type: 'STOCK', commodity_guid: AAPL_GUID },
+      { guid: PARENT_GUID, name: 'Brokerage', parent_guid: ROOT_GUID, account_type: 'ASSET', commodity_guid: USD_GUID },
+      { guid: ROOT_GUID, name: 'Root', parent_guid: null, account_type: 'ROOT', commodity_guid: USD_GUID },
+      ...extra,
+    ];
+  }
+
+  /** USD is a CURRENCY (fraction 100); everything else is a stock commodity. */
+  function mockCommodities() {
+    mockCommoditiesFindUnique.mockImplementation(
+      async (args: { where: { guid: string } }) =>
+        args.where.guid === USD_GUID
+          ? { namespace: 'CURRENCY', fraction: 100 }
+          : { namespace: 'NASDAQ', fraction: 10000 },
+    );
+    mockCommoditiesFindMany.mockResolvedValue([{ guid: USD_GUID, fraction: 100 }]);
+  }
+
   function makeLotWithSplits(opts: {
     lotGuid?: string;
     accountGuid?: string;
@@ -862,7 +902,8 @@ describe('generateCapitalGains', () => {
     // No acquisition_date slot
     mockSlotsFindFirst.mockResolvedValue(null);
     // Book
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     // findOrCreateAccount (Income:Capital Gains:Short Term)
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
@@ -924,7 +965,8 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Traditional IRA', parent_guid: 'root-guid' });
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Root', parent_guid: null });
     mockSlotsFindFirst.mockResolvedValue(null);
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     // findOrCreateAccount: Income:Capital Gains:Tax-Deferred:Short Term
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
@@ -1010,7 +1052,8 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'brokerage-guid' });
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
     mockSlotsFindFirst.mockResolvedValue(null);
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
       .mockResolvedValueOnce({ guid: 'capgains-guid' })
@@ -1037,7 +1080,8 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'brokerage-guid' });
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
     mockSlotsFindFirst.mockResolvedValue(null);
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     // Long Term path
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
@@ -1072,7 +1116,8 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'brokerage-guid' });
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
     mockSlotsFindFirst.mockResolvedValue(null);
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
       .mockResolvedValueOnce({ guid: 'capgains-guid' })
@@ -1113,7 +1158,8 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'BTC', parent_guid: 'exchange-guid' });
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Exchange', parent_guid: null });
     mockSlotsFindFirst.mockResolvedValue(null);
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
       .mockResolvedValueOnce({ guid: 'capgains-guid' })
@@ -1144,7 +1190,8 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
     // Return acquisition_date from 2022 — this should make it long_term
     mockSlotsFindFirst.mockResolvedValue({ string_val: '2022-01-01T00:00:00.000Z' });
-    mockBooksFindFirst.mockResolvedValue({ root_account_guid: 'root-guid' });
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
     mockAccountsFindFirst
       .mockResolvedValueOnce({ guid: 'income-guid' })
       .mockResolvedValueOnce({ guid: 'capgains-guid' })
@@ -1159,6 +1206,186 @@ describe('generateCapitalGains', () => {
     // Without the slot it would be short_term (Jun-Nov 2024).
     // With acquisition_date from 2022, it should be long_term.
     expect(result.holdingPeriod).toBe('long_term');
+  });
+
+  it('C8: commodity-denominated source tx — currency falls back to ancestor CURRENCY, value uses currency fraction', async () => {
+    // Crypto-style account: scu 1e9; the source buy/sell transactions are
+    // (incorrectly) denominated in the commodity itself, as imported data
+    // sometimes is. Buy 2 @ $500 = +$1000, sell 2 @ $750 = -$1500 => gain $500.
+    const lot = makeLotWithSplits({
+      commodityScu: 1000000000,
+      splits: [
+        { qtyNum: 2000000000n, qtyDenom: 1000000000n, valNum: 100000n, valDenom: 100n, postDate: new Date('2024-01-01'), currencyGuid: AAPL_GUID },
+        { qtyNum: -2000000000n, qtyDenom: 1000000000n, valNum: -150000n, valDenom: 100n, postDate: new Date('2024-07-01'), currencyGuid: AAPL_GUID },
+      ],
+    });
+
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'VT', parent_guid: 'brokerage-guid' });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows());
+    mockCommodities();
+    mockAccountsFindFirst
+      .mockResolvedValueOnce({ guid: 'income-guid' })
+      .mockResolvedValueOnce({ guid: 'capgains-guid' })
+      .mockResolvedValueOnce({ guid: 'st-guid' });
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeDefined();
+    expect(result.gainLoss).toBeCloseTo(500);
+    // Transaction currency is the ancestor account's CURRENCY (USD), NOT the
+    // commodity the source transaction was denominated in.
+    expect(mockTransactionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency_guid: USD_GUID }),
+      }),
+    );
+    // Values use the currency fraction (100), NOT the commodity scu (1e9);
+    // quantities keep the commodity scu.
+    const investCall = mockSplitsCreate.mock.calls[0][0] as {
+      data: { value_num: bigint; value_denom: bigint; quantity_denom: bigint };
+    };
+    expect(investCall.data.value_num).toBe(50000n);
+    expect(investCall.data.value_denom).toBe(100n);
+    expect(investCall.data.quantity_denom).toBe(1000000000n);
+    const incomeCall = mockSplitsCreate.mock.calls[1][0] as {
+      data: { value_num: bigint; value_denom: bigint };
+    };
+    expect(incomeCall.data.value_num).toBe(-50000n);
+    expect(incomeCall.data.value_denom).toBe(100n);
+  });
+
+  it('C9: no CURRENCY ancestor — falls back to most-common CURRENCY commodity across accounts', async () => {
+    const lot = makeLotWithSplits({
+      splits: [
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2024-01-01'), currencyGuid: AAPL_GUID },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-07-01'), currencyGuid: AAPL_GUID },
+      ],
+    });
+
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'VT', parent_guid: 'brokerage-guid' });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
+    mockSlotsFindFirst.mockResolvedValue(null);
+    // No ancestor carries a CURRENCY commodity; USD backs 2 accounts, EUR 1.
+    mockAccountsFindMany.mockResolvedValue([
+      { guid: INVEST_GUID, name: 'VT', parent_guid: PARENT_GUID, account_type: 'STOCK', commodity_guid: AAPL_GUID },
+      { guid: PARENT_GUID, name: 'Brokerage', parent_guid: ROOT_GUID, account_type: 'ASSET', commodity_guid: AAPL_GUID },
+      { guid: ROOT_GUID, name: 'Root', parent_guid: null, account_type: 'ROOT', commodity_guid: null },
+      { guid: 'bank-1-guid', name: 'Checking', parent_guid: ROOT_GUID, account_type: 'BANK', commodity_guid: USD_GUID },
+      { guid: 'bank-2-guid', name: 'Savings', parent_guid: ROOT_GUID, account_type: 'BANK', commodity_guid: USD_GUID },
+      { guid: 'bank-3-guid', name: 'Euro Cash', parent_guid: ROOT_GUID, account_type: 'BANK', commodity_guid: 'eur-guid-00000000000000000000' },
+    ]);
+    mockCommoditiesFindUnique.mockImplementation(
+      async (args: { where: { guid: string } }) =>
+        args.where.guid === AAPL_GUID
+          ? { namespace: 'NASDAQ', fraction: 10000 }
+          : { namespace: 'CURRENCY', fraction: 100 },
+    );
+    mockCommoditiesFindMany.mockResolvedValue([
+      { guid: 'eur-guid-00000000000000000000', fraction: 100 },
+      { guid: USD_GUID, fraction: 100 },
+    ]);
+    mockAccountsFindFirst
+      .mockResolvedValueOnce({ guid: 'income-guid' })
+      .mockResolvedValueOnce({ guid: 'capgains-guid' })
+      .mockResolvedValueOnce({ guid: 'st-guid' });
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeDefined();
+    // USD backs 2 accounts vs EUR's 1 — the most-common CURRENCY wins
+    expect(mockTransactionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency_guid: USD_GUID }),
+      }),
+    );
+  });
+
+  it('C10: existing Income:Investment:Capital Gains:Long Term:taxable account is found and reused', async () => {
+    // Long-term taxable gain
+    const lot = makeLotWithSplits({
+      splits: [
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2022-01-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-06-01') },
+      ],
+    });
+
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'brokerage-guid' });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows([
+      { guid: 'income-acct-guid', name: 'Income', parent_guid: ROOT_GUID, account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'inv-income-guid', name: 'Investment', parent_guid: 'income-acct-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-guid', name: 'Capital Gains', parent_guid: 'inv-income-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-lt-guid', name: 'Long Term', parent_guid: 'cg-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-lt-taxable-guid', name: 'taxable', parent_guid: 'cg-lt-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-lt-nontax-guid', name: 'non-taxable', parent_guid: 'cg-lt-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+    ]));
+    mockCommodities();
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeDefined();
+    expect(result.holdingPeriod).toBe('long_term');
+    expect(result.taxClassification).toBe('TAX_NORMAL');
+    // Income split posted to the EXISTING taxable long-term account
+    const incomeCall = mockSplitsCreate.mock.calls[1][0] as { data: { account_guid: string } };
+    expect(incomeCall.data.account_guid).toBe('cg-lt-taxable-guid');
+    // No account lookup-by-path or creation happened
+    expect(mockAccountsFindFirst).not.toHaveBeenCalled();
+    expect(mockAccountsCreate).not.toHaveBeenCalled();
+  });
+
+  it('C11: TAX_DEFERRED prefers the existing non-taxable capital gains account', async () => {
+    const lot = makeLotWithSplits({
+      splits: [
+        { qtyNum: 100n, qtyDenom: 100n, valNum: 5000n, valDenom: 100n, postDate: new Date('2022-01-01') },
+        { qtyNum: -100n, qtyDenom: 100n, valNum: -6000n, valDenom: 100n, postDate: new Date('2024-06-01') },
+      ],
+    });
+
+    mockLotsFindUnique.mockResolvedValue(lot);
+    // classifyAccountTax: Traditional IRA => TAX_DEFERRED
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'ira-guid' });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Traditional IRA', parent_guid: null });
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockAccountsFindMany.mockResolvedValue(baseAccountRows([
+      { guid: 'income-acct-guid', name: 'Income', parent_guid: ROOT_GUID, account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'inv-income-guid', name: 'Investment', parent_guid: 'income-acct-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-guid', name: 'Capital Gains', parent_guid: 'inv-income-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-lt-guid', name: 'Long Term', parent_guid: 'cg-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-lt-taxable-guid', name: 'taxable', parent_guid: 'cg-lt-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+      { guid: 'cg-lt-nontax-guid', name: 'non-taxable', parent_guid: 'cg-lt-guid', account_type: 'INCOME', commodity_guid: USD_GUID },
+    ]));
+    mockCommodities();
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.taxClassification).toBe('TAX_DEFERRED');
+    const incomeCall = mockSplitsCreate.mock.calls[1][0] as { data: { account_guid: string } };
+    expect(incomeCall.data.account_guid).toBe('cg-lt-nontax-guid');
+    expect(mockAccountsFindFirst).not.toHaveBeenCalled();
+    expect(mockAccountsCreate).not.toHaveBeenCalled();
   });
 });
 

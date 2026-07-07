@@ -66,10 +66,11 @@ export async function GET(request: NextRequest) {
 
     // Resolved IRS limits for scenario validation (catch-up by birthday).
     // Spouse IRA limits use the spouse's birthday so catch-up eligibility is per person.
-    const [limit401k, limitIra, limitHsa, limitSpouseIra] = await Promise.all([
+    const [limit401k, limitIra, limitHsa, limitHsaFamily, limitSpouseIra] = await Promise.all([
       getContributionLimit(year, '401k', effectiveBirthday),
       getContributionLimit(year, 'traditional_ira', effectiveBirthday),
       getContributionLimit(year, 'hsa', effectiveBirthday),
+      getContributionLimit(year, 'hsa_family', effectiveBirthday),
       getContributionLimit(year, 'traditional_ira', effectiveSpouseBirthday),
     ]);
 
@@ -112,6 +113,7 @@ export async function GET(request: NextRequest) {
         '401k': limit401k,
         ira: limitIra,
         hsa: limitHsa,
+        hsaFamily: limitHsaFamily,
         spouseIra: limitSpouseIra,
       },
     });

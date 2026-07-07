@@ -2,7 +2,7 @@ import prisma from '@/lib/prisma';
 
 export const RETIREMENT_ACCOUNT_TYPES = [
   '401k', '403b', '457', 'traditional_ira', 'roth_ira', 'sep_ira', 'simple_ira',
-  'hsa', 'hra', 'fsa', 'education_529', 'coverdell_esa',
+  'hsa', 'hsa_family', 'hra', 'fsa', 'education_529', 'coverdell_esa',
 ] as const;
 
 export type RetirementAccountType = typeof RETIREMENT_ACCOUNT_TYPES[number] | 'brokerage';
@@ -34,6 +34,8 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: 'sep_ira', base_limit: 69000, catch_up_limit: 0, catch_up_age: 50 },
     { account_type: 'simple_ira', base_limit: 16000, catch_up_limit: 3500, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4150, catch_up_limit: 1000, catch_up_age: 55 },
+    // IRS family-coverage HSA limit; catch-up is per account holder (55+)
+    { account_type: 'hsa_family', base_limit: 8300, catch_up_limit: 1000, catch_up_age: 55 },
     { account_type: 'fsa', base_limit: 3200, catch_up_limit: 0, catch_up_age: 50 },
     { account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0, catch_up_age: 50 },
   ],
@@ -46,6 +48,8 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: 'sep_ira', base_limit: 70000, catch_up_limit: 0, catch_up_age: 50 },
     { account_type: 'simple_ira', base_limit: 16500, catch_up_limit: 3500, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4300, catch_up_limit: 1000, catch_up_age: 55 },
+    // IRS family-coverage HSA limit; catch-up is per account holder (55+)
+    { account_type: 'hsa_family', base_limit: 8550, catch_up_limit: 1000, catch_up_age: 55 },
     { account_type: 'fsa', base_limit: 3300, catch_up_limit: 0, catch_up_age: 50 },
     { account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0, catch_up_age: 50 },
   ],
@@ -60,6 +64,8 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
     { account_type: 'sep_ira', base_limit: 72000, catch_up_limit: 0, catch_up_age: 50 },
     { account_type: 'simple_ira', base_limit: 17000, catch_up_limit: 4000, catch_up_age: 50 },
     { account_type: 'hsa', base_limit: 4400, catch_up_limit: 1000, catch_up_age: 55 },
+    // IRS family-coverage HSA limit; catch-up is per account holder (55+)
+    { account_type: 'hsa_family', base_limit: 8750, catch_up_limit: 1000, catch_up_age: 55 },
     { account_type: 'fsa', base_limit: 3400, catch_up_limit: 0, catch_up_age: 50 },
     { account_type: 'coverdell_esa', base_limit: 2000, catch_up_limit: 0, catch_up_age: 50 },
   ],

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateNetWorthByOwner } from '@/lib/reports/net-worth-by-owner';
+import { generateNetWorthByOwner, OwnerBucketNames } from '@/lib/reports/net-worth-by-owner';
 import { ReportFilters } from '@/lib/reports/types';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { getEntityProfile } from '@/lib/services/entity.service';
 
 export async function GET(request: NextRequest) {
     try {
@@ -22,7 +23,21 @@ export async function GET(request: NextRequest) {
             bookAccountGuids,
         };
 
-        const report = await generateNetWorthByOwner(filters);
+        // Resolve self/spouse bucket labels to household member names from the
+        // book's entity profile. Names are cosmetic — never fail the report.
+        let ownerNames: OwnerBucketNames | undefined;
+        try {
+            const bookGuid = await getActiveBookGuid();
+            const entity = await getEntityProfile(bookGuid, roleResult.user.id);
+            ownerNames = {
+                self: entity.members.find(m => m.role === 'self')?.name?.trim() || null,
+                spouse: entity.members.find(m => m.role === 'spouse')?.name?.trim() || null,
+            };
+        } catch {
+            ownerNames = undefined;
+        }
+
+        const report = await generateNetWorthByOwner(filters, ownerNames);
         return NextResponse.json(report);
     } catch (error) {
         console.error('Error generating net worth by owner report:', error);

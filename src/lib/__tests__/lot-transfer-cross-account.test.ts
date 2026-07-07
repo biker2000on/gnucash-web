@@ -73,6 +73,7 @@ class FakePrisma {
     lots: [] as Rec[],
     slots: [] as Rec[],
     books: [] as Rec[],
+    commodities: [] as Rec[],
   };
 
   private txOf(s: Rec): Rec | null {
@@ -281,6 +282,16 @@ class FakePrisma {
     },
   };
 
+  commodities = {
+    findUnique: async (args: Rec) => {
+      const c = this.t.commodities.find(x => x.guid === args.where.guid);
+      return c ? { ...c } : null;
+    },
+    findMany: async (args: Rec = {}) => {
+      return this.t.commodities.filter(c => this.matchPlain(c, args.where ?? {})).map(c => ({ ...c }));
+    },
+  };
+
   transactions = {
     create: async (args: Rec) => {
       const rec: Rec = { ...args.data };
@@ -358,6 +369,10 @@ beforeEach(() => {
 /** Seed root/assets/cash and one STOCK account per letter, in the given order. */
 function seedBase(stockOrder: string[]) {
   db.t.books.push({ guid: 'book-1', root_account_guid: ROOT });
+  db.t.commodities.push(
+    { guid: USD, namespace: 'CURRENCY', mnemonic: 'USD', fraction: 100, quote_flag: 0 },
+    { guid: AAPL, namespace: 'NASDAQ', mnemonic: 'AAPL', fraction: 10000, quote_flag: 1 },
+  );
   db.t.accounts.push(
     acct(ROOT, 'Root Account', 'ROOT', null, USD),
     acct(ASSETS, 'Assets', 'ASSET', ROOT, USD),

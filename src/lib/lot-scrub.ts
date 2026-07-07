@@ -819,10 +819,20 @@ export async function splitTransferAcrossSourceLots(
  * For a closed lot (shares sum to ~0), create a GnuCash double-balance gains transaction:
  * - Adjusting split in investment account (zero shares, +gainLoss value —
  *   offsets the lot's basis-minus-proceeds so the lot totals to zero)
- * - Corresponding entry in Income:Capital Gains account (zero shares, -gainLoss
- *   value — a credit, i.e. income, for a gain)
+ * - Corresponding entry in a capital-gains income account (zero shares,
+ *   -gainLoss value — a credit, i.e. income, for a gain)
  *
- * Uses `commodity_scu` from parent account (not hardcoded 100).
+ * Currency: uses the source transaction's currency only when it is a real
+ * CURRENCY commodity; otherwise falls back to the nearest ancestor account's
+ * currency, then the most-common currency across accounts. Split VALUES are
+ * denominated in the currency's fraction; split QUANTITIES use the investment
+ * account's `commodity_scu`.
+ *
+ * Gains account: prefers an existing INCOME account under the lot's book root
+ * whose full name contains "capital gain" and matches the holding period
+ * (honoring taxable/non-taxable naming for the tax classification); only
+ * creates `Income:Capital Gains:...` when no match exists.
+ *
  * Classifies ST/LT by holding period; handles TAX_EXEMPT (skip) and TAX_DEFERRED.
  *
  * @param lotGuid - GUID of the closed lot
@@ -939,37 +949,184 @@ export async function generateCapitalGains(
     holdingPeriod = classifyHoldingPeriod(openDate, closeDate);
   }
 
-  // Determine the gains account path
-  const periodLabel = holdingPeriod === 'long_term' ? 'Long Term' : 'Short Term';
-  let gainsAccountPath: string;
-  if (taxClassification === 'TAX_DEFERRED') {
-    gainsAccountPath = `Income:Capital Gains:Tax-Deferred:${periodLabel}`;
+  // Load all accounts once — used for the currency fallback walk, the
+  // book-root walk, and existing gains-account discovery. Walking in JS keeps
+  // this compatible with the in-memory fake prisma used in tests.
+  const allAccounts: Array<{
+    guid: string;
+    name: string;
+    parent_guid: string | null;
+    account_type: string;
+    commodity_guid: string | null;
+  }> = await tx.accounts.findMany({
+    select: {
+      guid: true,
+      name: true,
+      parent_guid: true,
+      account_type: true,
+      commodity_guid: true,
+    },
+  });
+  const accountsByGuid = new Map(allAccounts.map(a => [a.guid, a]));
+
+  // --- Resolve the transaction currency -------------------------------------
+  // The source transaction's currency is only trustworthy when it is a real
+  // CURRENCY commodity. Imported crypto/stock data can produce transactions
+  // denominated in the commodity itself, which would make the gains
+  // transaction nonsense (unbalanced in registers).
+  const commodityCache = new Map<string, { namespace: string; fraction: number } | null>();
+  const getCommodity = async (guid: string | null | undefined) => {
+    if (!guid) return null;
+    if (!commodityCache.has(guid)) {
+      const c = await tx.commodities.findUnique({
+        where: { guid },
+        select: { namespace: true, fraction: true },
+      });
+      commodityCache.set(guid, c);
+    }
+    return commodityCache.get(guid) ?? null;
+  };
+
+  let currencyGuid: string | null = null;
+  let currencyFraction = 100;
+
+  const sourceCurrencyGuid = lot.splits[0]?.transaction?.currency_guid ?? null;
+  const sourceCommodity = await getCommodity(sourceCurrencyGuid);
+  if (sourceCurrencyGuid && sourceCommodity?.namespace === 'CURRENCY') {
+    currencyGuid = sourceCurrencyGuid;
+    currencyFraction = sourceCommodity.fraction || 100;
   } else {
-    gainsAccountPath = `Income:Capital Gains:${periodLabel}`;
+    // Walk up the investment account's ancestors and use the first account
+    // whose commodity is a currency.
+    let ancestorGuid = lot.account.parent_guid;
+    for (let i = 0; i < 20 && ancestorGuid && !currencyGuid; i++) {
+      const ancestor = accountsByGuid.get(ancestorGuid);
+      if (!ancestor) break;
+      const commodity = await getCommodity(ancestor.commodity_guid);
+      if (ancestor.commodity_guid && commodity?.namespace === 'CURRENCY') {
+        currencyGuid = ancestor.commodity_guid;
+        currencyFraction = commodity.fraction || 100;
+      }
+      ancestorGuid = ancestor.parent_guid;
+    }
+
+    if (!currencyGuid) {
+      // Last resort: the most-common CURRENCY commodity across accounts
+      // (deterministic: account count desc, then guid).
+      const currencies: Array<{ guid: string; fraction: number }> =
+        await tx.commodities.findMany({
+          where: { namespace: 'CURRENCY' },
+          select: { guid: true, fraction: true },
+        });
+      const counts = new Map<string, number>();
+      for (const a of allAccounts) {
+        if (a.commodity_guid) {
+          counts.set(a.commodity_guid, (counts.get(a.commodity_guid) || 0) + 1);
+        }
+      }
+      const ranked = [...currencies].sort((a, b) => {
+        const diff = (counts.get(b.guid) || 0) - (counts.get(a.guid) || 0);
+        if (diff !== 0) return diff;
+        return a.guid < b.guid ? -1 : a.guid > b.guid ? 1 : 0;
+      });
+      if (ranked.length > 0) {
+        currencyGuid = ranked[0].guid;
+        currencyFraction = ranked[0].fraction || 100;
+      }
+    }
   }
 
-  // Get book root and currency
-  const book = await tx.books.findFirst({ select: { root_account_guid: true } });
-  if (!book) {
-    throw new Error('No book found');
-  }
-
-  // Use the transaction currency from the lot's splits
-  const currencyGuid = lot.splits[0]?.transaction?.currency_guid;
   if (!currencyGuid) {
     throw new Error('Cannot determine currency for gains transaction');
   }
 
-  const gainsAccountGuid = await findOrCreateAccount(
-    gainsAccountPath,
-    book.root_account_guid,
-    currencyGuid,
-    tx,
-  );
+  // --- Resolve the gains account ---------------------------------------------
+  // Walk up from the lot's account to its book root.
+  let rootGuid: string | null = null;
+  {
+    let cursor = accountsByGuid.get(lot.account.guid) ?? null;
+    for (let i = 0; i < 20 && cursor; i++) {
+      if (!cursor.parent_guid) {
+        rootGuid = cursor.guid;
+        break;
+      }
+      cursor = accountsByGuid.get(cursor.parent_guid) ?? null;
+    }
+  }
+  if (!rootGuid) {
+    // Broken parent chain — fall back to the first book's root.
+    const book = await tx.books.findFirst({ select: { root_account_guid: true } });
+    rootGuid = book?.root_account_guid ?? null;
+  }
+  if (!rootGuid) {
+    throw new Error('Cannot determine book root for gains transaction');
+  }
 
-  // Use commodity_scu from the investment account
+  // Build a fullname (root excluded, ":"-joined) plus the root it belongs to.
+  const fullnameOf = (guid: string): { fullname: string; root: string | null } => {
+    const parts: string[] = [];
+    let cur = accountsByGuid.get(guid) ?? null;
+    let root: string | null = null;
+    for (let i = 0; i < 25 && cur; i++) {
+      if (!cur.parent_guid) {
+        root = cur.guid;
+        break;
+      }
+      parts.unshift(cur.name);
+      cur = accountsByGuid.get(cur.parent_guid) ?? null;
+    }
+    return { fullname: parts.join(':'), root };
+  };
+
+  // Candidates: INCOME accounts under this book root whose fullname mentions
+  // capital gains and matches the holding period.
+  const periodRe = holdingPeriod === 'long_term' ? /long[ -]?term/ : /short[ -]?term/;
+  let candidates = allAccounts
+    .filter(a => a.account_type === 'INCOME')
+    .map(a => ({ guid: a.guid, ...fullnameOf(a.guid) }))
+    .filter(c => {
+      if (c.root !== rootGuid) return false;
+      const lower = c.fullname.toLowerCase();
+      return lower.includes('capital gain') && periodRe.test(lower);
+    });
+
+  // Taxability preference.
+  const nonTaxableRe = /non.?taxable|tax.?deferred/;
+  const taxableRe = /(^|[^-\w])taxable\b|:taxable/;
+  if (taxClassification === 'TAX_DEFERRED') {
+    const sheltered = candidates.filter(c => nonTaxableRe.test(c.fullname.toLowerCase()));
+    if (sheltered.length > 0) candidates = sheltered;
+  } else {
+    const notSheltered = candidates.filter(c => !nonTaxableRe.test(c.fullname.toLowerCase()));
+    if (notSheltered.length > 0) candidates = notSheltered;
+    const explicitlyTaxable = candidates.filter(c => taxableRe.test(c.fullname.toLowerCase()));
+    if (explicitlyTaxable.length > 0) candidates = explicitlyTaxable;
+  }
+
+  // Deterministic pick: deepest path first, then alphabetical.
+  candidates.sort((a, b) => {
+    const depthDiff = b.fullname.split(':').length - a.fullname.split(':').length;
+    if (depthDiff !== 0) return depthDiff;
+    return a.fullname < b.fullname ? -1 : a.fullname > b.fullname ? 1 : 0;
+  });
+
+  let gainsAccountGuid: string;
+  if (candidates.length > 0) {
+    gainsAccountGuid = candidates[0].guid;
+  } else {
+    // No existing account matches — create the default hierarchy.
+    const periodLabel = holdingPeriod === 'long_term' ? 'Long Term' : 'Short Term';
+    const gainsAccountPath =
+      taxClassification === 'TAX_DEFERRED'
+        ? `Income:Capital Gains:Tax-Deferred:${periodLabel}`
+        : `Income:Capital Gains:${periodLabel}`;
+    gainsAccountGuid = await findOrCreateAccount(gainsAccountPath, rootGuid, currencyGuid, tx);
+  }
+
+  // Split VALUES are denominated in the transaction currency's fraction;
+  // split QUANTITIES use the investment account's commodity_scu.
   const scu = lot.account.commodity_scu || 100;
-  const valFrac = fromDecimal(Math.abs(gainLoss), scu);
+  const valFrac = fromDecimal(Math.abs(gainLoss), currencyFraction);
 
   // Create the gains transaction
   const txGuid = generateGuid();

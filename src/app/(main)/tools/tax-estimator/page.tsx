@@ -23,6 +23,7 @@ import { computeIraDeductionLimit, computeRothIraContributionLimit } from '@/lib
 import { summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
 import { MobileCard } from '@/components/ui/MobileCard';
 import BracketFillChart from '@/components/tools/tax/BracketFillChart';
 import TaxMappingPanel, {
@@ -67,6 +68,8 @@ interface EstimatePayload {
     '401k': LimitInfo | null;
     ira: LimitInfo | null;
     hsa: LimitInfo | null;
+    /** Family-coverage HSA limit (optional for older cached payloads). */
+    hsaFamily?: LimitInfo | null;
     spouseIra: LimitInfo | null;
   };
 }
@@ -128,7 +131,7 @@ function buildInputs(
     categoryTotal(bookData, 'trad_401k_contribution'),
   );
   const tradIra = Math.max(c['traditional_ira'] ?? 0, categoryTotal(bookData, 'trad_ira_contribution'));
-  const hsa = Math.max(c['hsa'] ?? 0, categoryTotal(bookData, 'hsa_contribution'));
+  const hsa = Math.max((c['hsa'] ?? 0) + (c['hsa_family'] ?? 0), categoryTotal(bookData, 'hsa_contribution'));
   const sepIra = Math.max(c['sep_ira'] ?? 0, categoryTotal(bookData, 'sep_ira_contribution'));
   const simpleIra = Math.max(c['simple_ira'] ?? 0, categoryTotal(bookData, 'simple_ira_contribution'));
 
@@ -220,6 +223,7 @@ const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
 
 export default function TaxEstimatorPage() {
   const isMobile = useIsMobile();
+  const { spouseName } = useHouseholdNames();
   const currentYear = new Date().getFullYear();
   const defaultYear: TaxYear = isSupportedTaxYear(currentYear) ? currentYear : 2026;
 
@@ -505,20 +509,26 @@ export default function TaxEstimatorPage() {
     const iraLimit = estimate.limits.ira !== null
       ? estimate.limits.ira.total + (isJoint ? (estimate.limits.spouseIra?.total ?? 0) : 0)
       : null;
+    // Books with family-coverage HSA contributions validate against the
+    // family limit; otherwise the self-only limit applies. Fall back to the
+    // self-only limit when the family limit isn't resolved (older payloads).
+    const hsaLimit = (c['hsa_family'] ?? 0) > 0
+      ? estimate.limits.hsaFamily?.total ?? estimate.limits.hsa?.total ?? null
+      : estimate.limits.hsa?.total ?? null;
     return {
       limits: {
         trad401k: estimate.limits['401k']?.total ?? null,
         roth401k: estimate.limits['401k']?.total ?? null,
         tradIra: iraLimit,
         rothIra: iraLimit,
-        hsa: estimate.limits.hsa?.total ?? null,
+        hsa: hsaLimit,
       },
       actuals: {
         trad401k: (c['401k'] ?? 0) + (c['403b'] ?? 0) + (c['457'] ?? 0),
         roth401k: 0, // Roth deferrals tracked within the same flagged 401k account
         tradIra: c['traditional_ira'] ?? 0,
         rothIra: c['roth_ira'] ?? 0,
-        hsa: c['hsa'] ?? 0,
+        hsa: (c['hsa'] ?? 0) + (c['hsa_family'] ?? 0),
       },
     };
   }, [estimate, computed, filingStatus]);
@@ -794,6 +804,17 @@ export default function TaxEstimatorPage() {
               traditional-IRA deduction phase-outs.
             </p>
           </div>
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">One system, three markers</h4>
+            <p>
+              Tax marking is intentionally split by purpose: the{' '}
+              <span className="text-foreground">#taxes tag</span> feeds the dashboard&rsquo;s Taxes chart
+              (what you <em>spend</em> on taxes), <span className="text-foreground">tax category
+              mappings</span> here feed all calculations (what&rsquo;s taxable and withheld), and the{' '}
+              <span className="text-foreground">retirement flag</span> on accounts marks tax shelter. There
+              is no separate &ldquo;tax related&rdquo; checkbox anymore — it did nothing and was removed.
+            </p>
+          </div>
         </div>
       </CollapsibleConfigSection>
 
@@ -961,12 +982,12 @@ export default function TaxEstimatorPage() {
             )}
             <div className="grid gap-3 sm:grid-cols-2">
               {[
-                { label: 'You', data: computed.phaseOuts.self, limit: estimate.limits.ira },
+                { id: 'self', label: 'You', data: computed.phaseOuts.self, limit: estimate.limits.ira },
                 ...(computed.phaseOuts.spouse
-                  ? [{ label: 'Spouse', data: computed.phaseOuts.spouse, limit: estimate.limits.spouseIra }]
+                  ? [{ id: 'spouse', label: spouseName ?? 'Spouse', data: computed.phaseOuts.spouse, limit: estimate.limits.spouseIra }]
                   : []),
-              ].map(({ label, data, limit }) => (
-                <div key={label} className="bg-surface border border-border rounded-lg p-4 space-y-2">
+              ].map(({ id, label, data, limit }) => (
+                <div key={id} className="bg-surface border border-border rounded-lg p-4 space-y-2">
                   <div className="flex items-baseline justify-between">
                     <span className="text-sm font-semibold text-foreground">{label}</span>
                     {limit && (
@@ -976,7 +997,7 @@ export default function TaxEstimatorPage() {
                       </span>
                     )}
                   </div>
-                  {label === 'Spouse' && !limit && (
+                  {id === 'spouse' && !limit && (
                     <p className="text-xs text-foreground-muted">
                       Set the spouse birthday in Tax settings to resolve the spouse&apos;s IRA limit and catch-up.
                     </p>

@@ -33,6 +33,22 @@ export const OWNER_BUCKET_LABELS: Record<OwnerBucketKey, string> = {
   unassigned: 'Unassigned',
 };
 
+/**
+ * Optional household member names used to resolve the self/spouse bucket
+ * labels (e.g. 'Self' → 'Alice'). The `owner` bucket key is always the
+ * stable 'self'|'spouse'|'joint'|'unassigned' value; only `label` changes.
+ */
+export interface OwnerBucketNames {
+  self?: string | null;
+  spouse?: string | null;
+}
+
+function resolveBucketLabel(owner: OwnerBucketKey, names?: OwnerBucketNames): string {
+  if (owner === 'self' && names?.self) return names.self;
+  if (owner === 'spouse' && names?.spouse) return names.spouse;
+  return OWNER_BUCKET_LABELS[owner];
+}
+
 export interface OwnerAccountRow {
   guid: string;
   fullname: string;
@@ -91,6 +107,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export function bucketAccountsByOwner(
   rows: OwnerBalanceInput[],
   ownerMap: Map<string, AccountOwner>,
+  ownerNames?: OwnerBucketNames,
 ): { buckets: OwnerBucket[]; totals: NetWorthByOwnerTotals } {
   const assetTypes = new Set<string>(ASSET_TYPES);
   const liabilityTypes = new Set<string>(LIABILITY_TYPES);
@@ -139,7 +156,7 @@ export function bucketAccountsByOwner(
 
     buckets.push({
       owner,
-      label: OWNER_BUCKET_LABELS[owner],
+      label: resolveBucketLabel(owner, ownerNames),
       totalAssets,
       totalLiabilities,
       netWorth,
@@ -174,8 +191,13 @@ function buildSections(buckets: OwnerBucket[]): ReportSection[] {
 /**
  * Generate the Net Worth by Owner report.
  * Balances are computed through `filters.endDate` (inclusive; defaults to today).
+ * Pass `ownerNames` (resolved by the caller, e.g. from the book's entity
+ * profile) to label the self/spouse buckets with household member names.
  */
-export async function generateNetWorthByOwner(filters: ReportFilters): Promise<NetWorthByOwnerData> {
+export async function generateNetWorthByOwner(
+  filters: ReportFilters,
+  ownerNames?: OwnerBucketNames,
+): Promise<NetWorthByOwnerData> {
   const asOf = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
 
   // Ownership inheritance needs the full account tree (ancestors may be
@@ -243,7 +265,7 @@ export async function generateNetWorthByOwner(filters: ReportFilters): Promise<N
     };
   });
 
-  const { buckets, totals } = bucketAccountsByOwner(rows, ownerMap);
+  const { buckets, totals } = bucketAccountsByOwner(rows, ownerMap, ownerNames);
 
   return {
     type: ReportType.NET_WORTH_BY_OWNER,
