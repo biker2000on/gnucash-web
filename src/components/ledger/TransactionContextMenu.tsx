@@ -16,6 +16,8 @@ interface TransactionContextMenuProps {
     y: number;
     items: TransactionContextMenuItem[];
     onClose: () => void;
+    /** Accessible name for the menu; defaults to "Transaction actions". */
+    ariaLabel?: string;
 }
 
 export function TransactionContextMenu({
@@ -24,6 +26,7 @@ export function TransactionContextMenu({
     y,
     items,
     onClose,
+    ariaLabel = 'Transaction actions',
 }: TransactionContextMenuProps) {
     const menuRef = useRef<HTMLDivElement>(null);
     const [activeIndex, setActiveIndex] = useState(0);
@@ -94,7 +97,7 @@ export function TransactionContextMenu({
         <div
             ref={menuRef}
             role="menu"
-            aria-label="Transaction actions"
+            aria-label={ariaLabel}
             className="fixed z-[10000] w-48 rounded-lg border border-border bg-surface-elevated p-1 shadow-2xl"
             style={position}
         >

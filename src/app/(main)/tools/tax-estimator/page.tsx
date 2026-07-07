@@ -20,6 +20,7 @@ import {
   type TaxYear,
 } from '@/lib/tax/types';
 import { computeIraDeductionLimit, computeRothIraContributionLimit } from '@/lib/tax/phaseouts';
+import { summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
@@ -95,8 +96,10 @@ function categoryTotal(bookData: BookTaxData, category: TaxCategory): number {
 
 /** Categories that are simple annual flows we can annualize from YTD */
 const ANNUALIZABLE: TaxCategory[] = [
-  'w2_wages', 'federal_withholding', 'state_withholding', 'fica_social_security',
-  'fica_medicare', 'interest_income', 'ordinary_dividends', 'qualified_dividends',
+  'w2_wages', 'federal_withholding', 'state_withholding', 'estimated_tax_payment',
+  'state_estimated_tax_payment', 'fica_social_security',
+  'fica_medicare', 'interest_income', 'tax_exempt_interest', 'ordinary_dividends',
+  'qualified_dividends',
   'self_employment_income', 'business_expense', 'rental_income', 'retirement_income',
   'social_security_benefits', 'charitable_donation', 'mortgage_interest',
   'property_tax', 'state_local_tax_paid', 'medical_expense', 'education_expense',
@@ -109,7 +112,7 @@ function buildInputs(
   filingStatus: FilingStatus,
   annualize: boolean,
   filersAge65Plus: number,
-): { inputs: FederalTaxInputs; withholding: number; stateWithholding: number } {
+): { inputs: FederalTaxInputs; payments: TaxPaymentsSummary } {
   const factor = annualize && bookData.elapsedYearFraction < 1
     ? 1 / bookData.elapsedYearFraction
     : 1;
@@ -133,6 +136,9 @@ function buildInputs(
     ...emptyFederalInputs(year, filingStatus),
     wages: get('w2_wages'),
     interest: get('interest_income'),
+    // Muni interest: excluded from taxable income/AGI; only feeds Social
+    // Security taxability (Pub 915) inside the federal engine.
+    taxExemptInterest: get('tax_exempt_interest'),
     ordinaryDividends: get('ordinary_dividends') + qualifiedDividends,
     qualifiedDividends,
     shortTermCapitalGains: bookData.realizedGains.shortTerm,
@@ -149,15 +155,17 @@ function buildInputs(
     simpleIraContributions: simpleIra,
     charitableDonations: get('charitable_donation'),
     mortgageInterest: get('mortgage_interest'),
-    stateLocalTaxesPaid: get('state_withholding') + get('property_tax') + get('state_local_tax_paid'),
+    // State estimated payments count as state income tax paid during the
+    // year (Schedule A line 5a), same as state withholding.
+    stateLocalTaxesPaid: get('state_withholding') + get('state_estimated_tax_payment')
+      + get('property_tax') + get('state_local_tax_paid'),
     medicalExpenses: get('medical_expense'),
     otherDeductions: get('other_deduction'),
     filersAge65Plus,
   };
   return {
     inputs,
-    withholding: get('federal_withholding'),
-    stateWithholding: get('state_withholding'),
+    payments: summarizeTaxPayments(bookData, factor),
   };
 }
 
@@ -393,7 +401,7 @@ export default function TaxEstimatorPage() {
 
   const computed = useMemo(() => {
     if (!estimate) return null;
-    const { inputs: baseInputs, withholding, stateWithholding } = buildInputs(
+    const { inputs: baseInputs, payments } = buildInputs(
       estimate.bookData, year, filingStatus, annualize, filersAge65Plus,
     );
     // Child Tax Credit: qualifying children come from the household profile
@@ -471,17 +479,21 @@ export default function TaxEstimatorPage() {
       flatRateOverride: stateFlatRate,
     });
     const totalLiability = Math.round((federal.totalTax + state.tax) * 100) / 100;
-    const totalWithheld = withholding + stateWithholding;
+    // Total taxes paid: withholding + estimated payments (federal and state)
+    const totalWithheld = payments.totalPaid;
     const balance = totalLiability - totalWithheld;
+    // Safe harbor intentionally receives withholding only: its quarterly
+    // schedule computes the estimated payments STILL needed on top of
+    // withholding (withholding is treated as paid evenly through the year).
     const safeHarbor = computeSafeHarbor({
       year,
       filingStatus,
       currentYearTax: federal.totalTax,
       priorYearTax: priorYearTax === '' ? null : priorYearTax,
       priorYearAgi: priorYearAgi === '' ? null : priorYearAgi,
-      withholding,
+      withholding: payments.withholding,
     });
-    return { inputs: cappedInputs, federal, state, totalLiability, withholding, stateWithholding, totalWithheld, balance, safeHarbor, phaseOuts };
+    return { inputs: cappedInputs, federal, state, totalLiability, payments, totalWithheld, balance, safeHarbor, phaseOuts };
   }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi, coveredByPlan, spouseCovered]);
 
   const scenarioLimits: ScenarioLimits | null = useMemo(() => {
@@ -850,9 +862,17 @@ export default function TaxEstimatorPage() {
               sub={`Federal ${formatCurrency(computed.federal.totalTax)} + ${computed.state.stateName} ${formatCurrency(computed.state.tax)}`}
             />
             <SummaryCard
-              label="Withheld (projected)"
+              label={
+                computed.payments.estimatedPayments + computed.payments.stateEstimatedPayments > 0.004
+                  ? 'Taxes paid (projected)'
+                  : 'Withheld (projected)'
+              }
               value={formatCurrency(computed.totalWithheld)}
-              sub={`Federal ${formatCurrency(computed.withholding)} · State ${formatCurrency(computed.stateWithholding)}`}
+              sub={
+                computed.payments.estimatedPayments + computed.payments.stateEstimatedPayments > 0.004
+                  ? `Withheld ${formatCurrency(computed.payments.withholding + computed.payments.stateWithholding)} · Est. payments ${formatCurrency(computed.payments.estimatedPayments + computed.payments.stateEstimatedPayments)}`
+                  : `Federal ${formatCurrency(computed.payments.withholding)} · State ${formatCurrency(computed.payments.stateWithholding)}`
+              }
             />
             <SummaryCard
               label={computed.balance >= 0 ? 'Projected balance due' : 'Projected refund'}

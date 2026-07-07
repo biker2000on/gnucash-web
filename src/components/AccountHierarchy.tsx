@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
     ColumnDef,
@@ -25,6 +25,7 @@ import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
 import { FilterBar } from './ui/FilterBar';
 import { AccountForm } from './AccountForm';
+import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 import TagChip from './tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
@@ -410,6 +411,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
     const [deleteConfirm, setDeleteConfirm] = useState<AccountWithChildren | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; account: DerivedAccount } | null>(null);
     const filterInputRef = useRef<HTMLInputElement>(null);
 
     // Keyboard navigation
@@ -676,6 +678,45 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
         }
     }, [modalMode, selectedAccount, invalidateAccounts, onRefresh, toastSuccess, toastError]);
 
+    const openContextMenu = useCallback((event: ReactMouseEvent, account: DerivedAccount) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setContextMenu({ x: event.clientX, y: event.clientY, account });
+    }, []);
+
+    const contextMenuItems = useMemo<TransactionContextMenuItem[]>(() => {
+        if (!contextMenu) return [];
+        const account = contextMenu.account;
+        return [
+            {
+                id: 'open-ledger',
+                label: 'Open ledger',
+                onSelect: () => router.push(`/accounts/${account.guid}`),
+            },
+            ...(account.children.length > 0 ? [{
+                id: 'open-subaccounts',
+                label: 'Open with sub-accounts',
+                onSelect: () => router.push(`/accounts/${account.guid}?subaccounts=1`),
+            }] : []),
+            {
+                id: 'new-child',
+                label: 'New child account',
+                onSelect: () => handleNewChild(account),
+            },
+            {
+                id: 'edit',
+                label: 'Edit account',
+                onSelect: () => { void handleEdit(account); },
+            },
+            ...(!isReadonly ? [{
+                id: 'delete',
+                label: 'Delete account',
+                variant: 'danger' as const,
+                onSelect: () => handleDeleteConfirm(account),
+            }] : []),
+        ];
+    }, [contextMenu, handleDeleteConfirm, handleEdit, handleNewChild, isReadonly, router]);
+
     const columns = useMemo<ColumnDef<DerivedAccount>[]>(() => [
         {
             id: 'accountName',
@@ -938,7 +979,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             }
 
             if (isInInput) return;
-            if (modalOpen || deleteConfirm !== null) return;
+            if (modalOpen || deleteConfirm !== null || contextMenu !== null) return;
 
             const rows = table.getRowModel().rows;
             if (rows.length === 0) return;
@@ -999,7 +1040,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [focusedRowIndex, modalOpen, deleteConfirm, table, handleRowToggle, router, filterText]);
+    }, [focusedRowIndex, modalOpen, deleteConfirm, contextMenu, table, handleRowToggle, router, filterText]);
 
     // Auto-scroll focused row into view
     useEffect(() => {
@@ -1281,6 +1322,10 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                         handleRowToggle(row.original.guid, row.getIsExpanded());
                                     }
                                 }}
+                                onContextMenu={(e) => {
+                                    setFocusedRowIndex(rowIndex);
+                                    openContextMenu(e, row.original);
+                                }}
                             >
                                 {row.getVisibleCells().map((cell) => (
                                     <td key={cell.id} className="align-middle">
@@ -1298,6 +1343,15 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     No accounts match the current filters.
                 </div>
             )}
+
+            <TransactionContextMenu
+                isOpen={!!contextMenu}
+                x={contextMenu?.x ?? 0}
+                y={contextMenu?.y ?? 0}
+                items={contextMenuItems}
+                onClose={() => setContextMenu(null)}
+                ariaLabel="Account actions"
+            />
 
             <Modal
                 isOpen={modalOpen}

@@ -155,11 +155,20 @@ export async function aggregateBookTaxData(
 
   /* --- Realized capital gains from lots in taxable investment accounts --- */
   const retirementGuids = await getRetirementAccountGuids(bookAccountGuids);
-  const investmentAccounts = accountRows.filter(
+  const investmentCandidates = accountRows.filter(
     a =>
       (a.account_type === 'STOCK' || a.account_type === 'MUTUAL') &&
       !retirementGuids.has(a.guid),
   );
+  // Respect the EFFECTIVE tax mapping (direct or inherited from an ancestor
+  // via expandMappingsToDescendants): accounts mapped to 'exclude' are
+  // non-taxable (e.g. a brokerage subtree or single holding the user marked
+  // non-taxable), so their lots must not feed STCG/LTCG.
+  const investmentAccounts = investmentCandidates.filter(
+    a => mappings.get(a.guid) !== 'exclude',
+  );
+  const excludedInvestmentAccountCount =
+    investmentCandidates.length - investmentAccounts.length;
 
   let shortTerm = 0;
   let longTerm = 0;
@@ -283,6 +292,7 @@ export async function aggregateBookTaxData(
       shortTerm: Math.round(shortTerm * 100) / 100,
       longTerm: Math.round(longTerm * 100) / 100,
       accounts: gainAccounts,
+      excludedAccountCount: excludedInvestmentAccountCount,
     },
     contributionsByType,
     contributionsByTypeAndOwner,

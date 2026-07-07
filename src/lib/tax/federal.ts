@@ -365,9 +365,13 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     se.halfDeduction;
 
   /* --- Taxable Social Security (worksheet uses income net of adjustments) --- */
+  // Per IRS Pub 915, provisional income includes tax-exempt interest (1040
+  // line 2a) even though it never enters total income or AGI. It is added
+  // here — and ONLY here — so muni interest can raise the taxable share of
+  // Social Security benefits without itself being taxed.
   const taxableSs = computeTaxableSocialSecurity(
     inputs.socialSecurityBenefits,
-    Math.max(0, incomeExSs - adjustments),
+    Math.max(0, incomeExSs - adjustments) + Math.max(0, inputs.taxExemptInterest ?? 0),
     inputs.filingStatus,
   );
 
@@ -576,6 +580,7 @@ export function emptyFederalInputs(year: TaxYear, filingStatus: FilingStatus): F
     filingStatus,
     wages: 0,
     interest: 0,
+    taxExemptInterest: 0,
     ordinaryDividends: 0,
     qualifiedDividends: 0,
     shortTermCapitalGains: 0,

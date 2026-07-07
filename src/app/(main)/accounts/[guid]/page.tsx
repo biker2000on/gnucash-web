@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, Suspense } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import AccountLedger, { AccountTransaction } from '@/components/AccountLedger';
 import { InvestmentAccount } from '@/components/InvestmentAccount';
 import { parseTransactionsResponse } from '@/components/ledger/investment-utils';
@@ -39,6 +39,8 @@ function AccountPageContent() {
     const params = useParams();
     const guid = params.guid as string;
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const initialShowSubaccounts = searchParams.get('subaccounts') === '1';
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
     const { balanceReversal } = useUserPreferences();
     const { activeBookGuid } = useBooks();
@@ -187,6 +189,7 @@ function AccountPageContent() {
                     accountCommodityGuid={account?.commodity_guid}
                     commodityScu={account?.commodity_scu}
                     hasChildren={(account?.child_count ?? 0) > 0}
+                    initialShowSubaccounts={initialShowSubaccounts}
                     onEscape={handleEscapeBack}
                     onCurrentBalanceChange={setCurrentBalanceOverride}
                 />

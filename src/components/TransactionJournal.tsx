@@ -393,6 +393,15 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         if (!contextMenu) return [];
         const guid = contextMenu.tx.guid;
         const accountGuid = contextMenu.accountGuid;
+        // Accounts for GnuCash-style "Jump": the journal has no current account,
+        // so list every non-Trading split account, deduped and capped.
+        const jumpTargets = Array.from(new Map(
+            (contextMenu.tx.splits || [])
+                .filter(s =>
+                    s.account_guid &&
+                    !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:'))
+                .map(s => [s.account_guid, s])
+        ).values()).slice(0, 6);
         return [
             {
                 id: 'view',
@@ -414,6 +423,11 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 label: 'Tags…',
                 onSelect: () => setTagEditorGuid(guid),
             },
+            ...jumpTargets.map(split => ({
+                id: `jump-${split.account_guid}`,
+                label: `Jump to ${split.account_name || split.account_fullname || 'account'}`,
+                onSelect: () => router.push(`/accounts/${split.account_guid}`),
+            })),
             ...(accountGuid ? [{
                 id: 'view-account',
                 label: 'View in account',

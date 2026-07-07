@@ -387,3 +387,52 @@ describe('rates and breakdown integrity', () => {
     expect(r.taxableIncome).toBe(0);
   });
 });
+
+describe('tax-exempt interest (Pub 915)', () => {
+  it('raises taxable Social Security via provisional income only', () => {
+    // Single, $20k retirement income + $20k SS benefits:
+    // provisional = 20,000 + 10,000 = 30,000 → tier 1 only:
+    // taxable SS = min(0.5 * (30,000 - 25,000), 0.5 * 20,000) = 2,500
+    const base = computeFederalTax(inputs({
+      retirementIncome: 20_000,
+      socialSecurityBenefits: 20_000,
+    }));
+    expect(base.taxableSocialSecurity).toBe(2_500);
+
+    // Add $10k muni interest: provisional = 40,000 (> 34,000 base2)
+    // tier1 = min(0.5*(34k-25k), 0.5*20k) = 4,500; tier2 = 0.85*6,000 = 5,100
+    // taxable SS = 9,600
+    const withMuni = computeFederalTax(inputs({
+      retirementIncome: 20_000,
+      socialSecurityBenefits: 20_000,
+      taxExemptInterest: 10_000,
+    }));
+    expect(withMuni.taxableSocialSecurity).toBe(9_600);
+
+    // The muni interest itself never enters total income or AGI: both move
+    // only by the extra taxable SS (9,600 - 2,500 = 7,100), not by 10,000+.
+    expect(withMuni.totalIncome - base.totalIncome).toBeCloseTo(7_100, 2);
+    expect(withMuni.agi - base.agi).toBeCloseTo(7_100, 2);
+  });
+
+  it('has no effect when there are no Social Security benefits', () => {
+    const base = computeFederalTax(inputs({ wages: 50_000 }));
+    const withMuni = computeFederalTax(inputs({ wages: 50_000, taxExemptInterest: 25_000 }));
+    expect(withMuni.agi).toBe(base.agi);
+    expect(withMuni.totalIncome).toBe(base.totalIncome);
+    expect(withMuni.totalTax).toBe(base.totalTax);
+  });
+
+  it('negative tax-exempt interest is ignored', () => {
+    const base = computeFederalTax(inputs({
+      retirementIncome: 20_000,
+      socialSecurityBenefits: 20_000,
+    }));
+    const negative = computeFederalTax(inputs({
+      retirementIncome: 20_000,
+      socialSecurityBenefits: 20_000,
+      taxExemptInterest: -5_000,
+    }));
+    expect(negative.taxableSocialSecurity).toBe(base.taxableSocialSecurity);
+  });
+});

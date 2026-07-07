@@ -88,6 +88,8 @@ interface AccountLedgerProps {
     accountCommodityGuid?: string;
     commodityScu?: number;
     hasChildren?: boolean;
+    /** Initialize the sub-accounts toggle on (e.g. from a ?subaccounts=1 URL param). */
+    initialShowSubaccounts?: boolean;
     onEscape?: () => void;
     /** Called with the latest running_balance of the newest transaction after any
      *  refetch, so the parent page can update its "Current Balance" header. */
@@ -106,6 +108,7 @@ export default function AccountLedger({
     accountCommodityGuid,
     commodityScu,
     hasChildren = false,
+    initialShowSubaccounts = false,
     onEscape,
     onCurrentBalanceChange,
 }: AccountLedgerProps) {
@@ -154,7 +157,7 @@ export default function AccountLedger({
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     // Sub-accounts view state
-    const [showSubaccounts, setShowSubaccounts] = useState(false);
+    const [showSubaccounts, setShowSubaccounts] = useState(initialShowSubaccounts && hasChildren);
 
     // Search and filter state
     const [searchText, setSearchText] = useState('');
@@ -1099,6 +1102,16 @@ export default function AccountLedger({
     const contextMenuItems = useMemo<TransactionContextMenuItem[]>(() => {
         if (!contextMenu) return [];
         const guid = contextMenu.tx.guid;
+        // Counter-accounts for GnuCash-style "Jump" (same filter as jumpToOtherAccount):
+        // skip the current account and Trading accounts, dedupe, cap the list.
+        const jumpTargets = Array.from(new Map(
+            (contextMenu.tx.splits || [])
+                .filter(s =>
+                    s.account_guid &&
+                    s.account_guid !== accountGuid &&
+                    !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:'))
+                .map(s => [s.account_guid, s])
+        ).values()).slice(0, 6);
         return [
             {
                 id: 'view',
@@ -1128,6 +1141,11 @@ export default function AccountLedger({
                 label: 'Tags…',
                 onSelect: () => setTagEditorGuid(guid),
             },
+            ...jumpTargets.map(split => ({
+                id: `jump-${split.account_guid}`,
+                label: `Jump to ${split.account_name || split.account_fullname || 'account'}`,
+                onSelect: () => router.push(`/accounts/${split.account_guid}`),
+            })),
             {
                 id: 'copy-id',
                 label: 'Copy transaction ID',
@@ -1140,7 +1158,7 @@ export default function AccountLedger({
                 onSelect: () => handleDeleteClick(guid),
             },
         ];
-    }, [contextMenu, copyTransactionGuid, handleDeleteClick, handleDuplicate, handleEditDirect, toggleReviewed]);
+    }, [accountGuid, contextMenu, copyTransactionGuid, handleDeleteClick, handleDuplicate, handleEditDirect, router, toggleReviewed]);
 
     // TanStack Table setup
     const columns = useMemo(() => {

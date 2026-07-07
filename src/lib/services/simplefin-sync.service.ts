@@ -712,8 +712,15 @@ async function findAndLinkTransferDedupMatch(
     JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
     WHERE s1.value_num = ${BigInt(oppositeValueNum)}
       AND s1.value_denom = ${BigInt(denom)}
-      AND m.source = 'simplefin'
-      AND m.match_type IS NULL
+      -- Candidate = a transaction that already carries exactly ONE feed id.
+      -- How it got that id doesn't matter: a plain simplefin import OR a
+      -- manually-entered transfer the user (or matcher) reconciled against the
+      -- other account's feed record. Requiring source='simplefin' here caused
+      -- duplicates: a manual transfer between two synced accounts got matched
+      -- to one side's feed record via manual_reconciliation, then the other
+      -- side's feed record failed this filter and was imported again.
+      AND m.simplefin_transaction_id IS NOT NULL
+      AND m.simplefin_transaction_id != ${sfTxn.id}
       AND m.simplefin_transaction_id_2 IS NULL
       AND t.post_date BETWEEN ${new Date(postDate.getTime() - matchWindowDays * 86400000)}
                           AND ${new Date(postDate.getTime() + matchWindowDays * 86400000)}

@@ -10,9 +10,17 @@ export const TAX_CATEGORIES = [
   'w2_wages',
   'federal_withholding',
   'state_withholding',
+  // Quarterly 1040-ES / state voucher payments made from the book
+  // (EXPENSE or ASSET-outflow accounts) — counted as taxes paid alongside
+  // withholding when projecting the balance due / refund.
+  'estimated_tax_payment',
+  'state_estimated_tax_payment',
   'fica_social_security',
   'fica_medicare',
   'interest_income',
+  // 1040 line 2a — muni-bond interest. Excluded from taxable income/AGI but
+  // included in MAGI for Social Security taxability (IRS Pub 915).
+  'tax_exempt_interest',
   'ordinary_dividends',
   'qualified_dividends',
   'self_employment_income',
@@ -57,9 +65,12 @@ export const TAX_CATEGORY_LABELS: Record<TaxCategory, string> = {
   w2_wages: 'W-2 Wages',
   federal_withholding: 'Federal Withholding',
   state_withholding: 'State Withholding',
+  estimated_tax_payment: 'Federal Estimated Tax Payment',
+  state_estimated_tax_payment: 'State Estimated Tax Payment',
   fica_social_security: 'FICA Social Security',
   fica_medicare: 'FICA Medicare',
   interest_income: 'Interest Income',
+  tax_exempt_interest: 'Tax-Exempt Interest (muni)',
   ordinary_dividends: 'Ordinary Dividends',
   qualified_dividends: 'Qualified Dividends',
   self_employment_income: 'Self-Employment Income',
@@ -93,15 +104,16 @@ export const TAX_CATEGORY_GROUPS: Array<{ label: string; categories: TaxCategory
   {
     label: 'Income',
     categories: [
-      'w2_wages', 'interest_income', 'ordinary_dividends', 'qualified_dividends',
-      'self_employment_income', 'rental_income', 'retirement_income',
-      'social_security_benefits', 'other_income',
+      'w2_wages', 'interest_income', 'tax_exempt_interest', 'ordinary_dividends',
+      'qualified_dividends', 'self_employment_income', 'rental_income',
+      'retirement_income', 'social_security_benefits', 'other_income',
     ],
   },
   {
     label: 'Taxes Withheld / Paid',
     categories: [
-      'federal_withholding', 'state_withholding', 'fica_social_security',
+      'federal_withholding', 'state_withholding', 'estimated_tax_payment',
+      'state_estimated_tax_payment', 'fica_social_security',
       'fica_medicare', 'state_local_tax_paid', 'property_tax',
     ],
   },
@@ -163,6 +175,13 @@ export interface FederalTaxInputs {
   wages: number;
   /** Taxable interest */
   interest: number;
+  /**
+   * Tax-exempt interest (muni bonds, 1040 line 2a). NOT part of taxable
+   * income or AGI, but included in provisional income when computing the
+   * taxable portion of Social Security benefits (IRS Pub 915).
+   * Optional, defaults to 0.
+   */
+  taxExemptInterest?: number;
   /** Total ordinary dividends (INCLUDES qualified dividends) */
   ordinaryDividends: number;
   /** Qualified dividends (subset of ordinaryDividends) */
@@ -371,6 +390,13 @@ export interface BookTaxData {
       shortTerm: number;
       longTerm: number;
     }>;
+    /**
+     * Number of non-retirement STOCK/MUTUAL accounts skipped from the
+     * realized-gains sweep because their effective tax mapping (direct or
+     * inherited from an ancestor) is 'exclude' — i.e. accounts the user
+     * marked non-taxable. Optional/additive for the UI to surface later.
+     */
+    excludedAccountCount?: number;
   };
   /** Employee retirement contributions by account type from contribution summary */
   contributionsByType: Record<string, number>;
