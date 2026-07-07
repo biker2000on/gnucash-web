@@ -738,6 +738,65 @@ export default function TaxEstimatorPage() {
         </div>
       </CollapsibleConfigSection>
 
+      {/* Setup guide */}
+      <CollapsibleConfigSection
+        title="Setup guide — making the estimate accurate"
+        summary="How to flag retirement accounts, map categories, and mark non-taxable accounts"
+        configured={hasMappings}
+        storageKey="taxEstimator.setupGuideOpen"
+      >
+        <div className="space-y-4 text-sm text-foreground-secondary max-w-3xl">
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">1. Flag retirement accounts</h4>
+            <p>
+              Edit each 401(k) / IRA / HSA account (Accounts page → edit) and check{' '}
+              <span className="text-foreground">Retirement account</span>, choosing the type and the owner
+              (you or your spouse). Everything inside a flagged account is tax-sheltered: its realized
+              gains, dividends, and interest never count as taxable here, and its contributions are
+              tracked against the right IRS limit per person.
+            </p>
+          </div>
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">2. Map income &amp; expense accounts to tax categories</h4>
+            <p>
+              Use <span className="text-foreground">Edit account mapping</span> below. A mapping covers the
+              account <em>and all its sub-accounts</em>; an explicit mapping on a child overrides its
+              parent. Map W-2 wages, federal/state withholding, FICA, taxable dividends/interest,
+              self-employment income, and deductions (charitable, mortgage interest, property tax, medical).
+            </p>
+          </div>
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">3. Mark non-taxable accounts as Excluded</h4>
+            <p>
+              Two places this matters: <span className="text-foreground">non-taxable investment accounts</span>{' '}
+              (asset side) mapped to Excluded stop feeding capital gains, and{' '}
+              <span className="text-foreground">non-taxable income accounts</span> (e.g. IRA dividends routed
+              into a shared <code className="text-xs">Income:…:non-taxable</code> account under a mapped parent)
+              mapped to Excluded stop counting as taxable income. Accounts named &ldquo;non-taxable&rdquo; get
+              Excluded suggested automatically, and income that lands inside a flagged retirement account is
+              guarded even without a mapping.
+            </p>
+          </div>
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">4. Special categories</h4>
+            <ul className="list-disc pl-5 space-y-1">
+              <li><span className="text-foreground">Tax-Exempt Interest (muni)</span> — municipal bond interest: excluded from AGI but counted for Social Security taxability.</li>
+              <li><span className="text-foreground">Employer Match (income)</span> — the income account funding your employer&rsquo;s match, so match money never counts as your own contribution.</li>
+              <li><span className="text-foreground">Federal / State Estimated Tax Payment</span> — accounts you pay 1040-ES or state vouchers from; the refund estimate uses withholding <em>plus</em> these payments.</li>
+            </ul>
+          </div>
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">5. Household &amp; filing details</h4>
+            <p>
+              Set spouse and children (with birthdays) in <span className="text-foreground">Settings →
+              Household &amp; entity</span> — birthdays drive catch-up limits, per-spouse IRA tracking, and the
+              Child Tax Credit. The workplace-plan coverage checkboxes in Tax settings above control the
+              traditional-IRA deduction phase-outs.
+            </p>
+          </div>
+        </div>
+      </CollapsibleConfigSection>
+
       {/* Onboarding empty state */}
       {!hasMappings && mappingsData && (
         <Section

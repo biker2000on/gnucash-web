@@ -98,6 +98,21 @@ export async function aggregateBookTaxData(
   const categories = new Map<TaxCategory, CategoryAggregate>();
   const mappedGuids = [...mappings.keys()].filter(g => mappings.get(g) !== 'exclude');
 
+  // Tax-sheltered asset accounts: retirement-flagged subtrees plus any
+  // non-income/expense account the user mapped to 'exclude' (non-taxable
+  // brokerage etc.). Income earned INSIDE these accounts is not taxable even
+  // when it credits a mapped income account (e.g. IRA dividends flowing into a
+  // shared Income:Dividends account).
+  const retirementGuids = await getRetirementAccountGuids(bookAccountGuids);
+  const excludedAssetGuids = accountRows
+    .filter(a =>
+      mappings.get(a.guid) === 'exclude' &&
+      a.account_type !== 'INCOME' &&
+      a.account_type !== 'EXPENSE',
+    )
+    .map(a => a.guid);
+  const shelteredGuids = [...new Set([...retirementGuids, ...excludedAssetGuids])];
+
   if (mappedGuids.length > 0) {
     const splitSums = await prisma.$queryRaw<Array<{
       account_guid: string;
@@ -120,6 +135,20 @@ export async function aggregateBookTaxData(
         -- buy/sell sub-splits, which carry real quantities and legitimate
         -- value flow.)
         AND NOT (s.quantity_num = 0 AND s.value_num <> 0)
+        -- Sheltered-income guard: skip splits whose exact-opposite counter
+        -- lands in a retirement or excluded asset account. A dividend paid
+        -- inside a 401k/IRA posts income -X against IRA cash +X — not taxable
+        -- regardless of which income account it credits. Exact-value matching
+        -- keeps multi-leg paychecks safe (the salary credit never equals the
+        -- 401k contribution leg).
+        AND NOT EXISTS (
+          SELECT 1 FROM splits s2
+          WHERE s2.tx_guid = s.tx_guid
+            AND s2.guid != s.guid
+            AND s2.value_num = -s.value_num
+            AND s2.value_denom = s.value_denom
+            AND s2.account_guid = ANY(${shelteredGuids})
+        )
       GROUP BY s.account_guid
     `;
 
@@ -154,7 +183,6 @@ export async function aggregateBookTaxData(
   }
 
   /* --- Realized capital gains from lots in taxable investment accounts --- */
-  const retirementGuids = await getRetirementAccountGuids(bookAccountGuids);
   const investmentCandidates = accountRows.filter(
     a =>
       (a.account_type === 'STOCK' || a.account_type === 'MUTUAL') &&

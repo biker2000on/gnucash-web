@@ -99,6 +99,26 @@ export function suggestTaxCategory(account: SuggestableAccount): TaxMappingSugge
     // brokerage / hra / fsa: no contribution category
   }
 
+  // 1.5 Explicit tax-treatment naming beats generic keyword rules.
+  // Municipal / tax-exempt interest is its own 1040 concept (line 2a);
+  // anything else declared non-taxable/tax-free should be excluded so it
+  // doesn't inherit a taxable category from a mapped parent (e.g.
+  // Income:Investment:Dividend Income:non-taxable under a mapped parent).
+  if (type === 'INCOME' && /interest/.test(path) && /muni(cipal)?|tax.?exempt|tax.?free/.test(path)) {
+    return {
+      accountGuid: account.guid,
+      category: 'tax_exempt_interest',
+      reason: 'Municipal / tax-exempt interest keywords',
+    };
+  }
+  if (/non.?taxable|tax.?exempt|tax.?free/.test(path)) {
+    return {
+      accountGuid: account.guid,
+      category: 'exclude',
+      reason: 'Account name declares it non-taxable',
+    };
+  }
+
   // 2. Keyword rules
   for (const rule of RULES) {
     if (rule.types.length > 0 && !rule.types.includes(type)) continue;

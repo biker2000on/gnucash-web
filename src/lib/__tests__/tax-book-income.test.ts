@@ -208,4 +208,33 @@ describe('aggregateBookTaxData', () => {
     expect(fed?.total).toBe(4000);
     expect(state?.total).toBe(1200);
   });
+  it('passes sheltered guids (retirement + excluded assets) to the category-sum guard', async () => {
+    mockGetRetirementAccountGuids.mockResolvedValue(new Set(['ret-401k']));
+    let capturedSql: string | null = null;
+    let capturedValues: unknown[] = [];
+    mockPrisma.$queryRaw.mockImplementation(
+      (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const sql = strings.join('?');
+        if (sql.includes('FROM account_hierarchy')) return Promise.resolve(ACCOUNTS);
+        if (sql.includes('FROM splits')) {
+          capturedSql = sql;
+          capturedValues = values;
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([]);
+      },
+    );
+    await run();
+    // Guard clause present in the SQL
+    expect(capturedSql).toContain('NOT EXISTS');
+    expect(capturedSql).toContain('s2.account_guid = ANY');
+    // The sheltered array carries retirement guids AND exclude-mapped asset
+    // accounts (broker + inherited muni-stock), but not income/expense guids
+    const arrays = capturedValues.filter((v): v is string[] => Array.isArray(v));
+    const sheltered = arrays.find(a => a.includes('ret-401k'));
+    expect(sheltered).toBeDefined();
+    expect(sheltered).toContain('broker');
+    expect(sheltered).toContain('muni-stock');
+    expect(sheltered).not.toContain('estpay');
+  });
 });

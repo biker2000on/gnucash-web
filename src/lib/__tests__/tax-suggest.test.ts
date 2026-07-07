@@ -103,3 +103,45 @@ describe('suggestTaxMappings', () => {
     expect(suggestions[0].reason.length).toBeGreaterThan(0);
   });
 });
+
+describe('non-taxable / tax-exempt naming rules', () => {
+  it('suggests exclude for income accounts named non-taxable', () => {
+    const s = suggestTaxCategory({
+      guid: 'g1',
+      name: 'non-taxable',
+      fullname: 'Income:Investment:Dividend Income:non-taxable',
+      accountType: 'INCOME',
+    });
+    expect(s?.category).toBe('exclude');
+  });
+
+  it('suggests tax_exempt_interest for municipal interest income', () => {
+    const s = suggestTaxCategory({
+      guid: 'g2',
+      name: 'Muni Bond Interest',
+      fullname: 'Income:Investment:Interest:Muni Bond Interest',
+      accountType: 'INCOME',
+    });
+    expect(s?.category).toBe('tax_exempt_interest');
+  });
+
+  it('does not misfire the non-taxable rule on ":taxable" accounts', () => {
+    const s = suggestTaxCategory({
+      guid: 'g3',
+      name: 'taxable',
+      fullname: 'Income:Investment:Dividend Income:taxable',
+      accountType: 'INCOME',
+    });
+    expect(s?.category).toBe('ordinary_dividends');
+  });
+
+  it('suggests exclude for non-taxable asset accounts too', () => {
+    const s = suggestTaxCategory({
+      guid: 'g4',
+      name: 'Non-Taxable Brokerage',
+      fullname: 'Assets:Investments:Non-Taxable Brokerage',
+      accountType: 'ASSET',
+    });
+    expect(s?.category).toBe('exclude');
+  });
+});
