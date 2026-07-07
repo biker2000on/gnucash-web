@@ -59,6 +59,8 @@ export interface Account {
     hidden: number;
     placeholder: number;
     fullname?: string;
+    /** Account's own owner preference ('self' | 'spouse' | 'joint') — not inherited */
+    owner?: string | null;
     total_balance?: string;
     period_balance?: string;
     total_balance_usd?: string;

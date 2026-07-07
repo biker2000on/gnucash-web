@@ -37,7 +37,7 @@ interface AccountFormData {
     tax_related: boolean;
     is_retirement: boolean;
     retirement_account_type: string | null;
-    owner: string | null; // 'self' | 'spouse' | null (null = self)
+    owner: string | null; // 'self' | 'spouse' | 'joint' | null (null = unset; retirement code treats unset as self)
 }
 
 interface FlatAccount {
@@ -57,6 +57,16 @@ interface Commodity {
 }
 
 const SECURITY_ACCOUNT_TYPES = new Set(['STOCK', 'MUTUAL']);
+
+// Balance-sheet account types that can carry an owner attribution
+// (banks, cash, brokerages, liabilities). Income/expense/equity accounts
+// don't have a meaningful owner.
+const OWNER_ELIGIBLE_ACCOUNT_TYPES = new Set([
+    'ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE',
+    'LIABILITY', 'CREDIT', 'PAYABLE',
+]);
+
+const OWNER_VALUES = new Set(['self', 'spouse', 'joint']);
 
 function isCurrencyCommodity(c: Commodity): boolean {
     return c.namespace === 'CURRENCY' || c.namespace === 'ISO4217';
@@ -125,7 +135,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             .then(res => (res.ok ? res.json() : null))
             .then((prefs: { owner?: string | null } | null) => {
                 if (cancelled || !prefs) return;
-                const owner = prefs.owner === 'spouse' ? 'spouse' : prefs.owner === 'self' ? 'self' : null;
+                const owner = prefs.owner && OWNER_VALUES.has(prefs.owner) ? prefs.owner : null;
                 setFormData(prev => ({ ...prev, owner }));
             })
             .catch(() => { /* owner is optional; leave default */ });
@@ -576,7 +586,10 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                 ...prev,
                                 is_retirement: e.target.checked,
                                 retirement_account_type: e.target.checked ? prev.retirement_account_type : null,
-                                owner: e.target.checked ? prev.owner : null,
+                                // Retirement accounts are individually owned; a joint
+                                // owner isn't valid there. Keep self/spouse as-is when
+                                // toggling either way.
+                                owner: e.target.checked && prev.owner === 'joint' ? 'self' : prev.owner,
                             }))}
                             className="w-5 h-5 rounded border-border-hover bg-background text-primary focus:ring-primary/50"
                         />
@@ -609,27 +622,48 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                         </select>
                     )}
 
-                    {formData.is_retirement && (
+                    {OWNER_ELIGIBLE_ACCOUNT_TYPES.has(formData.account_type) && (
                         <label className="flex items-center gap-2 cursor-pointer">
                             <span className="text-sm text-foreground-secondary">Owner</span>
-                            <select
-                                value={formData.owner ?? 'self'}
-                                onChange={e => setFormData(prev => ({
-                                    ...prev,
-                                    owner: e.target.value === 'spouse' ? 'spouse' : 'self',
-                                }))}
-                                className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                            >
-                                <option value="self">Self</option>
-                                <option value="spouse">Spouse</option>
-                            </select>
+                            {formData.is_retirement ? (
+                                // Retirement accounts are individually owned: no Joint,
+                                // and unset displays as Self (matching how the reports
+                                // attribute unset retirement owners).
+                                <select
+                                    value={formData.owner === 'spouse' ? 'spouse' : 'self'}
+                                    onChange={e => setFormData(prev => ({
+                                        ...prev,
+                                        owner: e.target.value === 'spouse' ? 'spouse' : 'self',
+                                    }))}
+                                    className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                >
+                                    <option value="self">Self</option>
+                                    <option value="spouse">Spouse</option>
+                                </select>
+                            ) : (
+                                <select
+                                    value={formData.owner && OWNER_VALUES.has(formData.owner) ? formData.owner : ''}
+                                    onChange={e => setFormData(prev => ({
+                                        ...prev,
+                                        owner: e.target.value || null,
+                                    }))}
+                                    className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                >
+                                    <option value="">—</option>
+                                    <option value="self">Self</option>
+                                    <option value="spouse">Spouse</option>
+                                    <option value="joint">Joint</option>
+                                </select>
+                            )}
                         </label>
                     )}
                 </div>
                 <p className="text-xs text-foreground-muted">
                     Retirement flags drive the Contribution Summary report, IRS limit tracking,
                     and the Tax Estimator. Flag the top-level account; children inherit it.
-                    Owner attributes the account to you or your spouse for per-person limit tracking.
+                    Owner attributes the account to you, your spouse, or both: it drives
+                    per-person limit tracking for retirement accounts and ownership reporting
+                    (Net Worth by Owner). Children inherit the nearest ancestor&apos;s owner.
                 </p>
             </div>
 

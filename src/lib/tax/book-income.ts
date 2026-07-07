@@ -278,7 +278,11 @@ export async function aggregateBookTaxData(
             account_guid: string;
             owner: string;
           }>>`
-            SELECT account_guid, COALESCE(owner, 'self') AS owner
+            -- Bucket to exactly 'self' | 'spouse'. 'joint' is valid on
+            -- balance-sheet accounts but retirement accounts shouldn't carry
+            -- it; if data has it anyway, fold it into 'self' rather than
+            -- creating a third bucket.
+            SELECT account_guid, CASE WHEN owner = 'spouse' THEN 'spouse' ELSE 'self' END AS owner
             FROM gnucash_web_account_preferences
             WHERE account_guid = ANY(${guids})
           `;

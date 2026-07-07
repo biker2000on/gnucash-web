@@ -92,6 +92,17 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(serializeBigInts(flatAccounts));
         }
 
+        // Owner preferences for the hierarchy's Owner column (single query,
+        // only rows with an owner set).
+        const ownerPrefs = await prisma.gnucash_web_account_preferences.findMany({
+            where: {
+                account_guid: { in: bookAccountGuids },
+                owner: { not: null },
+            },
+            select: { account_guid: true, owner: true },
+        });
+        const ownerByGuid = new Map(ownerPrefs.map(p => [p.account_guid, p.owner]));
+
         let accounts: Account[];
 
         if (noBalances) {
@@ -118,6 +129,7 @@ export async function GET(request: NextRequest) {
                 hidden: acc.hidden || 0,
                 placeholder: acc.placeholder || 0,
                 commodity_mnemonic: acc.commodity?.mnemonic,
+                owner: ownerByGuid.get(acc.guid) ?? null,
                 total_balance: undefined,
                 period_balance: undefined,
                 total_balance_usd: undefined,
@@ -186,6 +198,7 @@ export async function GET(request: NextRequest) {
                     hidden: acc.hidden || 0,
                     placeholder: acc.placeholder || 0,
                     commodity_mnemonic: acc.commodity?.mnemonic,
+                    owner: ownerByGuid.get(acc.guid) ?? null,
                     total_balance: totalBalance.toFixed(2),
                     period_balance: periodBalance.toFixed(2),
                     total_balance_usd: (totalBalance * reportCurrencyMultiplier).toFixed(2),

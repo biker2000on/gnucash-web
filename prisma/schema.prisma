@@ -540,7 +540,7 @@ model gnucash_web_account_preferences {
   is_retirement           Boolean  @default(false)
   retirement_account_type String?  @db.VarChar(20)
   tax_related             Boolean  @default(false)
-  owner                   String?  @db.VarChar(10) // 'self', 'spouse'
+  owner                   String?  @db.VarChar(10) // 'self', 'spouse', 'joint'
 
   @@map("gnucash_web_account_preferences")
 }

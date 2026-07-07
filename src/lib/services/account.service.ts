@@ -47,8 +47,10 @@ const RETIREMENT_ACCOUNT_TYPE_VALUES = [
   'coverdell_esa',
 ] as const;
 
-// Account owner attribution for per-spouse tax tracking
-const OWNER_VALUES = ['self', 'spouse'] as const;
+// Account owner attribution for per-spouse tax tracking and ownership reporting.
+// 'joint' is valid for balance-sheet accounts; retirement accounts should stay
+// 'self' | 'spouse' (IRAs/401ks are individually owned) — the UI enforces that.
+const OWNER_VALUES = ['self', 'spouse', 'joint'] as const;
 
 // Validation schemas
 export const CreateAccountSchema = z.object({

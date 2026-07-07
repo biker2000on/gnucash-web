@@ -21,6 +21,7 @@ export enum ReportType {
   TAX_HARVESTING = 'tax_harvesting',
   CONTRIBUTION_SUMMARY = 'contribution_summary',
   INCOME_STATEMENT_BY_PERIOD = 'income_statement_by_period',
+  NET_WORTH_BY_OWNER = 'net_worth_by_owner',
 }
 
 export interface ReportConfig {
@@ -318,6 +319,13 @@ export const REPORTS: ReportConfig[] = [
     description: 'Retirement and brokerage account contributions with IRS limit tracking',
     icon: 'trending',
     category: 'investment',
+  },
+  {
+    type: ReportType.NET_WORTH_BY_OWNER,
+    name: 'Net Worth by Owner',
+    description: 'Assets, liabilities, and net worth grouped by owner (self, spouse, joint)',
+    icon: 'balance',
+    category: 'financial',
   },
   {
     type: ReportType.RECONCILIATION,

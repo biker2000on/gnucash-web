@@ -6,7 +6,7 @@ import { isAccountInActiveBook } from '@/lib/book-scope';
 const VALID_COST_BASIS_METHODS = ['fifo', 'lifo', 'average'];
 const VALID_LOT_ASSIGNMENT_METHODS = ['fifo', 'lifo', 'average'];
 const VALID_RETIREMENT_TYPES = ['401k', '403b', '457', 'traditional_ira', 'roth_ira', 'hsa', 'hra', 'fsa', 'brokerage', 'sep_ira', 'simple_ira', 'education_529', 'coverdell_esa'];
-const VALID_OWNERS = ['self', 'spouse'];
+const VALID_OWNERS = ['self', 'spouse', 'joint'];
 
 // GET /api/accounts/{guid}/preferences
 export async function GET(

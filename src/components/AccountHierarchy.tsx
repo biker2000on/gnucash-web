@@ -43,6 +43,7 @@ type ColumnId =
     | 'totalBalanceCommodity'
     | 'lastReconcileDate'
     | 'reconciledUsd'
+    | 'owner'
     | 'placeholderBadge';
 
 interface ReconcileSummaryRow {
@@ -73,6 +74,7 @@ const DEFAULT_COLUMN_ORDER: ColumnId[] = [
     'totalBalanceCommodity',
     'lastReconcileDate',
     'reconciledUsd',
+    'owner',
     'placeholderBadge',
 ];
 const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
@@ -82,6 +84,7 @@ const DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
     totalBalanceCommodity: true,
     lastReconcileDate: false,
     reconciledUsd: false,
+    owner: false,
     placeholderBadge: false,
 };
 const MOBILE_DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
@@ -91,6 +94,7 @@ const MOBILE_DEFAULT_COLUMN_VISIBILITY: VisibilityState = {
     totalBalanceCommodity: false,
     lastReconcileDate: false,
     reconciledUsd: false,
+    owner: false,
     placeholderBadge: false,
 };
 // Condensed phone view: account name + total balance only, regardless of the
@@ -102,7 +106,14 @@ const MOBILE_CONDENSED_COLUMN_VISIBILITY: VisibilityState = {
     totalBalanceCommodity: false,
     lastReconcileDate: false,
     reconciledUsd: false,
+    owner: false,
     placeholderBadge: false,
+};
+
+const OWNER_BADGE_LABELS: Record<string, string> = {
+    self: 'Self',
+    spouse: 'Spouse',
+    joint: 'Joint',
 };
 
 function aggregateUnreviewed(account: AccountWithChildren, statusMap: ReviewStatusMap): number {
@@ -896,6 +907,25 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                     {formatCurrency(row.original.reconciledUsd, 'USD')}
                 </div>
             ),
+        },
+        {
+            id: 'owner',
+            header: 'Owner',
+            cell: ({ row }) => {
+                const owner = row.original.owner;
+                const label = owner ? OWNER_BADGE_LABELS[owner] : undefined;
+                return (
+                    <div className="px-3 py-1 leading-tight text-right">
+                        {label ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-background-tertiary text-foreground-muted border border-border-hover">
+                                {label}
+                            </span>
+                        ) : (
+                            <span className="text-sm text-foreground-muted">—</span>
+                        )}
+                    </div>
+                );
+            },
         },
         {
             id: 'placeholderBadge',
