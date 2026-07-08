@@ -213,6 +213,7 @@ const navItems: NavItem[] = [
             { name: 'Holdings', href: '/investments' },
             { name: 'Cash', href: '/investments/cash' },
             { name: 'Accounts', href: '/investments/accounts' },
+            { name: 'Rebalancing', href: '/investments/rebalancing' },
         ],
     },
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
@@ -224,6 +225,9 @@ const navItems: NavItem[] = [
         icon: 'Wrench',
         children: [
             { name: 'All Tools', href: '/tools' },
+            { name: 'Cash Flow Forecast', href: '/tools/cash-flow-forecast' },
+            { name: 'Subscriptions', href: '/tools/subscriptions' },
+            { name: 'Debt Payoff', href: '/tools/debt-payoff' },
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
             { name: 'Tax Estimator', href: '/tools/tax-estimator' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
@@ -238,6 +242,7 @@ const navItems: NavItem[] = [
         children: [
             { name: 'General', href: '/settings' },
             { name: 'Commodities', href: '/settings/commodities' },
+            { name: 'Rules', href: '/settings/rules' },
             { name: 'Connections', href: '/settings/connections' },
             { name: 'Users', href: '/settings/users' },
         ],

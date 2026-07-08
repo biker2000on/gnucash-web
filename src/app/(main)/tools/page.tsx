@@ -38,6 +38,27 @@ function ToolIcon({ icon }: { icon: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
                 </svg>
             );
+        case 'trend':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 3v14a2 2 0 002 2h16" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 14l4-4 3 3 5-6" />
+                </svg>
+            );
+        case 'repeat':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h5M20 20v-5h-5" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.582 9a8 8 0 0113.836-2.804L20 7.5M19.418 15a8 8 0 01-13.836 2.804L4 16.5" />
+                </svg>
+            );
+        case 'creditcard':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <rect x="3" y="5" width="18" height="14" rx="2" strokeWidth={1.5} />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h4" />
+                </svg>
+            );
         default:
             return null;
     }
@@ -80,6 +101,24 @@ function ToolCard({ title, description, icon, href }: ToolCardProps) {
 
 export default function ToolsPage() {
     const tools = [
+        {
+            title: 'Cash Flow Forecast',
+            description: 'Project cash account balances forward using scheduled transactions and your historical spending rate, with low-balance warnings.',
+            icon: 'trend',
+            href: '/tools/cash-flow-forecast',
+        },
+        {
+            title: 'Subscriptions',
+            description: 'Detect recurring charges and subscriptions from your spending, with price-increase tracking and monthly/annual cost totals.',
+            icon: 'repeat',
+            href: '/tools/subscriptions',
+        },
+        {
+            title: 'Debt Payoff',
+            description: 'Compare snowball vs avalanche payoff strategies across your debts and see how extra payments move your debt-free date.',
+            icon: 'creditcard',
+            href: '/tools/debt-payoff',
+        },
         {
             title: 'FIRE Calculator',
             description: 'Calculate your Financial Independence number and estimate years to retirement.',

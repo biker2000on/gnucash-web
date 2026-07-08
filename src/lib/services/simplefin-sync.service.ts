@@ -9,6 +9,7 @@ import prisma, { generateGuid } from '@/lib/prisma';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
+import { applyRules } from './categorization.service';
 import { createNotification } from '@/lib/notifications';
 import { cacheInvalidateFrom } from '@/lib/cache';
 
@@ -761,13 +762,14 @@ async function importTransaction(
   const amount = parseFloat(sfTxn.amount);
   if (isNaN(amount) || amount === 0) return;
 
-  // Guess the destination account based on historical transactions
-  const destAccountGuid = await guessCategory(
+  // Guess the destination account: explicit rules first, then history
+  const guess = await guessCategory(
     bankAccountGuid,
     sfTxn.description || sfTxn.payee || '',
     currencyMnemonic,
     bookGuid
   );
+  const destAccountGuid = guess.accountGuid;
 
   const postDate = normalizePostDate(sfTxn.posted);
   const description = sfTxn.description || sfTxn.payee || 'SimpleFin Import';
@@ -838,27 +840,54 @@ async function importTransaction(
         source: 'simplefin',
         reviewed: false,
         simplefin_transaction_id: sfTxn.id,
-        confidence: destAccountGuid.includes('Imbalance') ? 'low' : 'medium',
+        confidence: guess.confidence,
       },
     });
   });
 }
 
 /**
- * Guess the destination account based on historical transactions with similar descriptions.
- * Returns Imbalance-{currency} if no confident match found.
+ * Result of a category guess: the destination account plus how confident we
+ * are in it. Rule matches are 'high', history-based guesses are 'medium',
+ * and Imbalance fallbacks are 'low'. Stored in transaction_meta.confidence.
+ */
+interface CategoryGuess {
+  accountGuid: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Guess the destination account for an imported transaction.
+ * Order of precedence:
+ * 1. Explicit user-defined categorization rules (settings/rules) — 'high'
+ * 2. Most frequent historical counterpart account for similar descriptions — 'medium'
+ * 3. Imbalance-{currency} fallback — 'low'
  */
 async function guessCategory(
   bankAccountGuid: string,
   description: string,
   currencyMnemonic: string,
   bookGuid: string
-): Promise<string> {
+): Promise<CategoryGuess> {
   if (!description.trim()) {
-    return await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid);
+    return {
+      accountGuid: await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid),
+      confidence: 'low',
+    };
   }
 
-  // Find the most frequent counterpart account for similar descriptions
+  // 1. Explicit user rules take precedence over any history-based guess.
+  // Rule failures must never fail the import; fall through to history.
+  try {
+    const ruleAccountGuid = await applyRules(bookGuid, description);
+    if (ruleAccountGuid) {
+      return { accountGuid: ruleAccountGuid, confidence: 'high' };
+    }
+  } catch (err) {
+    console.warn('Categorization rules lookup failed, falling back to history guess:', err);
+  }
+
+  // 2. Find the most frequent counterpart account for similar descriptions
   const matches = await prisma.$queryRaw<{ account_guid: string; cnt: bigint }[]>`
     SELECT s2.account_guid, COUNT(*) as cnt
     FROM transactions t
@@ -871,10 +900,13 @@ async function guessCategory(
   `;
 
   if (matches.length > 0 && Number(matches[0].cnt) >= 2) {
-    return matches[0].account_guid;
+    return { accountGuid: matches[0].account_guid, confidence: 'medium' };
   }
 
-  return await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid);
+  return {
+    accountGuid: await getOrCreateImbalanceAccount(currencyMnemonic, bookGuid),
+    confidence: 'low',
+  };
 }
 
 /**
@@ -1094,15 +1126,18 @@ async function importInvestmentTransaction(
   // - Symbol-matched (STOCK child): counter = Cash child (brokerage sweep)
   // - Unmatched (Cash child): counter = guessCategory (same as normal import)
   let counterAccountGuid: string;
+  let counterConfidence: 'high' | 'medium' | 'low' = 'medium';
   if (isSymbolMatched) {
     counterAccountGuid = cashChildGuid;
   } else {
-    counterAccountGuid = await guessCategory(
+    const guess = await guessCategory(
       bankAccountGuid,
       sfTxn.description || sfTxn.payee || '',
       currencyMnemonic,
       bookGuid
     );
+    counterAccountGuid = guess.accountGuid;
+    counterConfidence = guess.confidence;
   }
 
   const postDate = normalizePostDate(sfTxn.posted);
@@ -1177,7 +1212,7 @@ async function importInvestmentTransaction(
         source: 'simplefin',
         reviewed: false,
         simplefin_transaction_id: sfTxn.id,
-        confidence: isSymbolMatched ? 'medium' : (counterAccountGuid.includes('Imbalance') ? 'low' : 'medium'),
+        confidence: isSymbolMatched ? 'medium' : counterConfidence,
       },
     });
   });

@@ -557,6 +557,23 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      <div className="bg-surface rounded-xl border border-border px-4 py-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Categorization Rules</h2>
+            <p className="text-sm text-foreground-muted mt-0.5">
+              Manage auto-categorization rules applied to bank-sync imports, with learned suggestions from your history.
+            </p>
+          </div>
+          <Link
+            href="/settings/rules"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
+          >
+            Open Rules Editor
+          </Link>
+        </div>
+      </div>
+
       {/* Price Refresh Schedule */}
       <CollapsibleConfigSection
         title="Price Refresh Schedule"
