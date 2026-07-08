@@ -239,6 +239,29 @@ export async function aggregateBookTaxData(
   // the page's buildInputs, not here.
   const contributionsByType: Record<string, number> = {};
   const contributionsByTypeAndOwner: Record<string, { self: number; spouse: number }> = {};
+
+  // Which retirement types are flagged in this book at all. When a type is
+  // flagged, the classifier-based contribution summary is authoritative for
+  // it and the raw category sum must NOT override it (the category sum counts
+  // dividends/interest received inside a mapped retirement account as
+  // contributions).
+  let flaggedRetirementTypes: string[] = [];
+  try {
+    const prefRows = await prisma.gnucash_web_account_preferences.findMany({
+      where: { account_guid: { in: bookAccountGuids }, is_retirement: true },
+      select: { retirement_account_type: true },
+    });
+    flaggedRetirementTypes = [
+      ...new Set(
+        prefRows
+          .map(r => r.retirement_account_type)
+          .filter((t): t is string => !!t && t !== 'brokerage'),
+      ),
+    ];
+  } catch {
+    // model unavailable (mocked tests) — leave empty; callers fall back
+  }
+
   try {
     const summary = await generateContributionSummary(
       {
@@ -328,6 +351,7 @@ export async function aggregateBookTaxData(
     },
     contributionsByType,
     contributionsByTypeAndOwner,
+    flaggedRetirementTypes,
     mappedAccountCount: directMappings.size,
   };
 }

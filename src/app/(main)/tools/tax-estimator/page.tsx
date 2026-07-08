@@ -20,7 +20,7 @@ import {
   type TaxYear,
 } from '@/lib/tax/types';
 import { computeIraDeductionLimit, computeRothIraContributionLimit } from '@/lib/tax/phaseouts';
-import { summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
+import { resolveContributionActuals, summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
@@ -123,17 +123,17 @@ function buildInputs(
     categoryTotal(bookData, c) * (ANNUALIZABLE.includes(c) ? factor : 1);
 
   const qualifiedDividends = get('qualified_dividends');
-  // 401k/IRA/HSA contributions come from the tax-year-aware contribution
-  // summary when available, falling back to mapped category totals.
-  const c = bookData.contributionsByType;
-  const trad401k = Math.max(
-    (c['401k'] ?? 0) + (c['403b'] ?? 0) + (c['457'] ?? 0),
-    categoryTotal(bookData, 'trad_401k_contribution'),
-  );
-  const tradIra = Math.max(c['traditional_ira'] ?? 0, categoryTotal(bookData, 'trad_ira_contribution'));
-  const hsa = Math.max((c['hsa'] ?? 0) + (c['hsa_family'] ?? 0), categoryTotal(bookData, 'hsa_contribution'));
-  const sepIra = Math.max(c['sep_ira'] ?? 0, categoryTotal(bookData, 'sep_ira_contribution'));
-  const simpleIra = Math.max(c['simple_ira'] ?? 0, categoryTotal(bookData, 'simple_ira_contribution'));
+  // 401k/IRA/HSA contributions: the classifier-based contribution summary is
+  // authoritative for flagged retirement types (it excludes internal
+  // dividends/transfers/match); category totals only serve as fallback for
+  // books without retirement flags. See resolveContributionActuals.
+  const {
+    trad401k,
+    tradIra,
+    hsa,
+    sepIra,
+    simpleIra,
+  } = resolveContributionActuals(bookData);
 
   const inputs: FederalTaxInputs = {
     ...emptyFederalInputs(year, filingStatus),
@@ -802,6 +802,18 @@ export default function TaxEstimatorPage() {
               Household &amp; entity</span> — birthdays drive catch-up limits, per-spouse IRA tracking, and the
               Child Tax Credit. The workplace-plan coverage checkboxes in Tax settings above control the
               traditional-IRA deduction phase-outs.
+            </p>
+          </div>
+          <div>
+            <h4 className="font-semibold text-foreground mb-1">6. Refund corrections for completed years</h4>
+            <p>
+              If you restate a filed year&rsquo;s taxes with a 12/31-dated adjustment (crediting your
+              withholding expense account against a payable/receivable once the refund is known), post that
+              adjustment to a <span className="text-foreground">child account</span> — e.g.{' '}
+              <code className="text-xs">Expenses:Taxes:Federal:Refund Adjustment</code> — and map the child to{' '}
+              <span className="text-foreground">Excluded</span>. Your expense reports still net to the actual
+              tax, while this estimator keeps seeing the gross withholding, so completed years show the true
+              refund instead of ~$0.
             </p>
           </div>
           <div>

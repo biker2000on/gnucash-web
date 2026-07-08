@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { summarizeTaxPayments } from '@/lib/tax/payments';
+import { resolveContributionActuals, summarizeTaxPayments } from '@/lib/tax/payments';
 import type { BookTaxData, TaxCategory } from '@/lib/tax/types';
 
 function bookData(totals: Partial<Record<TaxCategory, number>>): BookTaxData {
@@ -71,5 +71,41 @@ describe('summarizeTaxPayments', () => {
   it('rounds to cents', () => {
     const p = summarizeTaxPayments(bookData({ estimated_tax_payment: 1000.005 }));
     expect(p.estimatedPayments).toBe(1000.01);
+  });
+});
+
+describe('resolveContributionActuals', () => {
+  const base = (over: Record<string, unknown> = {}) => ({
+    categories: [
+      { category: 'trad_ira_contribution', total: 4994.42, accounts: [] },
+      { category: 'trad_401k_contribution', total: 15000, accounts: [] },
+    ],
+    contributionsByType: { traditional_ira: 3500 },
+    flaggedRetirementTypes: ['traditional_ira'],
+    ...over,
+  }) as never;
+
+  it('classifier is authoritative when the type is flagged (internal dividends do not inflate)', () => {
+    const a = resolveContributionActuals(base());
+    // Category total 4994.42 includes dividends received inside the IRA;
+    // flagged type -> classifier value 3500 wins.
+    expect(a.tradIra).toBe(3500);
+  });
+
+  it('falls back to the category total when the type is not flagged', () => {
+    const a = resolveContributionActuals(base({ flaggedRetirementTypes: [] }));
+    expect(a.tradIra).toBe(4994.42);
+    expect(a.trad401k).toBe(15000);
+  });
+
+  it('sums plan-family keys and treats missing maps safely', () => {
+    const a = resolveContributionActuals({
+      categories: [],
+      contributionsByType: { '401k': 10000, '403b': 2000, hsa: 1000, hsa_family: 500 },
+      flaggedRetirementTypes: ['401k', '403b', 'hsa', 'hsa_family'],
+    } as never);
+    expect(a.trad401k).toBe(12000);
+    expect(a.hsa).toBe(1500);
+    expect(a.sepIra).toBe(0);
   });
 });

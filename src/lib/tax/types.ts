@@ -406,6 +406,13 @@ export interface BookTaxData {
    * (or when the column doesn't exist yet) are attributed to 'self'.
    */
   contributionsByTypeAndOwner?: Record<string, { self: number; spouse: number }>;
+  /**
+   * Retirement types with at least one flagged account in the book. When a
+   * type is flagged, contributionsByType (classifier-based) is authoritative
+   * for it — raw category sums count dividends/interest received inside a
+   * mapped retirement account as contributions and must not override it.
+   */
+  flaggedRetirementTypes?: string[];
   mappedAccountCount: number;
 }
 
