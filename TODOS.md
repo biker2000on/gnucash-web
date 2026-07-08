@@ -210,3 +210,13 @@ Added a shared portal-based transaction context menu and wired it to right-click
 **Completed:** v0.2.1.0 (2026-03-27)
 
 Reconciliation matching links bank-imported transactions to existing manually-entered ones. Transfer dedup detects when the same transfer is imported from both sides and links them. "Bank-verified" badge in ledger. Match counts in sync results.
+
+## P3 - Ledger data cleanup: three credit cards with backwards balances
+
+**What:** Cara Chase Amazon Prime Card (+$3,785.34), Discover Card (+$154.92), and Chase Ink Unlimited (+$29.78) carry positive (debit) raw balances in the book — opposite the normal GnuCash credit-card sign convention.
+
+**Why:** Found by /qa on 2026-07-08 while testing the Debt Payoff Planner against live data. The planner shows them as negative "owed" and excludes them by default, which is faithful but confusing. Likely sign-flipped data entry or unmatched payments in the ledger.
+
+**Effort:** XS (data fix in the ledger, no code change)
+
+---
