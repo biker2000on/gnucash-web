@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0.0] - 2026-07-08
+
+### Added
+- **Capital Gains — Form 8949 / Schedule D**: realized stock/fund sales bucketed into IRS 8949 boxes with Schedule D totals, wash-sale adjustments, CSV export in IRS column order, and 1099-B reconciliation (paste/upload broker rows to confirm basis). Flags rows whose implied per-share price is wildly inconsistent with the same security's other sales, so a corrupt underlying transaction can't silently produce a wrong number on the form.
+- **Spending Watch (anomaly & fraud alerts)**: detects duplicate charges, first-time merchants, amount outliers, and category spikes; runs automatically on each SimpleFIN sync and delivers deduplicated alerts through the notification stream, plus an on-demand review page
+- **Financial Goals tracker**: emergency-fund (N months of expenses), savings-target, and debt-payoff goals with completion dates projected through the cash-flow forecast and debt engines, on-track/behind badges, and a per-goal "$X/mo to hit your date" hint
+- **Monthly Digest**: a month-at-a-glance summary (net-worth change, cash flow, top categories with month-over-month deltas, subscription changes, upcoming bills, budget status) viewable in-app and deliverable to notifications
+- **Investment Benchmark comparison**: portfolio time-weighted return vs S&P 500 / Dow / NASDAQ / Russell 2000 over 1Y/3Y/5Y/YTD/max, with a growth-of-100 chart and a one-click index-price backfill when coverage is missing
+- **Dividend Income tracking & calendar**: trailing-12-month and per-year totals, yield-on-cost and current yield per holding, a monthly income chart, and a forward payment calendar that projects active payers from trailing income (stopped securities excluded)
+- **Data Health dashboard**: checks for unbalanced transactions, structural corruption, missing/stale prices, quote-flag drift, and unreconciled aging, rolled into a 0-100 health score with fix links
+- **Withholding Checkup**: projects year-end federal tax from year-to-date data, flags under-withholding, and computes the safe-harbor target with the remaining quarterly 1040-ES estimate and a recommended per-paycheck adjustment
+
+### Fixed
+- Dividend forward projection tracked a security's single most-recent payment (overshooting trailing income ~3x) and projected securities that stopped paying years ago; it now anchors to trailing-12-month income and excludes inactive payers
+
 ## [0.5.0.0] - 2026-07-08
 
 ### Added

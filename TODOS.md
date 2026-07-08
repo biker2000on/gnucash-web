@@ -2,6 +2,16 @@
 
 Items deferred from plan reviews for future implementation.
 
+## P2 - Ledger data cleanup: corrupt FXAIX sale on 2024-05-22
+
+**What:** The FXAIX lot `a125d771` (1.563 shares bought 2024-04-18 for $272) has a "Sale of Assets" split on 2024-05-22 valued at **-$4,272.95** — an implied ~$2,734/share, when every other FXAIX lot sold that same day is ~$178/share. This inflates the lot's realized gain by ~$4,000.
+
+**Why:** Found by /qa on 2026-07-08 while validating the new Capital Gains (Form 8949) report against live data. The report now flags the row with a "review before filing" warning (ISSUE-005), but the underlying transaction is wrong and throws off the 2024 Schedule D. Likely a fat-fingered value or a bad import on that one sale split. Fix it in the ledger so the 8949 is correct.
+
+**Effort:** XS (data fix in the ledger, no code change)
+
+---
+
 ## P3 - Amazon Order History Reports CSV Format Support
 
 **What:** Support Amazon's "Order History Reports" CSV format (multi-file: orders CSV + items CSV joined by Order ID) as an alternative to the "Request My Data" single-file format.
