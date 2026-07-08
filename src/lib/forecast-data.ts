@@ -11,7 +11,7 @@
 import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
-import { fetchScheduledTransactions } from '@/app/api/scheduled-transactions/route';
+import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 import {
     computeForecast,
     computeDailyRunRates,

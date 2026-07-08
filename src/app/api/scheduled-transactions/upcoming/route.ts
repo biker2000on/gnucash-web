@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
-import { fetchScheduledTransactions } from '../route';
+import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 
 interface UpcomingOccurrence {
   date: string;
