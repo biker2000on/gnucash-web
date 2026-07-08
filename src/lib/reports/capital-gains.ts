@@ -53,6 +53,7 @@ export interface Form8949Row {
   description: string;     // "10 AAPL"
   ticker: string;
   accountGuid: string;
+  shares: number;          // shares sold (positive)
   dateAcquired: string;    // ISO
   dateSold: string;        // ISO
   proceeds: number;        // (d)
@@ -63,6 +64,14 @@ export interface Form8949Row {
   term: Term;
   basisReported: boolean;
   box: Form8949Box;
+  /**
+   * True when this row's implied per-share price is wildly inconsistent with
+   * other sales of the same security — a signal of a corrupt underlying
+   * transaction, not a real gain/loss. The figures are still reported (we do
+   * not silently alter the book) but flagged for review before filing.
+   */
+  suspect?: boolean;
+  suspectReason?: string;
 }
 
 export interface Form8949Bucket {
@@ -95,6 +104,61 @@ export interface CapitalGainsReport {
   rows: Form8949Row[];
   buckets: Form8949Bucket[];
   scheduleD: ScheduleDSummary;
+  /** Human-readable warnings, e.g. suspect rows worth reviewing before filing. */
+  warnings: string[];
+}
+
+/**
+ * Factor by which a row's implied per-share price may diverge from the
+ * same-security median before it is flagged as suspect. A normal security
+ * does not sell at 5× different prices within one tax year, so a larger
+ * divergence almost always means a corrupt underlying transaction.
+ */
+const SUSPECT_PRICE_FACTOR = 5;
+
+/**
+ * Flag rows whose implied per-share price is wildly inconsistent with other
+ * sales of the same security in the same report. Pure; mutates the passed rows'
+ * suspect fields and returns the warning strings. Rows with zero shares or
+ * non-positive proceeds are ignored for the median but can still be flagged if
+ * a sibling establishes a sane price.
+ */
+export function flagSuspectRows(rows: Form8949Row[]): string[] {
+  const warnings: string[] = [];
+  const byTicker = new Map<string, Form8949Row[]>();
+  for (const row of rows) {
+    const list = byTicker.get(row.ticker);
+    if (list) list.push(row);
+    else byTicker.set(row.ticker, [row]);
+  }
+
+  for (const [ticker, group] of byTicker) {
+    const prices = group
+      .filter(r => Math.abs(r.shares) > 1e-9 && Math.abs(r.proceeds) > 1e-9)
+      .map(r => Math.abs(r.proceeds / r.shares))
+      .sort((a, b) => a - b);
+    if (prices.length < 2) continue; // need siblings to establish a norm
+
+    const median = prices[Math.floor(prices.length / 2)];
+    if (median <= 0) continue;
+
+    for (const row of group) {
+      if (Math.abs(row.shares) <= 1e-9) continue;
+      const price = Math.abs(row.proceeds / row.shares);
+      if (price <= 0) continue;
+      const ratio = price / median;
+      if (ratio > SUSPECT_PRICE_FACTOR || ratio < 1 / SUSPECT_PRICE_FACTOR) {
+        row.suspect = true;
+        row.suspectReason =
+          `Implied price $${price.toFixed(2)}/share is far from the ${ticker} ` +
+          `median of $${median.toFixed(2)}/share — check the underlying transaction.`;
+        warnings.push(
+          `${ticker} sale on ${row.dateSold.slice(0, 10)}: ${row.suspectReason}`,
+        );
+      }
+    }
+  }
+  return warnings;
 }
 
 // -----------------------------------------------------------------------------
@@ -239,6 +303,7 @@ export function buildForm8949Row(sale: RealizedSaleInput, washSales: WashSaleRes
     description: `${formatShares(sale.shares)} ${sale.ticker}`,
     ticker: sale.ticker,
     accountGuid: sale.accountGuid,
+    shares: sale.shares,
     dateAcquired: sale.dateAcquired,
     dateSold: sale.dateSold,
     proceeds: sale.proceeds,
@@ -290,7 +355,9 @@ export function buildCapitalGainsReport(
     net: shortTerm.gain + longTerm.gain,
   };
 
-  return { year, rows, buckets, scheduleD };
+  const warnings = flagSuspectRows(rows);
+
+  return { year, rows, buckets, scheduleD, warnings };
 }
 
 // -----------------------------------------------------------------------------

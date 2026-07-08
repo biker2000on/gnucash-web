@@ -15,6 +15,7 @@ import {
   boxFor,
   buildForm8949Row,
   buildCapitalGainsReport,
+  flagSuspectRows,
   reconcile1099B,
   parseBrokerCSV,
   type RealizedSaleInput,
@@ -162,6 +163,50 @@ describe('buildCapitalGainsReport buckets + Schedule D totals', () => {
     expect(report.rows).toHaveLength(0);
     expect(report.scheduleD.net).toBe(0);
     expect(report.buckets.every(b => b.rows.length === 0)).toBe(true);
+    expect(report.warnings).toEqual([]);
+  });
+});
+
+// Regression: a corrupt underlying transaction (FXAIX lot in the live book had
+// a Sale-of-Assets split of -$4272.95 for 1.563 shares ≈ $2734/share vs ~$178
+// for every sibling) silently produced a $4000 phantom gain on the tax form.
+// The report now flags such rows instead of reporting them without warning.
+// QA 2026-07-08.
+describe('suspect-row flagging', () => {
+  it('flags a sale whose per-share price is wildly off from same-security siblings', () => {
+    const sales: RealizedSaleInput[] = [
+      sale({ ticker: 'FXAIX', shares: 1.9, proceeds: 338.6, costBasis: 340, dateSold: '2024-05-22' }),
+      sale({ ticker: 'FXAIX', shares: 1.86, proceeds: 331.7, costBasis: 340, dateSold: '2024-05-22' }),
+      // Corrupt: 1.563 shares for $4272.95 -> ~$2734/share
+      sale({ ticker: 'FXAIX', shares: 1.563, proceeds: 4272.95, costBasis: 272, dateSold: '2024-05-22' }),
+    ];
+    const report = buildCapitalGainsReport(sales, [], 2024);
+    const flagged = report.rows.filter(r => r.suspect);
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].proceeds).toBe(4272.95);
+    expect(flagged[0].suspectReason).toMatch(/per share|\/share/i);
+    expect(report.warnings.length).toBe(1);
+    expect(report.warnings[0]).toContain('FXAIX');
+    // The sane siblings are not flagged.
+    expect(report.rows.filter(r => !r.suspect)).toHaveLength(2);
+  });
+
+  it('does not flag a lone security with no sibling to compare against', () => {
+    const warnings = flagSuspectRows([
+      buildForm8949Row(sale({ ticker: 'SOLO', shares: 1, proceeds: 9999, costBasis: 100 })),
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('does not flag normal same-security sales at similar prices', () => {
+    const sales: RealizedSaleInput[] = [
+      sale({ ticker: 'VTI', shares: 10, proceeds: 2500, costBasis: 2000, dateSold: '2024-04-01' }),
+      sale({ ticker: 'VTI', shares: 5, proceeds: 1260, costBasis: 900, dateSold: '2024-07-01' }),
+      sale({ ticker: 'VTI', shares: 8, proceeds: 2050, costBasis: 1600, dateSold: '2024-09-01' }),
+    ];
+    const report = buildCapitalGainsReport(sales, [], 2024);
+    expect(report.rows.some(r => r.suspect)).toBe(false);
+    expect(report.warnings).toEqual([]);
   });
 });
 

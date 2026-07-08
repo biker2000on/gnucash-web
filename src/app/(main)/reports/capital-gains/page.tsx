@@ -25,6 +25,8 @@ interface Form8949Row {
   term: 'short_term' | 'long_term';
   basisReported: boolean;
   box: string;
+  suspect?: boolean;
+  suspectReason?: string;
 }
 
 interface Form8949Bucket {
@@ -48,6 +50,7 @@ interface CapitalGainsReport {
     netLongTerm: number;
     net: number;
   };
+  warnings?: string[];
   generatedAt: string;
 }
 
@@ -189,6 +192,24 @@ export default function CapitalGainsPage() {
             </button>
           </div>
 
+          {data.warnings && data.warnings.length > 0 && (
+            <div className="bg-negative/10 border border-negative/40 rounded-lg p-4">
+              <div className="flex items-center gap-2 text-negative font-semibold text-sm mb-2">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                Review before filing — {data.warnings.length} suspect {data.warnings.length === 1 ? 'row' : 'rows'}
+              </div>
+              <ul className="space-y-1 text-sm text-foreground-secondary list-disc pl-5">
+                {data.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+              <p className="text-xs text-foreground-muted mt-2">
+                These figures come straight from your book. A per-share price far from the same security&apos;s
+                other sales usually means the underlying transaction is wrong — fix it in the ledger before relying on these numbers.
+              </p>
+            </div>
+          )}
+
           {nonEmptyBuckets.length === 0 ? (
             <div className="bg-surface border border-border rounded-lg p-8 text-center text-foreground-muted text-sm">
               No realized sales found for {year}.
@@ -217,9 +238,19 @@ export default function CapitalGainsPage() {
                       {bucket.rows.map((r, i) => (
                         <tr
                           key={`${r.accountGuid}-${r.dateSold}-${i}`}
-                          className={`border-b border-border/40 transition-colors ${r.code === 'W' ? 'bg-warning/5' : 'hover:bg-surface-hover'}`}
+                          className={`border-b border-border/40 transition-colors ${r.suspect ? 'bg-negative/10' : r.code === 'W' ? 'bg-warning/5' : 'hover:bg-surface-hover'}`}
                         >
-                          <td className="px-4 py-3 font-medium text-foreground">{r.description}</td>
+                          <td className="px-4 py-3 font-medium text-foreground">
+                            {r.description}
+                            {r.suspect && (
+                              <span
+                                className="ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-negative/20 text-negative align-middle"
+                                title={r.suspectReason}
+                              >
+                                REVIEW
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 font-mono tabular-nums text-foreground-secondary">{fmtDate(r.dateAcquired)}</td>
                           <td className="px-4 py-3 font-mono tabular-nums text-foreground-secondary">{fmtDate(r.dateSold)}</td>
                           <td className="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatCurrency(r.proceeds, 'USD')}</td>
