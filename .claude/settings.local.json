@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:github.com)",
-      "Bash(PGPASSWORD=gnucash psql:*)"
+      "Bash(PGPASSWORD=gnucash psql:*)",
+      "Bash(node -e \"const p=require\\('C:/Users/biker/projects/gnucash-web/package.json'\\); console.log\\(Object.keys\\(p.dependencies\\).join\\('\\\\n'\\)\\)\")"
     ]
   },
   "enableAllProjectMcpServers": true,
