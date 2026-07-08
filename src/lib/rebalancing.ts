@@ -14,6 +14,10 @@
  * (default 5). A key is outside the band when
  * |currentPct - targetPct| > bandPct. Example: target 20%, band 5
  * means acceptable range is 15%..25% of portfolio value.
+ *
+ * Full-rebalance suggestions trade ONLY out-of-band holdings back to
+ * target (threshold rebalancing); in-band drift is tolerated by design.
+ * Buy-only mode (newCash > 0) allocates cash to all underweights.
  */
 
 // ---------------------------------------------------------------------------
@@ -104,6 +108,10 @@ export interface RebalanceSuggestion {
     label: string;
     /** Positive dollar amount to buy or sell. */
     amount: number;
+    /**
+     * Always true in full-rebalance mode (in-band holdings are not traded);
+     * in buy-only mode, cash may flow to in-band underweights too.
+     */
     outsideBand: boolean;
     /** Present on SELL suggestions after tax annotation. */
     tax?: SellTaxAnnotation;
@@ -309,9 +317,15 @@ export function computeRebalance(
                 }
             }
         } else {
-            // Full rebalance: land every key exactly on target.
-            for (const row of rows) {
-                if (Math.abs(row.delta) <= MIN_TRADE) continue;
+            // Full rebalance: trade only holdings OUTSIDE the tolerance band
+            // back to target. In-band drift is exactly what the band exists
+            // to tolerate — trading it would churn taxes and fees for no
+            // benefit. Sells and buys therefore may not net to zero; the
+            // difference stays in (or comes from) cash, surfaced as a warning.
+            const tradable = rows.filter(
+                r => r.outsideBand && Math.abs(r.delta) > MIN_TRADE
+            );
+            for (const row of tradable) {
                 suggestions.push({
                     action: row.delta > 0 ? 'BUY' : 'SELL',
                     key: row.key,
@@ -319,6 +333,21 @@ export function computeRebalance(
                     amount: round2(Math.abs(row.delta)),
                     outsideBand: row.outsideBand,
                 });
+            }
+
+            const sellTotal = tradable
+                .filter(r => r.delta < 0)
+                .reduce((s, r) => s + Math.abs(r.delta), 0);
+            const buyTotal = tradable
+                .filter(r => r.delta > 0)
+                .reduce((s, r) => s + r.delta, 0);
+            const net = sellTotal - buyTotal;
+            if (suggestions.length > 0 && Math.abs(net) > MIN_TRADE) {
+                warnings.push(
+                    net > 0
+                        ? `Only out-of-band holdings are traded: sells exceed buys by $${round2(net).toLocaleString('en-US')} — the remainder stays in cash.`
+                        : `Only out-of-band holdings are traded: buys exceed sells by $${round2(-net).toLocaleString('en-US')} — fund the difference from cash.`
+                );
             }
         }
     }

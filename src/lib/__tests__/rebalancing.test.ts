@@ -157,40 +157,62 @@ describe('computeRebalance — buy-only mode (new cash)', () => {
 });
 
 describe('computeRebalance — full rebalance mode', () => {
-    it('sell and buy amounts sum to ~zero net', () => {
+    // Regression: ISSUE-003 — full-rebalance suggested trades for holdings
+    // that were inside the tolerance band, contradicting the band's purpose
+    // and proposing needless taxable sells.
+    // Found by /qa on 2026-07-08
+    // Report: .gstack/qa-reports/qa-report-gnucash-web-2026-07-08.md
+    it('trades only out-of-band holdings and surfaces the cash remainder', () => {
+        // VTI drift +10 (outside default band 5); BND/VXUS drift -5 (inside)
         const result = computeRebalance(holdings, targets);
 
+        expect(result.suggestions).toHaveLength(1);
+        const sell = result.suggestions[0];
+        expect(sell.key).toBe('VTI');
+        expect(sell.action).toBe('SELL');
+        expect(sell.amount).toBeCloseTo(10_000, 2);
+        expect(sell.outsideBand).toBe(true);
+
+        // The un-netted proceeds are called out
+        expect(result.warnings.some(w => w.includes('sells exceed buys'))).toBe(true);
+    });
+
+    it('produces no suggestions when every holding is within the band', () => {
+        const result = computeRebalance(holdings, targets, { bandPct: 15 });
+        expect(result.suggestions).toHaveLength(0);
+        expect(result.warnings.some(w => w.includes('exceed'))).toBe(false);
+    });
+
+    it('nets to ~zero when every key is out of band', () => {
+        // Tight band: all three keys are outside, so the full exact-to-target
+        // trade set is produced and sells fund the buys exactly.
+        const result = computeRebalance(holdings, targets, { bandPct: 2 });
         const net = result.suggestions.reduce(
             (s, x) => s + (x.action === 'BUY' ? x.amount : -x.amount),
             0
         );
         expect(net).toBeCloseTo(0, 1);
-
-        const sell = result.suggestions.find(s => s.key === 'VTI')!;
-        expect(sell.action).toBe('SELL');
-        expect(sell.amount).toBeCloseTo(10_000, 2);
+        expect(result.suggestions).toHaveLength(3);
     });
 
-    it('nets to ~zero even with unnormalized targets', () => {
+    it('normalizes unnormalized targets to the same trade set', () => {
         const skewed: RebalanceTarget[] = [
             { key: 'VTI', targetPct: 5 },
             { key: 'BND', targetPct: 3 },
             { key: 'VXUS', targetPct: 2 },
         ];
-        const result = computeRebalance(holdings, skewed);
-        const net = result.suggestions.reduce(
-            (s, x) => s + (x.action === 'BUY' ? x.amount : -x.amount),
-            0
-        );
-        expect(net).toBeCloseTo(0, 1);
+        const result = computeRebalance(holdings, skewed, { bandPct: 2 });
+        const normalized = computeRebalance(holdings, targets, { bandPct: 2 });
+        expect(result.suggestions).toEqual(normalized.suggestions);
     });
 
     it('lists sells before buys', () => {
-        const result = computeRebalance(holdings, targets);
+        const result = computeRebalance(holdings, targets, { bandPct: 2 });
         const firstBuy = result.suggestions.findIndex(s => s.action === 'BUY');
         const lastSell = result.suggestions
             .map((s, i) => (s.action === 'SELL' ? i : -1))
             .reduce((a, b) => Math.max(a, b), -1);
+        expect(firstBuy).toBeGreaterThan(-1);
         expect(lastSell).toBeLessThan(firstBuy);
     });
 });
@@ -214,12 +236,11 @@ describe('computeRebalance — band filtering', () => {
         expect(wide.rows.every(r => !r.outsideBand)).toBe(true);
     });
 
-    it('propagates the band flag onto suggestions', () => {
+    it('propagates the band flag onto suggestions (all outside in full mode)', () => {
         const result = computeRebalance(holdings, targets);
-        const vti = result.suggestions.find(s => s.key === 'VTI')!;
-        const bnd = result.suggestions.find(s => s.key === 'BND')!;
-        expect(vti.outsideBand).toBe(true);
-        expect(bnd.outsideBand).toBe(false);
+        expect(result.suggestions.every(s => s.outsideBand)).toBe(true);
+        // In-band BND is not traded at all in full-rebalance mode
+        expect(result.suggestions.find(s => s.key === 'BND')).toBeUndefined();
     });
 });
 
