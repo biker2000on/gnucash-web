@@ -225,6 +225,42 @@ describe('irregular and sparse payers are excluded from projection', () => {
     it('detectSecurityCadence returns null for fewer than the minimum payments', () => {
         expect(detectSecurityCadence([pay('2025-06-15', 10, 'X')])).toBeNull();
     });
+
+    // Regression: a security that stopped paying years ago (e.g. VTSAX, last
+    // dividend 2018 in the live book) was still projected forward, inventing
+    // thousands in income that will never arrive. QA 2026-07-08.
+    it('does not project a security whose last payment predates the active window', () => {
+        // Regular quarterly cadence, but the whole series is 2016-2017 — stale.
+        const payments = quarterly('STALE', 2016, 2, 100);
+        const { calendar, projections } = projectForwardCalendar(payments, { asOf: AS_OF });
+        expect(calendar.find(c => c.ticker === 'STALE')).toBeUndefined();
+        const proj = projections.find(p => p.ticker === 'STALE');
+        expect(proj?.projected).toBe(false);
+        expect(proj?.reason).toBe('no recent payments');
+    });
+
+    // Regression: projection anchored to the single most-recent payment
+    // overshot trailing income ~3x for growing DRIP positions. It should now
+    // track the trailing-12-month total instead. QA 2026-07-08.
+    it('anchors projected next-12-month income to trailing income, not the latest payment', () => {
+        // Growing quarterly payer: last 4 payments (trailing 12mo) sum to 520,
+        // with the most recent being the largest at 160.
+        const payments = [
+            pay('2025-03-15', 100, 'GROW'),
+            pay('2025-06-15', 120, 'GROW'),
+            pay('2025-09-15', 140, 'GROW'),
+            pay('2025-12-15', 160, 'GROW'),
+        ];
+        const { calendar } = projectForwardCalendar(payments, { asOf: AS_OF, months: 12 });
+        const grow = calendar.filter(c => c.ticker === 'GROW');
+        const projectedTotal = grow.reduce((s, c) => s + c.estimatedAmount, 0);
+        // Trailing 12mo = 520 (all four). Latest-payment-x4 would have been 640.
+        // Projection tracks trailing income, well under the naive overshoot.
+        expect(projectedTotal).toBeLessThanOrEqual(560);
+        expect(projectedTotal).toBeGreaterThanOrEqual(480);
+        // Each projected payment reflects trailing/4, not the 160 latest.
+        expect(grow[0].estimatedAmount).toBeCloseTo(520 / 4, 5);
+    });
 });
 
 /* ------------------------------------------------------------------ */

@@ -335,6 +335,14 @@ const CADENCE_BANDS: CadenceBand[] = [
     { cadence: 'annual', minDays: 330, maxDays: 400, madLimitDays: 45 },
 ];
 
+/** Expected number of payments per year for each cadence. */
+const PAYMENTS_PER_YEAR: Record<DividendCadence, number> = {
+    monthly: 12,
+    quarterly: 4,
+    semiannual: 2,
+    annual: 1,
+};
+
 function median(values: number[]): number {
     if (values.length === 0) return 0;
     const sorted = [...values].sort((a, b) => a - b);
@@ -415,6 +423,7 @@ export function projectForwardCalendar(
 
     const calendar: ProjectedPayment[] = [];
     const projections: SecurityProjection[] = [];
+    const ttmStart = asOf.getTime() - 365 * DAY_MS;
 
     for (const [, group] of groups) {
         const first = group[0];
@@ -434,10 +443,46 @@ export function projectForwardCalendar(
             continue;
         }
 
-        // Estimated amount: most recent occurrence's amount.
         const last = occ[occ.length - 1];
-        const estimatedAmount = last.amount;
         const intervalMs = detected.medianIntervalDays * DAY_MS;
+
+        // A security that stopped paying is not projected — extrapolating one
+        // that last paid years ago would invent income that never arrives. The
+        // window is generous (books often lag on recording recent dividends /
+        // DRIP), so it excludes the clearly-stale (e.g. last paid years back)
+        // without dropping an active holding whose latest quarter isn't entered
+        // yet: max(2 cadence intervals, 400 days).
+        const activeWindowMs = Math.max(2 * intervalMs, 400 * DAY_MS);
+        if (last.date.getTime() < asOf.getTime() - activeWindowMs) {
+            projections.push({
+                ticker: first.ticker,
+                commodityGuid: first.commodityGuid,
+                projected: false,
+                cadence: detected.cadence,
+                reason: 'no recent payments',
+            });
+            continue;
+        }
+
+        // Anchor the forward estimate to trailing-12-month income rather than the
+        // single most-recent payment, which for growing DRIP positions (or a
+        // lumpy year-end distribution) overshoots badly. Distribute that trailing
+        // income across the expected number of payments per year.
+        const ttmTotal = occ
+            .filter(o => o.date.getTime() > ttmStart && o.date.getTime() <= asOf.getTime())
+            .reduce((sum, o) => sum + o.amount, 0);
+        if (ttmTotal <= 0) {
+            projections.push({
+                ticker: first.ticker,
+                commodityGuid: first.commodityGuid,
+                projected: false,
+                cadence: detected.cadence,
+                reason: 'no recent payments',
+            });
+            continue;
+        }
+        const paymentsPerYear = PAYMENTS_PER_YEAR[detected.cadence];
+        const estimatedAmount = ttmTotal / paymentsPerYear;
 
         // Walk forward from the last observed payment until the horizon.
         let nextMs = last.date.getTime() + intervalMs;
