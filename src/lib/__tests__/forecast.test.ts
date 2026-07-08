@@ -265,6 +265,39 @@ describe('computeForecast — threshold warnings', () => {
         });
         expect(result.warnings).toHaveLength(0);
     });
+
+    // Regression: ISSUE-001 — credit-card accounts flooded the warnings panel
+    // ("already below $0.00" for every carried card balance).
+    // Found by /qa on 2026-07-08
+    // Report: .gstack/qa-reports/qa-report-gnucash-web-2026-07-08.md
+    it('skips per-account warnings for excludeFromWarnings accounts but keeps them in the combined total', () => {
+        const result = computeForecast({
+            accounts: [
+                mkAccount({ currentBalance: 500 }),
+                mkAccount({
+                    guid: 'acct-card',
+                    name: 'Credit Card',
+                    currentBalance: -4460,
+                    excludeFromWarnings: true,
+                }),
+            ],
+            events: [],
+            runRates: {},
+            horizonDays: 10,
+            startDate: START,
+        });
+
+        // No warning for the credit card itself, even though it is below 0
+        expect(result.warnings.filter(w => w.accountGuid === 'acct-card')).toHaveLength(0);
+        // Checking stays above 0 — no warning for it either
+        expect(result.warnings.filter(w => w.accountGuid === 'acct-checking')).toHaveLength(0);
+        // Combined total (500 - 4460 < 0) still warns: net cash position is real
+        const combined = result.warnings.filter(w => w.accountGuid === COMBINED_GUID);
+        expect(combined).toHaveLength(1);
+        expect(combined[0].alreadyBelow).toBe(true);
+        // The card is still projected in the series
+        expect(result.series[0].balances['acct-card']).toBe(-4460);
+    });
 });
 
 describe('computeForecast — empty inputs', () => {

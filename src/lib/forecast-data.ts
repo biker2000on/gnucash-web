@@ -178,6 +178,7 @@ export async function loadForecastData(options: LoadForecastOptions): Promise<Fo
         guid: row.guid,
         name: row.name,
         currentBalance: balances.get(row.guid) || 0,
+        excludeFromWarnings: row.account_type === 'CREDIT',
     }));
 
     const runRates = computeDailyRunRates(flows, lookbackDays);

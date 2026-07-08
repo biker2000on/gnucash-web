@@ -24,6 +24,12 @@ export interface ForecastAccount {
     guid: string;
     name: string;
     currentBalance: number;
+    /**
+     * Skip low-balance warnings for this account (still projected and
+     * included in the combined total). Used for CREDIT accounts, where a
+     * negative balance means a normal carried card balance, not low cash.
+     */
+    excludeFromWarnings?: boolean;
 }
 
 export interface ForecastEvent {
@@ -299,7 +305,7 @@ export function computeForecast(input: ForecastInput): ForecastResult {
 
             const isBelow = balance < threshold;
             const wasBelow = belowState.get(account.guid) ?? false;
-            if (isBelow && (isFirstDay || !wasBelow)) {
+            if (isBelow && !account.excludeFromWarnings && (isFirstDay || !wasBelow)) {
                 warnings.push({
                     accountGuid: account.guid,
                     accountName: nameByGuid.get(account.guid) || account.guid,
