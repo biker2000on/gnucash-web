@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0.0] - 2026-07-08
+
+### Added
+- **Cash Flow Forecast tool**: projects cash account balances 30/60/90/180 days forward from scheduled-transaction occurrences plus a 90-day historical daily run rate, with per-account chart lines, a warning threshold, low-balance alerts, and an upcoming-events table
+- **Subscription detection tool**: finds recurring charges (weekly/monthly/quarterly/annual) from spending history with merchant normalization, price-increase tracking, stopped/new status, and monthly/annualized cost totals
+- **Debt Payoff Planner**: snowball vs avalanche vs minimum-only comparison across all liability accounts with freed-minimum rollover, mortgage APR/payment prefill from saved mortgage configs, balance-over-time chart, per-debt payoff dates, and payment-too-low warnings
+- **Portfolio Rebalancing**: per-symbol target allocations with drift bars and an absolute tolerance band, threshold rebalancing (only out-of-band holdings are traded), buy-only cash-flow mode for new money, and tax-aware sell ordering (losses first, then long-term gains) annotated from lot data
+- **Auto-categorization rules engine**: user-defined contains/exact/regex rules checked ahead of the history-based guess during SimpleFIN sync (rule hits import as high confidence), with a Settings → Rules page offering learned suggestions from transaction history, one-click rule creation, and a description test box
+
+### Fixed
+- Imbalance-routed SimpleFIN imports are now stored with low confidence (previously mis-stored as medium)
+- Credit-card accounts no longer flood the cash-flow-forecast low-balance warnings; the combined net-cash warning is preserved
+- Debt payoff chart windows to the longest completed plan instead of stretching to the 100-year simulation cap when minimums never pay off
+- `fetchScheduledTransactions` moved from the scheduled-transactions route into `src/lib/scheduled-transactions.ts`, fixing production builds after a dev session
+
 ## [0.4.0.0] - 2026-06-12
 
 ### Added
