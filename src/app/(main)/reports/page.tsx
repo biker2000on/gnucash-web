@@ -264,6 +264,38 @@ export default function ReportsPage() {
                 </section>
             )}
 
+            {/* Tax Reports (standalone pages, not part of the saved-report machinery) */}
+            <section className="space-y-4">
+                <h2 className="text-lg font-semibold text-foreground-secondary uppercase tracking-wider">
+                    Tax Reports
+                </h2>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <Link
+                        href="/reports/capital-gains"
+                        className="group block bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+                    >
+                        <div className="flex items-start gap-4">
+                            <div className="p-3 bg-primary/20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                                <ReportIcon icon="account" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
+                                    Capital Gains — Form 8949 / Schedule D
+                                </h3>
+                                <p className="mt-1 text-sm text-foreground-muted line-clamp-2">
+                                    Realized stock and fund sales bucketed into IRS Form 8949 boxes with Schedule D totals, wash-sale adjustments, and 1099-B reconciliation.
+                                </p>
+                            </div>
+                            <div className="text-foreground-muted group-hover:text-primary transition-colors">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                            </div>
+                        </div>
+                    </Link>
+                </div>
+            </section>
+
             {/* Base Reports by Category */}
             {CATEGORY_ORDER.map(category => {
                 const reports = reportsByCategory[category];

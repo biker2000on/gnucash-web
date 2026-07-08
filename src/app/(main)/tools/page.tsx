@@ -59,6 +59,33 @@ function ToolIcon({ icon }: { icon: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h4" />
                 </svg>
             );
+        case 'shield':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3l7 3v5c0 4.5-3 8-7 9-4-1-7-4.5-7-9V6l7-3z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.5 12l1.75 1.75L15 10" />
+                </svg>
+            );
+        case 'digest':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <rect x="4" y="3" width="16" height="18" rx="2" strokeWidth={1.5} />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 8h8M8 12h8M8 16h5" />
+                </svg>
+            );
+        case 'gauge':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 19a8 8 0 1116 0" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 19l4-6" />
+                </svg>
+            );
+        case 'heartbeat':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12h4l2-5 3 10 2-5h7" />
+                </svg>
+            );
         default:
             return null;
     }
@@ -114,10 +141,34 @@ export default function ToolsPage() {
             href: '/tools/subscriptions',
         },
         {
+            title: 'Spending Watch',
+            description: 'Spot spending anomalies and possible fraud — duplicate charges, unfamiliar merchants, unusually large charges, and category spikes — with one-click scan-and-alert.',
+            icon: 'shield',
+            href: '/tools/anomalies',
+        },
+        {
             title: 'Debt Payoff',
             description: 'Compare snowball vs avalanche payoff strategies across your debts and see how extra payments move your debt-free date.',
             icon: 'creditcard',
             href: '/tools/debt-payoff',
+        },
+        {
+            title: 'Monthly Digest',
+            description: 'A month-at-a-glance summary — net-worth change, cash flow, top categories with deltas, subscription changes, upcoming bills, and budget status.',
+            icon: 'digest',
+            href: '/tools/digest',
+        },
+        {
+            title: 'Withholding Checkup',
+            description: 'Project your year-end federal tax from year-to-date data, see whether you are under-withheld, and get safe-harbor estimates plus a per-paycheck adjustment.',
+            icon: 'gauge',
+            href: '/tools/withholding',
+        },
+        {
+            title: 'Data Health',
+            description: 'Check your book for unbalanced transactions, orphaned splits, stale or missing prices, and unreconciled aging — with a health score and fix links.',
+            icon: 'heartbeat',
+            href: '/tools/data-health',
         },
         {
             title: 'FIRE Calculator',

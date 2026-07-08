@@ -12,6 +12,7 @@ import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 import { applyRules } from './categorization.service';
 import { createNotification } from '@/lib/notifications';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { scanForAnomalies } from '@/lib/anomaly-detection';
 
 const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
 
@@ -431,6 +432,15 @@ export async function syncSimpleFin(
       await cacheInvalidateFrom(bookGuid, earliestImportedPostDate);
     } catch (err) {
       console.warn('SimpleFin sync cache invalidation failed:', err);
+    }
+
+    // Scan freshly imported spending for anomalies / fraud and push alerts.
+    // scanForAnomalies is internally guarded and never throws, but wrap the
+    // call anyway so nothing here can fail the sync.
+    try {
+      await scanForAnomalies(bookGuid, { userId: connection.user_id });
+    } catch (err) {
+      console.warn('SimpleFin sync anomaly scan failed:', err);
     }
   }
 

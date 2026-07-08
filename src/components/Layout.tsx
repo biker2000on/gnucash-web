@@ -161,6 +161,7 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
     Paperclip: IconPaperclip,
     Payslip: IconPayslip,
     Tag: IconTag,
+    Target: IconTarget,
 };
 
 function IconTag({ className = "w-5 h-5" }: { className?: string }) {
@@ -168,6 +169,16 @@ function IconTag({ className = "w-5 h-5" }: { className?: string }) {
         <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M20.59 13.41L12 22 2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
             <circle cx="7" cy="7" r="1" fill="currentColor" stroke="none" />
+        </svg>
+    );
+}
+
+function IconTarget({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="12" cy="12" r="5" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
         </svg>
     );
 }
@@ -214,9 +225,12 @@ const navItems: NavItem[] = [
             { name: 'Cash', href: '/investments/cash' },
             { name: 'Accounts', href: '/investments/accounts' },
             { name: 'Rebalancing', href: '/investments/rebalancing' },
+            { name: 'Benchmark', href: '/investments/benchmark' },
+            { name: 'Dividends', href: '/investments/dividends' },
         ],
     },
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
+    { name: 'Goals', href: '/goals', icon: 'Target' },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
     { name: 'Import/Export', href: '/import-export', icon: 'ArrowUpDown' },
     {
@@ -227,10 +241,14 @@ const navItems: NavItem[] = [
             { name: 'All Tools', href: '/tools' },
             { name: 'Cash Flow Forecast', href: '/tools/cash-flow-forecast' },
             { name: 'Subscriptions', href: '/tools/subscriptions' },
+            { name: 'Spending Watch', href: '/tools/anomalies' },
             { name: 'Debt Payoff', href: '/tools/debt-payoff' },
+            { name: 'Monthly Digest', href: '/tools/digest' },
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
             { name: 'Tax Estimator', href: '/tools/tax-estimator' },
+            { name: 'Withholding Checkup', href: '/tools/withholding' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
+            { name: 'Data Health', href: '/tools/data-health' },
             { name: 'Scheduled Transactions', href: '/scheduled-transactions' },
             { name: 'Asset Analysis', href: '/assets' },
         ],
