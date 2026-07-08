@@ -99,10 +99,19 @@ interface ChartPoint {
  * minimum-payments-only baseline.
  */
 export function DebtPayoffChart({ snowball, avalanche, minimum }: DebtPayoffChartProps) {
-  const data = useMemo<ChartPoint[]>(() => {
+  const { data, truncated } = useMemo<{ data: ChartPoint[]; truncated: boolean }>(() => {
     const plans = [snowball, avalanche, minimum];
     const maxLen = Math.max(...plans.map((p) => p.timeline.length));
-    if (maxLen === 0) return [];
+    if (maxLen === 0) return { data: [], truncated: false };
+
+    // Window the x-axis to the longest plan that actually completes; a
+    // capped plan (e.g. minimum-only that never pays off) would otherwise
+    // stretch the axis to the 100-year simulation cap and squash the
+    // useful curves against the left edge.
+    const completedLens = plans.filter((p) => !p.capped).map((p) => p.timeline.length);
+    const windowLen = completedLens.length > 0
+      ? Math.min(maxLen, Math.max(...completedLens) + 12)
+      : maxLen;
 
     // Balance at a given month: timeline value while running, 0 after a
     // completed plan ends, null past the cap for plans that never finish.
@@ -113,8 +122,8 @@ export function DebtPayoffChart({ snowball, avalanche, minimum }: DebtPayoffChar
 
     const points: ChartPoint[] = [];
     // Downsample long schedules so the chart stays readable (~240 points max)
-    const step = Math.max(1, Math.ceil(maxLen / 240));
-    for (let m = 0; m < maxLen; m += step) {
+    const step = Math.max(1, Math.ceil(windowLen / 240));
+    for (let m = 0; m < windowLen; m += step) {
       points.push({
         label: monthToLabel(m),
         snowball: valueAt(snowball, m),
@@ -123,8 +132,8 @@ export function DebtPayoffChart({ snowball, avalanche, minimum }: DebtPayoffChar
       });
     }
     // Always include the final month so lines reach zero
-    const last = maxLen - 1;
-    if ((maxLen - 1) % step !== 0) {
+    const last = windowLen - 1;
+    if ((windowLen - 1) % step !== 0) {
       points.push({
         label: monthToLabel(last),
         snowball: valueAt(snowball, last),
@@ -132,7 +141,7 @@ export function DebtPayoffChart({ snowball, avalanche, minimum }: DebtPayoffChar
         minimum: valueAt(minimum, last),
       });
     }
-    return points;
+    return { data: points, truncated: windowLen < maxLen };
   }, [snowball, avalanche, minimum]);
 
   if (data.length === 0) return null;
@@ -194,6 +203,11 @@ export function DebtPayoffChart({ snowball, avalanche, minimum }: DebtPayoffChar
           />
         </LineChart>
       </ResponsiveContainer>
+      {truncated && (
+        <p className="text-xs text-foreground-muted mt-2">
+          Minimum-payments-only never pays off these debts; its line continues beyond the chart window.
+        </p>
+      )}
     </div>
   );
 }
