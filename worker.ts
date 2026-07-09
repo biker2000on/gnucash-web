@@ -288,6 +288,11 @@ async function main() {
           await handleExtractPayslip(job);
           break;
         }
+        case 'extract-statement': {
+          const { handleExtractStatement } = await import('./src/lib/queue/jobs/extract-statement');
+          await handleExtractStatement(job);
+          break;
+        }
         case 'check-limit-coverage': {
           const { handleCheckLimitCoverage } = await import('./src/lib/queue/jobs/check-limit-coverage');
           await handleCheckLimitCoverage(job);

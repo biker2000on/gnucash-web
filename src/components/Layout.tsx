@@ -163,7 +163,17 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
     Tag: IconTag,
     Target: IconTarget,
     Briefcase: IconBriefcase,
+    Statement: IconStatement,
 };
+
+function IconStatement({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 2h9l5 5v13a2 2 0 01-2 2H6a2 2 0 01-2-2V4a2 2 0 012-2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M14 2v5h5M8 13h8M8 17h5M8 9h3" />
+        </svg>
+    );
+}
 
 function IconBriefcase({ className = "w-5 h-5" }: { className?: string }) {
     return (
@@ -279,6 +289,7 @@ const navItems: NavItem[] = [
     { name: 'Tags', href: '/tags', icon: 'Tag' },
     { name: 'Receipts', href: '/receipts', icon: 'Paperclip' },
     { name: 'Payslips', href: '/payslips', icon: 'Payslip' },
+    { name: 'Statements', href: '/statements', icon: 'Statement' },
     {
         name: 'Investments',
         href: '/investments',

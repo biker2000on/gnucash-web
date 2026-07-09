@@ -25,6 +25,23 @@ export async function signalScheduleChanged(bookGuid: string, enabled: boolean, 
   await enqueueJob('schedule-changed', { bookGuid, enabled, intervalHours, refreshTime });
 }
 
+/** Payload for the extract-statement job (statement ingestion pipeline). */
+export interface ExtractStatementJobData {
+  batchId: number;
+  bookGuid?: string;
+  userId?: number;
+}
+
+/**
+ * Enqueue a statement-extraction job. Returns the job id, or undefined if
+ * Redis is unavailable (caller should then run extraction inline).
+ */
+export async function enqueueExtractStatement(
+  data: ExtractStatementJobData,
+): Promise<string | undefined> {
+  return enqueueJob('extract-statement', data as unknown as Record<string, unknown>);
+}
+
 /**
  * Enqueue an immediate one-off job.
  * Returns undefined (triggering direct fallback) if Redis is unavailable.
