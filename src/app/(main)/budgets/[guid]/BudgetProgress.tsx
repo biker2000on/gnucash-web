@@ -173,8 +173,8 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
 
     // [ / ] step the period selector; scoped as plain keys so they are
     // ignored inside inputs and never collide with the global chords.
-    useKeyboardShortcut('budget-progress-prev-period', '[', 'Previous budget period', () => stepPeriod(-1));
-    useKeyboardShortcut('budget-progress-next-period', ']', 'Next budget period', () => stepPeriod(1));
+    useKeyboardShortcut('budget-progress-prev-period', '[', 'Previous budget period', () => stepPeriod(-1), 'page');
+    useKeyboardShortcut('budget-progress-next-period', ']', 'Next budget period', () => stepPeriod(1), 'page');
 
     const sortedAccounts = useMemo(() => {
         const rank = (a: AccountProgress) => {

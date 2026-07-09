@@ -2,7 +2,10 @@
 
 import { createContext, useContext, useCallback, useState, useEffect, useRef, useMemo, ReactNode } from 'react'
 
-export type ShortcutScope = 'global' | 'transaction-form' | 'date-field' | 'amount-field'
+// 'page' shortcuts execute exactly like 'global' ones but are contributed by
+// the currently-mounted page, so they appear under a "This page" group in the
+// help modal and disappear when you navigate away.
+export type ShortcutScope = 'global' | 'page' | 'transaction-form' | 'date-field' | 'amount-field'
 
 interface ShortcutRegistration {
   id: string
@@ -156,7 +159,7 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
         // Look for matching chord shortcut
         for (const shortcut of shortcuts.values()) {
           if (
-            shortcut.scope === 'global' &&
+            (shortcut.scope === 'global' || shortcut.scope === 'page') &&
             shortcut.enabled &&
             shortcut.key === chordKey
           ) {
@@ -183,7 +186,7 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
       // Detect chord prefixes dynamically from registered shortcuts
       const chordPrefixes = new Set<string>()
       shortcuts.forEach((s) => {
-        if (s.scope === 'global' && s.enabled && s.key.includes(' ')) {
+        if ((s.scope === 'global' || s.scope === 'page') && s.enabled && s.key.includes(' ')) {
           chordPrefixes.add(s.key.split(' ')[0])
         }
       })
@@ -197,10 +200,10 @@ export function KeyboardShortcutProvider({ children }: { children: ReactNode }) 
         return
       }
 
-      // Handle regular global shortcuts
+      // Handle regular global + page shortcuts
       for (const shortcut of shortcuts.values()) {
         if (
-          shortcut.scope === 'global' &&
+          (shortcut.scope === 'global' || shortcut.scope === 'page') &&
           shortcut.enabled &&
           matchShortcutKey(event, shortcut.key)
         ) {

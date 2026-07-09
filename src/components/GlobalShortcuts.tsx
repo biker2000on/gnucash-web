@@ -17,6 +17,11 @@ export function GlobalShortcuts() {
   useKeyboardShortcut('nav-ledger', 'g l', 'Go to Ledger', () => router.push('/ledger'))
   useKeyboardShortcut('nav-investments', 'g i', 'Go to Investments', () => router.push('/investments'))
   useKeyboardShortcut('nav-reports', 'g r', 'Go to Reports', () => router.push('/reports'))
+  useKeyboardShortcut('nav-budgets', 'g u', 'Go to Budgets', () => router.push('/budgets'))
+  useKeyboardShortcut('nav-goals', 'g o', 'Go to Goals', () => router.push('/goals'))
+  useKeyboardShortcut('nav-tags', 'g t', 'Go to Tags', () => router.push('/tags'))
+  useKeyboardShortcut('nav-tools', 'g w', 'Go to Tools', () => router.push('/tools'))
+  useKeyboardShortcut('nav-settings', 'g s', 'Go to Settings', () => router.push('/settings'))
 
   // Quick switchers
   useKeyboardShortcut('quick-account-switcher', 'Ctrl+p', 'Quick account switcher', () => {

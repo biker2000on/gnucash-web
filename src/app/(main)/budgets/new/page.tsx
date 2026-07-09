@@ -185,14 +185,14 @@ export default function NewBudgetPage() {
 
     // Shortcuts fire only outside inputs (global scope) and never while the
     // account picker modal is open (it owns Escape).
-    useKeyboardShortcut('budget-new-advance', 'Enter', 'Next step / create budget', advance, 'global', !pickerOpen && canAdvance);
-    useKeyboardShortcut('budget-new-back', 'Escape', 'Previous step', goBack, 'global', !pickerOpen && step > 1);
+    useKeyboardShortcut('budget-new-advance', 'Enter', 'Next step / create budget', advance, 'page', !pickerOpen && canAdvance);
+    useKeyboardShortcut('budget-new-back', 'Escape', 'Previous step', goBack, 'page', !pickerOpen && step > 1);
     useKeyboardShortcut(
         'budget-new-filter',
         '/',
         'Filter preview accounts',
         () => filterRef.current?.focus(),
-        'global',
+        'page',
         !pickerOpen && step === 2
     );
 
