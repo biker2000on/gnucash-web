@@ -321,15 +321,31 @@ export default function Layout({ children }: { children: ReactNode }) {
     const [isBusinessBook, setIsBusinessBook] = useState(false);
     useEffect(() => {
         let cancelled = false;
-        fetch('/api/entity')
-            .then(res => (res.ok ? res.json() : null))
-            .then(profile => {
-                if (!cancelled && profile?.entityType) {
-                    setIsBusinessBook(profile.entityType !== 'household');
-                }
-            })
-            .catch(() => { /* stay hidden on failure */ });
-        return () => { cancelled = true; };
+        const refresh = () => {
+            fetch('/api/entity')
+                .then(res => (res.ok ? res.json() : null))
+                .then(profile => {
+                    if (!cancelled && profile?.entityType) {
+                        setIsBusinessBook(profile.entityType !== 'household');
+                    }
+                })
+                .catch(() => { /* stay hidden on failure */ });
+        };
+        refresh();
+
+        // React immediately when the entity type is changed on the settings
+        // page — no refresh needed to reveal/hide the Business nav group.
+        // (Book switches do a full page reload, which re-runs the fetch above.)
+        const onEntityUpdated = (e: Event) => {
+            const type = (e as CustomEvent<{ entityType?: string }>).detail?.entityType;
+            if (type) setIsBusinessBook(type !== 'household');
+            else refresh();
+        };
+        window.addEventListener('entity-updated', onEntityUpdated);
+        return () => {
+            cancelled = true;
+            window.removeEventListener('entity-updated', onEntityUpdated);
+        };
     }, []);
 
     const effectiveNavItems = isBusinessBook

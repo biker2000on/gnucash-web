@@ -507,6 +507,11 @@ export default function SettingsPage() {
         throw new Error(data?.error || 'Failed to save entity profile');
       }
       success(`${entityNoun(entity.entityType)} profile saved`);
+      // Let the sidebar re-evaluate whether to show the Business nav group
+      // without a page refresh (household ⇄ business/nonprofit toggles it).
+      window.dispatchEvent(
+        new CustomEvent('entity-updated', { detail: { entityType: entity.entityType } }),
+      );
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Failed to save entity profile');
     } finally {
