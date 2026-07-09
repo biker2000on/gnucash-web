@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0.0] - 2026-07-09
+
+### Added
+- **Statement Import & Reconcile**: upload a bank or credit-card statement (PDF, CSV, or OFX/QFX), parse it (deterministic CSV/OFX parsers, or the AI extraction core for PDF), and reconcile it against the ledger. The workspace auto-matches statement lines to existing transactions, lists transactions that are on the statement but missing from the ledger (each with a suggested category to review before adding) and ledger entries not on the statement, and enforces a balance tie-out to the statement's closing balance before finalizing a full GnuCash reconciliation (matched + newly-added splits marked reconciled). Available on any book — household or business.
+
+### Fixed
+- Sidebar: **Invoices** and **Bills** now highlight independently (they share a path and differ only by query string); the Business nav group also auto-expands on business routes
 ## [0.7.1.0] - 2026-07-09
 
 ### Added
