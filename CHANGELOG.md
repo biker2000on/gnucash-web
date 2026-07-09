@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0.0] - 2026-07-08
+
+### Added — Business (AR/AP, shown only for business-entity books)
+- **Customers, vendors, jobs, bill terms, and tax tables**: full CRUD over the native GnuCash business tables with auto-numbering, deactivate-not-delete referential safety, and management pages under /business
+- **Invoice & bill engine**: GnuCash-desktop-compatible posting (real transaction + A/R-A/P lot + gncInvoice slot frames + book counters), GnuCash's own discount/tax semantics (PRETAX/SAMETIME/POSTTAX, tax-included), unposting, and payments with FIFO or explicit allocation that close lots on full payment
+- **Invoice & bill UI**: filterable list, draft line-item editor with live totals, post/unpost, payment modal with per-invoice allocation, payment center, and a clean printable document
+- **Business reports**: AR/AP aging (current/30/60/90+ per owner), sales tax collected with monthly filing summary, Schedule C estimate for sole proprietors, and a business dashboard (revenue, outstanding AR, AP due, top customers, avg days-to-pay)
+- **Business navigation group** in the sidebar, gated on the book's entity type — household books never see it
+
+### Added — Budgets
+- **Budget vs Actual**: per-account progress with pace marker, projected end-of-period overspend (on-track/warning/over), period stepping via [ ] keys, YoY comparison, and compact progress bars on the budget list
+- **Envelope/rollover budgeting**: unspent amounts carry forward (deficits too), sinking funds, per-line settings for rollover/threshold/goal link
+- **Overspend alerts**: threshold/over/projected alerts through the notification stream, scanned automatically after bank sync and on demand
+- **Goal-linked budget lines**: link a budget category to a financial goal, with inline goal progress
+- **Auto-budget wizard**: generate a budget from trailing history (median or mean), 50/30/20-style percent-of-income or zero-based templates, editable preview before creation
+- **Budget scenarios**: duplicate any budget scaled by a factor (lean/stretch) and compare two budgets side by side
 ## [0.6.0.0] - 2026-07-08
 
 ### Added
