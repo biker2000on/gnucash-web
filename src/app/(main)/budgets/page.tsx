@@ -1,9 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { BudgetList } from '@/components/BudgetList';
 import { BudgetForm } from '@/components/BudgetForm';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useToast } from '@/contexts/ToastContext';
 
 interface Budget {
     guid: string;
@@ -20,18 +24,35 @@ interface Budget {
     };
 }
 
+const SCENARIO_PRESETS = [
+    { label: 'Lean −10%', factor: 0.9 },
+    { label: 'Stretch +10%', factor: 1.1 },
+] as const;
+
 export default function BudgetsPage() {
+    const router = useRouter();
+    const toast = useToast();
     const [budgets, setBudgets] = useState<Budget[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Modal state
+    // Create/edit modal state
     const [modalOpen, setModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
     const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState<Budget | null>(null);
     const [deleting, setDeleting] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
+
+    // Scenario modal state
+    const [scenarioOpen, setScenarioOpen] = useState(false);
+    const [scenarioSource, setScenarioSource] = useState('');
+    const [scenarioName, setScenarioName] = useState('');
+    const [scenarioFactor, setScenarioFactor] = useState(0.9);
+    const [scenarioCustomPct, setScenarioCustomPct] = useState('');
+    const [scenarioMode, setScenarioMode] = useState<'preset' | 'custom'>('preset');
+    const [scenarioSaving, setScenarioSaving] = useState(false);
+    const [scenarioError, setScenarioError] = useState<string | null>(null);
 
     const fetchBudgets = useCallback(async () => {
         setLoading(true);
@@ -127,23 +148,98 @@ export default function BudgetsPage() {
         fetchBudgets();
     };
 
+    const openScenarioModal = () => {
+        const first = budgets[0];
+        setScenarioSource(first?.guid || '');
+        setScenarioMode('preset');
+        setScenarioFactor(0.9);
+        setScenarioCustomPct('');
+        setScenarioName(first ? `${first.name} (Lean −10%)` : '');
+        setScenarioError(null);
+        setScenarioOpen(true);
+    };
+
+    const scenarioDefaultName = (sourceGuid: string, factor: number, mode: 'preset' | 'custom') => {
+        const src = budgets.find(b => b.guid === sourceGuid);
+        if (!src) return '';
+        if (mode === 'preset') {
+            const preset = SCENARIO_PRESETS.find(p => p.factor === factor);
+            if (preset) return `${src.name} (${preset.label})`;
+        }
+        const pct = Math.round((factor - 1) * 100);
+        return `${src.name} (${pct >= 0 ? '+' : ''}${pct}%)`;
+    };
+
+    const effectiveFactor = scenarioMode === 'custom'
+        ? 1 + (parseFloat(scenarioCustomPct) || 0) / 100
+        : scenarioFactor;
+
+    const handleScenarioCreate = async () => {
+        if (!scenarioSource || !scenarioName.trim() || scenarioSaving) return;
+        if (!(effectiveFactor > 0)) {
+            setScenarioError('Factor must be greater than 0');
+            return;
+        }
+        setScenarioSaving(true);
+        setScenarioError(null);
+        try {
+            const res = await fetch(`/api/budgets/${scenarioSource}/scenario`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: scenarioName.trim(), factor: effectiveFactor }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Failed to create scenario');
+            setScenarioOpen(false);
+            toast.success(`Scenario "${scenarioName.trim()}" created`);
+            fetchBudgets();
+        } catch (err) {
+            setScenarioError(err instanceof Error ? err.message : 'Failed to create scenario');
+        } finally {
+            setScenarioSaving(false);
+        }
+    };
+
+    const inputClass =
+        'w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm';
+
     return (
         <div className="space-y-6">
-            <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-foreground">Budgets</h1>
-                    <p className="text-foreground-muted">Create and manage your financial budgets.</p>
-                </div>
-                <button
-                    onClick={handleCreate}
-                    className="flex items-center gap-2 px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
-                >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                    New Budget
-                </button>
-            </header>
+            <PageHeader
+                title="Budgets"
+                subtitle="Create and manage your financial budgets."
+                actions={
+                    <>
+                        <button
+                            onClick={handleCreate}
+                            className="flex items-center gap-2 px-3 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            New budget
+                        </button>
+                        <Link
+                            href="/budgets/new"
+                            className="px-3 py-2 text-sm border border-border rounded-lg text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors"
+                        >
+                            From history…
+                        </Link>
+                    </>
+                }
+                menuActions={[
+                    {
+                        label: 'Duplicate as scenario…',
+                        onSelect: openScenarioModal,
+                        disabled: budgets.length === 0,
+                    },
+                    {
+                        label: 'Compare budgets…',
+                        onSelect: () => router.push(budgets[0] ? `/budgets/compare?a=${budgets[0].guid}` : '/budgets/compare'),
+                        disabled: budgets.length === 0,
+                    },
+                ]}
+            />
 
             {loading ? (
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 flex items-center justify-center">
@@ -183,6 +279,102 @@ export default function BudgetsPage() {
                         onSave={handleSave}
                         onCancel={() => setModalOpen(false)}
                     />
+                </div>
+            </Modal>
+
+            {/* Scenario Modal */}
+            <Modal
+                isOpen={scenarioOpen}
+                onClose={() => setScenarioOpen(false)}
+                title="Duplicate as Scenario"
+                size="sm"
+            >
+                <div className="p-6 space-y-4">
+                    {scenarioError && (
+                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-3 text-rose-400 text-sm">
+                            {scenarioError}
+                        </div>
+                    )}
+                    <label className="block">
+                        <span className="block text-xs text-foreground-secondary mb-1">Source budget</span>
+                        <select
+                            value={scenarioSource}
+                            onChange={e => {
+                                setScenarioSource(e.target.value);
+                                setScenarioName(scenarioDefaultName(e.target.value, effectiveFactor, scenarioMode));
+                            }}
+                            className={inputClass}
+                        >
+                            {budgets.map(b => (
+                                <option key={b.guid} value={b.guid}>{b.name}</option>
+                            ))}
+                        </select>
+                    </label>
+                    <div>
+                        <span className="block text-xs text-foreground-secondary mb-1">Adjustment</span>
+                        <div className="flex items-center gap-2">
+                            {SCENARIO_PRESETS.map(preset => (
+                                <button
+                                    key={preset.label}
+                                    onClick={() => {
+                                        setScenarioMode('preset');
+                                        setScenarioFactor(preset.factor);
+                                        setScenarioName(scenarioDefaultName(scenarioSource, preset.factor, 'preset'));
+                                    }}
+                                    className={`px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                                        scenarioMode === 'preset' && scenarioFactor === preset.factor
+                                            ? 'border-primary/60 bg-primary-light text-primary'
+                                            : 'border-border text-foreground-secondary hover:text-foreground hover:border-border-hover'
+                                    }`}
+                                >
+                                    {preset.label}
+                                </button>
+                            ))}
+                            <div className={`flex items-center gap-1 px-2 py-1 rounded-md border ${
+                                scenarioMode === 'custom' ? 'border-primary/60 bg-primary-light' : 'border-border'
+                            }`}>
+                                <input
+                                    type="number"
+                                    step={1}
+                                    value={scenarioCustomPct}
+                                    onFocus={() => setScenarioMode('custom')}
+                                    onChange={e => {
+                                        setScenarioMode('custom');
+                                        setScenarioCustomPct(e.target.value);
+                                        const factor = 1 + (parseFloat(e.target.value) || 0) / 100;
+                                        setScenarioName(scenarioDefaultName(scenarioSource, factor, 'custom'));
+                                    }}
+                                    placeholder="±%"
+                                    className="w-14 bg-transparent text-sm font-mono tabular-nums text-right text-foreground focus:outline-none"
+                                />
+                                <span className="text-xs text-foreground-muted">%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <label className="block">
+                        <span className="block text-xs text-foreground-secondary mb-1">New budget name</span>
+                        <input
+                            type="text"
+                            value={scenarioName}
+                            onChange={e => setScenarioName(e.target.value)}
+                            className={inputClass}
+                        />
+                    </label>
+                    <div className="flex justify-end gap-3 pt-2">
+                        <button
+                            onClick={() => setScenarioOpen(false)}
+                            className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={handleScenarioCreate}
+                            disabled={scenarioSaving || !scenarioSource || !scenarioName.trim()}
+                            className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:opacity-50 text-primary-foreground rounded-lg transition-colors"
+                        >
+                            {scenarioSaving ? 'Creating…' : 'Create scenario'}
+                        </button>
+                    </div>
                 </div>
             </Modal>
 

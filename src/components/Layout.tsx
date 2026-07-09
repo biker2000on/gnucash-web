@@ -162,7 +162,17 @@ const iconMap: Record<string, ({ className }: { className?: string }) => ReactEl
     Payslip: IconPayslip,
     Tag: IconTag,
     Target: IconTarget,
+    Briefcase: IconBriefcase,
 };
+
+function IconBriefcase({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+            <rect x="3" y="7" width="18" height="13" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2M3 12h18" />
+        </svg>
+    );
+}
 
 function IconTag({ className = "w-5 h-5" }: { className?: string }) {
     return (
@@ -208,6 +218,25 @@ interface NavItem {
         href: string;
     }>;
 }
+
+// Shown only when the active book's entity profile is a business type.
+const businessNavItem: NavItem = {
+    name: 'Business',
+    href: '/business',
+    icon: 'Briefcase',
+    children: [
+        { name: 'Dashboard', href: '/business' },
+        { name: 'Customers', href: '/business/customers' },
+        { name: 'Vendors', href: '/business/vendors' },
+        { name: 'Invoices', href: '/business/invoices' },
+        { name: 'Bills', href: '/business/invoices?type=bill' },
+        { name: 'Payments', href: '/business/payments' },
+        { name: 'AR/AP Aging', href: '/business/reports/aging' },
+        { name: 'Sales Tax', href: '/business/reports/sales-tax' },
+        { name: 'Schedule C', href: '/business/reports/schedule-c' },
+        { name: 'Business Settings', href: '/business/settings' },
+    ],
+};
 
 const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
@@ -285,6 +314,32 @@ const subscribe = () => () => undefined;
 
 export default function Layout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
+
+    // Business nav group is gated on the active book's entity type — household
+    // books never see AR/AP features. Re-checked when the book changes (the
+    // BookSwitcher triggers a full navigation, so mount-time fetch suffices).
+    const [isBusinessBook, setIsBusinessBook] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/entity')
+            .then(res => (res.ok ? res.json() : null))
+            .then(profile => {
+                if (!cancelled && profile?.entityType) {
+                    setIsBusinessBook(profile.entityType !== 'household');
+                }
+            })
+            .catch(() => { /* stay hidden on failure */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    const effectiveNavItems = isBusinessBook
+        ? (() => {
+            const items = [...navItems];
+            const budgetsIdx = items.findIndex(i => i.href === '/budgets');
+            items.splice(budgetsIdx >= 0 ? budgetsIdx : items.length, 0, businessNavItem);
+            return items;
+        })()
+        : navItems;
 
     // Data-dense pages use the full content width to reduce horizontal scrolling.
     const isFullWidthPage =
@@ -573,7 +628,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {/* Nav links */}
                 <nav className={`flex-1 space-y-1 overflow-y-auto overflow-x-hidden transition-all duration-300
                     ${collapsed && hydrated ? 'px-2 py-4' : 'px-4 py-4'}`}>
-                    {navItems.map(renderNavItem)}
+                    {effectiveNavItems.map(renderNavItem)}
                 </nav>
 
                 {/* Drag handle */}
@@ -624,7 +679,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
                 {/* Mobile nav links (always expanded) */}
                 <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-                    {navItems.map((item) => {
+                    {effectiveNavItems.map((item) => {
                         const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href + '/'));
                         const Icon = iconMap[item.icon];
                         const isSectionExpanded = expandedSections.has(item.name);

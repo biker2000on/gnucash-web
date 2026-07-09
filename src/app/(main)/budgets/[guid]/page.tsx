@@ -11,6 +11,9 @@ import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { useToast } from '@/contexts/ToastContext';
+import { BudgetProgress } from './BudgetProgress';
+import { BudgetYoY } from './BudgetYoY';
+import type { BudgetActualsResponse } from '@/lib/budget-actuals';
 
 interface BudgetAmount {
     id: number;
@@ -76,6 +79,13 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
     const [expandLevel, setExpandLevel] = useState<number>(0);
 
+    // Progress vs editor view. Defaults to Progress when the budget has
+    // amounts (set once after the initial fetch), Editor otherwise.
+    const [view, setView] = useState<'progress' | 'editor' | null>(null);
+    const [actuals, setActuals] = useState<BudgetActualsResponse | null>(null);
+    const [actualsLoading, setActualsLoading] = useState(false);
+    const [actualsError, setActualsError] = useState<string | null>(null);
+
     // View toggle state
     const [showAllAccounts, setShowAllAccounts] = useState(false);
     const [allAccounts, setAllAccounts] = useState<Array<{
@@ -102,6 +112,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 }
                 const data = await res.json();
                 setBudget(data);
+                setView(prev => prev ?? ((data.amounts?.length ?? 0) > 0 ? 'progress' : 'editor'));
             } catch (err) {
                 setError(err instanceof Error ? err.message : 'An error occurred');
             } finally {
@@ -110,6 +121,44 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         }
         fetchBudget();
     }, [guid]);
+
+    const fetchActuals = useCallback(async () => {
+        setActualsLoading(true);
+        setActualsError(null);
+        try {
+            const res = await fetch(`/api/budgets/${guid}/actuals`);
+            if (!res.ok) throw new Error('Failed to load budget progress');
+            const data = await res.json();
+            setActuals(data);
+        } catch (err) {
+            setActualsError(err instanceof Error ? err.message : 'An error occurred');
+        } finally {
+            setActualsLoading(false);
+        }
+    }, [guid]);
+
+    // (Re)load actuals whenever the budget data changes so edits made in the
+    // editor are reflected in the progress view.
+    useEffect(() => {
+        if (budget) fetchActuals();
+    }, [budget, fetchActuals]);
+
+    // Integrate with the global shortcut events (GlobalShortcuts): 'e' enters
+    // the editor view; Escape returns to Progress when the budget has amounts.
+    useEffect(() => {
+        const handleEnterEdit = () => setView('editor');
+        const handleExitEdit = () => {
+            if ((budget?.amounts?.length ?? 0) > 0) {
+                setView(prev => (prev === 'editor' ? 'progress' : prev));
+            }
+        };
+        window.addEventListener('enter-edit-mode', handleEnterEdit);
+        window.addEventListener('exit-edit-mode', handleExitEdit);
+        return () => {
+            window.removeEventListener('enter-edit-mode', handleEnterEdit);
+            window.removeEventListener('exit-edit-mode', handleExitEdit);
+        };
+    }, [budget]);
 
     useEffect(() => {
         if (!showAllAccounts) return;
@@ -664,7 +713,32 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     </div>
                 </header>
 
-                {/* Summary Cards */}
+                {/* View tabs: Progress (actuals/pacing) vs Editor (amounts) */}
+                <div className="flex items-center gap-1 border-b border-border">
+                    <button
+                        onClick={() => setView('progress')}
+                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                            view === 'progress'
+                                ? 'border-primary text-primary'
+                                : 'border-transparent text-foreground-secondary hover:text-foreground'
+                        }`}
+                    >
+                        Progress
+                    </button>
+                    <button
+                        onClick={() => setView('editor')}
+                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                            view === 'editor'
+                                ? 'border-primary text-primary'
+                                : 'border-transparent text-foreground-secondary hover:text-foreground'
+                        }`}
+                    >
+                        Editor
+                    </button>
+                </div>
+
+                {/* Summary Cards (editor view) */}
+                {view === 'editor' && (
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Income</div>
@@ -698,9 +772,44 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         </div>
                     </div>
                 </div>
+                )}
             </div>
 
-            {/* Budget Table - Full Width */}
+            {/* Progress view: budget vs actual with pacing + YoY */}
+            {view === 'progress' && (
+                <div className="space-y-6">
+                    {actualsLoading && !actuals ? (
+                        <div className="bg-surface border border-border rounded-lg p-12 flex items-center justify-center">
+                            <div className="flex items-center gap-3">
+                                <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                                <span className="text-foreground-secondary">Loading budget progress...</span>
+                            </div>
+                        </div>
+                    ) : actualsError ? (
+                        <div className="bg-surface border border-rose-800/50 rounded-lg p-8 text-center text-rose-400">
+                            {actualsError}
+                        </div>
+                    ) : actuals ? (
+                        <>
+                            <BudgetProgress data={actuals} />
+                            {actuals.yoy && (
+                                <BudgetYoY
+                                    yoy={actuals.yoy}
+                                    currency={actuals.currency}
+                                    windowLabel={
+                                        actuals.yoy.periodsCompared.length > 0
+                                            ? `${actuals.periods[actuals.yoy.periodsCompared[0]]?.label} – ${actuals.periods[actuals.yoy.periodsCompared[actuals.yoy.periodsCompared.length - 1]]?.label}`
+                                            : undefined
+                                    }
+                                />
+                            )}
+                        </>
+                    ) : null}
+                </div>
+            )}
+
+            {/* Budget Table - Full Width (editor view) */}
+            {view === 'editor' && (
             <div>
                 {flattenedNodes.length === 0 ? (
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 text-center">
@@ -1029,6 +1138,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     </div>
                 )}
             </div>
+            )}
 
             {/* Account Picker Modal */}
             <AccountPickerModal

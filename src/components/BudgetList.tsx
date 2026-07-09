@@ -1,8 +1,11 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { formatCurrency } from '@/lib/format';
+import type { BudgetActualsSummary } from '@/lib/budget-actuals';
 
 interface Budget {
     guid: string;
@@ -20,8 +23,62 @@ interface BudgetListProps {
     onDelete?: (budget: Budget) => void;
 }
 
+/** Compact current-period budget bar with pace marker for list cards. */
+function CompactProgress({ summary }: { summary?: BudgetActualsSummary }) {
+    if (!summary || !summary.spend || summary.currentPeriod === null) {
+        return <span className="text-xs text-foreground-muted">—</span>;
+    }
+    const s = summary.spend;
+    const fill = s.pctUsed === null ? 0 : Math.min(100, Math.max(0, s.pctUsed));
+    const barColor = s.status === 'over' ? 'bg-negative' : s.status === 'warning' ? 'bg-warning' : 'bg-primary';
+    return (
+        <div className="min-w-[140px] max-w-[220px]">
+            <div className="relative h-1.5 rounded-sm bg-background-tertiary overflow-hidden">
+                <div className={`absolute inset-y-0 left-0 rounded-sm ${barColor}`} style={{ width: `${fill}%` }} />
+                {summary.elapsedFraction !== null && summary.elapsedFraction > 0 && summary.elapsedFraction < 1 && (
+                    <div
+                        className="absolute inset-y-0 w-px bg-foreground-secondary"
+                        style={{ left: `${summary.elapsedFraction * 100}%` }}
+                    />
+                )}
+            </div>
+            <div className="mt-1 text-[11px] font-mono tabular-nums text-foreground-muted whitespace-nowrap">
+                {formatCurrency(s.actual, summary.currency)} / {formatCurrency(s.budgeted, summary.currency)}
+                {summary.periodLabel && <span className="ml-1">· {summary.periodLabel}</span>}
+            </div>
+        </div>
+    );
+}
+
 export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
     const isMobile = useIsMobile();
+    const [summaries, setSummaries] = useState<Record<string, BudgetActualsSummary>>({});
+
+    useEffect(() => {
+        let cancelled = false;
+        async function loadSummaries() {
+            const results = await Promise.all(
+                budgets.map(async budget => {
+                    if (!budget._count?.amounts) return null;
+                    try {
+                        const res = await fetch(`/api/budgets/${budget.guid}/actuals?summary=1`);
+                        if (!res.ok) return null;
+                        return (await res.json()) as BudgetActualsSummary;
+                    } catch {
+                        return null;
+                    }
+                })
+            );
+            if (cancelled) return;
+            const map: Record<string, BudgetActualsSummary> = {};
+            for (const summary of results) {
+                if (summary) map[summary.budgetGuid] = summary;
+            }
+            setSummaries(map);
+        }
+        if (budgets.length > 0) loadSummaries();
+        return () => { cancelled = true; };
+    }, [budgets]);
 
     if (budgets.length === 0) {
         return (
@@ -71,6 +128,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                                 ),
                             },
                             { label: 'Accounts', value: <><span className="font-mono">{budget._count?.amounts || 0}</span> allocations</> },
+                            { label: 'Current Period', value: <CompactProgress summary={summaries[budget.guid]} /> },
                             { label: 'Description', value: budget.description || '—' },
                         ]}
                     >
@@ -122,6 +180,7 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                         <th className="px-6 py-4 text-left font-semibold">Name</th>
                         <th className="px-6 py-4 text-left font-semibold">Period Type</th>
                         <th className="px-6 py-4 text-left font-semibold">Accounts</th>
+                        <th className="px-6 py-4 text-left font-semibold">Current Period</th>
                         <th className="px-6 py-4 text-left font-semibold">Description</th>
                         <th className="px-6 py-4 text-right font-semibold">Actions</th>
                     </tr>
@@ -147,6 +206,9 @@ export function BudgetList({ budgets, onEdit, onDelete }: BudgetListProps) {
                             </td>
                             <td className="px-6 py-4 text-sm text-foreground-secondary">
                                 {budget._count?.amounts || 0} allocations
+                            </td>
+                            <td className="px-6 py-4">
+                                <CompactProgress summary={summaries[budget.guid]} />
                             </td>
                             <td className="px-6 py-4 text-sm text-foreground-muted max-w-xs truncate">
                                 {budget.description || '—'}

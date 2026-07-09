@@ -13,6 +13,7 @@ import { applyRules } from './categorization.service';
 import { createNotification } from '@/lib/notifications';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { scanForAnomalies } from '@/lib/anomaly-detection';
+import { scanBudgetAlerts } from '@/lib/budget-envelope';
 
 const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
 
@@ -441,6 +442,15 @@ export async function syncSimpleFin(
       await scanForAnomalies(bookGuid, { userId: connection.user_id });
     } catch (err) {
       console.warn('SimpleFin sync anomaly scan failed:', err);
+    }
+
+    // Evaluate budget overspend/threshold alerts against the freshly imported
+    // spending. scanBudgetAlerts is internally guarded and never throws, but
+    // wrap the call anyway so nothing here can fail the sync.
+    try {
+      await scanBudgetAlerts(bookGuid, { userId: connection.user_id });
+    } catch (err) {
+      console.warn('SimpleFin sync budget alert scan failed:', err);
     }
   }
 

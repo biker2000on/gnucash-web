@@ -309,6 +309,83 @@ export class BudgetService {
   }
 
   /**
+   * Create a budget together with a monthly recurrence and bulk per-period
+   * amounts in a single transaction. Used by budget generation (uniform
+   * amounts across periods) and scenario duplication (per-period amounts).
+   *
+   * Each line's `amounts` array is indexed by period_num; shorter arrays are
+   * zero-filled, longer ones truncated to num_periods. Rows are written for
+   * every period (including zeros) so the account is part of the budget.
+   */
+  static async createWithAmounts(input: {
+    name: string;
+    description?: string;
+    num_periods: number;
+    /** YYYY-MM-DD start of period 0; creates a monthly recurrence when set */
+    period_start?: string;
+    lines: Array<{ accountGuid: string; amounts: number[] }>;
+  }) {
+    const base = CreateBudgetSchema.parse({
+      name: input.name,
+      description: input.description ?? '',
+      num_periods: input.num_periods,
+    });
+
+    const budgetGuid = generateGuid();
+
+    const rows: Array<{
+      budget_guid: string;
+      account_guid: string;
+      period_num: number;
+      amount_num: bigint;
+      amount_denom: bigint;
+    }> = [];
+    for (const line of input.lines) {
+      if (!line.accountGuid || line.accountGuid.length !== 32) {
+        throw new Error(`Invalid account GUID: ${line.accountGuid}`);
+      }
+      for (let period = 0; period < base.num_periods; period++) {
+        const amount = line.amounts[period] ?? 0;
+        rows.push({
+          budget_guid: budgetGuid,
+          account_guid: line.accountGuid,
+          period_num: period,
+          amount_num: BigInt(Math.round(amount * 100)),
+          amount_denom: 100n,
+        });
+      }
+    }
+
+    const budget = await prisma.$transaction(async tx => {
+      const created = await tx.budgets.create({
+        data: {
+          guid: budgetGuid,
+          name: base.name,
+          description: base.description || null,
+          num_periods: base.num_periods,
+        },
+      });
+      if (input.period_start) {
+        await tx.recurrences.create({
+          data: {
+            obj_guid: budgetGuid,
+            recurrence_mult: 1,
+            recurrence_period_type: 'month',
+            recurrence_period_start: new Date(`${input.period_start}T00:00:00.000Z`),
+            recurrence_weekend_adjust: 'none',
+          },
+        });
+      }
+      if (rows.length > 0) {
+        await tx.budget_amounts.createMany({ data: rows });
+      }
+      return created;
+    });
+
+    return serializeBigInts(budget);
+  }
+
+  /**
    * Calculate average monthly spending from last N months
    */
   static async getHistoricalAverage(accountGuid: string, months: number = 12) {

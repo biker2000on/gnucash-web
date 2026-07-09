@@ -44,9 +44,16 @@ interface Account {
 interface AccountPickerModalProps {
     isOpen: boolean;
     onClose: () => void;
-    budgetGuid: string;
+    /** Target budget; required unless `onSelect` is provided. */
+    budgetGuid?: string;
     existingAccountGuids: string[];
-    onAccountAdded: (account: Account) => void;
+    onAccountAdded?: (account: Account) => void;
+    /**
+     * When provided, picking an account calls this instead of POSTing to the
+     * budget accounts API — lets flows without a persisted budget (e.g. the
+     * new-budget wizard) reuse this picker.
+     */
+    onSelect?: (account: Account) => void;
 }
 
 const BUDGETABLE_TYPES = ['INCOME', 'EXPENSE', 'ASSET', 'LIABILITY', 'BANK', 'CASH', 'CREDIT'];
@@ -56,7 +63,8 @@ export function AccountPickerModal({
     onClose,
     budgetGuid,
     existingAccountGuids,
-    onAccountAdded
+    onAccountAdded,
+    onSelect
 }: AccountPickerModalProps) {
     const [rawAccounts, setRawAccounts] = useState<FlatAccount[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
@@ -207,6 +215,18 @@ export function AccountPickerModal({
     }, [treeNodes]);
 
     const handleAddAccount = async (node: AccountTreeNode) => {
+        // Selection-only mode: no persisted budget yet, hand the pick back.
+        if (onSelect) {
+            onSelect({
+                guid: node.guid,
+                name: node.name,
+                account_type: node.account_type,
+                full_name: node.fullname,
+            });
+            onClose();
+            return;
+        }
+
         setIsAdding(true);
         setError(null);
         try {
@@ -221,7 +241,7 @@ export function AccountPickerModal({
                 throw new Error(data.error || 'Failed to add account');
             }
 
-            onAccountAdded({
+            onAccountAdded?.({
                 guid: node.guid,
                 name: node.name,
                 account_type: node.account_type,
