@@ -74,6 +74,36 @@ const BUSINESS_ROLE_OPTIONS = [
   { value: 'officer', label: 'Officer' },
 ];
 
+const NONPROFIT_ROLE_OPTIONS = [
+  { value: 'officer', label: 'Officer / Director' },
+];
+
+/**
+ * Human-readable noun for an entity type, used to label the settings section,
+ * save button, and toast so a business/nonprofit book doesn't read as a
+ * "Household". Households stay "Household"; 501(c)(3) reads as "Organization";
+ * everything else is a "Business".
+ */
+function entityNoun(type: EntityType | undefined): string {
+  if (!type || type === 'household') return 'Household';
+  if (type === 'nonprofit_501c3') return 'Organization';
+  return 'Business';
+}
+
+/** Heading for the members list, appropriate to the entity type. */
+function entityMembersLabel(type: EntityType | undefined): string {
+  if (!type || type === 'household') return 'Household Members';
+  if (type === 'nonprofit_501c3') return 'Officers & Directors';
+  return 'Owners & Officers';
+}
+
+/** Placeholder example name for the entity-name field. */
+function entityNamePlaceholder(type: EntityType | undefined): string {
+  if (!type || type === 'household') return 'Smith Household';
+  if (type === 'nonprofit_501c3') return 'Community Bee Club';
+  return 'Acme LLC';
+}
+
 interface EntityMemberForm {
   role: string;
   name: string;
@@ -476,7 +506,7 @@ export default function SettingsPage() {
         const data = await res.json().catch(() => null);
         throw new Error(data?.error || 'Failed to save entity profile');
       }
-      success('Household & entity profile saved');
+      success(`${entityNoun(entity.entityType)} profile saved`);
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Failed to save entity profile');
     } finally {
@@ -506,7 +536,12 @@ export default function SettingsPage() {
       : `${entityTypeLabel} · ${entity.entityName.trim()}`
     : undefined;
   const entityRoleOptions =
-    entity?.entityType === 'household' ? HOUSEHOLD_ROLE_OPTIONS : BUSINESS_ROLE_OPTIONS;
+    entity?.entityType === 'household'
+      ? HOUSEHOLD_ROLE_OPTIONS
+      : entity?.entityType === 'nonprofit_501c3'
+        ? NONPROFIT_ROLE_OPTIONS
+        : BUSINESS_ROLE_OPTIONS;
+  const entitySectionTitle = entity ? `${entityNoun(entity.entityType)} profile` : 'Entity profile';
 
   if (loading) {
     return (
@@ -974,9 +1009,9 @@ export default function SettingsPage() {
         </div>
       </CollapsibleConfigSection>
 
-      {/* Household & Entity */}
+      {/* Entity profile (household / business / nonprofit) */}
       <CollapsibleConfigSection
-        title="Household & entity"
+        title={entitySectionTitle}
         summary={entitySummary}
         configured
         storageKey="settings.entityOpen"
@@ -989,8 +1024,9 @@ export default function SettingsPage() {
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-foreground-muted">
-              Describe who this book belongs to — a household or a business. Used by the tax
-              estimator and contribution tracking (per-spouse IRA limits).
+              Describe who this book belongs to — a household, a business, or a nonprofit
+              organization. Sets which features and reports apply (household tax estimator and
+              contribution limits, or the business AR/AP suite).
             </p>
 
             {/* Entity Type */}
@@ -1017,7 +1053,7 @@ export default function SettingsPage() {
                   type="text"
                   value={entity.entityName}
                   onChange={(e) => setEntity({ ...entity, entityName: e.target.value })}
-                  placeholder={entity.entityType === 'household' ? 'Smith Household' : 'Acme LLC'}
+                  placeholder={entityNamePlaceholder(entity.entityType)}
                   className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                 />
               </div>
@@ -1037,7 +1073,7 @@ export default function SettingsPage() {
             {/* Members */}
             <div className="space-y-2">
               <label className="block text-sm text-foreground-secondary">
-                {entity.entityType === 'household' ? 'Household Members' : 'Owners & Officers'}
+                {entityMembersLabel(entity.entityType)}
               </label>
               <div className="space-y-2">
                 {entity.members.map((member, index) => {
@@ -1161,7 +1197,7 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <button
-                  onClick={() => handleAddEntityMember('owner')}
+                  onClick={() => handleAddEntityMember(entity.entityType === 'nonprofit_501c3' ? 'officer' : 'owner')}
                   className="text-sm text-primary hover:text-primary-hover transition-colors"
                 >
                   + Add member
@@ -1178,7 +1214,7 @@ export default function SettingsPage() {
               {savingEntity && (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               )}
-              <span>{savingEntity ? 'Saving...' : 'Save Household & Entity'}</span>
+              <span>{savingEntity ? 'Saving...' : `Save ${entityNoun(entity.entityType)} profile`}</span>
             </button>
           </div>
         )}
