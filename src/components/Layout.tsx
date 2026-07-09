@@ -1,7 +1,7 @@
 "use client";
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
 import { UserMenu } from './UserMenu';
 import { NotificationBell } from './NotificationBell';
@@ -209,6 +209,40 @@ function IconChevronDown({ className = "w-4 h-4" }: { className?: string }) {
 // Nav items
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve which child in a nav group is active, honoring the query string so
+ * sibling items that share a pathname but differ by query (e.g. Invoices at
+ * /business/invoices vs Bills at /business/invoices?type=bill) highlight
+ * correctly. Returns the href of the single active child, or null.
+ */
+function resolveActiveChildHref(
+    children: Array<{ name: string; href: string }>,
+    pathname: string | null,
+    search: URLSearchParams,
+): string | null {
+    if (!pathname) return null;
+    // 1. Most specific: a child whose full query string matches the current URL.
+    const queryMatch = children.find((c) => {
+        const [cPath, cQuery] = c.href.split('?');
+        if (cPath !== pathname || !cQuery) return false;
+        let all = true;
+        new URLSearchParams(cQuery).forEach((v, k) => {
+            if (search.get(k) !== v) all = false;
+        });
+        return all;
+    });
+    if (queryMatch) return queryMatch.href;
+    // 2. Exact-path child with no query — the default when no query sibling matched.
+    const plain = children.find((c) => {
+        const [cPath, cQuery] = c.href.split('?');
+        return cPath === pathname && !cQuery;
+    });
+    if (plain) return plain.href;
+    // 3. Nested route (e.g. /business/invoices/{guid}) highlights its base child.
+    const nested = children.find((c) => pathname.startsWith(c.href.split('?')[0] + '/'));
+    return nested?.href ?? null;
+}
+
 interface NavItem {
     name: string;
     href: string;
@@ -314,6 +348,7 @@ const subscribe = () => () => undefined;
 
 export default function Layout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
+    const searchParams = useSearchParams();
 
     // Business nav group is gated on the active book's entity type — household
     // books never see AR/AP features. Re-checked when the book changes (the
@@ -421,11 +456,12 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     // Auto-expand nav sections when pathname matches a child route
     useEffect(() => {
-        navItems.forEach((item) => {
+        effectiveNavItems.forEach((item) => {
             if (item.children) {
-                const matchesChild = item.children.some(
-                    (child) => pathname === child.href || pathname?.startsWith(child.href + '/')
-                );
+                const matchesChild = item.children.some((child) => {
+                    const childPath = child.href.split('?')[0];
+                    return pathname === childPath || pathname?.startsWith(childPath + '/');
+                });
                 if (matchesChild) {
                     setExpandedSections((prev) => {
                         if (prev.has(item.name)) return prev;
@@ -436,7 +472,9 @@ export default function Layout({ children }: { children: ReactNode }) {
                 }
             }
         });
-    }, [pathname]);
+        // effectiveNavItems depends on isBusinessBook; re-run when either changes.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pathname, isBusinessBook]);
 
     // Persist collapsed state to localStorage
     const toggleCollapsed = useCallback(() => {
@@ -496,6 +534,9 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     function renderNavItem(item: NavItem) {
         const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href + '/'));
+        const activeChildHref = item.children
+            ? resolveActiveChildHref(item.children, pathname, searchParams ?? new URLSearchParams())
+            : null;
         const Icon = iconMap[item.icon];
         const isSectionExpanded = expandedSections.has(item.name);
         const isCollapsed = collapsed && hydrated;
@@ -581,7 +622,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {item.children && isSectionExpanded && !isCollapsed && (
                     <div className="ml-8 mt-1 space-y-0.5">
                         {item.children.map((child) => {
-                            const isChildActive = pathname === child.href;
+                            const isChildActive = child.href === activeChildHref;
                             return (
                                 <Link
                                     key={child.href}
@@ -697,6 +738,9 @@ export default function Layout({ children }: { children: ReactNode }) {
                 <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
                     {effectiveNavItems.map((item) => {
                         const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href + '/'));
+                        const activeChildHref = item.children
+                            ? resolveActiveChildHref(item.children, pathname, searchParams ?? new URLSearchParams())
+                            : null;
                         const Icon = iconMap[item.icon];
                         const isSectionExpanded = expandedSections.has(item.name);
 
@@ -762,7 +806,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                 {item.children && isSectionExpanded && (
                                     <div className="ml-8 mt-1 space-y-0.5">
                                         {item.children.map((child) => {
-                                            const isChildActive = pathname === child.href;
+                                            const isChildActive = child.href === activeChildHref;
                                             return (
                                                 <Link
                                                     key={child.href}
