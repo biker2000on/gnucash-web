@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1.0] - 2026-07-09
+
+### Added
+- **Schedule C account mapper**: a dense mapping panel on the Schedule C report (mirroring the tax estimator's mapper) to manually assign expense accounts to Schedule C lines; manual overrides win over the keyword heuristic and the report re-totals live on save
+- **Keyboard shortcut nav chords**: g u (Budgets), g o (Goals), g t (Tags), g w (Tools), g s (Settings)
+
+### Changed
+- **Keyboard shortcuts modal** is now a dense 2-3 column grid and is page-aware: shortcuts contributed by the current page group under a "This Page" heading shown first, and disappear when you navigate away
+- **Entity settings section** adapts its labels to the entity type (Household / Business / Organization) instead of always reading "Household & entity"
+
+### Fixed
+- Switching a book's entity type to a business or nonprofit now reveals the Business navigation group immediately, without a page refresh
 ## [0.7.0.0] - 2026-07-08
 
 ### Added — Business (AR/AP, shown only for business-entity books)
