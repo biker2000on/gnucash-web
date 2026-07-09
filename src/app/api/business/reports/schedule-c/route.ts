@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateScheduleC } from '@/lib/business/business-reports';
+import { getMappings } from '@/lib/business/schedule-c-mappings';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
@@ -16,7 +17,8 @@ export async function GET(request: NextRequest) {
         }
 
         const bookAccountGuids = await getBookAccountGuids();
-        const report = await generateScheduleC(bookAccountGuids, year);
+        const overrides = await getMappings(bookAccountGuids);
+        const report = await generateScheduleC(bookAccountGuids, year, overrides);
         return NextResponse.json(report);
     } catch (error) {
         console.error('Error generating Schedule C report:', error);

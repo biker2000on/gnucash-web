@@ -421,6 +421,19 @@ export const SCHEDULE_C_EXPENSE_LINE_ORDER = [
 ] as const;
 
 /**
+ * Schedule C line numbers a MANUAL override may target: every labelled line
+ * except '1' (gross receipts income). Equal to the expense line order set.
+ */
+export const SCHEDULE_C_MANUAL_LINES: ReadonlySet<string> = new Set(
+    Object.keys(SCHEDULE_C_LINE_LABELS).filter((l) => l !== '1'),
+);
+
+/** True when `line` is a valid manual-override Schedule C expense line. */
+export function isValidScheduleCLine(line: unknown): line is string {
+    return typeof line === 'string' && SCHEDULE_C_MANUAL_LINES.has(line);
+}
+
+/**
  * Map an expense account to a Schedule C line via keyword rules.
  * Leaf name is checked first (most specific), then the full path (so
  * children inherit a parent category). Returns null when unmapped.
@@ -450,6 +463,10 @@ export interface ScheduleCAccountDetail {
     name: string;
     path: string;
     amount: number;
+    /** Keyword-heuristic line (null when no keyword matched). Income = '1'. */
+    suggestedLine: string | null;
+    /** Effective line this account landed on after applying manual overrides. */
+    mappedLine: string;
 }
 
 export interface ScheduleCLine {
@@ -475,6 +492,8 @@ export interface ScheduleCReport {
     netProfit: number;
     /** Number of expense accounts that fell through to line 27a. */
     unmappedCount: number;
+    /** Number of expense accounts whose line came from a manual override. */
+    overriddenCount: number;
 }
 
 /**
@@ -482,10 +501,16 @@ export interface ScheduleCReport {
  * tax year. Pure. Meals (24b) are deducted at 50%; unmapped expenses land on
  * line 27a "Other expenses" with an itemized account list. This is an
  * ESTIMATE for sole-proprietor / single-member-LLC books, not filing advice.
+ *
+ * `overrides` maps an account GUID → a manual Schedule C line. A valid manual
+ * override WINS over the keyword heuristic; unrecognized override lines are
+ * ignored and fall back to the keyword result (then to line 27a). Omitting
+ * `overrides` (default `{}`) preserves the original keyword-only behavior.
  */
 export function buildScheduleC(
     year: number,
     accounts: ReadonlyArray<ScheduleCAccountInput>,
+    overrides: Record<string, string> = {},
 ): ScheduleCReport {
     const incomeAccounts: ScheduleCAccountDetail[] = [];
     let grossReceipts = 0;
@@ -502,6 +527,7 @@ export function buildScheduleC(
     }
 
     let unmappedCount = 0;
+    let overriddenCount = 0;
 
     for (const acct of accounts) {
         if (Math.abs(acct.total) < 0.005) continue;
@@ -510,18 +536,27 @@ export function buildScheduleC(
             // GnuCash stores income as credits (negative) — negate for display.
             const amount = round2(-acct.total);
             grossReceipts = round2(grossReceipts + amount);
-            incomeAccounts.push({ guid: acct.guid, name: acct.name, path: acct.path, amount });
+            incomeAccounts.push({
+                guid: acct.guid, name: acct.name, path: acct.path, amount,
+                suggestedLine: '1', mappedLine: '1',
+            });
             continue;
         }
 
-        const mapped = mapExpenseAccountToLine(acct.name, acct.path);
-        const lineNo = mapped ?? '27a';
-        if (!mapped) unmappedCount++;
+        const suggested = mapExpenseAccountToLine(acct.name, acct.path);
+        const override = overrides[acct.guid];
+        const overridden = isValidScheduleCLine(override);
+        const lineNo = overridden ? override : (suggested ?? '27a');
+        if (overridden) overriddenCount++;
+        else if (!suggested) unmappedCount++;
 
         const line = lineMap.get(lineNo)!;
         const amount = round2(acct.total);
         line.amount = round2(line.amount + amount);
-        line.accounts.push({ guid: acct.guid, name: acct.name, path: acct.path, amount });
+        line.accounts.push({
+            guid: acct.guid, name: acct.name, path: acct.path, amount,
+            suggestedLine: suggested, mappedLine: lineNo,
+        });
     }
 
     let totalExpenses = 0;
@@ -541,6 +576,7 @@ export function buildScheduleC(
         totalExpenses,
         netProfit: round2(grossReceipts - totalExpenses),
         unmappedCount,
+        overriddenCount,
     };
 }
 
@@ -976,6 +1012,7 @@ export async function generateBusinessDashboard(
 export async function generateScheduleC(
     bookAccountGuids: string[],
     year: number,
+    overrides: Record<string, string> = {},
 ): Promise<ScheduleCReport> {
     const start = new Date(Date.UTC(year, 0, 1));
     const end = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
@@ -1007,5 +1044,6 @@ export async function generateScheduleC(
             type: r.account_type as 'INCOME' | 'EXPENSE',
             total: r.total,
         })),
+        overrides,
     );
 }

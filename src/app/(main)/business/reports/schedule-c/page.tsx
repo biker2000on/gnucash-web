@@ -1,21 +1,36 @@
 'use client';
 
-import { useState, useEffect, Fragment } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import type { ScheduleCReport } from '@/lib/business/business-reports';
 import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
+import { useToast } from '@/contexts/ToastContext';
+import ScheduleCMappingPanel, {
+    type ScheduleCMappingAccount,
+    type ScheduleCLineOption,
+} from './ScheduleCMappingPanel';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
+
+interface ScheduleCMappingsPayload {
+    mappings: Record<string, string>;
+    accounts: ScheduleCMappingAccount[];
+    lineOptions: ScheduleCLineOption[];
+}
 
 export default function ScheduleCPage() {
     const currentYear = new Date().getUTCFullYear();
     const minYear = currentYear - 5;
     const years = Array.from({ length: 6 }, (_, i) => currentYear - i);
 
+    const toast = useToast();
     const [year, setYear] = useState(currentYear);
     const [report, setReport] = useState<ScheduleCReport | null>(null);
     const [entityType, setEntityType] = useState<string | null>(null);
+    const [mappingsData, setMappingsData] = useState<ScheduleCMappingsPayload | null>(null);
+    const [savingMappings, setSavingMappings] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     // Expanded line numbers ('1' = gross receipts income detail).
@@ -26,9 +41,11 @@ export default function ScheduleCPage() {
     // not collide with the global 'n'/'e'/'g *' bindings.
     useKeyboardShortcut('schedule-c-prev-year', '[', 'Previous tax year', () =>
         setYear((y) => Math.max(minYear, y - 1)),
+        'page',
     );
     useKeyboardShortcut('schedule-c-next-year', ']', 'Next tax year', () =>
         setYear((y) => Math.min(currentYear, y + 1)),
+        'page',
     );
 
     // Escape collapses expanded rows. GlobalShortcuts owns the Escape key and
@@ -46,16 +63,19 @@ export default function ScheduleCPage() {
         setError(null);
         (async () => {
             try {
-                const [res, entityRes] = await Promise.all([
+                const [res, entityRes, mapsRes] = await Promise.all([
                     fetch(`/api/business/reports/schedule-c?year=${year}`),
                     fetch('/api/entity'),
+                    fetch('/api/business/schedule-c/mappings'),
                 ]);
                 if (!res.ok) throw new Error(`Request failed (${res.status})`);
                 const json: ScheduleCReport = await res.json();
                 const entity = entityRes.ok ? await entityRes.json() : null;
+                const maps = mapsRes.ok ? await mapsRes.json() : null;
                 if (!cancelled) {
                     setReport(json);
                     setEntityType(entity?.entityType ?? null);
+                    setMappingsData(maps);
                     setExpanded(new Set());
                 }
             } catch {
@@ -68,6 +88,34 @@ export default function ScheduleCPage() {
             cancelled = true;
         };
     }, [year]);
+
+    // Persist mapping overrides, then re-fetch the report + mappings so the
+    // line totals above update live.
+    const handleSaveMappings = useCallback(
+        async (changes: Array<{ accountGuid: string; line: string | null }>) => {
+            setSavingMappings(true);
+            try {
+                const res = await fetch('/api/business/schedule-c/mappings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ changes }),
+                });
+                if (!res.ok) throw new Error('Save failed');
+                const [repRes, mapsRes] = await Promise.all([
+                    fetch(`/api/business/reports/schedule-c?year=${year}`),
+                    fetch('/api/business/schedule-c/mappings'),
+                ]);
+                if (repRes.ok) setReport(await repRes.json());
+                if (mapsRes.ok) setMappingsData(await mapsRes.json());
+                toast.success('Schedule C mapping saved');
+            } catch {
+                toast.error('Failed to save Schedule C mapping');
+            } finally {
+                setSavingMappings(false);
+            }
+        },
+        [year, toast],
+    );
 
     const toggleLine = (line: string) => {
         setExpanded((prev) => {
@@ -312,11 +360,37 @@ export default function ScheduleCPage() {
                         </div>
                     )}
 
+                    {mappingsData && (
+                        <CollapsibleConfigSection
+                            title="Account mapping"
+                            summary={
+                                report.overriddenCount > 0
+                                    ? `${report.overriddenCount} account${report.overriddenCount === 1 ? '' : 's'} overridden`
+                                    : 'Auto-mapped by keyword — click to override'
+                            }
+                            configured
+                            storageKey="scheduleC.mappingOpen"
+                        >
+                            <p className="text-xs text-foreground-muted mb-3">
+                                Map each expense account to a Schedule C line. A manual line overrides
+                                the keyword guess; totals above refresh when you save.
+                            </p>
+                            <ScheduleCMappingPanel
+                                accounts={mappingsData.accounts}
+                                mappings={mappingsData.mappings}
+                                lineOptions={mappingsData.lineOptions}
+                                saving={savingMappings}
+                                onSave={handleSaveMappings}
+                            />
+                        </CollapsibleConfigSection>
+                    )}
+
                     <p className="text-xs text-foreground-muted">
-                        This is an ESTIMATE built from account-name keywords — not tax filing software and
-                        not filing advice. Meals (line 24b) are deducted at 50% of the booked amount.
-                        Shortcuts: [ and ] step the tax year, Esc collapses expanded lines. Review every
-                        line against IRS Schedule C instructions before using these numbers.
+                        This is an ESTIMATE built from account-name keywords and your manual line
+                        overrides — not tax filing software and not filing advice. Meals (line 24b) are
+                        deducted at 50% of the booked amount. Shortcuts: [ and ] step the tax year, Esc
+                        collapses expanded lines. Review every line against IRS Schedule C instructions
+                        before using these numbers.
                     </p>
                 </>
             )}
