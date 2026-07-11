@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.9.2.0] - 2026-07-11
 
 ### Added
-- **Cryptocurrency support**: crypto commodities are now handled as a distinct `CRYPTO` asset class (moved out of the misused `EUREX` namespace) with daily price quotes from Yahoo Finance via `{SYMBOL}-USD` pairs. Full historical prices backfilled from each holding's first transaction; ongoing daily refresh and the scheduled price job now include crypto automatically. Crypto is tagged sector "Crypto" for sector-exposure and rebalancing.
+- **Cryptocurrency support**: crypto commodities are now handled as a distinct `CRYPTO` type/namespace (moved out of the misused `EUREX` namespace) with daily price quotes from Yahoo Finance via `{SYMBOL}-USD` pairs. Full historical prices backfilled from each holding's first transaction; ongoing daily refresh and the scheduled price job now include crypto automatically. Crypto is tagged sector "Crypto" for sector-exposure and rebalancing, `CRYPTO` is an offered commodity type in the editor, and symbol verification maps crypto to its Yahoo pair (so crypto rows verify correctly).
 
 ### Fixed
 - **Price precision**: stored price quotes now use 1e8 resolution instead of the currency's 1/100 fraction, so sub-cent assets (e.g. SiaCoin, IOST) no longer round to $0.00.

@@ -61,7 +61,7 @@ export async function verifySymbolsBulk(
     items: Array<{ symbol: string; namespace?: string }>
 ): Promise<Map<string, CachedResult>> {
     const out = new Map<string, CachedResult>();
-    const toFetch: string[] = [];
+    const toFetch: Array<{ symbol: string; namespace?: string }> = [];
     for (const { symbol, namespace } of items) {
         const trimmed = symbol.trim();
         if (!trimmed) continue;
@@ -74,7 +74,7 @@ export async function verifySymbolsBulk(
         if (cached) {
             out.set(trimmed.toUpperCase(), cached);
         } else {
-            toFetch.push(trimmed);
+            toFetch.push({ symbol: trimmed, namespace });
         }
     }
     if (toFetch.length === 0) return out;
@@ -86,26 +86,24 @@ export async function verifySymbolsBulk(
             body: JSON.stringify({ symbols: toFetch }),
         });
         if (!res.ok) {
-            for (const s of toFetch) {
+            for (const { symbol: s, namespace } of toFetch) {
                 const fallback = { exists: false };
-                cache.set(cacheKey(s), fallback);
+                cache.set(cacheKey(s, namespace), fallback);
                 out.set(s.toUpperCase(), fallback);
             }
             return out;
         }
         const json = (await res.json()) as { results: Record<string, CachedResult> };
-        for (const s of toFetch) {
+        for (const { symbol: s, namespace } of toFetch) {
             const r = json.results?.[s] ?? { exists: false };
-            // Cache under both with-namespace and without — bulk is namespace-agnostic
-            const item = items.find((it) => it.symbol.trim() === s);
-            cache.set(cacheKey(s, item?.namespace), r);
-            cache.set(cacheKey(s), r);
+            // Results are keyed by the original mnemonic; cache under its namespace.
+            cache.set(cacheKey(s, namespace), r);
             out.set(s.toUpperCase(), r);
         }
     } catch {
-        for (const s of toFetch) {
+        for (const { symbol: s, namespace } of toFetch) {
             const fallback = { exists: false };
-            cache.set(cacheKey(s), fallback);
+            cache.set(cacheKey(s, namespace), fallback);
             out.set(s.toUpperCase(), fallback);
         }
     }

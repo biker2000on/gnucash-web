@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import YahooFinance from 'yahoo-finance2';
 import { requireRole } from '@/lib/auth';
+import { yahooSymbolFor } from '@/lib/yahoo-symbol';
 import { z } from 'zod';
 
 /**
@@ -38,7 +39,8 @@ export async function GET(request: NextRequest) {
 
     try {
         const yahooFinance = new YahooFinance();
-        const quote = await yahooFinance.quote(symbol);
+        const ySymbol = yahooSymbolFor({ mnemonic: symbol, namespace });
+        const quote = await yahooFinance.quote(ySymbol);
         if (quote && quote.symbol && typeof quote.regularMarketPrice === 'number') {
             return NextResponse.json({
                 exists: true,
@@ -52,7 +54,11 @@ export async function GET(request: NextRequest) {
 }
 
 const BulkSchema = z.object({
-    symbols: z.array(z.string().min(1)).max(200),
+    // Back-compat: a plain string[] of symbols, or objects carrying the
+    // namespace so crypto can be mapped to its {SYM}-USD Yahoo pair.
+    symbols: z
+        .array(z.union([z.string().min(1), z.object({ symbol: z.string().min(1), namespace: z.string().optional() })]))
+        .max(200),
 });
 
 /**
@@ -83,8 +89,19 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'symbols[] required' }, { status: 400 });
     }
 
-    const symbols = Array.from(new Set(parsed.data.symbols.map((s) => s.trim()).filter(Boolean)));
-    if (symbols.length === 0) {
+    // Normalize to { original, ySymbol } where original is the mnemonic the
+    // client keys results by, and ySymbol is what Yahoo actually needs (crypto
+    // maps to {SYM}-USD). Dedup by original.
+    const seen = new Set<string>();
+    const items: Array<{ original: string; ySymbol: string }> = [];
+    for (const raw of parsed.data.symbols) {
+        const symbol = (typeof raw === 'string' ? raw : raw.symbol).trim();
+        if (!symbol || seen.has(symbol)) continue;
+        seen.add(symbol);
+        const namespace = typeof raw === 'string' ? undefined : raw.namespace;
+        items.push({ original: symbol, ySymbol: yahooSymbolFor({ mnemonic: symbol, namespace }) });
+    }
+    if (items.length === 0) {
         return NextResponse.json({ results: {} });
     }
 
@@ -92,24 +109,24 @@ export async function POST(request: NextRequest) {
     const results: Record<string, Entry> = {};
     try {
         const yahooFinance = new YahooFinance();
-        const quotes = await yahooFinance.quote(symbols);
+        const quotes = await yahooFinance.quote(items.map((it) => it.ySymbol));
         const byUpper = new Map<string, typeof quotes[number]>();
         for (const q of quotes) {
             if (q?.symbol) byUpper.set(q.symbol.toUpperCase(), q);
         }
-        for (const sym of symbols) {
-            const q = byUpper.get(sym.toUpperCase());
+        for (const { original, ySymbol } of items) {
+            const q = byUpper.get(ySymbol.toUpperCase());
             if (q && typeof q.regularMarketPrice === 'number') {
-                results[sym] = {
+                results[original] = {
                     exists: true,
                     fullname: q.longName || q.shortName || undefined,
                 };
             } else {
-                results[sym] = { exists: false };
+                results[original] = { exists: false };
             }
         }
     } catch {
-        for (const sym of symbols) results[sym] = { exists: false };
+        for (const { original } of items) results[original] = { exists: false };
     }
     return NextResponse.json({ results });
 }

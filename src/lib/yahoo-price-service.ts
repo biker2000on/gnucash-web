@@ -13,6 +13,9 @@
 import YahooFinance from 'yahoo-finance2';
 import { getCurrencyByMnemonic } from './currency';
 import { fromDecimal, generateGuid } from './prisma';
+import { yahooSymbolFor } from './yahoo-symbol';
+
+export { yahooSymbolFor };
 
 /**
  * Denominator for stored price quotes. Prices need higher precision than a
@@ -418,17 +421,6 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<Array<{
  * (have quote_flag=1 and are not in CURRENCY namespace)
  * @returns Array of quotable commodities
  */
-/**
- * Yahoo symbol for a commodity. Crypto commodities (namespace CRYPTO) trade
- * as {MNEMONIC}-USD pairs on Yahoo Finance (BTC -> BTC-USD); everything else
- * uses the mnemonic as-is.
- */
-export function yahooSymbolFor(c: { mnemonic: string; namespace?: string | null }): string {
-  return (c.namespace ?? '').toUpperCase() === 'CRYPTO'
-    ? `${c.mnemonic.toUpperCase()}-USD`
-    : c.mnemonic;
-}
-
 export async function getQuotableCommodities(): Promise<QuotableCommodity[]> {
   const { default: prisma } = await import('./prisma');
 

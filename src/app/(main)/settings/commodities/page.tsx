@@ -376,7 +376,7 @@ export default function CommodityPriceSettingsPage() {
     [commodities]
   );
   const namespaceSuggestions = useMemo(() => {
-    const set = new Set<string>(['CURRENCY', 'NASDAQ', 'NYSE', 'AMEX', 'FUND', 'ETF', 'BOND']);
+    const set = new Set<string>(['CURRENCY', 'NASDAQ', 'NYSE', 'AMEX', 'FUND', 'ETF', 'BOND', 'CRYPTO']);
     if (namespaceKey) for (const ns of namespaceKey.split('|')) set.add(ns);
     return Array.from(set).sort();
   }, [namespaceKey]);
