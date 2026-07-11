@@ -43,6 +43,11 @@ export async function GET(request: NextRequest) {
   const days = parseInt(searchParams.get('days') || '365', 10);
   const accountGuidsParam = searchParams.get('accountGuids');
   const filterAccountGuids = accountGuidsParam ? accountGuidsParam.split(',') : null;
+  // Optional cash/currency accounts (e.g. an investment account's own cash) whose
+  // running $ balance is added to the value series. Without this, an account
+  // reads as ~$0 during a rebalance (holdings sold to cash, not yet reinvested),
+  // producing a false cliff in the chart and breaking TWR (-100%).
+  const cashAccountGuidsParam = searchParams.get('cashAccountGuids');
 
   const startDate = new Date();
   startDate.setUTCDate(startDate.getUTCDate() - days);
@@ -50,6 +55,11 @@ export async function GET(request: NextRequest) {
   try {
     // Get book account GUIDs for scoping
     const bookAccountGuids = await getBookAccountGuids();
+
+    // Cash accounts to fold into the value series (scoped to the active book).
+    const cashAccountGuids = cashAccountGuidsParam
+      ? cashAccountGuidsParam.split(',').filter((g) => bookAccountGuids.includes(g))
+      : [];
 
     // Get all STOCK accounts with non-CURRENCY commodities in active book
     const accounts = await prisma.accounts.findMany({
@@ -71,7 +81,7 @@ export async function GET(request: NextRequest) {
       ? accounts.filter(a => filterAccountGuids.includes(a.guid))
       : accounts;
 
-    if (filteredAccounts.length === 0) {
+    if (filteredAccounts.length === 0 && cashAccountGuids.length === 0) {
       return NextResponse.json({ history: [], cashFlows: [], indices: { sp500: [], djia: [], nasdaq: [], russell2000: [] } });
     }
 
@@ -120,6 +130,34 @@ export async function GET(request: NextRequest) {
 
     // Sort splits by date ascending for pointer-based accumulation
     allSplits.sort((a, b) => a.postDate.getTime() - b.postDate.getTime());
+
+    // Cash accounts: accumulate a running $ balance over time (value splits, no
+    // price needed). Their splits also join cashFlowByDate so that internal
+    // transfers (sell holding -> cash, cash -> buy holding) net to zero and only
+    // genuine external contributions/withdrawals affect TWR/MWR.
+    interface CashSplit {
+      amount: number;
+      postDate: Date;
+    }
+    const cashSplits: CashSplit[] = [];
+    if (cashAccountGuids.length > 0) {
+      const rows = await prisma.splits.findMany({
+        where: { account_guid: { in: cashAccountGuids } },
+        select: {
+          value_num: true,
+          value_denom: true,
+          transaction: { select: { post_date: true } },
+        },
+      });
+      for (const split of rows) {
+        if (!split.transaction.post_date) continue;
+        const amount = parseFloat(toDecimal(split.value_num, split.value_denom));
+        cashSplits.push({ amount, postDate: split.transaction.post_date });
+        const dateStr = split.transaction.post_date.toISOString().split('T')[0];
+        cashFlowByDate.set(dateStr, (cashFlowByDate.get(dateStr) || 0) + amount);
+      }
+      cashSplits.sort((a, b) => a.postDate.getTime() - b.postDate.getTime());
+    }
 
     // Get all unique commodity GUIDs
     const commodityGuids = [...new Set(filteredAccounts.map(a => a.commodity_guid).filter(Boolean))];
@@ -193,12 +231,21 @@ export async function GET(request: NextRequest) {
         allDates.add(dateStr);
       }
     });
+    cashSplits.forEach(split => {
+      const dateStr = split.postDate.toISOString().split('T')[0];
+      if (dateStr >= startDate.toISOString().split('T')[0]) {
+        allDates.add(dateStr);
+      }
+    });
     allDates.add(startDate.toISOString().split('T')[0]);
     const sortedDates = Array.from(allDates).sort();
 
     // Running share totals per account (accumulated over time)
     const sharesByAccount = new Map<string, number>();
     let splitPointer = 0;
+    // Running cash balance across all cash accounts (accumulated over time)
+    let cashBalance = 0;
+    let cashPointer = 0;
 
     // For each date, calculate portfolio value with point-in-time shares
     for (const dateStr of sortedDates) {
@@ -214,6 +261,12 @@ export async function GET(request: NextRequest) {
         splitPointer++;
       }
 
+      // Advance cash pointer: accumulate cash balance with postDate <= dateEnd
+      while (cashPointer < cashSplits.length && cashSplits[cashPointer].postDate <= dateEnd) {
+        cashBalance += cashSplits[cashPointer].amount;
+        cashPointer++;
+      }
+
       // Update latest known prices for this date (forward-fill)
       for (const [commodityGuid, pricesByDate] of pricesByDateByCommodity) {
         const priceOnDate = pricesByDate.get(dateStr);
@@ -223,7 +276,7 @@ export async function GET(request: NextRequest) {
       }
 
       // Calculate total portfolio value with point-in-time shares and latest known prices
-      let portfolioValue = 0;
+      let portfolioValue = cashBalance;
 
       for (const account of filteredAccounts) {
         const shares = sharesByAccount.get(account.guid) || 0;

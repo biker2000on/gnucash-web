@@ -74,9 +74,10 @@ export default function AccountsPage() {
     ];
   }, [filteredHoldings, selectedCashAccount]);
 
-  // Calculate filtered summary
+  // Calculate filtered summary. Include cash so Total Value is the full account
+  // value and stays consistent with the performance chart (which folds in cash).
   const filteredSummary = useMemo(() => {
-    if (filteredHoldings.length === 0) {
+    if (holdingsWithCash.length === 0) {
       return {
         totalValue: 0,
         totalCostBasis: 0,
@@ -86,8 +87,8 @@ export default function AccountsPage() {
         dayChangePercent: 0,
       };
     }
-    const totalValue = filteredHoldings.reduce((sum, h) => sum + h.marketValue, 0);
-    const totalCostBasis = filteredHoldings.reduce((sum, h) => sum + h.costBasis, 0);
+    const totalValue = holdingsWithCash.reduce((sum, h) => sum + h.marketValue, 0);
+    const totalCostBasis = holdingsWithCash.reduce((sum, h) => sum + h.costBasis, 0);
     const totalGainLoss = totalValue - totalCostBasis;
     const totalGainLossPercent = totalCostBasis > 0
       ? ((totalGainLoss / totalCostBasis) * 100)
@@ -100,7 +101,7 @@ export default function AccountsPage() {
       dayChange: 0,
       dayChangePercent: 0,
     };
-  }, [filteredHoldings]);
+  }, [holdingsWithCash]);
 
   // Build allocation from filtered holdings
   const filteredAllocation = useMemo(() => {
@@ -140,16 +141,24 @@ export default function AccountsPage() {
     return filteredHoldings.map(h => h.accountGuid);
   }, [filteredHoldings]);
 
+  // The account's own cash account, so its balance is folded into the value
+  // series — otherwise the chart cliffs to ~$0 during a rebalance (holdings sold
+  // to cash, not yet reinvested) and TWR reads -100%.
+  const cashHistoryGuids = useMemo(() => {
+    const guid = selectedCashAccount?.cashAccountGuid || selectedCashAccount?.parentGuid;
+    return guid ? [guid] : [];
+  }, [selectedCashAccount]);
+
   // Trigger fetch when account selection changes
   useEffect(() => {
     if (filteredAccountGuids.length > 0) {
-      fetchAccountHistory(filteredAccountGuids);
+      fetchAccountHistory(filteredAccountGuids, cashHistoryGuids);
     }
-  }, [filteredAccountGuids, fetchAccountHistory]);
+  }, [filteredAccountGuids, cashHistoryGuids, fetchAccountHistory]);
 
   // Get the cached account history
-  const accountHistory = getAccountHistory(filteredAccountGuids);
-  const accountCashFlows = getAccountCashFlows(filteredAccountGuids);
+  const accountHistory = getAccountHistory(filteredAccountGuids, cashHistoryGuids);
+  const accountCashFlows = getAccountCashFlows(filteredAccountGuids, cashHistoryGuids);
   const performancePercent = useMemo(() => {
     if (performanceMetric === 'mwr') {
       return calculateMoneyWeightedReturn(accountHistory, accountCashFlows);

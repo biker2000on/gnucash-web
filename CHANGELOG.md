@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.4.0] - 2026-07-11
+
+### Fixed
+- **Account performance chart no longer craters during a rebalance**: the per-account chart valued only holdings, so when an account sold everything to cash and rebought later (e.g. a 401k provider switch), it dropped to ~$0 for the gap and broke TWR to −100%. The account's own cash balance is now folded into the value series (and its splits net internal transfers out of the return math), so the line stays continuous. The Account View "Total Value" now includes cash to match.
+
 ## [0.9.3.0] - 2026-07-11
 
 ### Fixed

@@ -16,9 +16,9 @@ interface InvestmentDataContextType {
   fetchPortfolio: () => Promise<void>;
   fetchHistory: () => Promise<void>;
   handleFetchAllPrices: () => Promise<void>;
-  fetchAccountHistory: (accountGuids: string[]) => Promise<void>;
-  getAccountHistory: (accountGuids: string[]) => HistoryPoint[];
-  getAccountCashFlows: (accountGuids: string[]) => CashFlowPoint[];
+  fetchAccountHistory: (accountGuids: string[], cashAccountGuids?: string[]) => Promise<void>;
+  getAccountHistory: (accountGuids: string[], cashAccountGuids?: string[]) => HistoryPoint[];
+  getAccountCashFlows: (accountGuids: string[], cashAccountGuids?: string[]) => CashFlowPoint[];
 }
 
 const InvestmentDataContext = createContext<InvestmentDataContextType | null>(null);
@@ -84,13 +84,18 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
-  const fetchAccountHistory = useCallback(async (accountGuids: string[]) => {
-    const key = [...accountGuids].sort().join(',');
+  const accountKey = (accountGuids: string[], cashAccountGuids: string[] = []) =>
+    `${[...accountGuids].sort().join(',')}|${[...cashAccountGuids].sort().join(',')}`;
+
+  const fetchAccountHistory = useCallback(async (accountGuids: string[], cashAccountGuids: string[] = []) => {
+    const key = accountKey(accountGuids, cashAccountGuids);
     // Skip if already cached
     if (accountHistoryMap[key]) return;
 
     try {
-      const res = await fetch(`/api/investments/history?days=36500&accountGuids=${accountGuids.join(',')}`);
+      const params = new URLSearchParams({ days: '36500', accountGuids: accountGuids.join(',') });
+      if (cashAccountGuids.length > 0) params.set('cashAccountGuids', cashAccountGuids.join(','));
+      const res = await fetch(`/api/investments/history?${params.toString()}`);
       const data = await res.json();
       if (res.ok) {
         setAccountHistoryMap(prev => ({
@@ -106,14 +111,12 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
     }
   }, [accountHistoryMap]);
 
-  const getAccountHistory = useCallback((accountGuids: string[]) => {
-    const key = [...accountGuids].sort().join(',');
-    return accountHistoryMap[key]?.history || [];
+  const getAccountHistory = useCallback((accountGuids: string[], cashAccountGuids: string[] = []) => {
+    return accountHistoryMap[accountKey(accountGuids, cashAccountGuids)]?.history || [];
   }, [accountHistoryMap]);
 
-  const getAccountCashFlows = useCallback((accountGuids: string[]) => {
-    const key = [...accountGuids].sort().join(',');
-    return accountHistoryMap[key]?.cashFlows || [];
+  const getAccountCashFlows = useCallback((accountGuids: string[], cashAccountGuids: string[] = []) => {
+    return accountHistoryMap[accountKey(accountGuids, cashAccountGuids)]?.cashFlows || [];
   }, [accountHistoryMap]);
 
   const handleFetchAllPrices = useCallback(async () => {
