@@ -201,6 +201,13 @@ export async function refreshAllMetadata(): Promise<{
   let failed = 0;
 
   for (const commodity of commodities) {
+    // Crypto has no Yahoo sector/industry profile; its metadata is seeded
+    // (sector 'Crypto') at reclassification time, so skip the refresh.
+    if ((commodity.namespace ?? '').toUpperCase() === 'CRYPTO') {
+      skipped++;
+      continue;
+    }
+
     const cached = await getCachedMetadata(commodity.guid);
     if (cached && isCacheFresh(cached.lastUpdated)) {
       skipped++;

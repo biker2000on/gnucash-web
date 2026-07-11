@@ -15,6 +15,13 @@ import { getCurrencyByMnemonic } from './currency';
 import { fromDecimal, generateGuid } from './prisma';
 
 /**
+ * Denominator for stored price quotes. Prices need higher precision than a
+ * currency's 1/100 fraction so sub-cent assets (many cryptos) don't round to
+ * zero. 1e8 keeps num within int64 for any realistic price.
+ */
+const PRICE_DENOM = 100_000_000;
+
+/**
  * Result of a price fetch operation for a single symbol
  */
 export interface PriceFetchResult {
@@ -411,6 +418,17 @@ export async function fetchBatchQuotes(symbols: string[]): Promise<Array<{
  * (have quote_flag=1 and are not in CURRENCY namespace)
  * @returns Array of quotable commodities
  */
+/**
+ * Yahoo symbol for a commodity. Crypto commodities (namespace CRYPTO) trade
+ * as {MNEMONIC}-USD pairs on Yahoo Finance (BTC -> BTC-USD); everything else
+ * uses the mnemonic as-is.
+ */
+export function yahooSymbolFor(c: { mnemonic: string; namespace?: string | null }): string {
+  return (c.namespace ?? '').toUpperCase() === 'CRYPTO'
+    ? `${c.mnemonic.toUpperCase()}-USD`
+    : c.mnemonic;
+}
+
 export async function getQuotableCommodities(): Promise<QuotableCommodity[]> {
   const { default: prisma } = await import('./prisma');
 
@@ -458,7 +476,11 @@ export async function storeFetchedPrice(
 
   try {
     const guid = generateGuid();
-    const { num, denom } = fromDecimal(price, usd.fraction);
+    // Prices are quotes, not monetary amounts, so they need far more precision
+    // than the currency's 1/100 fraction — otherwise sub-cent assets (e.g. many
+    // cryptocurrencies) round to $0.00. Store at 1e8 resolution (well within
+    // int64 for any realistic price) to preserve small values exactly.
+    const { num, denom } = fromDecimal(price, PRICE_DENOM);
 
     await prisma.prices.create({
       data: {
@@ -523,7 +545,7 @@ export async function fetchAndStorePrices(
   let totalFailed = 0;
 
   for (const commodity of targetCommodities) {
-    const symbol = commodity.mnemonic;
+    const symbol = yahooSymbolFor(commodity);
     let pricesStored = 0;
     let earliestDate: string | null = null;
     let latestDate: string | null = null;
@@ -670,7 +692,7 @@ export async function auditAndBackfillPrices(
   let totalFailed = 0;
 
   for (const commodity of targetCommodities) {
-    const symbol = commodity.mnemonic;
+    const symbol = yahooSymbolFor(commodity);
 
     try {
       const startDate = await getCommodityAuditStartDate(commodity.guid);
