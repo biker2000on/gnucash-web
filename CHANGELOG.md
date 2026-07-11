@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1.0] - 2026-07-10
+
+### Added
+- **Inventory**: receive stock against posted vendor bills (unit costs from the bill lines, no double-posting), reorder points with automatic low-stock alerts (after bank sync and on demand), per-item **FIFO valuation** option with layer-based COGS, a Stock Valuation report, and a **setting to enable inventory on household books** (standalone Inventory nav item)
+- **Recurring invoices**: define from any invoice or bill ("Make recurring..."), cadence with month-end anchoring, optional auto-post, runs automatically after bank sync plus Run-now, atomic claim-first generation (no duplicates), notifications per generated document
+- **Customer statements**: printable per-customer statement with opening/closing balance, chronological activity, running balance, and an aging footer
+- **Statements**: OFX account auto-detection (ACCTID) with a per-book learned account map — re-uploads skip the account picker; assign-account flow for unmapped files; create a categorization rule directly from a reconcile missing line
+- **Dashboard**: sparkline and bar chart custom widgets (monthly balance or spend series) and per-book dashboard layouts
 ## [0.9.0.0] - 2026-07-10
 
 ### Added
