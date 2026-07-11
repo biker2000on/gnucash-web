@@ -55,6 +55,21 @@ export async function POST(
     }
 
     const summary = await finalizeReconcile(batch);
+
+    // Remember the OFX <ACCTID> → account pairing so future uploads of this
+    // account auto-assign. Best effort — never fails the finalize.
+    try {
+      const { getBatch: getServiceBatch, upsertStatementAcctMap } = await import(
+        '@/lib/services/statement.service'
+      );
+      const full = await getServiceBatch(batchId);
+      if (full?.ofxAcctId && full.accountGuid) {
+        await upsertStatementAcctMap(bookGuid, full.ofxAcctId, full.accountGuid);
+      }
+    } catch (mapErr) {
+      console.warn('Failed to upsert OFX account map after finalize:', mapErr);
+    }
+
     return NextResponse.json(serializeBigInts({ success: true, summary }));
   } catch (error) {
     if (error instanceof StatementReconcileError) {

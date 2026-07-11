@@ -25,6 +25,7 @@ export enum ReportType {
   BUDGET_REPORT = 'budget_report',
   SALES_BY_CUSTOMER = 'sales_by_customer',
   EXPENSES_BY_VENDOR = 'expenses_by_vendor',
+  STOCK_VALUATION = 'stock_valuation',
 }
 
 export interface ReportConfig {
@@ -342,6 +343,13 @@ export const REPORTS: ReportConfig[] = [
     name: 'Expenses by Vendor',
     description: 'Posted vendor bill totals per vendor with amounts paid and outstanding balance',
     icon: 'cash',
+    category: 'business',
+  },
+  {
+    type: ReportType.STOCK_VALUATION,
+    name: 'Stock Valuation',
+    description: 'Inventory on hand per item with valuation method, unit cost, and extended value',
+    icon: 'balance',
     category: 'business',
   },
   {

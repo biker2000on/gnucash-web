@@ -8,6 +8,21 @@ import {
   InvoiceNotFoundError,
   InvoiceStateError,
 } from './invoice-engine';
+import {
+  RecurringInvoiceValidationError,
+  RecurringInvoiceNotFoundError,
+} from './recurring-invoices';
+
+/** Maps recurring-invoice service errors (falls through to invoice errors). */
+export function mapRecurringError(error: unknown): NextResponse {
+  if (error instanceof RecurringInvoiceValidationError) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  if (error instanceof RecurringInvoiceNotFoundError) {
+    return NextResponse.json({ error: error.message }, { status: 404 });
+  }
+  return mapInvoiceError(error);
+}
 
 export function mapInvoiceError(error: unknown): NextResponse {
   if (error instanceof InvoiceValidationError) {

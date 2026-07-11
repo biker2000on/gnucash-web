@@ -26,6 +26,8 @@ import {
     MOVEMENT_TYPE_META,
     compareItems,
     lowStockCount,
+    belowReorderCount,
+    isBelowReorder,
     totalStockValue,
     formatQty,
 } from '@/components/business/inventory-ui';
@@ -284,7 +286,26 @@ export default function InventoryPage() {
     const [editing, setEditing] = useState<'new' | ItemDTO | null>(null);
     const [deactivating, setDeactivating] = useState<ItemDTO | null>(null);
     const [isDeactivating, setIsDeactivating] = useState(false);
+    const [scanning, setScanning] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const handleReorderScan = async () => {
+        setScanning(true);
+        try {
+            const res = await fetch('/api/inventory/reorder-scan', { method: 'POST' });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to scan reorder points');
+            success(
+                data.detected === 0
+                    ? 'All items are above their reorder points'
+                    : `${data.detected} item${data.detected === 1 ? '' : 's'} at/below reorder point — ${data.created} new alert${data.created === 1 ? '' : 's'}`,
+            );
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to scan reorder points');
+        } finally {
+            setScanning(false);
+        }
+    };
 
     const fetchItems = useCallback(async () => {
         try {
@@ -419,6 +440,12 @@ export default function InventoryPage() {
     const activeItems = useMemo(() => items.filter((i) => i.active), [items]);
     const activeLocations = useMemo(() => locations.filter((l) => l.active), [locations]);
     const lowStock = useMemo(() => lowStockCount(items), [items]);
+    const reorderLow = useMemo(() => belowReorderCount(items), [items]);
+    // Distinct active items that are out of stock OR at/below reorder point.
+    const anyLow = useMemo(
+        () => items.filter((i) => i.active && (i.onHand <= 0 || isBelowReorder(i))).length,
+        [items],
+    );
     const stockValue = useMemo(() => totalStockValue(items), [items]);
 
     const rowActions = (item: ItemDTO) => [
@@ -433,17 +460,28 @@ export default function InventoryPage() {
         <div className="space-y-4">
             <PageHeader
                 title="Inventory"
-                subtitle="Items, stock levels, and movements. Valuation is book-wide moving average cost."
+                subtitle="Items, stock levels, and movements. Valuation is book-wide — moving average or FIFO per item."
                 actions={
-                    <button
-                        type="button"
-                        onClick={() => setEditing('new')}
-                        disabled={isReadonly}
-                        title={isReadonly ? READONLY_TOOLTIP : 'New Item (n)'}
-                        className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
-                    >
-                        + New Item
-                    </button>
+                    <>
+                        <button
+                            type="button"
+                            onClick={handleReorderScan}
+                            disabled={isReadonly || scanning}
+                            title={isReadonly ? READONLY_TOOLTIP : 'Create alerts for items at or below their reorder point'}
+                            className="px-3 py-2 text-sm rounded-lg border border-border bg-surface/50 text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        >
+                            {scanning ? 'Scanning...' : 'Scan reorder points'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setEditing('new')}
+                            disabled={isReadonly}
+                            title={isReadonly ? READONLY_TOOLTIP : 'New Item (n)'}
+                            className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
+                        >
+                            + New Item
+                        </button>
+                    </>
                 }
                 menuActions={[
                     { label: 'Manage locations', onSelect: () => router.push('/business/inventory/locations') },
@@ -465,10 +503,10 @@ export default function InventoryPage() {
                     size="compact"
                 />
                 <StatCard
-                    label="Out of stock"
-                    value={loading ? '—' : String(lowStock)}
-                    tone={lowStock > 0 ? 'warning' : 'default'}
-                    sub="active items at ≤ 0"
+                    label="Low stock"
+                    value={loading ? '—' : String(anyLow)}
+                    tone={anyLow > 0 ? 'warning' : 'default'}
+                    sub={loading ? undefined : `${lowStock} at ≤ 0 · ${reorderLow} at reorder point`}
                     size="compact"
                 />
             </StatGrid>
@@ -564,10 +602,20 @@ export default function InventoryPage() {
                                                     <td className="px-4 py-2 text-foreground-secondary">{item.unit}</td>
                                                     <td
                                                         className={`px-4 py-2 font-mono tabular-nums text-right whitespace-nowrap ${
-                                                            item.onHand <= 0 && item.active ? 'text-warning' : 'text-foreground'
+                                                            item.active && (item.onHand <= 0 || isBelowReorder(item))
+                                                                ? 'text-warning'
+                                                                : 'text-foreground'
                                                         }`}
                                                         style={TNUM}
                                                     >
+                                                        {item.active && isBelowReorder(item) && (
+                                                            <span
+                                                                className="inline-block mr-1.5 px-1.5 py-0.5 text-[10px] uppercase tracking-wider rounded-md bg-warning/10 text-warning align-middle"
+                                                                title={`At or below reorder point (${formatQty(item.reorderPoint ?? 0)})`}
+                                                            >
+                                                                Reorder
+                                                            </span>
+                                                        )}
                                                         {formatQty(item.onHand)}
                                                     </td>
                                                     <td className="px-4 py-2 font-mono tabular-nums text-right text-foreground-secondary whitespace-nowrap" style={TNUM}>
@@ -609,10 +657,13 @@ export default function InventoryPage() {
                                                     label: 'On hand',
                                                     value: (
                                                         <span
-                                                            className={`font-mono tabular-nums ${item.onHand <= 0 && item.active ? 'text-warning' : ''}`}
+                                                            className={`font-mono tabular-nums ${
+                                                                item.active && (item.onHand <= 0 || isBelowReorder(item)) ? 'text-warning' : ''
+                                                            }`}
                                                             style={TNUM}
                                                         >
                                                             {formatQty(item.onHand)} {item.unit}
+                                                            {item.active && isBelowReorder(item) ? ' · reorder' : ''}
                                                         </span>
                                                     ),
                                                 },

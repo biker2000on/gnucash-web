@@ -8,16 +8,27 @@
  * negative-stock guards are serialized.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * VALUATION (v1): moving average cost per item, BOOK-WIDE.
+ * VALUATION: per-item 'average' (default) or 'fifo', BOOK-WIDE.
  * ─────────────────────────────────────────────────────────────────────────
- *   The average cost is NOT tracked per location — transferring stock
- *   between locations never changes cost. On a cost-bearing inbound movement
- *   ('receive' | 'return_in' | 'assemble_produce' | positive 'adjust' with a
- *   unitCost):
+ *   Cost is NOT tracked per location — transferring stock between locations
+ *   never changes cost.
+ *
+ *   'average': on a cost-bearing inbound movement ('receive' | 'return_in' |
+ *   'assemble_produce' | positive 'adjust' with a unitCost):
  *       newAvg = (onHandTotal * avgCost + qty * unitCost) / (onHandTotal + qty)
  *   (guarded against zero/negative denominators — see applyMovementToAvgCost).
  *   Outbound movements ('ship' | 'assemble_consume' | 'return_out' |
  *   negative 'adjust') consume at the current average cost and never change it.
+ *
+ *   'fifo': cost layers are rebuilt from the item's movement history
+ *   (buildFifoLayers — transfers ignored, inbound movements create layers at
+ *   their unit_cost, consumption depletes oldest-first). Consuming movements
+ *   compute a layer-weighted effective unit cost (computeFifoConsumption),
+ *   record it on the movement's unit_cost, and post COGS at that cost.
+ *   items.avg_cost is STILL maintained for display ("avg cost (info)").
+ *   Switching an item's method affects FUTURE consumption only.
+ *   returnToStock still re-enters at avgCost (creates an avg-cost layer for
+ *   FIFO items) — a documented approximation.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * LEDGER POSTINGS (optional, per-operation `post: true`)
@@ -43,6 +54,12 @@
  * INVOICE FULFILLMENT is an EXPLICIT action — posting a customer invoice via
  * the invoice engine does NOT create stock movements automatically. Call
  * fulfillInvoiceLines() after the invoice is posted.
+ *
+ * BILL RECEIVING mirrors fulfillment on the purchase side: receiveFromBill()
+ * creates 'receive' movements against a POSTED vendor bill at each entry's
+ * price, linked via invoice_guid + entry_guid, with NO ledger posting (the
+ * bill posting already booked the debit — put the item's Inventory asset
+ * account on the bill line for inventory purchases).
  */
 
 import prisma from '@/lib/prisma';
@@ -317,6 +334,140 @@ export function validateReturnAllocations(
   }
 }
 
+/**
+ * Validate receive-against-bill allocations (pure): mirror of
+ * validateFulfillmentAllocations with bill wording — every entryGuid must be
+ * a bill entry, quantities positive, and per entry alreadyReceived + newly
+ * allocated must not exceed the billed quantity.
+ */
+export function validateReceiveAllocations(
+  allocations: FulfillmentAllocation[],
+  entryQuantities: Map<string, number>,
+  alreadyReceived: Map<string, number>,
+): void {
+  if (!allocations || allocations.length === 0) {
+    throw new InventoryValidationError('At least one allocation is required');
+  }
+  const newByEntry = new Map<string, number>();
+  for (const a of allocations) {
+    if (!a.entryGuid) throw new InventoryValidationError('entryGuid is required on each allocation');
+    if (!entryQuantities.has(a.entryGuid)) {
+      throw new InventoryValidationError(`Entry ${a.entryGuid} does not belong to this bill`);
+    }
+    if (!(Number.isFinite(a.quantity) && a.quantity > 0)) {
+      throw new InventoryValidationError('Allocation quantity must be a positive number');
+    }
+    newByEntry.set(a.entryGuid, (newByEntry.get(a.entryGuid) ?? 0) + a.quantity);
+  }
+  for (const [entryGuid, newQty] of newByEntry) {
+    const entryQty = entryQuantities.get(entryGuid) ?? 0;
+    const received = alreadyReceived.get(entryGuid) ?? 0;
+    if (received + newQty > entryQty + EPSILON) {
+      throw new InventoryValidationError(
+        `Entry ${entryGuid}: receiving ${newQty} exceeds the remaining quantity ` +
+          `(${entryQty} on the bill, ${received} already received)`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FIFO cost layers (pure, DB-free)
+// ---------------------------------------------------------------------------
+
+export interface FifoLayer {
+  /** Remaining quantity in this layer (always > 0). */
+  quantity: number;
+  /** Cost basis per unit of this layer. */
+  unitCost: number;
+}
+
+/**
+ * Build the REMAINING FIFO cost layers from an item's full movement history
+ * (movements must be oldest-first — the engine orders by id ASC).
+ *
+ * Rules:
+ *   - transfer_in / transfer_out are IGNORED — they are paired location moves
+ *     and cost is book-wide, so processing them would deplete layers on the
+ *     way out and re-add costless units on the way in.
+ *   - every other INBOUND movement (quantity > 0) creates a layer at its
+ *     unit_cost (0 when the movement carries no cost — keeps layer totals in
+ *     lockstep with book-wide on-hand).
+ *   - every other CONSUMING movement (quantity < 0) depletes layers
+ *     oldest-first. Consumption beyond the available layers is clamped
+ *     (guards histories that predate FIFO or were adjusted below zero).
+ */
+export function buildFifoLayers(
+  movements: ReadonlyArray<Pick<InventoryMovement, 'movementType' | 'quantity' | 'unitCost'>>,
+): FifoLayer[] {
+  const layers: FifoLayer[] = [];
+  for (const m of movements) {
+    if (m.movementType === 'transfer_in' || m.movementType === 'transfer_out') continue;
+    if (m.quantity > EPSILON) {
+      layers.push({ quantity: m.quantity, unitCost: m.unitCost ?? 0 });
+    } else if (m.quantity < -EPSILON) {
+      let toConsume = -m.quantity;
+      while (toConsume > EPSILON && layers.length > 0) {
+        const head = layers[0];
+        const take = Math.min(head.quantity, toConsume);
+        head.quantity -= take;
+        toConsume -= take;
+        if (head.quantity <= EPSILON) layers.shift();
+      }
+      // Any residual toConsume is clamped (pre-FIFO / corrupt history).
+    }
+  }
+  return layers;
+}
+
+export interface FifoConsumption {
+  /** Total cost of the consumed quantity. */
+  totalCost: number;
+  /** totalCost / quantity — the weighted effective unit cost. */
+  unitCost: number;
+  /** Per-layer breakdown, oldest-first. */
+  breakdown: Array<{ quantity: number; unitCost: number }>;
+  /** Layers remaining AFTER the consumption (input layers are not mutated). */
+  remaining: FifoLayer[];
+}
+
+/**
+ * Consume `quantity` units from FIFO layers (oldest-first). A consumption
+ * spanning several layers yields a weighted unit cost. Pure — the input
+ * layers are copied, not mutated. Throws:
+ *   - InventoryValidationError for a non-positive/non-finite quantity;
+ *   - InventoryStockError when quantity exceeds the total remaining layers.
+ */
+export function computeFifoConsumption(
+  layers: ReadonlyArray<FifoLayer>,
+  quantity: number,
+): FifoConsumption {
+  if (!(Number.isFinite(quantity) && quantity > 0)) {
+    throw new InventoryValidationError('FIFO consumption quantity must be a positive number');
+  }
+  const available = layers.reduce((sum, l) => sum + l.quantity, 0);
+  if (quantity > available + EPSILON) {
+    throw new InventoryStockError(
+      `Insufficient FIFO layers: ${available} available, ${quantity} requested`,
+    );
+  }
+
+  const remaining = layers.map((l) => ({ ...l }));
+  const breakdown: FifoConsumption['breakdown'] = [];
+  let toConsume = quantity;
+  let totalCost = 0;
+  while (toConsume > EPSILON && remaining.length > 0) {
+    const head = remaining[0];
+    const take = Math.min(head.quantity, toConsume);
+    breakdown.push({ quantity: take, unitCost: head.unitCost });
+    totalCost += take * head.unitCost;
+    head.quantity -= take;
+    toConsume -= take;
+    if (head.quantity <= EPSILON) remaining.shift();
+  }
+  return { totalCost, unitCost: totalCost / quantity, breakdown, remaining };
+}
+
 // ---------------------------------------------------------------------------
 // Shared DB helpers (run inside a prisma.$transaction)
 // ---------------------------------------------------------------------------
@@ -333,6 +484,9 @@ interface ItemRowRaw {
   cogs_account_guid: string | null;
   asset_account_guid: string | null;
   avg_cost: unknown;
+  valuation_method: string;
+  reorder_point: unknown;
+  reorder_quantity: unknown;
   active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -341,7 +495,8 @@ interface ItemRowRaw {
 const ITEM_COLS = `
   id, book_guid, sku, name, description, unit, sale_price,
   income_account_guid, cogs_account_guid, asset_account_guid,
-  avg_cost, active, created_at, updated_at
+  avg_cost, valuation_method, reorder_point, reorder_quantity,
+  active, created_at, updated_at
 `;
 
 /** Lock + load an item (FOR UPDATE serializes concurrent stock mutations). */
@@ -425,6 +580,41 @@ async function getOnHand(
         itemId,
       );
   return Number(rows[0]?.total ?? 0);
+}
+
+/** All movements for an item, oldest-first (FIFO layer input). */
+async function loadItemMovementsAsc(tx: PrismaTx, itemId: number): Promise<InventoryMovement[]> {
+  const rows = await tx.$queryRawUnsafe<Parameters<typeof mapMovementRow>[0][]>(
+    `SELECT ${MOVEMENT_COLS} FROM gnucash_web_inventory_movements
+     WHERE item_id = $1 ORDER BY id ASC`,
+    itemId,
+  );
+  return rows.map(mapMovementRow);
+}
+
+/**
+ * Effective unit cost for CONSUMING `positiveQty` of an item:
+ *   - 'average' items consume at the current moving average;
+ *   - 'fifo' items consume at the weighted cost of the oldest remaining
+ *     layers (rebuilt from movement history inside the same transaction, so
+ *     sequential consumptions in one call see each other's movements).
+ * Falls back to avgCost when the layer history cannot cover the quantity
+ * (histories that predate FIFO adoption).
+ */
+async function consumptionUnitCost(
+  tx: PrismaTx,
+  item: InventoryItem,
+  positiveQty: number,
+): Promise<number> {
+  if (item.valuationMethod !== 'fifo') return item.avgCost;
+  const movements = await loadItemMovementsAsc(tx, item.id);
+  const layers = buildFifoLayers(movements);
+  try {
+    return computeFifoConsumption(layers, positiveQty).unitCost;
+  } catch (error) {
+    if (error instanceof InventoryStockError) return item.avgCost;
+    throw error;
+  }
 }
 
 interface MovementInsert {
@@ -742,13 +932,18 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
     const onHandAtLocation = await getOnHand(tx, item.id, input.locationId);
     assertSufficientStock(onHandAtLocation, signedQty, item.sku);
 
-    const txnGuid = await maybePostCogs(tx, item, input.quantity, date, input.post, input.reference);
+    const isFifo = item.valuationMethod === 'fifo';
+    const effectiveCost = await consumptionUnitCost(tx, item, input.quantity);
+    const txnGuid = await maybePostCogs(tx, item, input.quantity, date, input.post, input.reference, effectiveCost);
 
     const movement = await insertMovement(tx, {
       itemId: item.id,
       locationId: input.locationId,
       movementType: 'ship',
       quantity: signedQty,
+      // FIFO items record the layer-derived cost on the consuming movement;
+      // average items keep null (they consume at the moving average).
+      unitCost: isFifo ? effectiveCost : null,
       movementDate: date,
       reference: input.reference ?? null,
       invoiceGuid: input.invoiceGuid ?? null,
@@ -760,7 +955,11 @@ export async function shipStock(input: ShipInput): Promise<MovementResult> {
   return result!;
 }
 
-/** Shared COGS posting for ship/fulfillment (debit COGS, credit asset). */
+/**
+ * Shared COGS posting for ship/fulfillment (debit COGS, credit asset).
+ * `unitCost` is the effective consumption cost: the moving average for
+ * 'average' items, the FIFO layer-weighted cost for 'fifo' items.
+ */
 async function maybePostCogs(
   tx: PrismaTx,
   item: InventoryItem,
@@ -768,6 +967,7 @@ async function maybePostCogs(
   date: string,
   post: boolean | undefined,
   reference: string | null | undefined,
+  unitCost: number,
 ): Promise<string | null> {
   if (!post) return null;
   if (!item.cogsAccountGuid || !item.assetAccountGuid) {
@@ -777,7 +977,7 @@ async function maybePostCogs(
   }
   await assertPostableAccount(tx, item.cogsAccountGuid, 'COGS');
   await assertPostableAccount(tx, item.assetAccountGuid, 'Asset');
-  const amount = positiveQty * item.avgCost;
+  const amount = positiveQty * unitCost;
   return writeLedgerTxn(tx, {
     date,
     description: `COGS: ${item.sku} × ${positiveQty}`,
@@ -850,12 +1050,20 @@ export async function adjustStock(input: AdjustInput): Promise<MovementResult> {
     const newAvg = applyMovementToAvgCost(item.avgCost, onHandTotal, 'adjust', signedQty, input.unitCost);
     if (newAvg !== item.avgCost) await updateItemAvgCost(tx, item.id, newAvg);
 
+    // Negative adjustments on FIFO items consume layers — record the
+    // layer-derived cost (any caller-supplied cost is informational only
+    // for a negative adjust and is superseded here).
+    let recordedCost: number | null = input.unitCost ?? null;
+    if (signedQty < 0 && item.valuationMethod === 'fifo') {
+      recordedCost = await consumptionUnitCost(tx, item, -signedQty);
+    }
+
     const movement = await insertMovement(tx, {
       itemId: item.id,
       locationId: input.locationId,
       movementType: 'adjust',
       quantity: signedQty,
-      unitCost: input.unitCost ?? null,
+      unitCost: recordedCost,
       movementDate: date,
       reference: input.reference ?? null,
     });
@@ -1003,10 +1211,20 @@ export async function assembleBom(input: AssembleInput): Promise<AssembleResult>
     const componentSpecs: AssemblyComponentSpec[] = [];
     for (const line of lineRows) {
       const component = items.get(line.component_item_id)!;
+      const quantityPerBatch = Number(line.quantity);
+      // FIFO components consume at their layer-derived cost for the exact
+      // quantity this run will consume; average components at avgCost.
+      // (Invalid batches fall through — computeAssemblyCost rejects them.)
+      const consumedQty =
+        Number.isFinite(input.batches) && input.batches > 0
+          ? quantityPerBatch * input.batches
+          : 0;
       componentSpecs.push({
         itemId: component.id,
-        quantityPerBatch: Number(line.quantity),
-        avgCost: component.avgCost,
+        quantityPerBatch,
+        avgCost: consumedQty > 0
+          ? await consumptionUnitCost(tx, component, consumedQty)
+          : component.avgCost,
         onHandAtLocation: await getOnHand(tx, component.id, input.locationId),
         label: component.sku,
       });
@@ -1051,15 +1269,23 @@ export async function assembleBom(input: AssembleInput): Promise<AssembleResult>
       }
     }
 
-    // Consume components at their current average cost.
+    // Consume components at their effective cost (avg or FIFO — already
+    // baked into the plan via componentSpecs.avgCost). FIFO components
+    // record the derived cost on the consuming movement.
     const consumed: InventoryMovement[] = [];
     for (const consumption of plan.consumptions) {
+      const component = items.get(consumption.itemId)!;
+      const isFifoComponent = component.valuationMethod === 'fifo';
       consumed.push(
         await insertMovement(tx, {
           itemId: consumption.itemId,
           locationId: input.locationId,
           movementType: 'assemble_consume',
           quantity: consumption.quantity,
+          unitCost:
+            isFifoComponent && consumption.quantity < 0
+              ? consumption.cost / -consumption.quantity
+              : null,
           movementDate: date,
           reference,
           txnGuid,
@@ -1220,13 +1446,18 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
     const movements: InventoryMovement[] = [];
     for (const a of input.allocations) {
       const item = items.get(a.itemId)!;
-      const txnGuid = await maybePostCogs(tx, item, a.quantity, date, input.post, reference);
+      const isFifo = item.valuationMethod === 'fifo';
+      // Computed inside the loop so sequential FIFO consumptions of the same
+      // item see each other's just-inserted movements.
+      const effectiveCost = await consumptionUnitCost(tx, item, a.quantity);
+      const txnGuid = await maybePostCogs(tx, item, a.quantity, date, input.post, reference, effectiveCost);
       movements.push(
         await insertMovement(tx, {
           itemId: item.id,
           locationId: a.locationId,
           movementType: 'ship',
           quantity: -a.quantity,
+          unitCost: isFifo ? effectiveCost : null,
           movementDate: date,
           reference,
           invoiceGuid: input.invoiceGuid,
@@ -1360,5 +1591,261 @@ export async function getInvoiceFulfillment(
     invoiceId: invoice.id,
     entries,
     fullyFulfilled: entries.length > 0 && entries.every((e) => e.remainingQuantity <= EPSILON),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Vendor bill receiving (purchase-order mirror of invoice fulfillment)
+// ---------------------------------------------------------------------------
+
+const OWNER_TYPE_VENDOR = 4;
+
+interface BillForReceiving {
+  guid: string;
+  id: string;
+  /** Billed quantity per entry guid. */
+  entryQuantities: Map<string, number>;
+  /** Unit cost per entry guid (the bill entry's b_price as a decimal). */
+  entryUnitCosts: Map<string, number>;
+}
+
+/** Load + validate a POSTED vendor bill (job-owned resolving to a vendor allowed). */
+async function loadPostedVendorBill(
+  tx: PrismaTx,
+  billGuid: string,
+): Promise<BillForReceiving> {
+  const bill = await tx.invoices.findUnique({ where: { guid: billGuid } });
+  if (!bill) throw new InventoryNotFoundError(`Bill not found: ${billGuid}`);
+
+  let isVendorBill = bill.owner_type === OWNER_TYPE_VENDOR;
+  if (bill.owner_type === OWNER_TYPE_JOB && bill.owner_guid) {
+    const job = await tx.jobs.findUnique({
+      where: { guid: bill.owner_guid },
+      select: { owner_type: true },
+    });
+    isVendorBill = job?.owner_type === OWNER_TYPE_VENDOR;
+  }
+  if (!isVendorBill) {
+    throw new InventoryValidationError('Receiving is only supported for vendor bills');
+  }
+  if (!bill.post_txn) {
+    throw new InventoryStateError(`Bill ${bill.id} is not posted — post it before receiving`);
+  }
+
+  const entryRows: Array<{
+    guid: string;
+    quantity_num: bigint | null;
+    quantity_denom: bigint | null;
+    b_price_num: bigint | null;
+    b_price_denom: bigint | null;
+  }> = await tx.entries.findMany({
+    where: { bill: billGuid },
+    select: {
+      guid: true,
+      quantity_num: true,
+      quantity_denom: true,
+      b_price_num: true,
+      b_price_denom: true,
+    },
+  });
+  const entryQuantities = new Map<string, number>();
+  const entryUnitCosts = new Map<string, number>();
+  for (const row of entryRows) {
+    entryQuantities.set(row.guid, toDecimalNumber(row.quantity_num, row.quantity_denom));
+    entryUnitCosts.set(row.guid, toDecimalNumber(row.b_price_num, row.b_price_denom));
+  }
+  return { guid: bill.guid, id: bill.id, entryQuantities, entryUnitCosts };
+}
+
+/** Net received quantity per entry = SUM of receive + return_out movement quantities. */
+async function getReceivedByEntry(
+  tx: PrismaTx,
+  billGuid: string,
+): Promise<Map<string, number>> {
+  const rows = await tx.$queryRawUnsafe<Array<{ entry_guid: string | null; total: unknown }>>(
+    `SELECT entry_guid, SUM(quantity) AS total
+     FROM gnucash_web_inventory_movements
+     WHERE invoice_guid = $1 AND movement_type IN ('receive', 'return_out')
+     GROUP BY entry_guid`,
+    billGuid,
+  );
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    if (row.entry_guid) map.set(row.entry_guid, Number(row.total ?? 0));
+  }
+  return map;
+}
+
+export interface ReceiveFromBillInput {
+  bookGuid: string;
+  billGuid: string;
+  allocations: FulfillmentAllocation[];
+  date?: string;
+}
+
+export interface ReceiveFromBillResult {
+  billGuid: string;
+  movements: InventoryMovement[];
+}
+
+/**
+ * Receive stock against the lines of a POSTED vendor bill: creates 'receive'
+ * movements linked via invoice_guid (= the bill guid) + entry_guid, with
+ * unit_cost taken from each bill entry's price. Updates the moving average
+ * (and creates FIFO layers implicitly, since layers derive from movement
+ * history). An entry may be received across several calls/locations, but
+ * never beyond its billed quantity.
+ *
+ * NO ledger transaction is written — posting the bill already booked the
+ * debit against each line's account. For inventory purchases, put the item's
+ * Inventory ASSET account on the bill line so the posting debits inventory
+ * directly (a COGS/expense line would double-count once the stock ships).
+ */
+export async function receiveFromBill(input: ReceiveFromBillInput): Promise<ReceiveFromBillResult> {
+  await ensureInventoryTables();
+  const date = parseMovementDate(input.date);
+
+  let result: ReceiveFromBillResult | null = null;
+  await prisma.$transaction(async (tx) => {
+    const bill = await loadPostedVendorBill(tx, input.billGuid);
+    const alreadyReceived = await getReceivedByEntry(tx, input.billGuid);
+    validateReceiveAllocations(input.allocations, bill.entryQuantities, alreadyReceived);
+
+    const items = await lockItems(tx, input.bookGuid, input.allocations.map((a) => a.itemId));
+    for (const a of input.allocations) await assertLocation(tx, input.bookGuid, a.locationId);
+
+    // Track each item's evolving average across sequential allocations so a
+    // bill with several lines for one item folds every receipt into the avg.
+    const currentAvg = new Map<number, number>();
+    for (const item of items.values()) currentAvg.set(item.id, item.avgCost);
+
+    const reference = `Bill ${bill.id}`;
+    const movements: InventoryMovement[] = [];
+    for (const a of input.allocations) {
+      const item = items.get(a.itemId)!;
+      const unitCost = bill.entryUnitCosts.get(a.entryGuid) ?? 0;
+
+      const onHandTotal = await getOnHand(tx, item.id);
+      const newAvg = applyMovementToAvgCost(
+        currentAvg.get(item.id)!,
+        onHandTotal,
+        'receive',
+        a.quantity,
+        unitCost,
+      );
+      if (newAvg !== currentAvg.get(item.id)) {
+        await updateItemAvgCost(tx, item.id, newAvg);
+        currentAvg.set(item.id, newAvg);
+      }
+
+      movements.push(
+        await insertMovement(tx, {
+          itemId: item.id,
+          locationId: a.locationId,
+          movementType: 'receive',
+          quantity: a.quantity,
+          unitCost,
+          movementDate: date,
+          reference,
+          invoiceGuid: input.billGuid,
+          entryGuid: a.entryGuid,
+          txnGuid: null,
+        }),
+      );
+    }
+    result = { billGuid: input.billGuid, movements };
+  });
+  return result!;
+}
+
+export interface BillReceivingEntry {
+  entryGuid: string;
+  /** Quantity on the bill entry. */
+  billedQuantity: number;
+  /** The bill entry's unit price (decimal) — the receive cost basis. */
+  unitCost: number;
+  /** Net received = received − returned to vendor. */
+  receivedQuantity: number;
+  remainingQuantity: number;
+  movements: InventoryMovement[];
+}
+
+export interface BillReceivingView {
+  billGuid: string;
+  billId: string;
+  entries: BillReceivingEntry[];
+  fullyReceived: boolean;
+}
+
+/** Per-entry receiving state for a vendor bill (mirror of getInvoiceFulfillment). */
+export async function getBillReceiving(
+  bookGuid: string,
+  billGuid: string,
+): Promise<BillReceivingView> {
+  await ensureInventoryTables();
+
+  const bill = await prisma.invoices.findUnique({ where: { guid: billGuid } });
+  if (!bill) throw new InventoryNotFoundError(`Bill not found: ${billGuid}`);
+
+  const entryRows: Array<{
+    guid: string;
+    quantity_num: bigint | null;
+    quantity_denom: bigint | null;
+    b_price_num: bigint | null;
+    b_price_denom: bigint | null;
+  }> = await prisma.entries.findMany({
+    where: { bill: billGuid },
+    select: {
+      guid: true,
+      quantity_num: true,
+      quantity_denom: true,
+      b_price_num: true,
+      b_price_denom: true,
+    },
+  });
+
+  const movementRows = await prisma.$queryRawUnsafe<Parameters<typeof mapMovementRow>[0][]>(
+    `
+      SELECT mv.id, mv.item_id, mv.location_id, mv.movement_type, mv.quantity,
+             mv.unit_cost, mv.movement_date, mv.reference, mv.invoice_guid,
+             mv.entry_guid, mv.txn_guid, mv.counterpart_movement_id, mv.created_at
+      FROM gnucash_web_inventory_movements mv
+      JOIN gnucash_web_inventory_items i ON i.id = mv.item_id
+      WHERE mv.invoice_guid = $1 AND i.book_guid = $2
+      ORDER BY mv.id ASC
+    `,
+    billGuid,
+    bookGuid,
+  );
+  const movements = movementRows.map(mapMovementRow);
+  const movementsByEntry = new Map<string, InventoryMovement[]>();
+  for (const m of movements) {
+    if (!m.entryGuid) continue;
+    const arr = movementsByEntry.get(m.entryGuid) ?? [];
+    arr.push(m);
+    movementsByEntry.set(m.entryGuid, arr);
+  }
+
+  const entries: BillReceivingEntry[] = entryRows.map((row) => {
+    const billedQuantity = toDecimalNumber(row.quantity_num, row.quantity_denom);
+    const entryMovements = movementsByEntry.get(row.guid) ?? [];
+    const receivedQuantity = entryMovements
+      .filter((m) => m.movementType === 'receive' || m.movementType === 'return_out')
+      .reduce((sum, m) => sum + m.quantity, 0);
+    return {
+      entryGuid: row.guid,
+      billedQuantity,
+      unitCost: toDecimalNumber(row.b_price_num, row.b_price_denom),
+      receivedQuantity,
+      remainingQuantity: billedQuantity - receivedQuantity,
+      movements: entryMovements,
+    };
+  });
+
+  return {
+    billGuid,
+    billId: bill.id,
+    entries,
+    fullyReceived: entries.length > 0 && entries.every((e) => e.remainingQuantity <= EPSILON),
   };
 }

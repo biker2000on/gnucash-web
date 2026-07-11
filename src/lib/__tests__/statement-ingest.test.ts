@@ -11,6 +11,8 @@ vi.mock('../services/statement.service', () => ({
   getBatch: vi.fn(),
   setBatchStatus: vi.fn().mockResolvedValue(null),
   replaceLines: vi.fn().mockResolvedValue(0),
+  upsertStatementAcctMap: vi.fn().mockResolvedValue(undefined),
+  getMappedAccountGuid: vi.fn().mockResolvedValue(null),
 }));
 
 // Mock storage so no filesystem/S3 access happens.
@@ -37,6 +39,7 @@ const batchBase = {
   openingBalance: null,
   closingBalance: null,
   currency: null,
+  ofxAcctId: null,
   error: null,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -97,6 +100,66 @@ describe('runStatementExtraction — OFX', () => {
 
     const [, lines] = vi.mocked(statementService.replaceLines).mock.calls[0];
     expect(lines[0]).toMatchObject({ date: '2024-03-01', amount: -19.99, description: 'Netflix' });
+  });
+
+  const OFX_WITH_ACCTID =
+    `<OFX><BANKACCTFROM><ACCTID>123456789</ACCTID></BANKACCTFROM>` +
+    `<STMTTRN><DTPOSTED>20240301<TRNAMT>-19.99<NAME>Netflix</NAME></STMTTRN></OFX>`;
+
+  it('stores the detected ACCTID and remembers the pairing when the batch has an account', async () => {
+    vi.mocked(statementService.getBatch).mockResolvedValue({
+      ...batchBase, source: 'ofx', accountGuid: 'acct-1',
+    });
+    storageGet.mockResolvedValue(Buffer.from(OFX_WITH_ACCTID, 'utf-8'));
+
+    await runStatementExtraction(1, 'book1', '[test]');
+
+    expect(statementService.upsertStatementAcctMap).toHaveBeenCalledWith('book1', '123456789', 'acct-1');
+    const calls = vi.mocked(statementService.setBatchStatus).mock.calls;
+    const last = calls[calls.length - 1];
+    expect(last[1]).toBe('parsed');
+    expect(last[2]).toMatchObject({ ofxAcctId: '123456789' });
+    expect(last[2]).not.toHaveProperty('accountGuid'); // already assigned — no patch
+  });
+
+  it('auto-assigns the account from a remembered mapping when the batch has none', async () => {
+    vi.mocked(statementService.getBatch).mockResolvedValue({ ...batchBase, source: 'ofx' });
+    vi.mocked(statementService.getMappedAccountGuid).mockResolvedValueOnce('acct-mapped');
+    storageGet.mockResolvedValue(Buffer.from(OFX_WITH_ACCTID, 'utf-8'));
+
+    await runStatementExtraction(1, 'book1', '[test]');
+
+    expect(statementService.getMappedAccountGuid).toHaveBeenCalledWith('book1', '123456789');
+    expect(statementService.upsertStatementAcctMap).not.toHaveBeenCalled();
+    const calls = vi.mocked(statementService.setBatchStatus).mock.calls;
+    const last = calls[calls.length - 1];
+    expect(last[2]).toMatchObject({ ofxAcctId: '123456789', accountGuid: 'acct-mapped' });
+  });
+
+  it('leaves the batch unassigned when the ACCTID has no mapping yet', async () => {
+    vi.mocked(statementService.getBatch).mockResolvedValue({ ...batchBase, source: 'ofx' });
+    storageGet.mockResolvedValue(Buffer.from(OFX_WITH_ACCTID, 'utf-8'));
+
+    await runStatementExtraction(1, 'book1', '[test]');
+
+    const calls = vi.mocked(statementService.setBatchStatus).mock.calls;
+    const last = calls[calls.length - 1];
+    expect(last[1]).toBe('parsed');
+    expect(last[2]).toMatchObject({ ofxAcctId: '123456789' });
+    expect(last[2]).not.toHaveProperty('accountGuid');
+  });
+
+  it('records a null ofxAcctId when the OFX file has no ACCTID', async () => {
+    vi.mocked(statementService.getBatch).mockResolvedValue({ ...batchBase, source: 'ofx' });
+    const ofx = `<OFX><STMTTRN><DTPOSTED>20240301<TRNAMT>-19.99<NAME>Netflix</NAME></STMTTRN></OFX>`;
+    storageGet.mockResolvedValue(Buffer.from(ofx, 'utf-8'));
+
+    await runStatementExtraction(1, 'book1', '[test]');
+
+    expect(statementService.getMappedAccountGuid).not.toHaveBeenCalled();
+    expect(statementService.upsertStatementAcctMap).not.toHaveBeenCalled();
+    const calls = vi.mocked(statementService.setBatchStatus).mock.calls;
+    expect(calls[calls.length - 1][2]).toMatchObject({ ofxAcctId: null });
   });
 });
 

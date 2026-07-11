@@ -1000,11 +1000,20 @@ export default function InventoryItemPage() {
                 <StatCard
                     label="On hand"
                     value={formatQty(item.onHand)}
-                    sub={item.unit}
-                    tone={item.onHand <= 0 ? 'warning' : 'default'}
+                    sub={
+                        item.reorderPoint != null
+                            ? `${item.unit} · reorder at ${formatQty(item.reorderPoint)}${item.reorderQuantity != null ? ` (+${formatQty(item.reorderQuantity)})` : ''}`
+                            : item.unit
+                    }
+                    tone={item.onHand <= 0 || (item.reorderPoint != null && item.onHand <= item.reorderPoint) ? 'warning' : 'default'}
                     size="compact"
                 />
-                <StatCard label="Avg cost" value={formatCurrency(item.avgCost)} sub="moving average" size="compact" />
+                <StatCard
+                    label={item.valuationMethod === 'fifo' ? 'Avg cost (info)' : 'Avg cost'}
+                    value={formatCurrency(item.avgCost)}
+                    sub={item.valuationMethod === 'fifo' ? 'FIFO valuation — consumes at layer cost' : 'moving average'}
+                    size="compact"
+                />
                 <StatCard label="Stock value" value={formatCurrency(item.stockValue)} sub="at avg cost" size="compact" />
                 <StatCard
                     label="Sale price"

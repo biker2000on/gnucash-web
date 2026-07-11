@@ -156,6 +156,41 @@ export default function SettingsPage() {
   const [entity, setEntity] = useState<EntityProfileForm | null>(null);
   const [savingEntity, setSavingEntity] = useState(false);
 
+  // Household inventory opt-in (business books always have inventory).
+  const [householdInventoryEnabled, setHouseholdInventoryEnabled] = useState(false);
+  const [savingHouseholdInventory, setSavingHouseholdInventory] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/inventory/settings')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((s) => {
+        if (!cancelled && s) setHouseholdInventoryEnabled(s.enabledForHousehold === true);
+      })
+      .catch(() => { /* leave disabled */ });
+    return () => { cancelled = true; };
+  }, []);
+  const handleToggleHouseholdInventory = async (enabled: boolean) => {
+    setSavingHouseholdInventory(true);
+    const prev = householdInventoryEnabled;
+    setHouseholdInventoryEnabled(enabled);
+    try {
+      const res = await fetch('/api/inventory/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabledForHousehold: enabled }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      // Sidebar reacts without a refresh (same pattern as entity-updated).
+      window.dispatchEvent(new CustomEvent('inventory-settings-updated'));
+      success(enabled ? 'Inventory enabled for this book' : 'Inventory disabled for this book');
+    } catch {
+      setHouseholdInventoryEnabled(prev);
+      showError('Failed to save inventory setting');
+    } finally {
+      setSavingHouseholdInventory(false);
+    }
+  };
+
   // Sync tax rate input from context (mount only)
   useEffect(() => {
     if (defaultTaxRate > 0) {
@@ -613,6 +648,31 @@ export default function SettingsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Inventory for household books (business books always have it) */}
+      {entity && entity.entityType === 'household' && (
+        <div className="bg-surface rounded-xl border border-border px-4 py-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Inventory Management</h2>
+              <p className="text-sm text-foreground-muted mt-0.5">
+                Track items, stock levels, and bills of materials in this household book.
+                Adds an Inventory entry to the sidebar.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={householdInventoryEnabled}
+                onChange={(e) => handleToggleHouseholdInventory(e.target.checked)}
+                disabled={savingHouseholdInventory}
+                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+              />
+              <span className="text-sm text-foreground-secondary">Enabled</span>
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* Price Refresh Schedule */}
       <CollapsibleConfigSection

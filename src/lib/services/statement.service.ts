@@ -1,9 +1,11 @@
 /**
  * Statement Service
  *
- * Owns the two shared tables for the "Statement Import & Reconcile" feature:
+ * Owns the shared tables for the "Statement Import & Reconcile" feature:
  *   - gnucash_web_statement_batches  (one uploaded statement file)
  *   - gnucash_web_statement_lines    (one parsed transaction line)
+ *   - gnucash_web_statement_acct_map (remembers OFX <ACCTID> → ledger account
+ *                                     pairings per book for auto-assignment)
  *
  * Both tables are created lazily via an advisory-lock guarded CREATE TABLE
  * (the same pattern as src/lib/notifications.ts) and are NOT part of the
@@ -47,6 +49,8 @@ export interface StatementBatch {
   openingBalance: number | null;
   closingBalance: number | null;
   currency: string | null;
+  /** OFX <ACCTID> detected during parse (null for CSV/PDF or when absent). */
+  ofxAcctId: string | null;
   error: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -101,6 +105,7 @@ export interface BatchStatusPatch {
   openingBalance?: number | null;
   closingBalance?: number | null;
   currency?: string | null;
+  ofxAcctId?: string | null;
   error?: string | null;
 }
 
@@ -133,6 +138,7 @@ interface BatchRow {
   opening_balance: unknown;
   closing_balance: unknown;
   currency: string | null;
+  ofx_acct_id: string | null;
   error: string | null;
   created_at: Date;
   updated_at: Date;
@@ -174,6 +180,7 @@ function mapBatchRow(row: BatchRow): StatementBatch {
     openingBalance: numOrNull(row.opening_balance),
     closingBalance: numOrNull(row.closing_balance),
     currency: row.currency,
+    ofxAcctId: row.ofx_acct_id ?? null,
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -198,7 +205,8 @@ function mapLineRow(row: LineRow): StatementLine {
 const BATCH_COLS = `
   id, book_guid, account_guid, source, original_filename, storage_key,
   thumbnail_key, status, statement_start_date, statement_end_date,
-  opening_balance, closing_balance, currency, error, created_at, updated_at
+  opening_balance, closing_balance, currency, ofx_acct_id, error,
+  created_at, updated_at
 `;
 
 const LINE_COLS = `
@@ -257,6 +265,20 @@ export function ensureStatementTables(): Promise<void> {
 
           CREATE INDEX IF NOT EXISTS idx_statement_lines_batch
             ON gnucash_web_statement_lines(batch_id);
+
+          -- v2: OFX account auto-detect (lazy column add on existing installs)
+          ALTER TABLE gnucash_web_statement_batches
+            ADD COLUMN IF NOT EXISTS ofx_acct_id VARCHAR(64);
+
+          -- Remembers which ledger account an OFX <ACCTID> reconciles against,
+          -- per book, so later uploads can be auto-assigned.
+          CREATE TABLE IF NOT EXISTS gnucash_web_statement_acct_map (
+            book_guid VARCHAR(32) NOT NULL,
+            ofx_acct_id VARCHAR(64) NOT NULL,
+            account_guid VARCHAR(32) NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (book_guid, ofx_acct_id)
+          );
         END $$;
       `);
     })();
@@ -355,6 +377,7 @@ export async function setBatchStatus(
   if ('openingBalance' in patch) add('opening_balance', patch.openingBalance ?? null);
   if ('closingBalance' in patch) add('closing_balance', patch.closingBalance ?? null);
   if ('currency' in patch) add('currency', patch.currency ?? null);
+  if ('ofxAcctId' in patch) add('ofx_acct_id', patch.ofxAcctId ?? null);
   if ('error' in patch) add('error', patch.error ?? null);
 
   params.push(id);
@@ -374,6 +397,52 @@ export async function deleteBatch(id: number): Promise<void> {
   await ensureStatementTables();
   await prisma.$executeRaw`DELETE FROM gnucash_web_statement_lines WHERE batch_id = ${id}`;
   await prisma.$executeRaw`DELETE FROM gnucash_web_statement_batches WHERE id = ${id}`;
+}
+
+// ---------------------------------------------------------------------------
+// OFX account map (ofx_acct_id → account_guid, per book)
+// ---------------------------------------------------------------------------
+
+/**
+ * Remember (or refresh) the pairing between an OFX <ACCTID> and a ledger
+ * account for a book. Called when an OFX batch with a known account is
+ * uploaded/parsed, when a batch is manually assigned an account, and when a
+ * reconcile is finalized.
+ */
+export async function upsertStatementAcctMap(
+  bookGuid: string,
+  ofxAcctId: string,
+  accountGuid: string,
+): Promise<void> {
+  await ensureStatementTables();
+  await prisma.$executeRawUnsafe(
+    `
+      INSERT INTO gnucash_web_statement_acct_map (book_guid, ofx_acct_id, account_guid, updated_at)
+      VALUES ($1, $2, $3, now())
+      ON CONFLICT (book_guid, ofx_acct_id)
+      DO UPDATE SET account_guid = EXCLUDED.account_guid, updated_at = now()
+    `,
+    bookGuid,
+    ofxAcctId,
+    accountGuid,
+  );
+}
+
+/** Look up the remembered ledger account for an OFX <ACCTID>, or null. */
+export async function getMappedAccountGuid(
+  bookGuid: string,
+  ofxAcctId: string,
+): Promise<string | null> {
+  await ensureStatementTables();
+  const rows = await prisma.$queryRawUnsafe<Array<{ account_guid: string }>>(
+    `
+      SELECT account_guid FROM gnucash_web_statement_acct_map
+      WHERE book_guid = $1 AND ofx_acct_id = $2
+    `,
+    bookGuid,
+    ofxAcctId,
+  );
+  return rows[0]?.account_guid ?? null;
 }
 
 // ---------------------------------------------------------------------------

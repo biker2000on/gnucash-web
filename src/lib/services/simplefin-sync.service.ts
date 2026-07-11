@@ -14,6 +14,8 @@ import { createNotification } from '@/lib/notifications';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { scanForAnomalies } from '@/lib/anomaly-detection';
 import { scanBudgetAlerts } from '@/lib/budget-envelope';
+import { scanInventoryReorder } from '@/lib/services/inventory.service';
+import { runDueRecurringInvoices } from '@/lib/business/recurring-invoices';
 
 const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
 
@@ -452,6 +454,26 @@ export async function syncSimpleFin(
     } catch (err) {
       console.warn('SimpleFin sync budget alert scan failed:', err);
     }
+
+    // Check inventory reorder points and push low-stock alerts.
+    // scanInventoryReorder is internally guarded and never throws, but wrap
+    // the call anyway so nothing here can fail the sync.
+    try {
+      await scanInventoryReorder(bookGuid, { userId: connection.user_id });
+    } catch (err) {
+      console.warn('SimpleFin sync inventory reorder scan failed:', err);
+    }
+  }
+
+  // Generate any due recurring invoices/bills. Runs on every sync (not only
+  // when transactions were imported) — recurrence due dates pass regardless
+  // of bank activity. The runner claims each occurrence atomically, so
+  // overlapping syncs cannot double-generate; wrap the call so nothing here
+  // can fail the sync.
+  try {
+    await runDueRecurringInvoices(bookGuid, { userId: connection.user_id });
+  } catch (err) {
+    console.warn('SimpleFin sync recurring invoice run failed:', err);
   }
 
   if (result.errors.length > 0) {

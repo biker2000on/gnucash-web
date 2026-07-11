@@ -5,7 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
-import type { ItemDTO } from '@/components/business/inventory-ui';
+import type { ItemDTO, ValuationMethod } from '@/components/business/inventory-ui';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -20,6 +20,9 @@ interface ItemForm {
     incomeAccountGuid: string;
     cogsAccountGuid: string;
     assetAccountGuid: string;
+    valuationMethod: ValuationMethod;
+    reorderPoint: string;
+    reorderQuantity: string;
     active: boolean;
 }
 
@@ -32,6 +35,9 @@ const EMPTY_FORM: ItemForm = {
     incomeAccountGuid: '',
     cogsAccountGuid: '',
     assetAccountGuid: '',
+    valuationMethod: 'average',
+    reorderPoint: '',
+    reorderQuantity: '',
     active: true,
 };
 
@@ -45,6 +51,9 @@ function itemToForm(item: ItemDTO): ItemForm {
         incomeAccountGuid: item.incomeAccountGuid ?? '',
         cogsAccountGuid: item.cogsAccountGuid ?? '',
         assetAccountGuid: item.assetAccountGuid ?? '',
+        valuationMethod: item.valuationMethod ?? 'average',
+        reorderPoint: item.reorderPoint != null ? String(item.reorderPoint) : '',
+        reorderQuantity: item.reorderQuantity != null ? String(item.reorderQuantity) : '',
         active: item.active,
     };
 }
@@ -110,6 +119,16 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
             error('Sale price must be a non-negative number');
             return;
         }
+        const reorderPoint = form.reorderPoint.trim() === '' ? null : Number(form.reorderPoint);
+        if (reorderPoint !== null && (!Number.isFinite(reorderPoint) || reorderPoint < 0)) {
+            error('Reorder point must be a non-negative number');
+            return;
+        }
+        const reorderQuantity = form.reorderQuantity.trim() === '' ? null : Number(form.reorderQuantity);
+        if (reorderQuantity !== null && (!Number.isFinite(reorderQuantity) || reorderQuantity < 0)) {
+            error('Reorder quantity must be a non-negative number');
+            return;
+        }
         setSaving(true);
         try {
             const payload = {
@@ -121,6 +140,9 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                 incomeAccountGuid: form.incomeAccountGuid || null,
                 cogsAccountGuid: form.cogsAccountGuid || null,
                 assetAccountGuid: form.assetAccountGuid || null,
+                valuationMethod: form.valuationMethod,
+                reorderPoint,
+                reorderQuantity,
                 ...(isNew ? {} : { active: form.active }),
             };
             const url = isNew ? '/api/inventory/items' : `/api/inventory/items/${(editing as ItemDTO).id}`;
@@ -207,6 +229,57 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                             placeholder="Optional"
                         />
                     </div>
+                </div>
+
+                <div className="pt-2 border-t border-border">
+                    <h3 className="text-sm font-semibold text-foreground mb-2">Valuation &amp; reorder</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label className={labelClass}>Valuation method</label>
+                            <select
+                                value={form.valuationMethod}
+                                onChange={(e) => setForm({ ...form, valuationMethod: e.target.value as ValuationMethod })}
+                                className={inputClass}
+                            >
+                                <option value="average">Moving average</option>
+                                <option value="fifo">FIFO</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className={labelClass}>Reorder point</label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={form.reorderPoint}
+                                onChange={(e) => setForm({ ...form, reorderPoint: e.target.value })}
+                                className={`${inputClass} font-mono text-right`}
+                                style={TNUM}
+                                placeholder="No alert"
+                                title="Alert when total on-hand is at or below this quantity"
+                            />
+                        </div>
+                        <div>
+                            <label className={labelClass}>Reorder quantity</label>
+                            <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={form.reorderQuantity}
+                                onChange={(e) => setForm({ ...form, reorderQuantity: e.target.value })}
+                                className={`${inputClass} font-mono text-right`}
+                                style={TNUM}
+                                placeholder="Optional"
+                                title="Suggested quantity to reorder (shown in the alert)"
+                            />
+                        </div>
+                    </div>
+                    {!isNew && editing && (editing as ItemDTO).valuationMethod !== form.valuationMethod && (
+                        <p className="mt-2 text-xs text-warning">
+                            Changing the valuation method affects future consumption only — past
+                            movements and postings are not revalued.
+                        </p>
+                    )}
                 </div>
 
                 <div className="pt-2 border-t border-border">

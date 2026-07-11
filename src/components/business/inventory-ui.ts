@@ -22,6 +22,8 @@ export type MovementType =
     | 'return_in'
     | 'return_out';
 
+export type ValuationMethod = 'average' | 'fifo';
+
 export interface ItemDTO {
     id: number;
     sku: string;
@@ -32,8 +34,14 @@ export interface ItemDTO {
     incomeAccountGuid: string | null;
     cogsAccountGuid: string | null;
     assetAccountGuid: string | null;
-    /** Book-wide moving average cost. */
+    /** Book-wide moving average cost (informational for FIFO items). */
     avgCost: number;
+    /** 'average' (default) or 'fifo'. Affects future consumption only. */
+    valuationMethod: ValuationMethod;
+    /** Alert when total on-hand ≤ this (null = no reorder tracking). */
+    reorderPoint: number | null;
+    /** Suggested quantity to reorder (informational). */
+    reorderQuantity: number | null;
     active: boolean;
     onHand: number;
     stockValue: number;
@@ -104,6 +112,23 @@ export interface FulfillmentDTO {
     entries: FulfillmentEntryDTO[];
 }
 
+export interface BillReceivingEntryDTO {
+    entryGuid: string;
+    billedQuantity: number;
+    /** The bill entry's unit price — the receive cost basis. */
+    unitCost: number;
+    receivedQuantity: number;
+    remainingQuantity: number;
+    movements: MovementDTO[];
+}
+
+export interface BillReceivingDTO {
+    billGuid: string;
+    billId: string;
+    fullyReceived: boolean;
+    entries: BillReceivingEntryDTO[];
+}
+
 // ---------------------------------------------------------------------------
 // Movement type presentation
 // ---------------------------------------------------------------------------
@@ -164,6 +189,20 @@ export function formatSignedQty(value: number): string {
 /** Count of active items at or below zero stock (low/zero-stock KPI). */
 export function lowStockCount(items: Array<Pick<ItemDTO, 'active' | 'onHand'>>): number {
     return items.filter((i) => i.active && i.onHand <= 0).length;
+}
+
+/** True when the item tracks a reorder point and on-hand is at or below it. */
+export function isBelowReorder(
+    item: Pick<ItemDTO, 'reorderPoint' | 'onHand'>,
+): boolean {
+    return item.reorderPoint != null && item.onHand <= item.reorderPoint;
+}
+
+/** Count of active items at or below their reorder point. */
+export function belowReorderCount(
+    items: Array<Pick<ItemDTO, 'active' | 'reorderPoint' | 'onHand'>>,
+): number {
+    return items.filter((i) => i.active && isBelowReorder(i)).length;
 }
 
 /** Sum of stock value across active items (book-wide, at avg cost). */

@@ -28,10 +28,10 @@ import {
 } from '@/lib/dashboard-layout';
 import {
     CustomWidgetDef,
-    LAYOUT_PREF_KEY,
-    CUSTOM_WIDGETS_PREF_KEY,
     getRegistryEntry,
     sanitizeCustomWidgetDefs,
+    resolveDashboardKeys,
+    pickDashboardPref,
 } from '@/lib/dashboard-widgets';
 import WidgetGallery from '@/components/dashboard/WidgetGallery';
 import CustomWidgetForm from '@/components/dashboard/CustomWidgetForm';
@@ -332,6 +332,9 @@ function DashboardContent() {
     const [layoutLoaded, setLayoutLoaded] = useState(false);
     const [editing, setEditing] = useState(false);
     const dragIndexRef = useRef<number | null>(null);
+    // Per-book preference keys. Defaults to the legacy global keys until the
+    // active book resolves; all saves after load go to the per-book keys.
+    const prefKeysRef = useRef(resolveDashboardKeys(null));
 
     // Composable-widget states
     const [customDefs, setCustomDefs] = useState<CustomWidgetDef[]>([]);
@@ -421,27 +424,50 @@ function DashboardContent() {
         };
     }, []);
 
-    // Load persisted dashboard layout + custom widget definitions
+    // Load persisted dashboard layout + custom widget definitions.
+    // Layouts are per-book (`dashboard.layout.<bookGuid>`); the legacy global
+    // key is only used as a one-time starting value when the book has no
+    // per-book value yet. Saves always write the per-book key.
     useEffect(() => {
         let cancelled = false;
-        fetch('/api/user/preferences?key=dashboard.*')
-            .then(res => (res.ok ? res.json() : null))
-            .then(json => {
+        (async () => {
+            try {
+                let bookGuid: string | null = null;
+                try {
+                    const bookRes = await fetch('/api/books/active');
+                    if (bookRes.ok) {
+                        const bookJson = await bookRes.json();
+                        bookGuid = typeof bookJson?.activeBookGuid === 'string'
+                            ? bookJson.activeBookGuid
+                            : null;
+                    }
+                } catch {
+                    // fall back to legacy (global) keys
+                }
+                const keys = resolveDashboardKeys(bookGuid);
                 if (cancelled) return;
-                const defs = sanitizeCustomWidgetDefs(json?.preferences?.[CUSTOM_WIDGETS_PREF_KEY]);
+                prefKeysRef.current = keys;
+
+                const res = await fetch('/api/user/preferences?key=dashboard.*');
+                const json = res.ok ? await res.json() : null;
+                if (cancelled) return;
+                const prefs = json?.preferences as Record<string, unknown> | undefined;
+
+                const defs = sanitizeCustomWidgetDefs(
+                    pickDashboardPref(prefs, keys.customWidgetsKey, keys.legacyCustomWidgetsKey)
+                );
                 setCustomDefs(defs);
                 const stored = sanitizeLayout(
-                    json?.preferences?.[LAYOUT_PREF_KEY],
+                    pickDashboardPref(prefs, keys.layoutKey, keys.legacyLayoutKey),
                     defs.map(d => d.id)
                 );
                 if (stored) setLayout(stored);
-            })
-            .catch(() => {
+            } catch {
                 // keep default layout
-            })
-            .finally(() => {
+            } finally {
                 if (!cancelled) setLayoutLoaded(true);
-            });
+            }
+        })();
         return () => {
             cancelled = true;
         };
@@ -476,7 +502,7 @@ function DashboardContent() {
     }, []);
 
     const persistLayout = useCallback((next: WidgetLayoutItem[]) => {
-        persistPreferences({ [LAYOUT_PREF_KEY]: next });
+        persistPreferences({ [prefKeysRef.current.layoutKey]: next });
     }, [persistPreferences]);
 
     const updateLayout = useCallback((next: WidgetLayoutItem[]) => {
@@ -539,11 +565,11 @@ function DashboardContent() {
             const nextLayout = [...layout, { id: def.id, width: 'third' as const }];
             setLayout(nextLayout);
             persistPreferences({
-                [CUSTOM_WIDGETS_PREF_KEY]: nextDefs,
-                [LAYOUT_PREF_KEY]: nextLayout,
+                [prefKeysRef.current.customWidgetsKey]: nextDefs,
+                [prefKeysRef.current.layoutKey]: nextLayout,
             });
         } else {
-            persistPreferences({ [CUSTOM_WIDGETS_PREF_KEY]: nextDefs });
+            persistPreferences({ [prefKeysRef.current.customWidgetsKey]: nextDefs });
         }
         toast.success(exists ? 'Widget updated' : 'Widget created');
     };
@@ -554,8 +580,8 @@ function DashboardContent() {
         setCustomDefs(nextDefs);
         setLayout(nextLayout);
         persistPreferences({
-            [CUSTOM_WIDGETS_PREF_KEY]: nextDefs,
-            [LAYOUT_PREF_KEY]: nextLayout,
+            [prefKeysRef.current.customWidgetsKey]: nextDefs,
+            [prefKeysRef.current.layoutKey]: nextLayout,
         });
         toast.success(`Deleted “${def.name}”`);
     };

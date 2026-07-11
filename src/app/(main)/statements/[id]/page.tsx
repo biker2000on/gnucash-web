@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { Modal } from '@/components/ui/Modal';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useToast } from '@/contexts/ToastContext';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
@@ -18,10 +19,12 @@ import {
   missingCounterparts,
   amountTone,
   isPollingStatus,
+  cleanRulePattern,
   type TieOut,
   type MissingLineState,
   type MissingDecision,
 } from '../statement-ui';
+import { AssignAccountForm } from '../AssignAccountForm';
 
 // ---------------------------------------------------------------------------
 // Types (from GET /api/statements/[id]/reconcile)
@@ -152,6 +155,9 @@ export default function StatementReconcilePage() {
   const [saving, setSaving] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
 
+  // "+ Rule" modal target (a missing line to build a categorization rule from).
+  const [ruleTarget, setRuleTarget] = useState<MissingLine | null>(null);
+
   // Live tie-out — starts from the reconcile view, updated by each PUT response.
   const [tieOut, setTieOut] = useState<TieOut | null>(null);
 
@@ -178,7 +184,7 @@ export default function StatementReconcilePage() {
     try {
       const b = await fetchDetail();
       setBatch(b);
-      if (b && b.status !== 'error' && !isPollingStatus(b.status)) {
+      if (b && b.status !== 'error' && !isPollingStatus(b.status) && b.accountGuid) {
         const v = await fetchReconcile();
         setView(v);
         setTieOut(v?.tieOut ?? null);
@@ -439,6 +445,27 @@ export default function StatementReconcilePage() {
         </div>
       )}
 
+      {/* Parsed but unassigned — reconcile needs an account */}
+      {!parsing && batch.status !== 'error' && !batch.accountGuid && (
+        <div className="bg-surface border border-[color:var(--warning)]/40 rounded-xl p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Assign a reconcile account</h2>
+            <p className="text-xs text-foreground-muted mt-1 max-w-2xl">
+              This statement parsed successfully but is not linked to a ledger account yet, so it
+              cannot be reconciled. Pick the account it belongs to — OFX uploads with the same
+              account id will be auto-assigned in the future.
+            </p>
+          </div>
+          <AssignAccountForm
+            batchId={batch.id}
+            onAssigned={() => {
+              setLoading(true);
+              load();
+            }}
+          />
+        </div>
+      )}
+
       {/* Reconcile workspace */}
       {view && batch.status !== 'error' && !parsing && (
         <>
@@ -671,7 +698,166 @@ export default function StatementReconcilePage() {
           </div>
         </>
       )}
+
+      <CreateRuleModal
+        line={ruleTarget}
+        initialAccountGuid={
+          ruleTarget
+            ? missingState[ruleTarget.lineId]?.counterpartAccountGuid ??
+              ruleTarget.suggestedAccountGuid ??
+              ''
+            : ''
+        }
+        onClose={() => setRuleTarget(null)}
+        onCreated={() => {
+          setRuleTarget(null);
+          load(); // re-fetch so suggestions pick up the new rule
+        }}
+      />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "+ Rule" modal — create a categorization rule from a missing statement line
+// ---------------------------------------------------------------------------
+
+function CreateRuleModal({
+  line,
+  initialAccountGuid,
+  onClose,
+  onCreated,
+}: {
+  line: MissingLine | null;
+  initialAccountGuid: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const toast = useToast();
+  const [pattern, setPattern] = useState('');
+  const [accountGuid, setAccountGuid] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-seed whenever a new line is targeted.
+  const lineId = line?.lineId;
+  useEffect(() => {
+    if (line) {
+      setPattern(cleanRulePattern(line.description));
+      setAccountGuid(initialAccountGuid);
+      setError(null);
+      setSaving(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineId]);
+
+  const handleCreate = useCallback(async () => {
+    const trimmed = pattern.trim();
+    if (!trimmed) {
+      setError('Enter a pattern to match against transaction descriptions.');
+      return;
+    }
+    if (!accountGuid) {
+      setError('Select the account this rule should suggest.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/categorization/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern: trimmed, matchType: 'contains', accountGuid }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Failed to create rule (HTTP ${res.status})`);
+      }
+      toast.success('Rule created. Future matching lines will suggest this account.');
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create rule');
+    } finally {
+      setSaving(false);
+    }
+  }, [pattern, accountGuid, toast, onCreated]);
+
+  return (
+    <Modal isOpen={!!line} onClose={onClose} title="Create Categorization Rule" size="md">
+      <div className="px-6 py-5 space-y-4">
+        <p className="text-xs text-foreground-muted">
+          Descriptions containing the pattern will suggest the target account on future imports.
+        </p>
+
+        {line && (
+          <div className="rounded-lg border border-border bg-background-tertiary px-3 py-2">
+            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-0.5">
+              Statement line
+            </div>
+            <div className="text-[13px] font-mono text-foreground-secondary truncate" title={line.description}>
+              {line.description || '(no description)'}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-foreground-muted uppercase tracking-wider mb-1.5">
+            Pattern <span className="normal-case tracking-normal">(contains, case-insensitive)</span>
+          </label>
+          <input
+            type="text"
+            value={pattern}
+            onChange={(e) => {
+              setPattern(e.target.value);
+              setError(null);
+            }}
+            placeholder="e.g. starbucks"
+            className="w-full bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm font-mono text-foreground placeholder-foreground-muted focus:ring-2 focus:ring-primary/40 focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-foreground-muted uppercase tracking-wider mb-1.5">
+            Target Account
+          </label>
+          <AccountSelector
+            value={accountGuid}
+            onChange={(guid) => {
+              setAccountGuid(guid);
+              setError(null);
+            }}
+            placeholder="Select income / expense / transfer account…"
+            hasError={!!error && !accountGuid}
+          />
+        </div>
+
+        {error && (
+          <div className="text-sm rounded-lg px-3 py-2 bg-[color:var(--negative)]/10 text-[color:var(--negative)] border border-[color:var(--negative)]/30">
+            {error}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
+        <button
+          onClick={onClose}
+          disabled={saving}
+          className="px-4 py-2 text-sm font-medium text-foreground-secondary bg-background-tertiary border border-border-hover rounded-lg hover:bg-surface-hover hover:text-foreground disabled:opacity-50 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleCreate}
+          disabled={saving || !pattern.trim() || !accountGuid}
+          className="px-4 py-2 text-sm font-medium text-primary-foreground rounded-lg bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-2"
+        >
+          {saving && (
+            <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+          )}
+          {saving ? 'Creating…' : 'Create rule'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

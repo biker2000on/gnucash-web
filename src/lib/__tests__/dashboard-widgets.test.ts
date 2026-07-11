@@ -16,6 +16,12 @@ import {
     sanitizeCustomWidgetDefs,
     createCustomWidgetId,
     describeCustomWidget,
+    isChartViz,
+    resolveDashboardKeys,
+    pickDashboardPref,
+    LAYOUT_PREF_KEY,
+    CUSTOM_WIDGETS_PREF_KEY,
+    DEFAULT_SERIES_MONTHS,
     MAX_CUSTOM_WIDGET_ACCOUNTS,
     MAX_CUSTOM_WIDGETS,
     type CustomWidgetDef,
@@ -210,6 +216,150 @@ describe('validateCustomWidgetDef', () => {
         );
         expect(def!.config.accountGuids.length).toBe(MAX_CUSTOM_WIDGET_ACCOUNTS);
         expect(new Set(def!.config.accountGuids).size).toBe(def!.config.accountGuids.length);
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* viz: chart-type custom widgets                                      */
+/* ------------------------------------------------------------------ */
+
+describe('validateCustomWidgetDef viz handling', () => {
+    it('defaults missing viz to stat (v1 defs, backward compat)', () => {
+        const noViz: Record<string, unknown> = { ...validDef() };
+        delete noViz.viz;
+        const def = validateCustomWidgetDef(noViz);
+        expect(def!.viz).toBe('stat');
+        expect(def!.config.months).toBeUndefined();
+    });
+
+    it('coerces unknown viz values to stat instead of dropping the def', () => {
+        const def = validateCustomWidgetDef(validDef({ viz: 'pie' as never }));
+        expect(def).not.toBeNull();
+        expect(def!.viz).toBe('stat');
+    });
+
+    it('accepts spark and bar viz', () => {
+        expect(validateCustomWidgetDef(validDef({ viz: 'spark' }))!.viz).toBe('spark');
+        expect(validateCustomWidgetDef(validDef({ viz: 'bar' }))!.viz).toBe('bar');
+        expect(isChartViz('spark')).toBe(true);
+        expect(isChartViz('bar')).toBe(true);
+        expect(isChartViz('stat')).toBe(false);
+        expect(isChartViz(undefined)).toBe(false);
+    });
+
+    it('defaults chart months to 12 and validates allowed values', () => {
+        const dflt = validateCustomWidgetDef(validDef({ viz: 'spark' }));
+        expect(dflt!.config.months).toBe(DEFAULT_SERIES_MONTHS);
+
+        const six = validateCustomWidgetDef(
+            validDef({ viz: 'bar', config: { mode: 'balance', accountGuids: ['a1'], months: 6 } })
+        );
+        expect(six!.config.months).toBe(6);
+
+        const bad = validateCustomWidgetDef(
+            validDef({ viz: 'spark', config: { mode: 'balance', accountGuids: ['a1'], months: 7 as never } })
+        );
+        expect(bad!.config.months).toBe(12);
+    });
+
+    it('stat defs never carry months; chart defs never carry days', () => {
+        const stat = validateCustomWidgetDef(
+            validDef({ config: { mode: 'balance', accountGuids: ['a1'], months: 6 } })
+        );
+        expect(stat!.config.months).toBeUndefined();
+
+        const chartSpend = validateCustomWidgetDef(
+            validDef({ viz: 'bar', config: { mode: 'spend', accountGuids: ['a1'], days: 30 } })
+        );
+        expect(chartSpend!.config.days).toBeUndefined();
+        expect(chartSpend!.config.months).toBe(DEFAULT_SERIES_MONTHS);
+    });
+
+    it('spend stat defs keep the days window', () => {
+        const spendStat = validateCustomWidgetDef(
+            validDef({ config: { mode: 'spend', accountGuids: ['a1'], days: 30 } })
+        );
+        expect(spendStat!.config.days).toBe(30);
+    });
+
+    it('sanitizeCustomWidgetDefs keeps chart defs alongside stat defs', () => {
+        const defs = sanitizeCustomWidgetDefs([
+            validDef(),
+            validDef({ id: 'custom:spark-1' as CustomWidgetDef['id'], viz: 'spark' }),
+            validDef({ id: 'custom:bar-1' as CustomWidgetDef['id'], viz: 'bar' }),
+        ]);
+        expect(defs.map(d => d.viz)).toEqual(['stat', 'spark', 'bar']);
+    });
+
+    it('describeCustomWidget summarizes chart configs', () => {
+        expect(
+            describeCustomWidget(
+                validDef({ viz: 'spark', config: { mode: 'balance', accountGuids: ['a1'], months: 6 } })
+            )
+        ).toBe('Balance of 1 account, monthly, 6mo');
+        expect(
+            describeCustomWidget(
+                validDef({ viz: 'bar', config: { mode: 'spend', accountGuids: ['a1', 'a2'], months: 24 } })
+            )
+        ).toBe('Monthly spend across 2 accounts, 24mo');
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Per-book preference keys                                            */
+/* ------------------------------------------------------------------ */
+
+describe('resolveDashboardKeys', () => {
+    it('builds per-book keys from a book guid', () => {
+        const keys = resolveDashboardKeys('abc123');
+        expect(keys.layoutKey).toBe('dashboard.layout.abc123');
+        expect(keys.customWidgetsKey).toBe('dashboard.customWidgets.abc123');
+        expect(keys.legacyLayoutKey).toBe(LAYOUT_PREF_KEY);
+        expect(keys.legacyCustomWidgetsKey).toBe(CUSTOM_WIDGETS_PREF_KEY);
+    });
+
+    it('degrades to legacy global keys without a book guid', () => {
+        for (const guid of [null, undefined, '', '   ']) {
+            const keys = resolveDashboardKeys(guid);
+            expect(keys.layoutKey).toBe(LAYOUT_PREF_KEY);
+            expect(keys.customWidgetsKey).toBe(CUSTOM_WIDGETS_PREF_KEY);
+        }
+    });
+
+    it('trims whitespace around the guid', () => {
+        expect(resolveDashboardKeys(' abc ').layoutKey).toBe('dashboard.layout.abc');
+    });
+});
+
+describe('pickDashboardPref', () => {
+    const perBookKey = 'dashboard.layout.book1';
+    const legacyKey = LAYOUT_PREF_KEY;
+
+    it('prefers the per-book value when present', () => {
+        const prefs = { [perBookKey]: ['per-book'], [legacyKey]: ['legacy'] };
+        expect(pickDashboardPref(prefs, perBookKey, legacyKey)).toEqual(['per-book']);
+    });
+
+    it('falls back to the legacy value when the per-book key is absent', () => {
+        const prefs = { [legacyKey]: ['legacy'] };
+        expect(pickDashboardPref(prefs, perBookKey, legacyKey)).toEqual(['legacy']);
+    });
+
+    it('treats a null per-book value as absent', () => {
+        const prefs = { [perBookKey]: null, [legacyKey]: ['legacy'] };
+        expect(pickDashboardPref(prefs, perBookKey, legacyKey)).toEqual(['legacy']);
+    });
+
+    it('returns undefined when neither key has a value', () => {
+        expect(pickDashboardPref({}, perBookKey, legacyKey)).toBeUndefined();
+        expect(pickDashboardPref(null, perBookKey, legacyKey)).toBeUndefined();
+        expect(pickDashboardPref(undefined, perBookKey, legacyKey)).toBeUndefined();
+    });
+
+    it('does not double-read when per-book and legacy keys are the same (no book guid)', () => {
+        const prefs = { [legacyKey]: ['legacy'] };
+        expect(pickDashboardPref(prefs, legacyKey, legacyKey)).toEqual(['legacy']);
+        expect(pickDashboardPref({ [legacyKey]: null }, legacyKey, legacyKey)).toBeUndefined();
     });
 });
 

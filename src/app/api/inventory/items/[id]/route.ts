@@ -33,7 +33,8 @@ export async function GET(
 /**
  * PUT /api/inventory/items/[id] — partial update.
  * Body (all optional): { sku, name, description, unit, salePrice,
- *   incomeAccountGuid, cogsAccountGuid, assetAccountGuid, active }
+ *   incomeAccountGuid, cogsAccountGuid, assetAccountGuid,
+ *   valuationMethod ('average'|'fifo'), reorderPoint, reorderQuantity, active }
  * Response: { item: InventoryItem }
  */
 export async function PUT(
@@ -57,6 +58,9 @@ export async function PUT(
       incomeAccountGuid: body.incomeAccountGuid,
       cogsAccountGuid: body.cogsAccountGuid,
       assetAccountGuid: body.assetAccountGuid,
+      valuationMethod: body.valuationMethod,
+      reorderPoint: body.reorderPoint,
+      reorderQuantity: body.reorderQuantity,
       active: body.active,
     });
     return NextResponse.json({ item });

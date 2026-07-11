@@ -6,11 +6,16 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import {
     CustomWidgetDef,
     CustomWidgetMode,
+    CustomWidgetViz,
     SpendDays,
+    SeriesMonths,
     SPEND_DAYS_OPTIONS,
+    SERIES_MONTHS_OPTIONS,
+    DEFAULT_SERIES_MONTHS,
     MAX_CUSTOM_WIDGET_ACCOUNTS,
     createCustomWidgetId,
     validateCustomWidgetDef,
+    isChartViz,
 } from '@/lib/dashboard-widgets';
 
 interface CustomWidgetFormProps {
@@ -27,14 +32,22 @@ const DAYS_LABELS: Record<SpendDays, string> = {
     365: 'Last 365 days',
 };
 
+const VIZ_OPTIONS: Array<[CustomWidgetViz, string, string]> = [
+    ['stat', 'Stat', 'Big number'],
+    ['spark', 'Sparkline', 'Monthly line'],
+    ['bar', 'Bars', 'Monthly bars'],
+];
+
 /**
- * Modal builder for user-defined stat widgets: name, source (account balances
- * or trailing spend), accounts, and display options. v1 display is Stat only.
+ * Modal builder for user-defined widgets: name, source (account balances or
+ * trailing spend), accounts, and display (stat, sparkline, or monthly bars).
  */
 export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: CustomWidgetFormProps) {
     const [name, setName] = useState('');
     const [mode, setMode] = useState<CustomWidgetMode>('balance');
+    const [viz, setViz] = useState<CustomWidgetViz>('stat');
     const [days, setDays] = useState<SpendDays>(90);
+    const [months, setMonths] = useState<SeriesMonths>(DEFAULT_SERIES_MONTHS);
     const [toneBySign, setToneBySign] = useState(false);
     // One entry per picker row; empty string = unselected row.
     const [accountGuids, setAccountGuids] = useState<string[]>(['']);
@@ -52,7 +65,9 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
             if (initial) {
                 setName(initial.name);
                 setMode(initial.config.mode);
+                setViz(initial.viz ?? 'stat');
                 setDays(initial.config.days ?? 90);
+                setMonths(initial.config.months ?? DEFAULT_SERIES_MONTHS);
                 setToneBySign(initial.config.toneBySign === true);
                 setAccountGuids(
                     initial.config.accountGuids.length > 0 ? [...initial.config.accountGuids] : ['']
@@ -60,7 +75,9 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
             } else {
                 setName('');
                 setMode('balance');
+                setViz('stat');
                 setDays(90);
+                setMonths(DEFAULT_SERIES_MONTHS);
                 setToneBySign(false);
                 setAccountGuids(['']);
             }
@@ -82,16 +99,18 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
     };
 
     const handleSave = () => {
+        const chart = isChartViz(viz);
         const candidate: CustomWidgetDef = {
             id: initial?.id ?? createCustomWidgetId(),
             name: name.trim(),
             config: {
                 mode,
                 accountGuids: accountGuids.filter(Boolean),
-                ...(mode === 'spend' ? { days } : {}),
-                toneBySign,
+                ...(mode === 'spend' && !chart ? { days } : {}),
+                ...(chart ? { months } : {}),
+                toneBySign: chart ? false : toneBySign,
             },
-            viz: 'stat',
+            viz,
         };
         const validated = validateCustomWidgetDef(candidate);
         if (!validated) {
@@ -160,8 +179,8 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
                     </div>
                 </div>
 
-                {/* Period (spend only) */}
-                {mode === 'spend' && (
+                {/* Period (spend stat only; chart types use the months window) */}
+                {mode === 'spend' && !isChartViz(viz) && (
                     <div>
                         <label className="block text-xs uppercase tracking-wider text-foreground-muted mb-1.5">
                             Period
@@ -229,14 +248,46 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
                     <label className="block text-xs uppercase tracking-wider text-foreground-muted mb-1.5">
                         Display
                     </label>
-                    <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border bg-surface/50">
-                        <div>
-                            <div className="text-sm text-foreground">Stat</div>
-                            <div className="text-[11px] text-foreground-muted">
-                                Big number. Charts are planned for a future version.
-                            </div>
+                    <div className="grid grid-cols-3 gap-2">
+                        {VIZ_OPTIONS.map(([value, label, sub]) => (
+                            <button
+                                key={value}
+                                type="button"
+                                onClick={() => setViz(value)}
+                                className={`text-left px-3 py-2 rounded-lg border transition-colors ${
+                                    viz === value
+                                        ? 'border-primary/50 bg-primary/10'
+                                        : 'border-border bg-surface/50 hover:border-border-hover'
+                                }`}
+                            >
+                                <div className={`text-sm ${viz === value ? 'text-primary' : 'text-foreground'}`}>
+                                    {label}
+                                </div>
+                                <div className="text-[11px] text-foreground-muted">{sub}</div>
+                            </button>
+                        ))}
+                    </div>
+
+                    {isChartViz(viz) ? (
+                        <div className="mt-2 flex items-center gap-2">
+                            <span className="text-[11px] text-foreground-muted shrink-0">Window</span>
+                            {SERIES_MONTHS_OPTIONS.map(m => (
+                                <button
+                                    key={m}
+                                    type="button"
+                                    onClick={() => setMonths(m)}
+                                    className={`px-3 py-1.5 rounded-lg border text-xs transition-colors ${
+                                        months === m
+                                            ? 'border-primary/50 bg-primary/10 text-primary'
+                                            : 'border-border text-foreground-secondary hover:border-border-hover'
+                                    }`}
+                                >
+                                    {m} months
+                                </button>
+                            ))}
                         </div>
-                        <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer shrink-0">
+                    ) : (
+                        <label className="mt-2 flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer w-fit">
                             <input
                                 type="checkbox"
                                 checked={toneBySign}
@@ -245,7 +296,7 @@ export default function CustomWidgetForm({ isOpen, onClose, initial, onSave }: C
                             />
                             Color by sign
                         </label>
-                    </div>
+                    )}
                 </div>
 
                 {validationError && (

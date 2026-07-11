@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
@@ -22,6 +24,12 @@ type ContactDTO = CustomerDTO | VendorDTO;
 
 interface ContactManagerProps {
     kind: ContactKind;
+    /**
+     * Adds a per-row overflow menu with a "Statement..." action that opens
+     * /business/{kind}s/{guid}/statement. Additive: the existing row buttons
+     * are untouched. Currently only wired up for customers.
+     */
+    enableStatements?: boolean;
 }
 
 interface AddressForm {
@@ -349,7 +357,8 @@ function JobsSection({ ownerGuid, kind }: { ownerGuid: string; kind: ContactKind
     );
 }
 
-export function ContactManager({ kind }: ContactManagerProps) {
+export function ContactManager({ kind, enableStatements = false }: ContactManagerProps) {
+    const router = useRouter();
     const { success, error } = useToast();
     const { isReadonly } = useCurrentUser();
     const singular = kind === 'customer' ? 'Customer' : 'Vendor';
@@ -664,6 +673,16 @@ export function ContactManager({ kind }: ContactManagerProps) {
                                             >
                                                 Delete
                                             </button>
+                                            {enableStatements && (
+                                                <ActionMenu
+                                                    className="ml-1 inline-block align-middle"
+                                                    label={`More actions for ${contact.name}`}
+                                                    items={[{
+                                                        label: 'Statement...',
+                                                        onSelect: () => router.push(`/business/${kind}s/${contact.guid}/statement`),
+                                                    }]}
+                                                />
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

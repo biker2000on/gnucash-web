@@ -5,9 +5,13 @@
  * unit-testable. Rendering lives in src/components/dashboard/widgets/ and is
  * wired up in src/app/(main)/dashboard/page.tsx.
  *
- * Persistence keys (gnucash_web_user_preferences, per user):
- *   - `dashboard.layout`        ordered [{ id, width }] (see dashboard-layout.ts)
- *   - `dashboard.customWidgets` array of CustomWidgetDef
+ * Persistence keys (gnucash_web_user_preferences, per user, per book):
+ *   - `dashboard.layout.<bookGuid>`        ordered [{ id, width }] (see dashboard-layout.ts)
+ *   - `dashboard.customWidgets.<bookGuid>` array of CustomWidgetDef
+ *
+ * Legacy (pre-per-book) keys `dashboard.layout` / `dashboard.customWidgets`
+ * are read as a one-time fallback seed when a book has no per-book value yet;
+ * all writes go to the per-book keys. See resolveDashboardKeys().
  */
 
 import {
@@ -21,6 +25,56 @@ import {
 
 export const LAYOUT_PREF_KEY = 'dashboard.layout';
 export const CUSTOM_WIDGETS_PREF_KEY = 'dashboard.customWidgets';
+
+/* ------------------------------------------------------------------ */
+/* Per-book preference keys                                            */
+/* ------------------------------------------------------------------ */
+
+export interface DashboardPrefKeys {
+    /** Per-book key all saves are written to (legacy key when no bookGuid). */
+    layoutKey: string;
+    customWidgetsKey: string;
+    /** Legacy global keys, read-only fallback for first load on a book. */
+    legacyLayoutKey: string;
+    legacyCustomWidgetsKey: string;
+}
+
+/**
+ * Resolve the preference keys for the given active book.
+ *
+ * With a bookGuid the per-book keys are `dashboard.layout.<bookGuid>` /
+ * `dashboard.customWidgets.<bookGuid>`. Without one (books/active failed or
+ * returned nothing) the per-book keys degrade to the legacy global keys so
+ * saves still land somewhere sensible.
+ */
+export function resolveDashboardKeys(bookGuid: string | null | undefined): DashboardPrefKeys {
+    const guid = typeof bookGuid === 'string' ? bookGuid.trim() : '';
+    const suffix = guid ? `.${guid}` : '';
+    return {
+        layoutKey: `${LAYOUT_PREF_KEY}${suffix}`,
+        customWidgetsKey: `${CUSTOM_WIDGETS_PREF_KEY}${suffix}`,
+        legacyLayoutKey: LAYOUT_PREF_KEY,
+        legacyCustomWidgetsKey: CUSTOM_WIDGETS_PREF_KEY,
+    };
+}
+
+/**
+ * Pick the effective raw preference value: the per-book key wins when it holds
+ * a value; otherwise the legacy global key acts as the starting value (a
+ * one-time seed — the first save writes it to the per-book key and legacy is
+ * never consulted again for this book).
+ */
+export function pickDashboardPref(
+    prefs: Record<string, unknown> | null | undefined,
+    perBookKey: string,
+    legacyKey: string
+): unknown {
+    if (!prefs || typeof prefs !== 'object') return undefined;
+    const perBook = prefs[perBookKey];
+    if (perBook !== undefined && perBook !== null) return perBook;
+    if (perBookKey === legacyKey) return undefined;
+    return prefs[legacyKey];
+}
 
 /* ------------------------------------------------------------------ */
 /* Registry                                                            */
@@ -108,8 +162,27 @@ export function registryCoversAllWidgets(): boolean {
 
 export type CustomWidgetMode = 'balance' | 'spend';
 
+/**
+ * Display kind for a custom widget.
+ *   stat  — single big number (v1 behavior).
+ *   spark — line sparkline over a monthly time series.
+ *   bar   — monthly bars over the same series.
+ */
+export type CustomWidgetViz = 'stat' | 'spark' | 'bar';
+
+export const CUSTOM_WIDGET_VIZ_OPTIONS = ['stat', 'spark', 'bar'] as const;
+
+export function isChartViz(viz: CustomWidgetViz | undefined): viz is 'spark' | 'bar' {
+    return viz === 'spark' || viz === 'bar';
+}
+
 export const SPEND_DAYS_OPTIONS = [30, 90, 365] as const;
 export type SpendDays = (typeof SPEND_DAYS_OPTIONS)[number];
+
+/** Trailing-window options (in months) for chart-type custom widgets. */
+export const SERIES_MONTHS_OPTIONS = [6, 12, 24] as const;
+export type SeriesMonths = (typeof SERIES_MONTHS_OPTIONS)[number];
+export const DEFAULT_SERIES_MONTHS: SeriesMonths = 12;
 
 /** Hard cap on accounts per custom widget (also enforced server-side). */
 export const MAX_CUSTOM_WIDGET_ACCOUNTS = 20;
@@ -123,9 +196,11 @@ export interface CustomWidgetConfig {
      */
     mode: CustomWidgetMode;
     accountGuids: string[];
-    /** Trailing window; only meaningful for mode 'spend'. */
+    /** Trailing window; only meaningful for mode 'spend' with viz 'stat'. */
     days?: SpendDays;
-    /** Color the stat green/red by the sign of the value. */
+    /** Time-series window; only meaningful for chart viz ('spark' | 'bar'). */
+    months?: SeriesMonths;
+    /** Color the stat green/red by the sign of the value (viz 'stat' only). */
     toneBySign?: boolean;
 }
 
@@ -133,8 +208,11 @@ export interface CustomWidgetDef {
     id: CustomWidgetId;
     name: string;
     config: CustomWidgetConfig;
-    /** Display kind. v1 supports 'stat' only; charts are a future extension. */
-    viz?: 'stat';
+    /**
+     * Display kind. Defs persisted before charts existed have no `viz` and
+     * are normalized to 'stat' (backward compat).
+     */
+    viz?: CustomWidgetViz;
 }
 
 export function createCustomWidgetId(): CustomWidgetId {
@@ -170,6 +248,14 @@ export function validateCustomWidgetDef(value: unknown): CustomWidgetDef | null 
     ].slice(0, MAX_CUSTOM_WIDGET_ACCOUNTS);
     if (accountGuids.length === 0) return null;
 
+    // Backward compat: defs persisted before charts have no viz → 'stat'.
+    // Unknown future values also degrade to 'stat' rather than dropping the def.
+    const viz: CustomWidgetViz = CUSTOM_WIDGET_VIZ_OPTIONS.includes(
+        v.viz as CustomWidgetViz
+    )
+        ? (v.viz as CustomWidgetViz)
+        : 'stat';
+
     const rawDays = typeof c.days === 'number' ? c.days : undefined;
     const days = SPEND_DAYS_OPTIONS.includes(rawDays as SpendDays)
         ? (rawDays as SpendDays)
@@ -177,16 +263,22 @@ export function validateCustomWidgetDef(value: unknown): CustomWidgetDef | null 
             ? 90
             : undefined;
 
+    const rawMonths = typeof c.months === 'number' ? c.months : undefined;
+    const months: SeriesMonths = SERIES_MONTHS_OPTIONS.includes(rawMonths as SeriesMonths)
+        ? (rawMonths as SeriesMonths)
+        : DEFAULT_SERIES_MONTHS;
+
     return {
         id,
         name: name.slice(0, 80),
         config: {
             mode,
             accountGuids,
-            ...(mode === 'spend' ? { days } : {}),
+            ...(mode === 'spend' && viz === 'stat' ? { days } : {}),
+            ...(isChartViz(viz) ? { months } : {}),
             toneBySign: c.toneBySign === true,
         },
-        viz: 'stat',
+        viz,
     };
 }
 
@@ -212,6 +304,12 @@ export function sanitizeCustomWidgetDefs(value: unknown): CustomWidgetDef[] {
 export function describeCustomWidget(def: CustomWidgetDef): string {
     const n = def.config.accountGuids.length;
     const accounts = `${n} account${n === 1 ? '' : 's'}`;
+    if (isChartViz(def.viz)) {
+        const months = def.config.months ?? DEFAULT_SERIES_MONTHS;
+        return def.config.mode === 'balance'
+            ? `Balance of ${accounts}, monthly, ${months}mo`
+            : `Monthly spend across ${accounts}, ${months}mo`;
+    }
     if (def.config.mode === 'balance') return `Balance of ${accounts}`;
     return `Spend across ${accounts}, last ${def.config.days ?? 90}d`;
 }

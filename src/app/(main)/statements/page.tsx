@@ -12,6 +12,7 @@ import { useAccounts } from '@/lib/hooks/useAccounts';
 import { formatAccountPath } from '@/lib/account-utils';
 import { formatCurrency } from '@/lib/format';
 import { statusBadge, sourceBadge, isPollingStatus } from './statement-ui';
+import { AssignAccountForm, RECONCILE_ACCOUNT_TYPES } from './AssignAccountForm';
 
 // ---------------------------------------------------------------------------
 // Types (subset of GET /api/statements contract)
@@ -34,9 +35,12 @@ interface Batch {
   lineCount: number;
 }
 
-// Reconcilable ledger accounts: banks, cash, plain assets, and credit cards.
-const RECONCILE_ACCOUNT_TYPES = ['BANK', 'CASH', 'ASSET', 'CREDIT', 'LIABILITY'];
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
+
+/** OFX/QFX files carry an <ACCTID>, so the account picker is optional for them. */
+function isOfxFilename(name: string | undefined): boolean {
+  return /\.(ofx|qfx)$/i.test(name ?? '');
+}
 
 // ---------------------------------------------------------------------------
 // Small presentational helpers
@@ -98,14 +102,15 @@ function UploadModal({
     }
   }, [isOpen]);
 
-  const canSubmit = !!file && !!accountGuid && !uploading;
+  const isOfx = isOfxFilename(file?.name);
+  const canSubmit = !!file && (!!accountGuid || isOfx) && !uploading;
 
   const handleSubmit = useCallback(async () => {
     if (!file) {
       setError('Choose a statement file (PDF, CSV, or OFX/QFX).');
       return;
     }
-    if (!accountGuid) {
+    if (!accountGuid && !isOfxFilename(file.name)) {
       setError('Select the ledger account this statement reconciles.');
       return;
     }
@@ -119,7 +124,7 @@ function UploadModal({
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('accountGuid', accountGuid);
+      if (accountGuid) formData.append('accountGuid', accountGuid);
       const res = await fetch('/api/statements/upload', { method: 'POST', body: formData });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -158,10 +163,15 @@ function UploadModal({
           </p>
         </div>
 
-        {/* Account selector (required) */}
+        {/* Account selector (required except for OFX/QFX) */}
         <div>
           <label className="block text-xs font-medium text-foreground-muted uppercase tracking-wider mb-1.5">
-            Reconcile Account <span className="text-[color:var(--warning)]">*</span>
+            Reconcile Account{' '}
+            {isOfx ? (
+              <span className="normal-case tracking-normal text-foreground-muted">(optional)</span>
+            ) : (
+              <span className="text-[color:var(--warning)]">*</span>
+            )}
           </label>
           <AccountSelector
             value={accountGuid}
@@ -171,10 +181,12 @@ function UploadModal({
             }}
             placeholder="Select bank / asset / credit account…"
             accountTypes={RECONCILE_ACCOUNT_TYPES}
-            hasError={!!error && !accountGuid}
+            hasError={!!error && !accountGuid && !isOfx}
           />
           <p className="text-xs text-foreground-muted mt-1.5">
-            Required — the ledger account this statement will be reconciled against.
+            {isOfx
+              ? 'Optional for OFX/QFX — auto-detected from the file when previously mapped. You can also assign it after parsing.'
+              : 'Required — the ledger account this statement will be reconciled against.'}
           </p>
         </div>
 
@@ -230,6 +242,7 @@ export default function StatementsPage() {
   const [search, setSearch] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Batch | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [assignTarget, setAssignTarget] = useState<Batch | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const fetchBatches = useCallback(async () => {
@@ -265,7 +278,7 @@ export default function StatementsPage() {
     'Search statements',
     () => searchRef.current?.focus(),
     'page',
-    !showUpload && !deleteTarget,
+    !showUpload && !deleteTarget && !assignTarget,
   );
 
   const filtered = useMemo(() => {
@@ -392,9 +405,18 @@ export default function StatementsPage() {
                         <Badge label={src.label} className={src.className} />
                       </td>
                       <td className="py-2.5 px-4 text-foreground-secondary max-w-[200px] truncate" title={b.accountGuid ? accountNames.get(b.accountGuid) ?? '' : ''}>
-                        {b.accountGuid
-                          ? accountNames.get(b.accountGuid) ?? '—'
-                          : <span className="text-foreground-muted">Unassigned</span>}
+                        {b.accountGuid ? (
+                          accountNames.get(b.accountGuid) ?? '—'
+                        ) : isPollingStatus(b.status) ? (
+                          <span className="text-foreground-muted">Unassigned</span>
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setAssignTarget(b); }}
+                            className="text-xs font-medium text-[color:var(--warning)] hover:underline"
+                          >
+                            Assign account
+                          </button>
+                        )}
                       </td>
                       <td className="py-2.5 px-4 font-mono tabular-nums text-foreground-secondary whitespace-nowrap">
                         {formatPeriod(b.statementStartDate, b.statementEndDate)}
@@ -434,6 +456,30 @@ export default function StatementsPage() {
       </div>
 
       <UploadModal isOpen={showUpload} onClose={() => setShowUpload(false)} onUploaded={fetchBatches} />
+
+      <Modal
+        isOpen={!!assignTarget}
+        onClose={() => setAssignTarget(null)}
+        title="Assign Reconcile Account"
+        size="md"
+      >
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-foreground-secondary">
+            <span className="text-foreground font-medium">{assignTarget?.originalFilename}</span>{' '}
+            parsed without a ledger account. Pick the account it reconciles against — OFX uploads
+            with the same account id will be auto-assigned from now on.
+          </p>
+          {assignTarget && (
+            <AssignAccountForm
+              batchId={assignTarget.id}
+              onAssigned={() => {
+                setAssignTarget(null);
+                fetchBatches();
+              }}
+            />
+          )}
+        </div>
+      </Modal>
 
       <ConfirmationDialog
         isOpen={!!deleteTarget}

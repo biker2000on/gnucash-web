@@ -275,6 +275,7 @@ const businessNavItem: NavItem = {
         { name: 'Invoices', href: '/business/invoices' },
         { name: 'Bills', href: '/business/invoices?type=bill' },
         { name: 'Payments', href: '/business/payments' },
+        { name: 'Recurring', href: '/business/recurring' },
         { name: 'Inventory', href: '/business/inventory' },
         { name: 'AR/AP Aging', href: '/business/reports/aging' },
         { name: 'Sales Tax', href: '/business/reports/sales-tax' },
@@ -373,6 +374,9 @@ export default function Layout({ children }: { children: ReactNode }) {
     // books never see AR/AP features. Re-checked when the book changes (the
     // BookSwitcher triggers a full navigation, so mount-time fetch suffices).
     const [isBusinessBook, setIsBusinessBook] = useState(false);
+    // Household books can opt in to inventory via Settings (inventory_settings
+    // tool config); business books always have it inside the Business group.
+    const [householdInventory, setHouseholdInventory] = useState(false);
     useEffect(() => {
         let cancelled = false;
         const refresh = () => {
@@ -384,8 +388,15 @@ export default function Layout({ children }: { children: ReactNode }) {
                     }
                 })
                 .catch(() => { /* stay hidden on failure */ });
+            fetch('/api/inventory/settings')
+                .then(res => (res.ok ? res.json() : null))
+                .then(s => {
+                    if (!cancelled && s) setHouseholdInventory(s.enabledForHousehold === true);
+                })
+                .catch(() => { /* stay hidden */ });
         };
         refresh();
+        window.addEventListener('inventory-settings-updated', refresh);
 
         // React immediately when the entity type is changed on the settings
         // page — no refresh needed to reveal/hide the Business nav group.
@@ -399,17 +410,28 @@ export default function Layout({ children }: { children: ReactNode }) {
         return () => {
             cancelled = true;
             window.removeEventListener('entity-updated', onEntityUpdated);
+            window.removeEventListener('inventory-settings-updated', refresh);
         };
     }, []);
 
-    const effectiveNavItems = isBusinessBook
-        ? (() => {
+    const effectiveNavItems = (() => {
+        if (isBusinessBook) {
             const items = [...navItems];
             const budgetsIdx = items.findIndex(i => i.href === '/budgets');
             items.splice(budgetsIdx >= 0 ? budgetsIdx : items.length, 0, businessNavItem);
             return items;
-        })()
-        : navItems;
+        }
+        if (householdInventory) {
+            // Household book with inventory enabled: standalone Inventory item
+            // (no Business group) in the same slot.
+            const items = [...navItems];
+            const budgetsIdx = items.findIndex(i => i.href === '/budgets');
+            const inventoryItem: NavItem = { name: 'Inventory', href: '/business/inventory', icon: 'Briefcase' };
+            items.splice(budgetsIdx >= 0 ? budgetsIdx : items.length, 0, inventoryItem);
+            return items;
+        }
+        return navItems;
+    })();
 
     // Data-dense pages use the full content width to reduce horizontal scrolling.
     const isFullWidthPage =

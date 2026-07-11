@@ -33,6 +33,12 @@ export interface ParsedStatement {
   openingBalance?: number;
   closingBalance?: number;
   currency?: string;
+  /** OFX only: <ACCTID> from BANKACCTFROM / CCACCTFROM / INVACCTFROM. */
+  acctId?: string;
+  /** OFX only: <BANKID> (routing number) when present. */
+  bankId?: string;
+  /** OFX only: <ACCTTYPE> (e.g. CHECKING, SAVINGS, CREDITLINE) when present. */
+  acctType?: string;
   lines: ParsedStatementLine[];
 }
 
@@ -406,6 +412,20 @@ export function parseStatementOfx(text: string): ParsedStatement {
 
   const currency = ofxTag(text, 'CURDEF');
   if (currency) result.currency = currency.toUpperCase();
+
+  // Account identification. Prefer the *ACCTFROM aggregate (aggregates are
+  // closed even in SGML OFX; only leaf tags are unclosed), falling back to the
+  // first <ACCTID> anywhere in the document.
+  const acctFromMatch = text.match(
+    /<(BANKACCTFROM|CCACCTFROM|INVACCTFROM)>([\s\S]*?)<\/\1>/i,
+  );
+  const acctBlock = acctFromMatch ? acctFromMatch[2] : text;
+  const acctId = ofxTag(acctBlock, 'ACCTID');
+  if (acctId) result.acctId = acctId;
+  const bankId = ofxTag(acctBlock, 'BANKID');
+  if (bankId) result.bankId = bankId;
+  const acctType = ofxTag(acctBlock, 'ACCTTYPE');
+  if (acctType) result.acctType = acctType.toUpperCase();
 
   // Statement period from the transaction list envelope.
   const listMatch = text.match(/<BANKTRANLIST>([\s\S]*?)<\/BANKTRANLIST>/i);

@@ -5,5 +5,5 @@ export const metadata = {
 };
 
 export default function CustomersPage() {
-    return <ContactManager kind="customer" />;
+    return <ContactManager kind="customer" enableStatements />;
 }

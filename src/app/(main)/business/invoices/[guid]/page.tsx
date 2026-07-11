@@ -10,6 +10,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { OwnerSelector, type OwnerDTO } from '@/components/business/OwnerSelector';
 import { PaymentModal } from '@/components/business/PaymentModal';
 import { InvoiceFulfillmentSection } from '@/components/business/InvoiceFulfillmentSection';
+import { BillReceivingSection } from '@/components/business/BillReceivingSection';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { useAccounts } from '@/lib/hooks/useAccounts';
@@ -29,6 +30,11 @@ import {
     dueDateFromTerm,
     todayIso,
 } from '@/components/business/invoice-ui';
+import {
+    CADENCE_OPTIONS,
+    cadenceToPattern,
+    type Cadence,
+} from '@/components/business/recurring-ui';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -94,6 +100,15 @@ function InvoiceDetailContent() {
     const [confirmUnpost, setConfirmUnpost] = useState(false);
     const [unposting, setUnposting] = useState(false);
     const [paymentOpen, setPaymentOpen] = useState(false);
+
+    // "Make recurring..." modal
+    const [recurringOpen, setRecurringOpen] = useState(false);
+    const [recurringName, setRecurringName] = useState('');
+    const [recurringCadence, setRecurringCadence] = useState<Cadence>('monthly');
+    const [recurringEvery, setRecurringEvery] = useState('1');
+    const [recurringStart, setRecurringStart] = useState(todayIso());
+    const [recurringAutoPost, setRecurringAutoPost] = useState(false);
+    const [creatingRecurring, setCreatingRecurring] = useState(false);
 
     // Posted-side data
     const [payments, setPayments] = useState<PaymentView[]>([]);
@@ -423,6 +438,92 @@ function InvoiceDetailContent() {
     };
 
     // ------------------------------------------------------------------
+    // Make recurring
+    // ------------------------------------------------------------------
+
+    const openRecurringModal = () => {
+        if (!invoice) return;
+        setRecurringName(`${invoice.ownerName} — ${singular.toLowerCase()}`);
+        setRecurringCadence('monthly');
+        setRecurringEvery('1');
+        setRecurringStart(todayIso());
+        setRecurringAutoPost(false);
+        setRecurringOpen(true);
+    };
+
+    const handleMakeRecurring = async (e?: React.FormEvent) => {
+        e?.preventDefault();
+        if (!invoice || !endOwner) return;
+        if (!recurringName.trim()) {
+            error('Name is required');
+            return;
+        }
+        const every = parseInt(recurringEvery, 10);
+        if (!Number.isInteger(every) || every < 1) {
+            error('Interval must be a positive whole number');
+            return;
+        }
+        if (!recurringStart) {
+            error('Start date is required');
+            return;
+        }
+        const templateEntries = invoice.entries
+            .filter((en) => en.accountGuid)
+            .map((en) => ({
+                description: en.description,
+                action: en.action || undefined,
+                notes: en.notes || undefined,
+                quantity: en.quantity,
+                price: en.price,
+                accountGuid: en.accountGuid as string,
+                ...(kind === 'invoice' ? {
+                    discount: en.discount || undefined,
+                    discountType: en.discountType,
+                    discountHow: en.discountHow,
+                } : {}),
+                taxable: en.taxable,
+                taxIncluded: en.taxIncluded,
+                taxTableGuid: en.taxTableGuid,
+            }));
+        if (templateEntries.length === 0) {
+            error('This document has no usable lines to make recurring');
+            return;
+        }
+        setCreatingRecurring(true);
+        try {
+            const { periodType, mult } = cadenceToPattern(recurringCadence, every);
+            const res = await fetch('/api/business/recurring-invoices', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: recurringName.trim(),
+                    ownerType: endOwner.type,
+                    ownerGuid: endOwner.guid,
+                    template: {
+                        entries: templateEntries,
+                        notes: invoice.notes || undefined,
+                        billingId: invoice.billingId || undefined,
+                        termsGuid: invoice.termsGuid,
+                        currencyGuid: invoice.currencyGuid,
+                    },
+                    periodType,
+                    mult,
+                    startDate: recurringStart,
+                    autoPost: recurringAutoPost,
+                }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to create the recurring schedule');
+            success(`Recurring schedule created — first run ${recurringStart}`);
+            setRecurringOpen(false);
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to create the recurring schedule');
+        } finally {
+            setCreatingRecurring(false);
+        }
+    };
+
+    // ------------------------------------------------------------------
     // Print
     // ------------------------------------------------------------------
 
@@ -599,6 +700,15 @@ function InvoiceDetailContent() {
         <>
             <button
                 type="button"
+                onClick={openRecurringModal}
+                disabled={isReadonly || !endOwner}
+                title={isReadonly ? READONLY_TOOLTIP : 'Generate this document on a schedule'}
+                className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors disabled:opacity-50"
+            >
+                Make recurring...
+            </button>
+            <button
+                type="button"
                 onClick={handlePrint}
                 className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors"
             >
@@ -650,13 +760,24 @@ function InvoiceDetailContent() {
                     {statusMeta.label}
                 </span>
                 {!isNew && isDraft && (
-                    <button
-                        type="button"
-                        onClick={handlePrint}
-                        className="text-foreground-muted hover:text-foreground transition-colors text-xs"
-                    >
-                        Print draft
-                    </button>
+                    <>
+                        <button
+                            type="button"
+                            onClick={handlePrint}
+                            className="text-foreground-muted hover:text-foreground transition-colors text-xs"
+                        >
+                            Print draft
+                        </button>
+                        <button
+                            type="button"
+                            onClick={openRecurringModal}
+                            disabled={isReadonly || !endOwner}
+                            title={isReadonly ? READONLY_TOOLTIP : 'Generate this document on a schedule'}
+                            className="text-foreground-muted hover:text-foreground transition-colors text-xs disabled:opacity-50"
+                        >
+                            Make recurring...
+                        </button>
+                    </>
                 )}
             </div>
 
@@ -1064,6 +1185,18 @@ function InvoiceDetailContent() {
                 />
             )}
 
+            {/* Inventory receiving (posted vendor bills only) */}
+            {!isDraft && invoice && invoice.type === 'bill' && (
+                <BillReceivingSection
+                    billGuid={invoice.guid}
+                    entries={invoice.entries.map((e) => ({
+                        guid: e.guid,
+                        description: e.description,
+                        quantity: e.quantity,
+                    }))}
+                />
+            )}
+
             {/* Post modal */}
             <Modal isOpen={postOpen} onClose={posting ? () => {} : () => setPostOpen(false)} title={`Post ${singular}`} size="sm">
                 <form onSubmit={handlePost} className="px-6 py-4 space-y-3">
@@ -1122,6 +1255,95 @@ function InvoiceDetailContent() {
                             className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
                         >
                             {posting ? 'Posting...' : `Post ${formatCurrency(totals.total, currency)}`}
+                        </button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Make recurring modal */}
+            <Modal
+                isOpen={recurringOpen}
+                onClose={creatingRecurring ? () => {} : () => setRecurringOpen(false)}
+                title={`Make ${singular} Recurring`}
+                size="sm"
+            >
+                <form onSubmit={handleMakeRecurring} className="px-6 py-4 space-y-3">
+                    <p className="text-sm text-foreground-secondary">
+                        A new {singular.toLowerCase()} with these {invoice?.entries.length ?? 0} line{(invoice?.entries.length ?? 0) === 1 ? '' : 's'} is
+                        generated on the schedule below. Manage schedules under{' '}
+                        <Link href="/business/recurring" className="text-primary hover:text-primary-hover">Recurring</Link>.
+                    </p>
+                    <div>
+                        <label className={labelClass}>Name *</label>
+                        <input
+                            type="text"
+                            value={recurringName}
+                            onChange={(e) => setRecurringName(e.target.value)}
+                            className={inputClass}
+                            autoFocus
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className={labelClass}>Cadence</label>
+                            <select
+                                value={recurringCadence}
+                                onChange={(e) => setRecurringCadence(e.target.value as Cadence)}
+                                className={inputClass}
+                            >
+                                {CADENCE_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className={labelClass}>Every</label>
+                            <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={recurringEvery}
+                                onChange={(e) => setRecurringEvery(e.target.value)}
+                                className={`${inputClass} font-mono`}
+                                style={TNUM}
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className={labelClass}>Start date *</label>
+                        <input
+                            type="date"
+                            value={recurringStart}
+                            onChange={(e) => setRecurringStart(e.target.value)}
+                            className={`${inputClass} font-mono`}
+                            style={TNUM}
+                        />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-foreground-secondary">
+                        <input
+                            type="checkbox"
+                            checked={recurringAutoPost}
+                            onChange={(e) => setRecurringAutoPost(e.target.checked)}
+                            className="accent-primary"
+                        />
+                        Post automatically on generation
+                    </label>
+                    <div className="flex justify-end gap-3 pt-2 border-t border-border">
+                        <button
+                            type="button"
+                            onClick={() => setRecurringOpen(false)}
+                            disabled={creatingRecurring}
+                            className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={creatingRecurring || isReadonly}
+                            title={isReadonly ? READONLY_TOOLTIP : undefined}
+                            className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors"
+                        >
+                            {creatingRecurring ? 'Creating...' : 'Create schedule'}
                         </button>
                     </div>
                 </form>

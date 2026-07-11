@@ -10,6 +10,7 @@ import {
   missingCounterparts,
   amountTone,
   formatSignedAbsolute,
+  cleanRulePattern,
   type MissingLineState,
 } from '../statement-ui';
 
@@ -139,6 +140,66 @@ describe('amountTone', () => {
     expect(amountTone(5)).toContain('--positive');
     expect(amountTone(-5)).toContain('--negative');
     expect(amountTone(0)).toBe('text-foreground-secondary');
+  });
+});
+
+describe('cleanRulePattern', () => {
+  it('drops digit-bearing reference tokens and lowercases', () => {
+    expect(cleanRulePattern('STARBUCKS #1234 SEATTLE WA')).toBe('starbucks');
+    expect(cleanRulePattern('AMAZON MKTPL*RT4Y89 SEATTLE')).toBe('amazon');
+  });
+
+  it('keeps original separators so the pattern still contains-matches', () => {
+    const desc = 'PAYPAL *SPOTIFY 402-935-7733';
+    const pattern = cleanRulePattern(desc);
+    expect(pattern).toBe('paypal *spotify');
+    // The whole point: a 'contains' rule built from the pattern matches the line.
+    expect(desc.toLowerCase().includes(pattern)).toBe(true);
+  });
+
+  it('strips leading bank-noise words', () => {
+    expect(cleanRulePattern('POS PURCHASE STARBUCKS')).toBe('starbucks');
+    expect(cleanRulePattern('ACH PAYMENT TO NETFLIX.COM')).toBe('netflix.com');
+    expect(cleanRulePattern('DEBIT CARD PURCHASE TRADER JOES')).toBe('trader joes');
+  });
+
+  it('keeps at least one token even if everything looks like noise', () => {
+    expect(cleanRulePattern('ACH PAYMENT')).toBe('payment');
+  });
+
+  it('skips runs that are entirely noise words', () => {
+    expect(cleanRulePattern('CHK 1042 HOMETOWN PLUMBING LLC INV 88')).toBe(
+      'hometown plumbing llc inv',
+    );
+  });
+
+  it('trims stray punctuation from the edges', () => {
+    expect(cleanRulePattern('*SPOTIFY*')).toBe('spotify');
+  });
+
+  it('falls back to the raw lowercased text when every token has digits', () => {
+    expect(cleanRulePattern('7-ELEVEN 32145')).toBe('7-eleven 32145');
+  });
+
+  it('handles empty / whitespace descriptions', () => {
+    expect(cleanRulePattern('')).toBe('');
+    expect(cleanRulePattern('   ')).toBe('');
+  });
+
+  it('result is always a substring of the collapsed lowercased description', () => {
+    const samples = [
+      'POS PURCHASE STARBUCKS #1234 SEATTLE',
+      'PAYPAL *SPOTIFY 402-935-7733',
+      'TRANSFER FROM SAVINGS 001',
+      'Check 204',
+      'WHOLEFDS MKT 10259 AUSTIN TX',
+    ];
+    for (const s of samples) {
+      const pattern = cleanRulePattern(s);
+      if (pattern) {
+        expect(s.replace(/\s+/g, ' ').trim().toLowerCase().includes(pattern)).toBe(true);
+      }
+    }
   });
 });
 

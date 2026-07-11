@@ -27,7 +27,8 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/inventory/items — create an item.
  * Body: { sku, name, description?, unit?, salePrice?,
- *         incomeAccountGuid?, cogsAccountGuid?, assetAccountGuid? }
+ *         incomeAccountGuid?, cogsAccountGuid?, assetAccountGuid?,
+ *         valuationMethod? ('average'|'fifo'), reorderPoint?, reorderQuantity? }
  * Response 201: { item: InventoryItem }
  */
 export async function POST(request: NextRequest) {
@@ -49,6 +50,9 @@ export async function POST(request: NextRequest) {
       incomeAccountGuid: body.incomeAccountGuid,
       cogsAccountGuid: body.cogsAccountGuid,
       assetAccountGuid: body.assetAccountGuid,
+      valuationMethod: body.valuationMethod,
+      reorderPoint: body.reorderPoint,
+      reorderQuantity: body.reorderQuantity,
     });
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {

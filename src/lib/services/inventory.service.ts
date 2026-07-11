@@ -22,12 +22,15 @@
  *   Stock on hand per (item, location) = SUM(quantity) and is never allowed
  *   to go below zero (the engine rejects with InventoryStockError → HTTP 409).
  *
- * VALUATION: moving average cost per item, BOOK-WIDE (not per-location, v1).
- * items.avg_cost is the single source of truth; the engine updates it on
- * cost-bearing inbound movements (see applyMovementToAvgCost).
+ * VALUATION: per-item 'average' (default) or 'fifo', BOOK-WIDE (never
+ * per-location). items.avg_cost is maintained on cost-bearing inbound
+ * movements for every item (see applyMovementToAvgCost); FIFO items
+ * additionally consume/post at layer-derived cost (see buildFifoLayers /
+ * computeFifoConsumption in the engine) — avg_cost is informational there.
  */
 
 import prisma from '@/lib/prisma';
+import { createNotification, ensureNotificationsTable } from '@/lib/notifications';
 
 // ---------------------------------------------------------------------------
 // Errors (shared by service + engine + API routes)
@@ -45,6 +48,9 @@ export class InventoryStateError extends Error {}
 // ---------------------------------------------------------------------------
 // Types (camelCase in TS; snake_case in the DB)
 // ---------------------------------------------------------------------------
+
+export const VALUATION_METHODS = ['average', 'fifo'] as const;
+export type ValuationMethod = (typeof VALUATION_METHODS)[number];
 
 export const MOVEMENT_TYPES = [
   'receive',
@@ -70,8 +76,17 @@ export interface InventoryItem {
   incomeAccountGuid: string | null;
   cogsAccountGuid: string | null;
   assetAccountGuid: string | null;
-  /** Book-wide moving average cost (v1 valuation model). */
+  /**
+   * Book-wide moving average cost. Always maintained (even for FIFO items,
+   * where it is informational only — FIFO items consume/post at layer cost).
+   */
   avgCost: number;
+  /** 'average' (default) or 'fifo'. Affects future consumption only. */
+  valuationMethod: ValuationMethod;
+  /** Alert when total on-hand ≤ this (null = no reorder tracking). */
+  reorderPoint: number | null;
+  /** Suggested quantity to reorder (informational). */
+  reorderQuantity: number | null;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -151,6 +166,9 @@ export interface CreateItemInput {
   incomeAccountGuid?: string | null;
   cogsAccountGuid?: string | null;
   assetAccountGuid?: string | null;
+  valuationMethod?: ValuationMethod;
+  reorderPoint?: number | null;
+  reorderQuantity?: number | null;
 }
 
 export interface UpdateItemInput {
@@ -162,6 +180,9 @@ export interface UpdateItemInput {
   incomeAccountGuid?: string | null;
   cogsAccountGuid?: string | null;
   assetAccountGuid?: string | null;
+  valuationMethod?: ValuationMethod;
+  reorderPoint?: number | null;
+  reorderQuantity?: number | null;
   active?: boolean;
 }
 
@@ -237,6 +258,9 @@ interface ItemRow {
   cogs_account_guid: string | null;
   asset_account_guid: string | null;
   avg_cost: unknown;
+  valuation_method: string;
+  reorder_point: unknown;
+  reorder_quantity: unknown;
   active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -297,6 +321,9 @@ export function mapItemRow(row: ItemRow): InventoryItem {
     cogsAccountGuid: row.cogs_account_guid,
     assetAccountGuid: row.asset_account_guid,
     avgCost: num(row.avg_cost),
+    valuationMethod: row.valuation_method === 'fifo' ? 'fifo' : 'average',
+    reorderPoint: numOrNull(row.reorder_point),
+    reorderQuantity: numOrNull(row.reorder_quantity),
     active: row.active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -358,7 +385,8 @@ function mapBomRow(row: BomRow, lines: BomLineRow[]): Bom {
 const ITEM_COLS = `
   id, book_guid, sku, name, description, unit, sale_price,
   income_account_guid, cogs_account_guid, asset_account_guid,
-  avg_cost, active, created_at, updated_at
+  avg_cost, valuation_method, reorder_point, reorder_quantity,
+  active, created_at, updated_at
 `;
 
 export const MOVEMENT_COLS = `
@@ -453,6 +481,14 @@ export function ensureInventoryTables(): Promise<void> {
 
           CREATE INDEX IF NOT EXISTS idx_inventory_bom_lines_bom
             ON gnucash_web_inventory_bom_lines(bom_id);
+
+          -- v2 lazy column additions (reorder points + valuation method).
+          ALTER TABLE gnucash_web_inventory_items
+            ADD COLUMN IF NOT EXISTS reorder_point NUMERIC;
+          ALTER TABLE gnucash_web_inventory_items
+            ADD COLUMN IF NOT EXISTS reorder_quantity NUMERIC;
+          ALTER TABLE gnucash_web_inventory_items
+            ADD COLUMN IF NOT EXISTS valuation_method VARCHAR(10) NOT NULL DEFAULT 'average';
         END $$;
       `);
     })();
@@ -476,6 +512,20 @@ function validateIsoDate(value: string, field: string): string {
   return value;
 }
 
+function validateNonNegativeOrNull(value: number | null | undefined, field: string): void {
+  if (value != null && !(Number.isFinite(value) && value >= 0)) {
+    throw new InventoryValidationError(`${field} must be a non-negative number`);
+  }
+}
+
+function validateValuationMethod(value: string | undefined): void {
+  if (value !== undefined && !VALUATION_METHODS.includes(value as ValuationMethod)) {
+    throw new InventoryValidationError(
+      `valuationMethod must be one of: ${VALUATION_METHODS.join(', ')}`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Items
 // ---------------------------------------------------------------------------
@@ -490,14 +540,18 @@ export async function createItem(bookGuid: string, input: CreateItemInput): Prom
   if (input.salePrice != null && !(Number.isFinite(input.salePrice) && input.salePrice >= 0)) {
     throw new InventoryValidationError('salePrice must be a non-negative number');
   }
+  validateNonNegativeOrNull(input.reorderPoint, 'reorderPoint');
+  validateNonNegativeOrNull(input.reorderQuantity, 'reorderQuantity');
+  validateValuationMethod(input.valuationMethod);
 
   try {
     const rows = await prisma.$queryRawUnsafe<ItemRow[]>(
       `
         INSERT INTO gnucash_web_inventory_items
           (book_guid, sku, name, description, unit, sale_price,
-           income_account_guid, cogs_account_guid, asset_account_guid)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           income_account_guid, cogs_account_guid, asset_account_guid,
+           valuation_method, reorder_point, reorder_quantity)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING ${ITEM_COLS}
       `,
       bookGuid,
@@ -509,6 +563,9 @@ export async function createItem(bookGuid: string, input: CreateItemInput): Prom
       input.incomeAccountGuid ?? null,
       input.cogsAccountGuid ?? null,
       input.assetAccountGuid ?? null,
+      input.valuationMethod ?? 'average',
+      input.reorderPoint ?? null,
+      input.reorderQuantity ?? null,
     );
     return mapItemRow(rows[0]);
   } catch (error) {
@@ -541,6 +598,9 @@ export async function updateItem(
       !(Number.isFinite(input.salePrice) && input.salePrice >= 0)) {
     throw new InventoryValidationError('salePrice must be a non-negative number');
   }
+  if (input.reorderPoint !== undefined) validateNonNegativeOrNull(input.reorderPoint, 'reorderPoint');
+  if (input.reorderQuantity !== undefined) validateNonNegativeOrNull(input.reorderQuantity, 'reorderQuantity');
+  validateValuationMethod(input.valuationMethod);
 
   try {
     const rows = await prisma.$queryRawUnsafe<ItemRow[]>(
@@ -555,6 +615,9 @@ export async function updateItem(
           cogs_account_guid = $9,
           asset_account_guid = $10,
           active = $11,
+          valuation_method = $12,
+          reorder_point = $13,
+          reorder_quantity = $14,
           updated_at = now()
         WHERE id = $1 AND book_guid = $2
         RETURNING ${ITEM_COLS}
@@ -570,6 +633,9 @@ export async function updateItem(
       input.cogsAccountGuid !== undefined ? input.cogsAccountGuid : existing.cogsAccountGuid,
       input.assetAccountGuid !== undefined ? input.assetAccountGuid : existing.assetAccountGuid,
       input.active !== undefined ? input.active : existing.active,
+      input.valuationMethod !== undefined ? input.valuationMethod : existing.valuationMethod,
+      input.reorderPoint !== undefined ? input.reorderPoint : existing.reorderPoint,
+      input.reorderQuantity !== undefined ? input.reorderQuantity : existing.reorderQuantity,
     );
     return mapItemRow(rows[0]);
   } catch (error) {
@@ -601,7 +667,8 @@ export async function listItems(
     `
       SELECT i.id, i.book_guid, i.sku, i.name, i.description, i.unit, i.sale_price,
              i.income_account_guid, i.cogs_account_guid, i.asset_account_guid,
-             i.avg_cost, i.active, i.created_at, i.updated_at,
+             i.avg_cost, i.valuation_method, i.reorder_point, i.reorder_quantity,
+             i.active, i.created_at, i.updated_at,
              COALESCE(m.on_hand, 0) AS on_hand
       FROM gnucash_web_inventory_items i
       LEFT JOIN (
@@ -623,7 +690,8 @@ export async function getItem(bookGuid: string, id: number): Promise<InventoryIt
     `
       SELECT i.id, i.book_guid, i.sku, i.name, i.description, i.unit, i.sale_price,
              i.income_account_guid, i.cogs_account_guid, i.asset_account_guid,
-             i.avg_cost, i.active, i.created_at, i.updated_at,
+             i.avg_cost, i.valuation_method, i.reorder_point, i.reorder_quantity,
+             i.active, i.created_at, i.updated_at,
              COALESCE((
                SELECT SUM(quantity) FROM gnucash_web_inventory_movements WHERE item_id = i.id
              ), 0) AS on_hand
@@ -1009,4 +1077,116 @@ export async function updateBom(bookGuid: string, id: number, input: UpdateBomIn
 /** Soft-delete: sets active = false (assembly history references stay valid). */
 export async function deactivateBom(bookGuid: string, id: number): Promise<Bom> {
   return updateBom(bookGuid, id, { active: false });
+}
+
+// ---------------------------------------------------------------------------
+// Reorder-point scan (notifications, mirrors scanBudgetAlerts)
+// ---------------------------------------------------------------------------
+
+export const REORDER_ALERT_SOURCE = 'inventory-reorder';
+
+/**
+ * Stable dedupe key for a reorder alert: one notification per (item,
+ * reorder point) breach. Raising the reorder point re-arms the alert;
+ * restocking above the point and dipping below it again does NOT re-alert
+ * until the point changes (matches the budget-alert scan's period-stable
+ * key philosophy). Exported for tests.
+ */
+export function reorderDedupeKey(itemId: number, reorderPoint: number): string {
+  return `item:${itemId}:below:${reorderPoint}`;
+}
+
+export interface ReorderScanOptions {
+  /** Owner of the notifications to create. */
+  userId: number;
+  /** Max notifications to create in a single scan (default 20). */
+  maxNotifications?: number;
+}
+
+interface ReorderScanRow {
+  id: number;
+  sku: string;
+  name: string;
+  unit: string;
+  reorder_point: unknown;
+  reorder_quantity: unknown;
+  on_hand: unknown;
+}
+
+/**
+ * Scan the book's active items with a reorder point set and create a
+ * notification for each item whose total on-hand is at or below the point.
+ * Deduped via (source='inventory-reorder', source_id=reorderDedupeKey(...)),
+ * exactly like the budget-alert scan. Session-free and fire-and-forget safe:
+ * never throws.
+ */
+export async function scanInventoryReorder(
+  bookGuid: string,
+  opts: ReorderScanOptions,
+): Promise<{ detected: number; created: number }> {
+  try {
+    await ensureInventoryTables();
+    const maxNotifications = opts.maxNotifications ?? 20;
+
+    const rows = await prisma.$queryRawUnsafe<ReorderScanRow[]>(
+      `
+        SELECT i.id, i.sku, i.name, i.unit, i.reorder_point, i.reorder_quantity,
+               COALESCE(m.on_hand, 0) AS on_hand
+        FROM gnucash_web_inventory_items i
+        LEFT JOIN (
+          SELECT item_id, SUM(quantity) AS on_hand
+          FROM gnucash_web_inventory_movements
+          GROUP BY item_id
+        ) m ON m.item_id = i.id
+        WHERE i.book_guid = $1 AND i.active = true AND i.reorder_point IS NOT NULL
+      `,
+      bookGuid,
+    );
+
+    const low = rows.filter((r) => num(r.on_hand) <= num(r.reorder_point));
+    if (low.length === 0) return { detected: 0, created: 0 };
+
+    await ensureNotificationsTable();
+    const existingRows = await prisma.$queryRaw<Array<{ source_id: string | null }>>`
+      SELECT source_id
+      FROM gnucash_web_notifications
+      WHERE user_id = ${opts.userId}
+        AND source = ${REORDER_ALERT_SOURCE}
+        AND (book_guid IS NULL OR book_guid = ${bookGuid})
+    `;
+    const seen = new Set(existingRows.map((r) => r.source_id).filter((s): s is string => !!s));
+
+    let created = 0;
+    for (const row of low) {
+      if (created >= maxNotifications) break;
+      const reorderPoint = num(row.reorder_point);
+      const key = reorderDedupeKey(row.id, reorderPoint);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const onHand = num(row.on_hand);
+      const reorderQty = numOrNull(row.reorder_quantity);
+      await createNotification({
+        userId: opts.userId,
+        bookGuid,
+        type: 'inventory_reorder',
+        severity: 'warning',
+        title: 'Inventory below reorder point',
+        message:
+          `${row.sku} — ${row.name}: ${onHand} ${row.unit} on hand ` +
+          `(reorder point ${reorderPoint})` +
+          (reorderQty != null ? `. Suggested reorder: ${reorderQty} ${row.unit}.` : '.'),
+        href: `/business/inventory/${row.id}`,
+        source: REORDER_ALERT_SOURCE,
+        sourceId: key,
+      });
+      created++;
+    }
+
+    return { detected: low.length, created };
+  } catch (error) {
+    // Never let reorder scanning break the caller (e.g. the sync path).
+    console.warn('Inventory reorder scan failed:', error);
+    return { detected: 0, created: 0 };
+  }
 }

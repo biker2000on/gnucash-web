@@ -257,4 +257,45 @@ VERSION:102
     expect(parseStatementOfx('').lines).toHaveLength(0);
     expect(parseStatementOfx('not ofx at all').lines).toHaveLength(0);
   });
+
+  describe('account auto-detect (<ACCTID>)', () => {
+    it('extracts ACCTID from a SGML BANKACCTFROM aggregate', () => {
+      const result = parseStatementOfx(OFX_SGML);
+      expect(result.acctId).toBe('123456789');
+    });
+
+    it('extracts ACCTID, BANKID, and ACCTTYPE from an XML BANKACCTFROM', () => {
+      const xml =
+        `<OFX><BANKACCTFROM><BANKID>021000021</BANKID><ACCTID>9988776655</ACCTID>` +
+        `<ACCTTYPE>checking</ACCTTYPE></BANKACCTFROM>` +
+        `<STMTTRN><DTPOSTED>20240115</DTPOSTED><TRNAMT>-19.99</TRNAMT><NAME>Netflix</NAME></STMTTRN></OFX>`;
+      const result = parseStatementOfx(xml);
+      expect(result.acctId).toBe('9988776655');
+      expect(result.bankId).toBe('021000021');
+      expect(result.acctType).toBe('CHECKING');
+    });
+
+    it('extracts ACCTID from a credit-card CCACCTFROM aggregate', () => {
+      const ofx =
+        `<OFX><CCSTMTRS><CURDEF>USD\n<CCACCTFROM>\n<ACCTID>4111-XXXX-1234\n</CCACCTFROM>` +
+        `<STMTTRN><DTPOSTED>20240201<TRNAMT>-42.00<NAME>Cafe</STMTTRN></CCSTMTRS></OFX>`;
+      const result = parseStatementOfx(ofx);
+      expect(result.acctId).toBe('4111-XXXX-1234');
+    });
+
+    it('falls back to a bare <ACCTID> tag when no *ACCTFROM aggregate closes', () => {
+      const ofx = `<OFX><BANKACCTFROM><BANKID>111<ACCTID>555000<STMTTRN><DTPOSTED>20240201<TRNAMT>-1.00<NAME>X</STMTTRN></OFX>`;
+      const result = parseStatementOfx(ofx);
+      expect(result.acctId).toBe('555000');
+      expect(result.bankId).toBe('111');
+    });
+
+    it('leaves acctId undefined when the file has no ACCTID', () => {
+      const xml = `<OFX><STMTTRN><DTPOSTED>20240115</DTPOSTED><TRNAMT>-19.99</TRNAMT><NAME>Netflix</NAME></STMTTRN></OFX>`;
+      const result = parseStatementOfx(xml);
+      expect(result.acctId).toBeUndefined();
+      expect(result.bankId).toBeUndefined();
+      expect(result.acctType).toBeUndefined();
+    });
+  });
 });

@@ -181,6 +181,81 @@ export function missingCounterparts(states: MissingLineState[]): number[] {
 }
 
 // ---------------------------------------------------------------------------
+// Categorization-rule pattern cleaner
+// ---------------------------------------------------------------------------
+
+/**
+ * Clean a statement-line description into a categorization-rule pattern for a
+ * 'contains' match.
+ *
+ * Mirrors the intent of normalizeMerchant (src/lib/recurring-detection.ts):
+ * lowercase, drop digit-bearing tokens (store numbers, dates, reference codes).
+ * It deviates in one important way: the result must remain a case-insensitive
+ * SUBSTRING of the description, because rule matching is
+ * `description.toLowerCase().includes(pattern)` — rewriting separators the way
+ * normalizeMerchant does ("paypal *spotify" → "paypal spotify") would produce
+ * patterns that never match. So instead we split the description into runs of
+ * consecutive digit-free tokens (keeping their original separators), strip
+ * leading bank-noise words (POS, PURCHASE, DEBIT, ACH, …), and take the FIRST
+ * run with meaningful content — the merchant almost always precedes the
+ * city/state suffix. Stray edge punctuation is trimmed (still substring-safe).
+ *
+ * "POS PURCHASE STARBUCKS #1234 SEATTLE" → "starbucks"
+ * "PAYPAL *SPOTIFY 402-935-7733"         → "paypal *spotify"
+ * Falls back to the whole lowercased description when every token has digits.
+ */
+const RULE_NOISE_WORDS = new Set([
+  'pos', 'purchase', 'debit', 'credit', 'card', 'checkcard', 'check', 'chk',
+  'ach', 'web', 'online', 'recurring', 'payment', 'pmt', 'withdrawal',
+  'deposit', 'transaction', 'transfer', 'to', 'from', 'at',
+]);
+
+export function cleanRulePattern(description: string): string {
+  const collapsed = description.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return '';
+
+  // Runs of consecutive digit-free tokens (digit tokens are refs/dates/ids).
+  const tokens = collapsed.split(' ');
+  const runs: string[][] = [];
+  let run: string[] = [];
+  for (const t of tokens) {
+    if (/\d/.test(t)) {
+      if (run.length) runs.push(run);
+      run = [];
+    } else {
+      run.push(t);
+    }
+  }
+  if (run.length) runs.push(run);
+
+  // Every token carried digits (e.g. "7-ELEVEN 123") — keep the raw text so
+  // the user still gets an editable prefill.
+  if (runs.length === 0) return collapsed.toLowerCase();
+
+  const bare = (w: string) => w.replace(/[^a-zA-Z0-9&]/g, '').toLowerCase();
+  // Trimming leading tokens / edge characters keeps the result a substring of
+  // the (collapsed) description, so a 'contains' rule still matches this line.
+  const finish = (words: string[]) =>
+    words
+      .join(' ')
+      .replace(/^[^a-zA-Z0-9&]+/, '')
+      .replace(/[^a-zA-Z0-9&]+$/, '')
+      .toLowerCase();
+
+  // First run with non-noise content wins (merchant precedes city/state).
+  for (const r of runs) {
+    let start = 0;
+    while (start < r.length && RULE_NOISE_WORDS.has(bare(r[start]))) start++;
+    if (start < r.length) return finish(r.slice(start));
+  }
+
+  // Everything was noise — keep the last word of the first run so the user
+  // still gets an editable prefill ("ACH PAYMENT" → "payment").
+  const first = runs[0];
+  return finish(first.slice(first.length - 1));
+}
+
+// ---------------------------------------------------------------------------
 // Amount / sign helpers
 // ---------------------------------------------------------------------------
 

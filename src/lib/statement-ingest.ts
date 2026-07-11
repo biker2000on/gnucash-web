@@ -14,7 +14,7 @@
  */
 
 import type { ParsedStatement } from './statement-parse/csv-ofx';
-import type { StatementLineInput } from './services/statement.service';
+import type { BatchStatusPatch, StatementLineInput } from './services/statement.service';
 
 function toLineInputs(parsed: ParsedStatement): StatementLineInput[] {
   return parsed.lines.map((l) => ({
@@ -35,6 +35,8 @@ export async function runStatementExtraction(
     getBatch,
     setBatchStatus,
     replaceLines,
+    upsertStatementAcctMap,
+    getMappedAccountGuid,
   } = await import('./services/statement.service');
 
   try {
@@ -93,14 +95,49 @@ export async function runStatementExtraction(
     const lines = toLineInputs(parsed);
     await replaceLines(batchId, lines);
 
-    await setBatchStatus(batchId, 'parsed', {
+    const parsedPatch: BatchStatusPatch = {
       statementStartDate: parsed.startDate ?? null,
       statementEndDate: parsed.endDate ?? null,
       openingBalance: parsed.openingBalance ?? null,
       closingBalance: parsed.closingBalance ?? null,
       currency: parsed.currency ?? null,
       error: null,
-    });
+    };
+
+    // OFX account auto-detect: persist the detected <ACCTID>, remember the
+    // pairing when the batch already has an account, or auto-assign the
+    // account when a previously-remembered pairing exists for this book.
+    if (batch.source === 'ofx') {
+      const { planOfxAccountActions, normalizeOfxAcctId } = await import(
+        './statement-parse/ofx-account'
+      );
+      const normalizedId = normalizeOfxAcctId(parsed.acctId);
+      const mappedAccountGuid =
+        !batch.accountGuid && normalizedId
+          ? await getMappedAccountGuid(batch.bookGuid, normalizedId)
+          : null;
+      const plan = planOfxAccountActions({
+        rawAcctId: parsed.acctId ?? null,
+        batchAccountGuid: batch.accountGuid,
+        mappedAccountGuid,
+      });
+      parsedPatch.ofxAcctId = plan.ofxAcctId;
+      if (plan.assignAccountGuid) {
+        parsedPatch.accountGuid = plan.assignAccountGuid;
+        console.log(
+          `${logPrefix} Auto-assigned account ${plan.assignAccountGuid} to batch ${batchId} via OFX ACCTID mapping`,
+        );
+      }
+      if (plan.ofxAcctId && plan.rememberAccountGuid) {
+        try {
+          await upsertStatementAcctMap(batch.bookGuid, plan.ofxAcctId, plan.rememberAccountGuid);
+        } catch (mapErr) {
+          console.warn(`${logPrefix} Failed to upsert OFX account map:`, mapErr);
+        }
+      }
+    }
+
+    await setBatchStatus(batchId, 'parsed', parsedPatch);
 
     console.log(`${logPrefix} Parsed ${lines.length} line(s) from ${batch.source} batch ${batchId}`);
   } catch (err) {
