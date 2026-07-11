@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0.0] - 2026-07-10
+
+### Added
+- **Inventory management** (business books): items/SKUs with book-wide moving-average-cost valuation, stock locations, receive/ship/adjust/transfer/return movements with negative-stock protection, bills of materials with assembly costing, optional balanced GnuCash ledger postings (inventory asset + COGS), and explicit invoice-line fulfillment that links sales to items and posts cost of goods sold — plus a full UI (items, item detail with stock by location and movement history, BOM editor and assemble, locations, invoice Fulfillment section)
+- **Composable dashboard**: a searchable widget gallery to add/remove widgets (goals, budget pacing, AR/AP, dividends, subscriptions, data health, plus all existing charts), business-only widgets gated by entity type, and a custom widget builder — define stat widgets from the UI over account balances or trailing spend, evaluated book-scoped on the server
+- **Sector-based rebalancing**: allocate by sector in addition to symbol, with fund exposure spread via sector weights, sector targets mapped back to per-symbol trades, and a sector-data backfill for holdings missing metadata
+- **Three new reports**: Budget Report (budgeted vs actual per account with subtotals), Sales by Customer, and Expenses by Vendor (new Business Reports category)
+- Dividends: TTM tooltips ("trailing twelve months") and per-security links to account ledgers
+
+### Changed
+- **Budgets overview** overhauled: sortable and filterable table with status pills (Active/Past/No amounts), resilient per-row progress, per-row action menus (scenario/compare for any budget), and a proper mobile card layout
+- **KPI/stat cards are dramatically more compact on mobile** (shared StatCard/StatGrid across 12 pages, ~75% less vertical space on phones; desktop unchanged)
+- Navigation: Receipts, Payslips, and Statements folded into one Uploads group; Inventory added to the Business group
 ## [0.8.0.0] - 2026-07-09
 
 ### Added
