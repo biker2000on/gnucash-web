@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.3.0] - 2026-07-11
+
+### Fixed
+- **Account paths never include the root account**: the investments cash/portfolio views built paths from the book's top-level root account (e.g. `Root Account:Assets:…`); paths now start at the first real account, matching the rest of the app. Works regardless of the root's name.
+
+### Data (prod + dev, not shipped in the image)
+- **John Hancock "Industrial Insight 401k"**: its holdings were recorded under real tickers (VT, FSMDX) but priced in John Hancock *units* that differ from the market, which inflated the historical 401k balance (VT was ~4.8× overstated). Split these into separate JH-specific commodities (`JOHNHANCOCK` namespace) with market quoting disabled, and backfilled a daily price series = buy-derived ratio × the ticker's real market price. The real VT/FSMDX tickers are preserved for future use. Migration: `scripts/jh-401k-separate.mjs`.
+
 ## [0.9.2.0] - 2026-07-11
 
 ### Added
