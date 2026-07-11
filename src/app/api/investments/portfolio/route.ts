@@ -110,6 +110,9 @@ function buildAccountPathFromMap(
   while (currentGuid) {
     const account = lookup.get(currentGuid);
     if (!account) break;
+    // Never include the book's top-level root account (parent_guid === null) in
+    // a displayed path — it is an implementation detail, not a real account.
+    if (account.parent_guid === null) break;
     segments.unshift(account.name);
     currentGuid = account.parent_guid;
   }
