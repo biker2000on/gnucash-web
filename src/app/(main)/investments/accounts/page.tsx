@@ -136,29 +136,19 @@ export default function AccountsPage() {
     return portfolio.sectorByAccount[effectiveSelectedAccount] || [];
   }, [effectiveSelectedAccount, portfolio]);
 
-  // Get account GUIDs for selected parent account
-  const filteredAccountGuids = useMemo(() => {
-    return filteredHoldings.map(h => h.accountGuid);
-  }, [filteredHoldings]);
-
-  // The account's own cash account, so its balance is folded into the value
-  // series — otherwise the chart cliffs to ~$0 during a rebalance (holdings sold
-  // to cash, not yet reinvested) and TWR reads -100%.
-  const cashHistoryGuids = useMemo(() => {
-    const guid = selectedCashAccount?.cashAccountGuid || selectedCashAccount?.parentGuid;
-    return guid ? [guid] : [];
-  }, [selectedCashAccount]);
-
-  // Trigger fetch when account selection changes
+  // Drive the performance chart off the selected parent account so the API can
+  // resolve its whole subtree server-side — every holding ever held under it
+  // (including closed 0-share positions like a since-sold fund) plus its cash.
+  // Deriving accounts from current holdings would silently omit closed ones.
   useEffect(() => {
-    if (filteredAccountGuids.length > 0) {
-      fetchAccountHistory(filteredAccountGuids, cashHistoryGuids);
+    if (effectiveSelectedAccount) {
+      fetchAccountHistory(effectiveSelectedAccount);
     }
-  }, [filteredAccountGuids, cashHistoryGuids, fetchAccountHistory]);
+  }, [effectiveSelectedAccount, fetchAccountHistory]);
 
   // Get the cached account history
-  const accountHistory = getAccountHistory(filteredAccountGuids, cashHistoryGuids);
-  const accountCashFlows = getAccountCashFlows(filteredAccountGuids, cashHistoryGuids);
+  const accountHistory = getAccountHistory(effectiveSelectedAccount);
+  const accountCashFlows = getAccountCashFlows(effectiveSelectedAccount);
   const performancePercent = useMemo(() => {
     if (performanceMetric === 'mwr') {
       return calculateMoneyWeightedReturn(accountHistory, accountCashFlows);

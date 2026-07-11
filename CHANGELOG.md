@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.9.4.0] - 2026-07-11
 
 ### Fixed
-- **Account performance chart no longer craters during a rebalance**: the per-account chart valued only holdings, so when an account sold everything to cash and rebought later (e.g. a 401k provider switch), it dropped to ~$0 for the gap and broke TWR to −100%. The account's own cash balance is now folded into the value series (and its splits net internal transfers out of the return math), so the line stays continuous. The Account View "Total Value" now includes cash to match.
+- **Account performance chart now includes closed positions and cash**: the per-account chart resolved its accounts from *current* holdings, so any position since sold to zero (e.g. a fund liquidated in a 401k provider switch) had its entire history dropped — the pre-switch balance read far too low. The chart now resolves the selected account's full subtree server-side (every holding ever held under it, including closed ones) plus its cash balance, so historical value is complete and the line stays continuous through a rebalance (previously it cratered to ~$0 and broke TWR to −100%). Internal sell→cash→buy transfers net out of the return math, and the Account View "Total Value" includes cash to match.
 
 ## [0.9.3.0] - 2026-07-11
 

@@ -16,9 +16,9 @@ interface InvestmentDataContextType {
   fetchPortfolio: () => Promise<void>;
   fetchHistory: () => Promise<void>;
   handleFetchAllPrices: () => Promise<void>;
-  fetchAccountHistory: (accountGuids: string[], cashAccountGuids?: string[]) => Promise<void>;
-  getAccountHistory: (accountGuids: string[], cashAccountGuids?: string[]) => HistoryPoint[];
-  getAccountCashFlows: (accountGuids: string[], cashAccountGuids?: string[]) => CashFlowPoint[];
+  fetchAccountHistory: (parentAccountGuid: string) => Promise<void>;
+  getAccountHistory: (parentAccountGuid: string) => HistoryPoint[];
+  getAccountCashFlows: (parentAccountGuid: string) => CashFlowPoint[];
 }
 
 const InvestmentDataContext = createContext<InvestmentDataContextType | null>(null);
@@ -84,23 +84,19 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
-  const accountKey = (accountGuids: string[], cashAccountGuids: string[] = []) =>
-    `${[...accountGuids].sort().join(',')}|${[...cashAccountGuids].sort().join(',')}`;
-
-  const fetchAccountHistory = useCallback(async (accountGuids: string[], cashAccountGuids: string[] = []) => {
-    const key = accountKey(accountGuids, cashAccountGuids);
+  const fetchAccountHistory = useCallback(async (parentAccountGuid: string) => {
+    if (!parentAccountGuid) return;
     // Skip if already cached
-    if (accountHistoryMap[key]) return;
+    if (accountHistoryMap[parentAccountGuid]) return;
 
     try {
-      const params = new URLSearchParams({ days: '36500', accountGuids: accountGuids.join(',') });
-      if (cashAccountGuids.length > 0) params.set('cashAccountGuids', cashAccountGuids.join(','));
+      const params = new URLSearchParams({ days: '36500', parentAccountGuid });
       const res = await fetch(`/api/investments/history?${params.toString()}`);
       const data = await res.json();
       if (res.ok) {
         setAccountHistoryMap(prev => ({
           ...prev,
-          [key]: {
+          [parentAccountGuid]: {
             history: data.history || [],
             cashFlows: data.cashFlows || [],
           },
@@ -111,12 +107,12 @@ export function InvestmentDataProvider({ children }: { children: ReactNode }) {
     }
   }, [accountHistoryMap]);
 
-  const getAccountHistory = useCallback((accountGuids: string[], cashAccountGuids: string[] = []) => {
-    return accountHistoryMap[accountKey(accountGuids, cashAccountGuids)]?.history || [];
+  const getAccountHistory = useCallback((parentAccountGuid: string) => {
+    return accountHistoryMap[parentAccountGuid]?.history || [];
   }, [accountHistoryMap]);
 
-  const getAccountCashFlows = useCallback((accountGuids: string[], cashAccountGuids: string[] = []) => {
-    return accountHistoryMap[accountKey(accountGuids, cashAccountGuids)]?.cashFlows || [];
+  const getAccountCashFlows = useCallback((parentAccountGuid: string) => {
+    return accountHistoryMap[parentAccountGuid]?.cashFlows || [];
   }, [accountHistoryMap]);
 
   const handleFetchAllPrices = useCallback(async () => {

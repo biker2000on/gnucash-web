@@ -48,6 +48,12 @@ export async function GET(request: NextRequest) {
   // reads as ~$0 during a rebalance (holdings sold to cash, not yet reinvested),
   // producing a false cliff in the chart and breaking TWR (-100%).
   const cashAccountGuidsParam = searchParams.get('cashAccountGuids');
+  // Preferred for the per-account view: resolve the whole subtree of an
+  // investment parent account server-side. This picks up EVERY holding ever held
+  // under it — including fully-closed positions (0 shares now) that are excluded
+  // from current holdings — plus the account's cash, so historical value is
+  // complete regardless of what is held today.
+  const parentAccountGuid = searchParams.get('parentAccountGuid');
 
   const startDate = new Date();
   startDate.setUTCDate(startDate.getUTCDate() - days);
@@ -56,12 +62,36 @@ export async function GET(request: NextRequest) {
     // Get book account GUIDs for scoping
     const bookAccountGuids = await getBookAccountGuids();
 
-    // Cash accounts to fold into the value series (scoped to the active book).
-    const cashAccountGuids = cashAccountGuidsParam
-      ? cashAccountGuidsParam.split(',').filter((g) => bookAccountGuids.includes(g))
-      : [];
+    // When a parent account is given, resolve its full descendant subtree so we
+    // can split it into holdings (STOCK/MUTUAL) and cash (CURRENCY) accounts,
+    // including closed positions.
+    let subtreeGuids: Set<string> | null = null;
+    if (parentAccountGuid && bookAccountGuids.includes(parentAccountGuid)) {
+      const tree = await prisma.accounts.findMany({
+        where: { guid: { in: bookAccountGuids } },
+        select: { guid: true, parent_guid: true },
+      });
+      const childrenByParent = new Map<string, string[]>();
+      for (const a of tree) {
+        if (!a.parent_guid) continue;
+        if (!childrenByParent.has(a.parent_guid)) childrenByParent.set(a.parent_guid, []);
+        childrenByParent.get(a.parent_guid)!.push(a.guid);
+      }
+      subtreeGuids = new Set<string>([parentAccountGuid]);
+      const stack = [parentAccountGuid];
+      while (stack.length > 0) {
+        const g = stack.pop()!;
+        for (const child of childrenByParent.get(g) ?? []) {
+          if (!subtreeGuids.has(child)) {
+            subtreeGuids.add(child);
+            stack.push(child);
+          }
+        }
+      }
+    }
 
-    // Get all STOCK accounts with non-CURRENCY commodities in active book
+    // Get all STOCK/MUTUAL accounts (non-CURRENCY) in the active book. No share
+    // filter, so closed positions are included.
     const accounts = await prisma.accounts.findMany({
       where: {
         guid: { in: bookAccountGuids },
@@ -76,10 +106,29 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // Filter to specific accounts if provided
-    const filteredAccounts = filterAccountGuids
-      ? accounts.filter(a => filterAccountGuids.includes(a.guid))
-      : accounts;
+    // Determine which holding accounts and cash accounts to value.
+    let filteredAccounts: { guid: string; commodity_guid: string | null }[];
+    let cashAccountGuids: string[];
+    if (subtreeGuids) {
+      filteredAccounts = accounts.filter(a => subtreeGuids!.has(a.guid));
+      // Cash = CURRENCY-denominated accounts anywhere in the subtree (includes
+      // the parent itself when it holds cash directly).
+      const cashAccounts = await prisma.accounts.findMany({
+        where: {
+          guid: { in: [...subtreeGuids] },
+          commodity: { namespace: 'CURRENCY' },
+        },
+        select: { guid: true },
+      });
+      cashAccountGuids = cashAccounts.map(a => a.guid);
+    } else {
+      filteredAccounts = filterAccountGuids
+        ? accounts.filter(a => filterAccountGuids.includes(a.guid))
+        : accounts;
+      cashAccountGuids = cashAccountGuidsParam
+        ? cashAccountGuidsParam.split(',').filter((g) => bookAccountGuids.includes(g))
+        : [];
+    }
 
     if (filteredAccounts.length === 0 && cashAccountGuids.length === 0) {
       return NextResponse.json({ history: [], cashFlows: [], indices: { sp500: [], djia: [], nasdaq: [], russell2000: [] } });
