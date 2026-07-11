@@ -14,11 +14,19 @@ import {
     type RebalanceTarget,
     type SellLotCandidate,
 } from '@/lib/rebalancing';
+import {
+    holdingsToSectorExposure,
+    mapSectorSuggestionsToSymbolTrades,
+    parseRebalanceConfig,
+    type RebalanceMode,
+    type SectorMetadataEntry,
+} from '@/lib/rebalancing-sector';
 
 const TOOL_TYPE = 'rebalance_targets';
 const CONFIG_NAME = 'Rebalance Targets';
 
 const SaveTargetsSchema = z.object({
+    mode: z.enum(['symbol', 'sector']).optional(),
     targets: z.array(
         z.object({
             key: z.string().min(1).max(64),
@@ -28,51 +36,61 @@ const SaveTargetsSchema = z.object({
     bandPct: z.number().min(0).max(50).optional(),
 });
 
-interface SavedConfig {
-    targets: RebalanceTarget[];
-    bandPct: number;
+function parseTargetsParam(raw: string | null): RebalanceTarget[] | null {
+    if (!raw) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        return parsed
+            .filter((t): t is { key: string; targetPct: number } =>
+                !!t && typeof t === 'object' &&
+                typeof (t as Record<string, unknown>).key === 'string' &&
+                typeof (t as Record<string, unknown>).targetPct === 'number' &&
+                Number.isFinite((t as { targetPct: number }).targetPct) &&
+                (t as { targetPct: number }).targetPct >= 0
+            )
+            .map(t => ({ key: t.key, targetPct: t.targetPct }));
+    } catch {
+        return null; // Malformed preview payload — fall back to saved targets
+    }
 }
 
-function parseSavedConfig(config: unknown): SavedConfig {
-    const fallback: SavedConfig = { targets: [], bandPct: DEFAULT_BAND_PCT };
-    if (!config || typeof config !== 'object') return fallback;
-    const obj = config as Record<string, unknown>;
-
-    const targets: RebalanceTarget[] = [];
-    if (Array.isArray(obj.targets)) {
-        for (const t of obj.targets) {
-            if (
-                t && typeof t === 'object' &&
-                typeof (t as Record<string, unknown>).key === 'string' &&
-                typeof (t as Record<string, unknown>).targetPct === 'number'
-            ) {
-                targets.push({
-                    key: (t as { key: string }).key,
-                    targetPct: (t as { targetPct: number }).targetPct,
-                });
-            }
-        }
+/** Load sector/sector-weight metadata for the given symbols, keyed by symbol. */
+async function loadSectorMetadata(
+    symbols: string[]
+): Promise<Record<string, SectorMetadataEntry>> {
+    if (symbols.length === 0) return {};
+    const rows = await prisma.gnucash_web_commodity_metadata.findMany({
+        where: { mnemonic: { in: symbols } },
+        select: { mnemonic: true, sector: true, sector_weights: true },
+    });
+    const map: Record<string, SectorMetadataEntry> = {};
+    for (const row of rows) {
+        map[row.mnemonic] = {
+            sector: row.sector,
+            sectorWeights: row.sector_weights as Record<string, number> | null,
+        };
     }
-
-    const bandPct = typeof obj.bandPct === 'number' && obj.bandPct >= 0
-        ? obj.bandPct
-        : DEFAULT_BAND_PCT;
-
-    return { targets, bandPct };
+    return map;
 }
 
 /**
  * GET /api/investments/rebalance
  *
  * Query params:
+ *   - mode: 'symbol' (default: saved mode) or 'sector'
  *   - newCash: optional dollars of new cash to invest (buy-only mode)
  *   - band: optional tolerance band override (absolute percentage points)
  *   - targets: optional JSON array [{key,targetPct}] to preview unsaved
- *     targets; when omitted the saved targets are used
+ *     targets for the active mode; when omitted the saved targets are used
  *
- * Returns current holdings consolidated by symbol, the saved targets,
- * computed drift rows, and rebalancing suggestions with tax
- * annotations on sells.
+ * Symbol mode: holdings and suggestions are keyed by commodity symbol.
+ * Sector mode: holdings are spread into sector exposure using cached
+ * commodity metadata (single stocks -> their sector, funds/ETFs ->
+ * proportional sector_weights, unknown -> 'Unclassified'); rows and
+ * suggestions are keyed by sector, and each sector trade is broken
+ * down into per-symbol trades (sectorGroups) plus a netted per-symbol
+ * list (symbolTrades) carrying the usual tax annotations on sells.
  */
 export async function GET(request: NextRequest) {
     try {
@@ -121,36 +139,71 @@ export async function GET(request: NextRequest) {
             currentValue: Math.round(bySymbol.get(symbol)!.value * 100) / 100,
         }));
 
-        // Saved targets from tool config
+        // Saved targets from tool config (legacy shape migrates to symbol mode)
         const configs = await ToolConfigService.listByUser(user.id, bookGuid, TOOL_TYPE);
-        const saved = parseSavedConfig(configs[0]?.config);
+        const saved = parseRebalanceConfig(configs[0]?.config);
 
-        // Optional unsaved-targets preview
-        let effectiveTargets = saved.targets;
-        const targetsParam = searchParams.get('targets');
-        if (targetsParam) {
-            try {
-                const parsed: unknown = JSON.parse(targetsParam);
-                if (Array.isArray(parsed)) {
-                    effectiveTargets = parsed
-                        .filter((t): t is { key: string; targetPct: number } =>
-                            !!t && typeof t === 'object' &&
-                            typeof (t as Record<string, unknown>).key === 'string' &&
-                            typeof (t as Record<string, unknown>).targetPct === 'number' &&
-                            Number.isFinite((t as { targetPct: number }).targetPct) &&
-                            (t as { targetPct: number }).targetPct >= 0
-                        )
-                        .map(t => ({ key: t.key, targetPct: t.targetPct }));
-                }
-            } catch {
-                // Malformed preview payload — fall back to saved targets
-            }
-        }
+        const modeParam = searchParams.get('mode');
+        const allocationMode: RebalanceMode = modeParam === 'sector' || modeParam === 'symbol'
+            ? modeParam
+            : saved.mode;
+
+        const savedTargets = allocationMode === 'sector'
+            ? saved.targetsBySector
+            : saved.targetsBySymbol;
+
+        // Optional unsaved-targets preview (applies to the active mode)
+        const previewTargets = parseTargetsParam(searchParams.get('targets'));
+        const effectiveTargets = previewTargets ?? savedTargets;
 
         const bandOverride = bandRaw !== null ? parseFloat(bandRaw) : NaN;
         const bandPct = Number.isFinite(bandOverride) && bandOverride >= 0
             ? bandOverride
             : saved.bandPct;
+
+        if (allocationMode === 'sector') {
+            // Spread symbol holdings into sector exposure
+            const metadata = await loadSectorMetadata(symbols);
+            const exposure = holdingsToSectorExposure(holdings, metadata);
+
+            const result = computeRebalance(exposure.holdings, effectiveTargets, {
+                newCash,
+                bandPct,
+            });
+
+            // Map sector deltas to per-symbol trades and tax-annotate net sells
+            const mapping = mapSectorSuggestionsToSymbolTrades(
+                result.suggestions,
+                exposure.contributions
+            );
+            const sellKeys = mapping.netBySymbol
+                .filter(s => s.action === 'SELL')
+                .map(s => s.key);
+            if (sellKeys.length > 0) {
+                const accountsBySymbol: Record<string, Array<{ guid: string; name?: string }>> = {};
+                for (const key of sellKeys) {
+                    accountsBySymbol[key] = bySymbol.get(key)?.accounts ?? [];
+                }
+                const lotsByKey: Record<string, SellLotCandidate[]> =
+                    await loadSellCandidatesBySymbol(accountsBySymbol);
+                mapping.netBySymbol = annotateSellSuggestions(mapping.netBySymbol, lotsByKey);
+            }
+
+            return NextResponse.json({
+                ...result,
+                allocationMode,
+                holdings,
+                sectorGroups: mapping.bySector,
+                symbolTrades: mapping.netBySymbol,
+                unclassifiedSymbols: exposure.unclassifiedSymbols,
+                savedMode: saved.mode,
+                savedTargets,
+                savedTargetsBySymbol: saved.targetsBySymbol,
+                savedTargetsBySector: saved.targetsBySector,
+                savedBandPct: saved.bandPct,
+                generatedAt: new Date().toISOString(),
+            });
+        }
 
         const result = computeRebalance(holdings, effectiveTargets, { newCash, bandPct });
 
@@ -170,8 +223,12 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({
             ...result,
+            allocationMode,
             holdings,
-            savedTargets: saved.targets,
+            savedMode: saved.mode,
+            savedTargets,
+            savedTargetsBySymbol: saved.targetsBySymbol,
+            savedTargetsBySector: saved.targetsBySector,
             savedBandPct: saved.bandPct,
             generatedAt: new Date().toISOString(),
         });
@@ -188,7 +245,14 @@ export async function GET(request: NextRequest) {
  * PUT /api/investments/rebalance
  *
  * Save target allocations (and optional band) to gnucash_web_tool_config.
- * Body: { targets: [{ key, targetPct }], bandPct?: number }
+ * Body: { mode?: 'symbol'|'sector', targets: [{ key, targetPct }], bandPct?: number }
+ *
+ * Targets are stored per mode: saving in sector mode replaces
+ * targetsBySector and leaves targetsBySymbol untouched (and vice
+ * versa). The saved `mode` becomes the default for future GETs. Writes
+ * always use the current shape
+ * { mode, targetsBySymbol, targetsBySector, bandPct }; a legacy
+ * { targets, bandPct } row is migrated on first save.
  */
 export async function PUT(request: NextRequest) {
     try {
@@ -202,12 +266,17 @@ export async function PUT(request: NextRequest) {
         // Drop zero-percent targets — absence already means 0%
         const targets = validated.targets.filter(t => t.targetPct > 0);
 
+        const existing = await ToolConfigService.listByUser(user.id, bookGuid, TOOL_TYPE);
+        const prior = parseRebalanceConfig(existing[0]?.config);
+
+        const mode = validated.mode ?? prior.mode;
         const config: Record<string, unknown> = {
-            targets,
+            mode,
+            targetsBySymbol: mode === 'symbol' ? targets : prior.targetsBySymbol,
+            targetsBySector: mode === 'sector' ? targets : prior.targetsBySector,
             bandPct: validated.bandPct ?? DEFAULT_BAND_PCT,
         };
 
-        const existing = await ToolConfigService.listByUser(user.id, bookGuid, TOOL_TYPE);
         const savedRow = existing.length > 0
             ? await ToolConfigService.update(existing[0].id, user.id, bookGuid, { config })
             : await ToolConfigService.create(user.id, bookGuid, {
@@ -221,6 +290,7 @@ export async function PUT(request: NextRequest) {
         }
 
         return NextResponse.json({
+            mode,
             targets,
             bandPct: config.bandPct,
             savedAt: new Date().toISOString(),

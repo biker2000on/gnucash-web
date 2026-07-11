@@ -22,6 +22,9 @@ export enum ReportType {
   CONTRIBUTION_SUMMARY = 'contribution_summary',
   INCOME_STATEMENT_BY_PERIOD = 'income_statement_by_period',
   NET_WORTH_BY_OWNER = 'net_worth_by_owner',
+  BUDGET_REPORT = 'budget_report',
+  SALES_BY_CUSTOMER = 'sales_by_customer',
+  EXPENSES_BY_VENDOR = 'expenses_by_vendor',
 }
 
 export interface ReportConfig {
@@ -29,7 +32,7 @@ export interface ReportConfig {
   name: string;
   description: string;
   icon: string;
-  category: 'financial' | 'account' | 'transaction' | 'investment' | 'chart';
+  category: 'financial' | 'account' | 'transaction' | 'investment' | 'business' | 'chart';
 }
 
 export interface ReportFilters {
@@ -319,6 +322,27 @@ export const REPORTS: ReportConfig[] = [
     description: 'Retirement and brokerage account contributions with IRS limit tracking',
     icon: 'trending',
     category: 'investment',
+  },
+  {
+    type: ReportType.BUDGET_REPORT,
+    name: 'Budget Report',
+    description: 'Budgeted vs actual amounts per account with income and expense subtotals',
+    icon: 'account',
+    category: 'financial',
+  },
+  {
+    type: ReportType.SALES_BY_CUSTOMER,
+    name: 'Sales by Customer',
+    description: 'Posted customer invoice totals per customer with tax, payments, and balance',
+    icon: 'trending',
+    category: 'business',
+  },
+  {
+    type: ReportType.EXPENSES_BY_VENDOR,
+    name: 'Expenses by Vendor',
+    description: 'Posted vendor bill totals per vendor with amounts paid and outstanding balance',
+    icon: 'cash',
+    category: 'business',
   },
   {
     type: ReportType.NET_WORTH_BY_OWNER,

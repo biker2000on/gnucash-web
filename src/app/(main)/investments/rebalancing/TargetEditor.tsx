@@ -5,9 +5,11 @@ import { formatCurrency } from '@/lib/format';
 
 interface TargetEditorProps {
     rows: RebalanceRow[];
-    /** Raw input strings keyed by symbol (controlled by the page). */
+    /** Raw input strings keyed by symbol/sector (controlled by the page). */
     targetInputs: Record<string, string>;
     onTargetChange: (key: string, value: string) => void;
+    /** First column header: 'Symbol' (default) or 'Sector'. */
+    keyHeader?: string;
 }
 
 function parsePct(value: string | undefined): number {
@@ -19,7 +21,7 @@ function parsePct(value: string | undefined): number {
  * Editable target-allocation table: one row per symbol with current %,
  * an editable target %, drift, and the dollar delta to reach target.
  */
-export function TargetEditor({ rows, targetInputs, onTargetChange }: TargetEditorProps) {
+export function TargetEditor({ rows, targetInputs, onTargetChange, keyHeader = 'Symbol' }: TargetEditorProps) {
     const totalPct = rows.reduce((sum, r) => sum + parsePct(targetInputs[r.key]), 0);
     const totalOk = Math.abs(totalPct - 100) <= 0.01;
 
@@ -47,7 +49,7 @@ export function TargetEditor({ rows, targetInputs, onTargetChange }: TargetEdito
                 <table className="w-full min-w-[560px] text-sm">
                     <thead className="bg-background-tertiary/50">
                         <tr className="text-left text-xs text-foreground-secondary">
-                            <th className="px-4 py-2 font-medium">Symbol</th>
+                            <th className="px-4 py-2 font-medium">{keyHeader}</th>
                             <th className="px-4 py-2 font-medium text-right">Value</th>
                             <th className="px-4 py-2 font-medium text-right">Current %</th>
                             <th className="px-4 py-2 font-medium text-right">Target %</th>

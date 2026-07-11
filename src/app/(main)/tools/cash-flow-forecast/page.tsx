@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { formatCurrency } from '@/lib/format';
 import type { ForecastWarning } from '@/lib/forecast';
 import { COMBINED_GUID } from '@/lib/forecast';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import ForecastChart from './ForecastChart';
 
 const HORIZON_OPTIONS = [30, 60, 90, 180] as const;
@@ -249,22 +250,23 @@ export default function CashFlowForecastPage() {
             {data && (
                 <>
                     {/* Summary */}
-                    <section
-                        className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 transition-opacity duration-150 ease-out ${loading ? 'opacity-60' : 'opacity-100'}`}
+                    <StatGrid
+                        cols={4}
+                        className={`transition-opacity duration-150 ease-out ${loading ? 'opacity-60' : 'opacity-100'}`}
                     >
-                        <SummaryCard label="Current Balance" value={formatCurrency(startBalance)} />
-                        <SummaryCard
+                        <StatCard label="Current Balance" value={formatCurrency(startBalance)} />
+                        <StatCard
                             label={`Projected in ${data.horizonDays} Days`}
                             value={formatCurrency(endBalance)}
                             tone={endBalance < data.threshold ? 'negative' : undefined}
                         />
-                        <SummaryCard
+                        <StatCard
                             label="Net Change"
                             value={`${netChange >= 0 ? '+' : ''}${formatCurrency(netChange)}`}
                             tone={netChange >= 0 ? 'positive' : 'negative'}
                         />
-                        <SummaryCard label="Scheduled Events" value={String(data.events.length)} />
-                    </section>
+                        <StatCard label="Scheduled Events" value={String(data.events.length)} />
+                    </StatGrid>
 
                     {/* Warnings */}
                     {displayWarnings.length > 0 && (
@@ -376,30 +378,6 @@ export default function CashFlowForecastPage() {
                     <p className="text-xs text-foreground-muted">{data.runRateNote}</p>
                 </>
             )}
-        </div>
-    );
-}
-
-function SummaryCard({
-    label,
-    value,
-    tone,
-}: {
-    label: string;
-    value: string;
-    tone?: 'positive' | 'negative';
-}) {
-    const valueColor =
-        tone === 'positive' ? 'text-positive' : tone === 'negative' ? 'text-negative' : 'text-foreground';
-    return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-5">
-            <p className="text-xs uppercase tracking-wide text-foreground-muted">{label}</p>
-            <p
-                className={`mt-2 text-2xl font-semibold font-mono ${valueColor}`}
-                style={{ fontFeatureSettings: "'tnum'" }}
-            >
-                {value}
-            </p>
         </div>
     );
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useToast } from '@/contexts/ToastContext';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useAccounts } from '@/lib/hooks/useAccounts';
@@ -398,15 +399,16 @@ export default function StatementReconcilePage() {
         </div>
 
         {/* Balance summary */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <SummaryTile label="Opening" value={formatCurrency(num(batch.openingBalance), currency)} />
-          <SummaryTile label="Closing" value={formatCurrency(num(batch.closingBalance), currency)} />
-          <SummaryTile
+        <StatGrid cols={4}>
+          <StatCard size="compact" label="Opening" value={formatCurrency(num(batch.openingBalance), currency)} />
+          <StatCard size="compact" label="Closing" value={formatCurrency(num(batch.closingBalance), currency)} />
+          <StatCard
+            size="compact"
             label="Statement Change"
             value={formatCurrency(num(batch.closingBalance) - num(batch.openingBalance), currency)}
           />
-          <SummaryTile label="Currency" value={currency} mono={false} />
-        </div>
+          <StatCard size="compact" label="Currency" value={currency} />
+        </StatGrid>
       </div>
 
       {/* Error state */}
@@ -689,15 +691,6 @@ function BackLink() {
       </svg>
       Statements
     </button>
-  );
-}
-
-function SummaryTile({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="bg-surface border border-border rounded-lg px-3 py-2">
-      <div className="text-[10px] text-foreground-muted uppercase tracking-wider">{label}</div>
-      <div className={`text-sm text-foreground mt-0.5 ${mono ? 'font-mono tabular-nums' : ''}`}>{value}</div>
-    </div>
   );
 }
 

@@ -9,6 +9,7 @@ import type {
     DigestBill,
     DigestBudgetRow,
 } from '@/lib/digest';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -56,60 +57,38 @@ function NetWorthHero({ digest }: { digest: MonthlyDigest }) {
     const { end, change, changePercent } = digest.netWorth;
     const arrow = change > 0 ? '▲' : change < 0 ? '▼' : '—';
     return (
-        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-            <p className="text-xs uppercase tracking-wide text-foreground-muted">
+        <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 sm:p-6">
+            <p className="text-[10px] sm:text-xs uppercase tracking-wide text-foreground-muted">
                 Net worth · end of {digest.monthLabel}
             </p>
             <p
-                className="mt-2 text-4xl font-mono font-bold text-foreground"
+                className="mt-1 sm:mt-2 text-2xl sm:text-4xl font-mono font-bold text-foreground"
                 style={TNUM}
             >
                 {formatCurrency(end, digest.currency)}
             </p>
-            <p className={`mt-2 text-lg font-mono font-semibold ${deltaClass(change)}`} style={TNUM}>
+            <p className={`mt-1 sm:mt-2 text-sm sm:text-lg font-mono font-semibold ${deltaClass(change)}`} style={TNUM}>
                 {arrow} {change >= 0 ? '+' : ''}
                 {formatCurrency(change, digest.currency)}
-                <span className="ml-2 text-sm">({pctText(changePercent)} vs prior month)</span>
+                <span className="ml-2 text-xs sm:text-sm">({pctText(changePercent)} vs prior month)</span>
             </p>
         </section>
-    );
-}
-
-function StatCard({
-    label,
-    value,
-    sublabel,
-    valueClass = 'text-foreground',
-}: {
-    label: string;
-    value: string;
-    sublabel?: string;
-    valueClass?: string;
-}) {
-    return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-5">
-            <p className="text-xs uppercase tracking-wide text-foreground-muted">{label}</p>
-            <p className={`mt-1 text-2xl font-mono font-semibold ${valueClass}`} style={TNUM}>
-                {value}
-            </p>
-            {sublabel && <p className="mt-1 text-xs text-foreground-muted">{sublabel}</p>}
-        </div>
     );
 }
 
 function StatRow({ digest }: { digest: MonthlyDigest }) {
     const { income, expenses, savingsRate } = digest.cashFlow;
     return (
-        <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <StatCard label="Income" value={formatCurrency(income, digest.currency)} valueClass="text-positive" />
-            <StatCard label="Expenses" value={formatCurrency(expenses, digest.currency)} valueClass="text-negative" />
+        <StatGrid cols={3}>
+            <StatCard label="Income" value={formatCurrency(income, digest.currency)} tone="positive" />
+            <StatCard label="Expenses" value={formatCurrency(expenses, digest.currency)} tone="negative" />
             <StatCard
                 label="Savings rate"
                 value={`${savingsRate.toFixed(1)}%`}
-                sublabel="Income minus expenses"
-                valueClass={savingsRate >= 0 ? 'text-primary' : 'text-negative'}
+                sub="Income minus expenses"
+                tone={savingsRate >= 0 ? 'primary' : 'negative'}
             />
-        </section>
+        </StatGrid>
     );
 }
 
@@ -433,14 +412,14 @@ export default function DigestPage() {
                         <div className="h-3 bg-foreground-muted/20 rounded w-40 mb-3" />
                         <div className="h-9 bg-foreground-muted/20 rounded w-52" />
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <StatGrid cols={3}>
                         {[1, 2, 3].map(i => (
-                            <div key={i} className="bg-surface/30 border border-border rounded-xl p-5 animate-pulse">
-                                <div className="h-3 bg-foreground-muted/20 rounded w-20 mb-3" />
-                                <div className="h-7 bg-foreground-muted/20 rounded w-28" />
+                            <div key={i} className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-xl sm:p-5 animate-pulse">
+                                <div className="h-3 bg-foreground-muted/20 rounded w-20 mb-2 sm:mb-3" />
+                                <div className="h-5 sm:h-7 bg-foreground-muted/20 rounded w-28" />
                             </div>
                         ))}
-                    </div>
+                    </StatGrid>
                 </div>
             )}
 

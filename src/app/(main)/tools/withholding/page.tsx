@@ -13,6 +13,7 @@ import {
 } from '@/lib/tax/types';
 import type { WithholdingCheckupPayload } from '@/lib/withholding';
 import WithholdingHeadline from './WithholdingHeadline';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 const PAY_FREQUENCIES: Array<{ value: number; label: string }> = [
@@ -39,16 +40,13 @@ function MetricCard({
   sub?: string;
   tone?: 'positive' | 'negative' | 'neutral';
 }) {
-  const valueClass =
-    tone === 'positive' ? 'text-positive' : tone === 'negative' ? 'text-negative' : 'text-foreground';
   return (
-    <div className="rounded-lg border border-border bg-surface p-4">
-      <p className="text-xs uppercase tracking-wide text-foreground-muted">{label}</p>
-      <p className={`mt-1 text-xl font-mono font-semibold ${valueClass}`} style={MONO}>
-        {value}
-      </p>
-      {sub && <p className="mt-0.5 text-[11px] text-foreground-muted">{sub}</p>}
-    </div>
+    <StatCard
+      label={label}
+      value={value}
+      sub={sub}
+      tone={tone === 'positive' ? 'positive' : tone === 'negative' ? 'negative' : 'default'}
+    />
   );
 }
 
@@ -259,7 +257,7 @@ export default function WithholdingCheckupPage() {
               <WithholdingHeadline checkup={checkup} />
 
               {/* Gap metrics */}
-              <div className="grid gap-4 sm:grid-cols-3">
+              <StatGrid cols={3}>
                 <MetricCard
                   label="Safe-harbor target"
                   value={formatCurrency(checkup.safeHarbor.requiredAnnualPayment)}
@@ -277,7 +275,7 @@ export default function WithholdingCheckupPage() {
                   tone={checkup.gapToFullLiability > 0.005 ? 'negative' : 'positive'}
                   sub="To owe nothing at filing"
                 />
-              </div>
+              </StatGrid>
 
               {/* Safe harbor + quarterly */}
               <section className="rounded-lg border border-border bg-surface/30 p-5 space-y-4">
@@ -369,7 +367,7 @@ export default function WithholdingCheckupPage() {
                 {bumpNote ? (
                   <p className="text-sm text-foreground-secondary">{bumpNote}</p>
                 ) : (
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <StatGrid cols={2}>
                     <MetricCard
                       label="Extra withholding / paycheck — avoid penalty"
                       value={`+${formatCurrency(checkup.recommendedPerPaycheckBump ?? 0)}`}
@@ -382,7 +380,7 @@ export default function WithholdingCheckupPage() {
                       tone="neutral"
                       sub="Fully covers the projected liability"
                     />
-                  </div>
+                  </StatGrid>
                 )}
               </section>
 

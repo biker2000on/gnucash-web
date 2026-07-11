@@ -5,6 +5,7 @@ import type { ScheduleCReport } from '@/lib/business/business-reports';
 import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useToast } from '@/contexts/ToastContext';
 import ScheduleCMappingPanel, {
@@ -189,41 +190,24 @@ export default function ScheduleCPage() {
             {!loading && !error && report && (
                 <>
                     {/* Compact stat row */}
-                    <div className="grid grid-cols-3 gap-4">
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-                            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
-                                Gross Receipts (Line 1)
-                            </div>
-                            <div className="text-lg font-bold font-mono text-foreground" style={TNUM}>
-                                {formatCurrency(report.grossReceipts)}
-                            </div>
-                        </div>
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-                            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
-                                Total Expenses (Line 28)
-                            </div>
-                            <div className="text-lg font-bold font-mono text-foreground" style={TNUM}>
-                                {formatCurrency(report.totalExpenses)}
-                            </div>
-                        </div>
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-                            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
-                                Net Profit (Line 31)
-                            </div>
-                            <div
-                                className={`text-lg font-bold font-mono ${
-                                    report.netProfit > 0
-                                        ? 'text-positive'
-                                        : report.netProfit < 0
-                                          ? 'text-negative'
-                                          : 'text-foreground'
-                                }`}
-                                style={TNUM}
-                            >
-                                {formatCurrency(report.netProfit)}
-                            </div>
-                        </div>
-                    </div>
+                    <StatGrid cols={3}>
+                        <StatCard
+                            label="Gross Receipts (Line 1)"
+                            value={formatCurrency(report.grossReceipts)}
+                            size="compact"
+                        />
+                        <StatCard
+                            label="Total Expenses (Line 28)"
+                            value={formatCurrency(report.totalExpenses)}
+                            size="compact"
+                        />
+                        <StatCard
+                            label="Net Profit (Line 31)"
+                            value={formatCurrency(report.netProfit)}
+                            tone={report.netProfit > 0 ? 'positive' : report.netProfit < 0 ? 'negative' : 'default'}
+                            size="compact"
+                        />
+                    </StatGrid>
 
                     {report.grossReceipts === 0 && report.totalExpenses === 0 ? (
                         <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">

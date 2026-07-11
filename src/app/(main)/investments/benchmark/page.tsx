@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import ExpandableChart from '@/components/charts/ExpandableChart';
 import { useToast } from '@/contexts/ToastContext';
 import {
@@ -28,10 +29,6 @@ interface BenchmarkResponse extends BenchmarkComparison {
 
 function formatPercent(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
-}
-
-function diffColor(value: number): string {
-  return value >= 0 ? 'text-positive' : 'text-negative';
 }
 
 export default function BenchmarkPage() {
@@ -135,11 +132,11 @@ export default function BenchmarkPage() {
 
       {loading && !data ? (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <StatGrid cols={3}>
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-28 bg-background-tertiary rounded-lg animate-pulse" />
+              <div key={i} className="h-16 sm:h-28 bg-background-tertiary rounded-lg animate-pulse" />
             ))}
-          </div>
+          </StatGrid>
           <div className="h-80 bg-background-tertiary rounded-lg animate-pulse" />
         </div>
       ) : !data ? (
@@ -149,44 +146,32 @@ export default function BenchmarkPage() {
       ) : (
         <>
           {/* Headline cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-background-secondary rounded-lg p-4 border border-border">
-              <p className="text-foreground-muted text-sm">Your return</p>
-              <p
-                className={`text-2xl font-bold font-mono ${diffColor(data.portfolioReturn)}`}
-                style={{ fontFeatureSettings: "'tnum'" }}
-              >
-                {formatPercent(data.portfolioReturn)}
-              </p>
-              <p className="text-xs text-foreground-muted mt-1">Time-weighted return</p>
-            </div>
-            <div className="bg-background-secondary rounded-lg p-4 border border-border">
-              <p className="text-foreground-muted text-sm">{data.indexName} return</p>
-              <p
-                className={`text-2xl font-bold font-mono ${diffColor(data.indexReturn)}`}
-                style={{ fontFeatureSettings: "'tnum'" }}
-              >
-                {data.insufficientCoverage ? '—' : formatPercent(data.indexReturn)}
-              </p>
-              <p className="text-xs text-foreground-muted mt-1">{data.indexSymbol} total return</p>
-            </div>
-            <div className="bg-background-secondary rounded-lg p-4 border border-border">
-              <p className="text-foreground-muted text-sm">Difference (alpha)</p>
-              <p
-                className={`text-2xl font-bold font-mono ${diffColor(data.alpha)}`}
-                style={{ fontFeatureSettings: "'tnum'" }}
-              >
-                {data.insufficientCoverage ? '—' : formatPercent(data.alpha)}
-              </p>
-              <p className="text-xs text-foreground-muted mt-1">
-                {data.insufficientCoverage
+          <StatGrid cols={3}>
+            <StatCard
+              label="Your return"
+              value={formatPercent(data.portfolioReturn)}
+              tone={data.portfolioReturn >= 0 ? 'positive' : 'negative'}
+              sub="Time-weighted return"
+            />
+            <StatCard
+              label={`${data.indexName} return`}
+              value={data.insufficientCoverage ? '—' : formatPercent(data.indexReturn)}
+              tone={data.indexReturn >= 0 ? 'positive' : 'negative'}
+              sub={`${data.indexSymbol} total return`}
+            />
+            <StatCard
+              label="Difference (alpha)"
+              value={data.insufficientCoverage ? '—' : formatPercent(data.alpha)}
+              tone={data.alpha >= 0 ? 'positive' : 'negative'}
+              sub={
+                data.insufficientCoverage
                   ? 'Needs index coverage'
                   : data.alpha >= 0
                     ? `Ahead of the ${data.indexName}`
-                    : `Behind the ${data.indexName}`}
-              </p>
-            </div>
-          </div>
+                    : `Behind the ${data.indexName}`
+              }
+            />
+          </StatGrid>
 
           {/* Coverage prompt */}
           {data.insufficientCoverage && (

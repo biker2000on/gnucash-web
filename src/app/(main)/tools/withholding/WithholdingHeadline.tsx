@@ -65,15 +65,15 @@ export default function WithholdingHeadline({ checkup }: { checkup: WithholdingC
     <div className="space-y-4">
       {/* Verdict banner */}
       <div
-        className={`rounded-lg border p-5 ${
+        className={`rounded-lg border p-4 sm:p-5 ${
           onTrack ? 'border-positive/30 bg-positive/5' : 'border-negative/30 bg-negative/5'
         }`}
       >
-        <p className="text-xs uppercase tracking-wide text-foreground-muted">
+        <p className="text-[10px] sm:text-xs uppercase tracking-wide text-foreground-muted">
           {checkup.status === 'owe' ? 'Projected balance due' : 'Projected outcome'}
         </p>
         <p
-          className={`mt-1 text-2xl font-bold font-mono ${
+          className={`mt-1 text-lg sm:text-2xl font-bold font-mono ${
             verdictTone === 'positive' ? 'text-positive' : 'text-negative'
           }`}
           style={MONO}

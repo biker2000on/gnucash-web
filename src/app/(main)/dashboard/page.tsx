@@ -16,16 +16,32 @@ import { DateRangePicker } from '@/components/ui/DateRangePicker';
 import { DATE_PRESETS } from '@/lib/datePresets';
 import { Modal } from '@/components/ui/Modal';
 import NewBookForm from '@/components/books/NewBookForm';
+import { useToast } from '@/contexts/ToastContext';
 import {
     WidgetId,
     WidgetLayoutItem,
-    WIDGET_META,
-    ALL_WIDGET_IDS,
     DEFAULT_LAYOUT,
     WIDTH_ORDER,
     WIDTH_CLASSES,
+    isCustomWidgetId,
     sanitizeLayout,
 } from '@/lib/dashboard-layout';
+import {
+    CustomWidgetDef,
+    LAYOUT_PREF_KEY,
+    CUSTOM_WIDGETS_PREF_KEY,
+    getRegistryEntry,
+    sanitizeCustomWidgetDefs,
+} from '@/lib/dashboard-widgets';
+import WidgetGallery from '@/components/dashboard/WidgetGallery';
+import CustomWidgetForm from '@/components/dashboard/CustomWidgetForm';
+import GoalsWidget from '@/components/dashboard/widgets/GoalsWidget';
+import BudgetPacingWidget from '@/components/dashboard/widgets/BudgetPacingWidget';
+import ArApWidget from '@/components/dashboard/widgets/ArApWidget';
+import DividendsWidget from '@/components/dashboard/widgets/DividendsWidget';
+import SubscriptionsWidget from '@/components/dashboard/widgets/SubscriptionsWidget';
+import DataHealthWidget from '@/components/dashboard/widgets/DataHealthWidget';
+import CustomWidget from '@/components/dashboard/widgets/CustomWidget';
 
 // ------------------------------------------------------------------
 // Types matching API responses
@@ -166,34 +182,35 @@ function deriveTaxCategoriesFromTree(
  * dashboard-level data (collapsed, or controls match the dashboard).
  */
 function useOverrideFetch<T>(url: string | null): { data: T | null; loading: boolean } {
-    const [data, setData] = useState<T | null>(null);
-    const [loading, setLoading] = useState(false);
+    const [state, setState] = useState<{ url: string | null; data: T | null; loading: boolean }>({
+        url,
+        data: null,
+        loading: !!url,
+    });
+
+    // Derive the reset synchronously during render when the url changes
+    // (avoids a sync setState inside the effect body).
+    if (state.url !== url) {
+        setState({ url, data: null, loading: !!url });
+    }
 
     useEffect(() => {
-        if (!url) {
-            setData(null);
-            setLoading(false);
-            return;
-        }
+        if (!url) return;
         let cancelled = false;
-        setLoading(true);
         fetch(url)
             .then(res => (res.ok ? res.json() : null))
             .then(json => {
-                if (!cancelled) setData(json);
+                if (!cancelled) setState({ url, data: json, loading: false });
             })
             .catch(() => {
-                if (!cancelled) setData(null);
-            })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
+                if (!cancelled) setState({ url, data: null, loading: false });
             });
         return () => {
             cancelled = true;
         };
     }, [url]);
 
-    return { data, loading };
+    return { data: state.data, loading: state.loading };
 }
 
 /** Build an override URL when the expanded view differs from the dashboard period. */
@@ -295,6 +312,7 @@ function PieWidget({
 function DashboardContent() {
     const { period, setPeriod, startDate, endDate, queryString } = useDashboardPeriod();
     const { dashboardDefaultPeriod, setDashboardDefaultPeriod } = useUserPreferences();
+    const toast = useToast();
 
     // Data states
     const [kpiData, setKpiData] = useState<KPIData | null>(null);
@@ -314,6 +332,13 @@ function DashboardContent() {
     const [layoutLoaded, setLayoutLoaded] = useState(false);
     const [editing, setEditing] = useState(false);
     const dragIndexRef = useRef<number | null>(null);
+
+    // Composable-widget states
+    const [customDefs, setCustomDefs] = useState<CustomWidgetDef[]>([]);
+    const [isBusiness, setIsBusiness] = useState(false);
+    const [galleryOpen, setGalleryOpen] = useState(false);
+    const [customFormOpen, setCustomFormOpen] = useState(false);
+    const [editingCustom, setEditingCustom] = useState<CustomWidgetDef | null>(null);
 
     // Fetch KPIs
     const fetchKpis = useCallback(async (qs: string) => {
@@ -396,14 +421,19 @@ function DashboardContent() {
         };
     }, []);
 
-    // Load persisted dashboard layout
+    // Load persisted dashboard layout + custom widget definitions
     useEffect(() => {
         let cancelled = false;
-        fetch('/api/user/preferences?key=dashboard.layout')
+        fetch('/api/user/preferences?key=dashboard.*')
             .then(res => (res.ok ? res.json() : null))
             .then(json => {
                 if (cancelled) return;
-                const stored = sanitizeLayout(json?.preferences?.['dashboard.layout']);
+                const defs = sanitizeCustomWidgetDefs(json?.preferences?.[CUSTOM_WIDGETS_PREF_KEY]);
+                setCustomDefs(defs);
+                const stored = sanitizeLayout(
+                    json?.preferences?.[LAYOUT_PREF_KEY],
+                    defs.map(d => d.id)
+                );
                 if (stored) setLayout(stored);
             })
             .catch(() => {
@@ -417,15 +447,37 @@ function DashboardContent() {
         };
     }, []);
 
-    const persistLayout = useCallback((next: WidgetLayoutItem[]) => {
+    // Entity type gates business widgets in the gallery.
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/entity')
+            .then(res => (res.ok ? res.json() : null))
+            .then(profile => {
+                if (!cancelled && profile?.entityType) {
+                    setIsBusiness(profile.entityType !== 'household');
+                }
+            })
+            .catch(() => {
+                // default: household (business widgets hidden from gallery)
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const persistPreferences = useCallback((prefs: Record<string, unknown>) => {
         fetch('/api/user/preferences', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ preferences: { 'dashboard.layout': next } }),
+            body: JSON.stringify({ preferences: prefs }),
         }).catch(() => {
-            // non-fatal; layout still applies locally
+            // non-fatal; changes still apply locally
         });
     }, []);
+
+    const persistLayout = useCallback((next: WidgetLayoutItem[]) => {
+        persistPreferences({ [LAYOUT_PREF_KEY]: next });
+    }, [persistPreferences]);
 
     const updateLayout = useCallback((next: WidgetLayoutItem[]) => {
         setLayout(next);
@@ -444,10 +496,7 @@ function DashboardContent() {
     // Layout editing actions
     // ------------------------------------------------------------------
 
-    const hiddenWidgets = useMemo(
-        () => ALL_WIDGET_IDS.filter(id => !layout.some(item => item.id === id)),
-        [layout]
-    );
+    const placedIds = useMemo(() => new Set<string>(layout.map(item => item.id)), [layout]);
 
     const cycleWidth = (index: number) => {
         const next = layout.map((item, i) => {
@@ -463,8 +512,64 @@ function DashboardContent() {
     };
 
     const addWidget = (id: WidgetId) => {
-        const defaultItem = DEFAULT_LAYOUT.find(item => item.id === id);
-        updateLayout([...layout, { id, width: defaultItem?.width ?? 'full' }]);
+        if (layout.some(item => item.id === id)) return;
+        const defaultWidth = isCustomWidgetId(id)
+            ? 'third'
+            : getRegistryEntry(id)?.defaultWidth ?? 'full';
+        updateLayout([...layout, { id, width: defaultWidth }]);
+    };
+
+    const removeWidgetById = (id: WidgetId) => {
+        updateLayout(layout.filter(item => item.id !== id));
+    };
+
+    // ------------------------------------------------------------------
+    // Custom widget definition management
+    // ------------------------------------------------------------------
+
+    const handleSaveCustom = (def: CustomWidgetDef) => {
+        const exists = customDefs.some(d => d.id === def.id);
+        const nextDefs = exists
+            ? customDefs.map(d => (d.id === def.id ? def : d))
+            : [...customDefs, def];
+        setCustomDefs(nextDefs);
+
+        if (!exists && !layout.some(item => item.id === def.id)) {
+            // New widget: place it on the dashboard immediately.
+            const nextLayout = [...layout, { id: def.id, width: 'third' as const }];
+            setLayout(nextLayout);
+            persistPreferences({
+                [CUSTOM_WIDGETS_PREF_KEY]: nextDefs,
+                [LAYOUT_PREF_KEY]: nextLayout,
+            });
+        } else {
+            persistPreferences({ [CUSTOM_WIDGETS_PREF_KEY]: nextDefs });
+        }
+        toast.success(exists ? 'Widget updated' : 'Widget created');
+    };
+
+    const handleDeleteCustom = (def: CustomWidgetDef) => {
+        const nextDefs = customDefs.filter(d => d.id !== def.id);
+        const nextLayout = layout.filter(item => item.id !== def.id);
+        setCustomDefs(nextDefs);
+        setLayout(nextLayout);
+        persistPreferences({
+            [CUSTOM_WIDGETS_PREF_KEY]: nextDefs,
+            [LAYOUT_PREF_KEY]: nextLayout,
+        });
+        toast.success(`Deleted “${def.name}”`);
+    };
+
+    const openNewCustomForm = () => {
+        setGalleryOpen(false);
+        setEditingCustom(null);
+        setCustomFormOpen(true);
+    };
+
+    const openEditCustomForm = (def: CustomWidgetDef) => {
+        setGalleryOpen(false);
+        setEditingCustom(def);
+        setCustomFormOpen(true);
     };
 
     const moveWidget = (from: number, to: number) => {
@@ -497,9 +602,25 @@ function DashboardContent() {
     // ------------------------------------------------------------------
 
     const renderWidget = (id: WidgetId) => {
+        if (isCustomWidgetId(id)) {
+            const def = customDefs.find(d => d.id === id);
+            return def ? <CustomWidget def={def} /> : null;
+        }
         switch (id) {
             case 'kpis':
                 return <KPIGrid data={kpiData} loading={kpiLoading} />;
+            case 'goals':
+                return <GoalsWidget />;
+            case 'budget-pacing':
+                return <BudgetPacingWidget />;
+            case 'ar-ap':
+                return <ArApWidget />;
+            case 'dividends':
+                return <DividendsWidget />;
+            case 'subscriptions':
+                return <SubscriptionsWidget />;
+            case 'data-health':
+                return <DataHealthWidget />;
             case 'netWorth':
                 return (
                     <ExpandableChart
@@ -636,20 +757,15 @@ function DashboardContent() {
                     <span className="text-sm text-foreground-secondary">
                         Drag widgets to rearrange. Use the buttons on each widget to resize or remove it.
                     </span>
-                    {hiddenWidgets.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2">
-                            {hiddenWidgets.map(id => (
-                                <button
-                                    key={id}
-                                    onClick={() => addWidget(id)}
-                                    title={WIDGET_META[id].description}
-                                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-dashed border-border text-xs text-foreground-secondary hover:border-primary/50 hover:text-primary transition-colors"
-                                >
-                                    <span aria-hidden>+</span> {WIDGET_META[id].title}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                    <button
+                        onClick={() => setGalleryOpen(true)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-primary/50 bg-primary/10 text-xs text-primary hover:bg-primary/20 transition-colors"
+                    >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
+                        </svg>
+                        Add widget
+                    </button>
                     <button
                         onClick={() => updateLayout(DEFAULT_LAYOUT)}
                         className="ml-auto px-2.5 py-1 rounded-lg text-xs text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors"
@@ -702,8 +818,38 @@ function DashboardContent() {
                     <p className="text-foreground-secondary text-sm">
                         All widgets are hidden. {editing ? 'Add widgets from the toolbar above.' : 'Click Customize to add widgets.'}
                     </p>
+                    {editing && (
+                        <button
+                            onClick={() => setGalleryOpen(true)}
+                            className="mt-4 px-3 py-1.5 rounded-lg border border-primary/50 bg-primary/10 text-sm text-primary hover:bg-primary/20 transition-colors"
+                        >
+                            Add widget
+                        </button>
+                    )}
                 </div>
             )}
+
+            {/* Widget gallery (add / remove / manage custom widgets) */}
+            <WidgetGallery
+                isOpen={galleryOpen}
+                onClose={() => setGalleryOpen(false)}
+                placedIds={placedIds}
+                isBusiness={isBusiness}
+                customDefs={customDefs}
+                onAdd={addWidget}
+                onRemove={removeWidgetById}
+                onNewCustom={openNewCustomForm}
+                onEditCustom={openEditCustomForm}
+                onDeleteCustom={handleDeleteCustom}
+            />
+
+            {/* Custom widget builder */}
+            <CustomWidgetForm
+                isOpen={customFormOpen}
+                onClose={() => setCustomFormOpen(false)}
+                initial={editingCustom}
+                onSave={handleSaveCustom}
+            />
         </div>
     );
 }

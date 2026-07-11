@@ -8,6 +8,7 @@ import type {
 } from '@/lib/business/business-reports';
 import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -27,23 +28,6 @@ const BUCKET_COLORS: Record<AgingBucketKey, string> = {
     b61_90: 'color-mix(in srgb, var(--negative) 80%, transparent)',
     b90plus: 'var(--negative)',
 };
-
-function StatCard({ label, value, detail, valueClass = 'text-foreground' }: {
-    label: string;
-    value: string;
-    detail?: string;
-    valueClass?: string;
-}) {
-    return (
-        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">{label}</div>
-            <div className={`text-lg font-bold font-mono ${valueClass}`} style={TNUM}>
-                {value}
-            </div>
-            {detail && <div className="text-xs text-foreground-muted mt-1" style={TNUM}>{detail}</div>}
-        </div>
-    );
-}
 
 function MiniAgingBar({ title, buckets, total, href }: {
     title: string;
@@ -193,34 +177,38 @@ export default function BusinessDashboardPage() {
 
             {!loading && !error && data && (
                 <>
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatGrid cols={4}>
                         <StatCard
                             label="Revenue YTD"
                             value={formatCurrency(data.revenue.ytd)}
-                            detail={`Mo ${formatCurrency(data.revenue.month)} · Qtr ${formatCurrency(data.revenue.quarter)}`}
-                            valueClass={data.revenue.ytd > 0 ? 'text-positive' : 'text-foreground'}
+                            sub={`Mo ${formatCurrency(data.revenue.month)} · Qtr ${formatCurrency(data.revenue.quarter)}`}
+                            tone={data.revenue.ytd > 0 ? 'positive' : 'default'}
+                            size="compact"
                         />
                         <StatCard
                             label="Outstanding AR"
                             value={formatCurrency(data.ar.total)}
-                            detail={`${data.ar.count} open invoice${data.ar.count === 1 ? '' : 's'}`}
+                            sub={`${data.ar.count} open invoice${data.ar.count === 1 ? '' : 's'}`}
+                            size="compact"
                         />
                         <StatCard
                             label="AP due in 30 days"
                             value={formatCurrency(data.ap.dueWithin30)}
-                            detail={`${formatCurrency(data.ap.dueWithin7)} within 7 days`}
-                            valueClass={data.ap.dueWithin30 > 0 ? 'text-warning' : 'text-foreground'}
+                            sub={`${formatCurrency(data.ap.dueWithin7)} within 7 days`}
+                            tone={data.ap.dueWithin30 > 0 ? 'warning' : 'default'}
+                            size="compact"
                         />
                         <StatCard
                             label="Avg days to pay"
                             value={data.avgDaysToPay === null ? '—' : `${data.avgDaysToPay}d`}
-                            detail={
+                            sub={
                                 data.paidInvoiceCount > 0
                                     ? `${data.paidInvoiceCount} paid invoice${data.paidInvoiceCount === 1 ? '' : 's'}`
                                     : 'no paid invoices yet'
                             }
+                            size="compact"
                         />
-                    </div>
+                    </StatGrid>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <MiniAgingBar

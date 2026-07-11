@@ -71,7 +71,7 @@ function StrategyCard({
       type="button"
       onClick={onSelect}
       disabled={!clickable}
-      className={`text-left bg-surface/30 border rounded-xl p-5 transition-colors ${
+      className={`text-left bg-surface/30 border rounded-xl p-3 sm:p-5 transition-colors ${
         selected
           ? 'border-primary bg-primary/5'
           : clickable
@@ -87,7 +87,7 @@ function StrategyCard({
           </span>
         )}
       </div>
-      <p className="text-2xl font-bold mt-1 font-mono text-foreground" style={MONO_STYLE}>
+      <p className="text-lg sm:text-2xl font-bold mt-1 font-mono text-foreground" style={MONO_STYLE}>
         {plan.capped || plan.months === null ? 'Never' : monthToLabel(plan.months)}
       </p>
       <p className="text-xs text-foreground-muted mt-1">
@@ -95,7 +95,7 @@ function StrategyCard({
           ? 'Not paid off within 100 years'
           : `Debt-free in ${formatMonths(plan.months)}`}
       </p>
-      <div className="flex items-baseline justify-between mt-3 pt-3 border-t border-border">
+      <div className="flex items-baseline justify-between mt-2 pt-2 sm:mt-3 sm:pt-3 border-t border-border">
         <span className="text-xs text-foreground-muted">Total interest</span>
         <span className="text-sm font-medium font-mono text-negative" style={MONO_STYLE}>
           {plan.capped ? `> ${fmt.format(plan.totalInterest)}` : fmtFull.format(plan.totalInterest)}
@@ -539,7 +539,7 @@ export default function DebtPayoffPage() {
 
           {/* Headline: both strategies side by side + baseline */}
           <section
-            className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 ${computing ? 'opacity-60' : ''}`}
+            className={`grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 ${computing ? 'opacity-60' : ''}`}
           >
             <StrategyCard
               title="Snowball"

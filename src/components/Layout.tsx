@@ -275,6 +275,7 @@ const businessNavItem: NavItem = {
         { name: 'Invoices', href: '/business/invoices' },
         { name: 'Bills', href: '/business/invoices?type=bill' },
         { name: 'Payments', href: '/business/payments' },
+        { name: 'Inventory', href: '/business/inventory' },
         { name: 'AR/AP Aging', href: '/business/reports/aging' },
         { name: 'Sales Tax', href: '/business/reports/sales-tax' },
         { name: 'Schedule C', href: '/business/reports/schedule-c' },
@@ -287,9 +288,16 @@ const navItems: NavItem[] = [
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
     { name: 'Tags', href: '/tags', icon: 'Tag' },
-    { name: 'Receipts', href: '/receipts', icon: 'Paperclip' },
-    { name: 'Payslips', href: '/payslips', icon: 'Payslip' },
-    { name: 'Statements', href: '/statements', icon: 'Statement' },
+    {
+        name: 'Uploads',
+        href: '/receipts',
+        icon: 'Paperclip',
+        children: [
+            { name: 'Receipts', href: '/receipts' },
+            { name: 'Payslips', href: '/payslips' },
+            { name: 'Statements', href: '/statements' },
+        ],
+    },
     {
         name: 'Investments',
         href: '/investments',

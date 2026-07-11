@@ -18,12 +18,12 @@ function ScoreHero({ report }: { report: DataHealthReport }) {
     const failing = report.checks.filter((c) => c.count > 0).length;
 
     return (
-        <section className="flex flex-wrap items-center gap-8 rounded-xl border border-border bg-surface/30 p-6 backdrop-blur-xl">
+        <section className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-surface/30 p-4 backdrop-blur-xl sm:gap-8 sm:p-6">
             <div className="flex items-baseline gap-2">
-                <span className={`font-mono text-6xl font-bold ${scoreColor(report.score)}`} style={TNUM}>
+                <span className={`font-mono text-4xl font-bold sm:text-6xl ${scoreColor(report.score)}`} style={TNUM}>
                     {report.score}
                 </span>
-                <span className="font-mono text-2xl text-foreground-muted" style={TNUM}>
+                <span className="font-mono text-lg text-foreground-muted sm:text-2xl" style={TNUM}>
                     /100
                 </span>
             </div>

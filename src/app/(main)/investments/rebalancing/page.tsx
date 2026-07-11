@@ -5,10 +5,12 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { RebalanceTarget } from '@/lib/rebalancing';
+import type { RebalanceMode } from '@/lib/rebalancing-sector';
 import type { RebalanceData } from './types';
 import { TargetEditor } from './TargetEditor';
 import { DriftBars } from './DriftBars';
 import { SuggestionsTable } from './SuggestionsTable';
+import { SectorSuggestionsTable } from './SectorSuggestionsTable';
 
 function parseTargets(inputs: Record<string, string>): RebalanceTarget[] {
     return Object.entries(inputs)
@@ -22,6 +24,12 @@ function sameTargets(a: RebalanceTarget[], b: RebalanceTarget[]): boolean {
     return a.every(t => Math.abs((bMap.get(t.key) ?? -1) - t.targetPct) < 0.001);
 }
 
+function inputsFromTargets(targets: RebalanceTarget[]): Record<string, string> {
+    const inputs: Record<string, string> = {};
+    for (const t of targets) inputs[t.key] = String(t.targetPct);
+    return inputs;
+}
+
 export default function RebalancingPage() {
     const { success, error: showError } = useToast();
 
@@ -29,39 +37,44 @@ export default function RebalancingPage() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [fetchingMeta, setFetchingMeta] = useState(false);
+    const [mode, setMode] = useState<RebalanceMode>('symbol');
 
     const [targetInputs, setTargetInputs] = useState<Record<string, string>>({});
     const [newCashInput, setNewCashInput] = useState('');
     const [bandInput, setBandInput] = useState('5');
 
     const initialized = useRef(false);
+    const skipPreview = useRef(false);
     const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const requestSeq = useRef(0);
+    const targetInputsRef = useRef(targetInputs);
+    targetInputsRef.current = targetInputs;
 
-    const buildQuery = useCallback((preview: boolean): string => {
+    const buildQuery = useCallback((preview: boolean, modeParam: RebalanceMode | null): string => {
         const params = new URLSearchParams();
+        if (modeParam) params.set('mode', modeParam);
         const cash = parseFloat(newCashInput);
         if (Number.isFinite(cash) && cash > 0) params.set('newCash', String(cash));
         const band = parseFloat(bandInput);
         if (Number.isFinite(band) && band >= 0) params.set('band', String(band));
-        if (preview) params.set('targets', JSON.stringify(parseTargets(targetInputs)));
+        if (preview) params.set('targets', JSON.stringify(parseTargets(targetInputsRef.current)));
         const qs = params.toString();
         return qs ? `?${qs}` : '';
-    }, [newCashInput, bandInput, targetInputs]);
+    }, [newCashInput, bandInput]);
 
-    const fetchData = useCallback(async (preview: boolean) => {
+    const fetchData = useCallback(async (preview: boolean, modeParam: RebalanceMode | null) => {
         const seq = ++requestSeq.current;
         try {
-            const res = await fetch(`/api/investments/rebalance${buildQuery(preview)}`);
+            const res = await fetch(`/api/investments/rebalance${buildQuery(preview, modeParam)}`);
             if (!res.ok) throw new Error('Request failed');
             const json: RebalanceData = await res.json();
             if (seq !== requestSeq.current) return; // stale response
             setData(json);
             if (!initialized.current) {
-                // Seed editable state from saved targets
-                const inputs: Record<string, string> = {};
-                for (const t of json.savedTargets) inputs[t.key] = String(t.targetPct);
-                setTargetInputs(inputs);
+                // Adopt the saved mode and seed editable state from saved targets
+                setMode(json.allocationMode);
+                setTargetInputs(inputsFromTargets(json.savedTargets));
                 setBandInput(String(json.savedBandPct));
                 initialized.current = true;
             }
@@ -70,28 +83,46 @@ export default function RebalancingPage() {
         }
     }, [buildQuery, showError]);
 
-    // Initial load (saved targets, no preview)
+    // Initial load (saved mode + targets, no preview)
     useEffect(() => {
-        void fetchData(false).finally(() => setLoading(false));
+        void fetchData(false, null).finally(() => setLoading(false));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Debounced live preview when inputs change
     useEffect(() => {
         if (!initialized.current) return;
+        if (skipPreview.current) {
+            // A mode switch just reseeded the inputs — its own fetch is in flight.
+            skipPreview.current = false;
+            return;
+        }
         setRefreshing(true);
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
         debounceTimer.current = setTimeout(() => {
-            void fetchData(true).finally(() => setRefreshing(false));
+            void fetchData(true, mode).finally(() => setRefreshing(false));
         }, 400);
         return () => {
             if (debounceTimer.current) clearTimeout(debounceTimer.current);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [targetInputs, newCashInput, bandInput, fetchData]);
 
     const handleTargetChange = useCallback((key: string, value: string) => {
         setTargetInputs(prev => ({ ...prev, [key]: value }));
     }, []);
+
+    const handleModeChange = useCallback((next: RebalanceMode) => {
+        if (next === mode || !data) return;
+        setMode(next);
+        // Reseed inputs from the other mode's saved targets and refetch
+        skipPreview.current = true;
+        setTargetInputs(inputsFromTargets(
+            next === 'sector' ? data.savedTargetsBySector : data.savedTargetsBySymbol
+        ));
+        setRefreshing(true);
+        void fetchData(false, next).finally(() => setRefreshing(false));
+    }, [mode, data, fetchData]);
 
     const editedTargets = useMemo(() => parseTargets(targetInputs), [targetInputs]);
     const bandValue = useMemo(() => {
@@ -101,7 +132,8 @@ export default function RebalancingPage() {
 
     const dirty = data !== null && (
         !sameTargets(editedTargets, data.savedTargets) ||
-        Math.abs(bandValue - data.savedBandPct) > 0.001
+        Math.abs(bandValue - data.savedBandPct) > 0.001 ||
+        mode !== data.savedMode
     );
 
     const handleSave = useCallback(async () => {
@@ -111,20 +143,44 @@ export default function RebalancingPage() {
             const res = await fetch('/api/investments/rebalance', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ targets: editedTargets, bandPct: bandValue }),
+                body: JSON.stringify({ mode, targets: editedTargets, bandPct: bandValue }),
             });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error || 'Save failed');
             }
             success('Target allocation saved');
-            await fetchData(false);
+            await fetchData(false, mode);
         } catch (e) {
             showError(e instanceof Error ? e.message : 'Failed to save targets');
         } finally {
             setSaving(false);
         }
-    }, [saving, editedTargets, bandValue, success, showError, fetchData]);
+    }, [saving, mode, editedTargets, bandValue, success, showError, fetchData]);
+
+    const handleFetchSectorData = useCallback(async () => {
+        if (fetchingMeta) return;
+        setFetchingMeta(true);
+        try {
+            const res = await fetch('/api/investments/commodity-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbols: data?.unclassifiedSymbols ?? [] }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || 'Fetch failed');
+            }
+            const json = await res.json();
+            success(`Sector data refreshed — ${json.refreshed} updated, ${json.failed} unavailable`);
+            setRefreshing(true);
+            await fetchData(true, mode).finally(() => setRefreshing(false));
+        } catch (e) {
+            showError(e instanceof Error ? e.message : 'Failed to fetch sector data');
+        } finally {
+            setFetchingMeta(false);
+        }
+    }, [fetchingMeta, data, mode, success, showError, fetchData]);
 
     if (loading) {
         return (
@@ -150,6 +206,9 @@ export default function RebalancingPage() {
         );
     }
 
+    const sectorMode = mode === 'sector';
+    const unclassified = sectorMode ? (data.unclassifiedSymbols ?? []) : [];
+
     return (
         <div className="space-y-6">
             <PageHeader
@@ -174,6 +233,27 @@ export default function RebalancingPage() {
                     </div>
                     <div className="font-mono tabular-nums text-lg font-semibold text-foreground">
                         {formatCurrency(data.totalValue)}
+                    </div>
+                </div>
+                <div>
+                    <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">
+                        Allocate By
+                    </div>
+                    <div className="inline-flex rounded border border-border overflow-hidden">
+                        {(['symbol', 'sector'] as const).map(m => (
+                            <button
+                                key={m}
+                                onClick={() => handleModeChange(m)}
+                                aria-pressed={mode === m}
+                                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                                    mode === m
+                                        ? 'bg-primary text-primary-foreground'
+                                        : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+                                }`}
+                            >
+                                {m === 'symbol' ? 'Symbol' : 'Sector'}
+                            </button>
+                        ))}
                     </div>
                 </div>
                 <label className="block">
@@ -219,6 +299,24 @@ export default function RebalancingPage() {
                 )}
             </div>
 
+            {/* Missing sector data callout */}
+            {sectorMode && unclassified.length > 0 && (
+                <div className="bg-secondary-light border border-secondary/30 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm text-foreground-secondary">
+                        No sector data for{' '}
+                        <span className="font-mono text-foreground">{unclassified.join(', ')}</span>
+                        {' '}— their value is shown under &ldquo;Unclassified&rdquo;.
+                    </p>
+                    <button
+                        onClick={handleFetchSectorData}
+                        disabled={fetchingMeta}
+                        className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover disabled:bg-primary/30 disabled:cursor-not-allowed text-primary-foreground rounded transition-colors"
+                    >
+                        {fetchingMeta ? 'Fetching…' : 'Fetch sector data'}
+                    </button>
+                </div>
+            )}
+
             {/* Warnings */}
             {data.warnings.length > 0 && (
                 <div className="bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 space-y-1">
@@ -229,17 +327,39 @@ export default function RebalancingPage() {
             )}
 
             {/* Drift bars */}
-            <DriftBars rows={data.rows} bandPct={data.bandPct} />
+            <DriftBars
+                rows={data.rows}
+                bandPct={data.bandPct}
+                keyWidthClass={sectorMode ? 'w-40' : 'w-16'}
+            />
 
             {/* Target editor */}
             <TargetEditor
                 rows={data.rows}
                 targetInputs={targetInputs}
                 onTargetChange={handleTargetChange}
+                keyHeader={sectorMode ? 'Sector' : 'Symbol'}
             />
 
             {/* Suggestions */}
-            <SuggestionsTable suggestions={data.suggestions} mode={data.mode} />
+            {sectorMode ? (
+                <>
+                    <SectorSuggestionsTable
+                        groups={data.sectorGroups ?? []}
+                        netBySymbol={data.symbolTrades ?? []}
+                        mode={data.mode}
+                    />
+                    {(data.symbolTrades?.length ?? 0) > 0 && (
+                        <SuggestionsTable
+                            suggestions={data.symbolTrades ?? []}
+                            mode={data.mode}
+                            title="Net Trades by Symbol (Tax Impact)"
+                        />
+                    )}
+                </>
+            ) : (
+                <SuggestionsTable suggestions={data.suggestions} mode={data.mode} />
+            )}
         </div>
     );
 }

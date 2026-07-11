@@ -10,6 +10,7 @@ import { BatchEditModal } from '@/components/budget/BatchEditModal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useToast } from '@/contexts/ToastContext';
 import { BudgetProgress } from './BudgetProgress';
 import { BudgetYoY } from './BudgetYoY';
@@ -739,39 +740,36 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
                 {/* Summary Cards (editor view) */}
                 {view === 'editor' && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Income</div>
-                        <div className="text-2xl font-bold text-emerald-400">
-                            {formatCurrency(incomeTotal.toString(), budgetCurrency)}
-                        </div>
-                    </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Total Expenses</div>
-                        <div className="text-2xl font-bold text-rose-400">
-                            {formatCurrency(expenseTotal.toString(), budgetCurrency)}
-                        </div>
-                    </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Average per Period</div>
-                        <div className="text-2xl font-bold text-primary">
-                            {formatCurrency((incomeTotal / budget.num_periods).toString(), budgetCurrency)}
-                        </div>
-                    </div>
-                    <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                        <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                            {showAllAccounts ? 'Accounts Shown' : 'Budgeted Accounts'}
-                        </div>
-                        <div className="text-2xl font-bold text-foreground">
-                            {flattenedNodes.length}
-                            {showAllAccounts && (
-                                <span className="text-sm font-normal text-foreground-muted ml-2">
-                                    ({flattenedNodes.filter(n => n.hasOwnBudget).length} budgeted)
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                <StatGrid cols={4}>
+                    <StatCard
+                        label="Total Income"
+                        value={formatCurrency(incomeTotal.toString(), budgetCurrency)}
+                        tone="positive"
+                    />
+                    <StatCard
+                        label="Total Expenses"
+                        value={formatCurrency(expenseTotal.toString(), budgetCurrency)}
+                        tone="negative"
+                    />
+                    <StatCard
+                        label="Average per Period"
+                        value={formatCurrency((incomeTotal / budget.num_periods).toString(), budgetCurrency)}
+                        tone="primary"
+                    />
+                    <StatCard
+                        label={showAllAccounts ? 'Accounts Shown' : 'Budgeted Accounts'}
+                        value={
+                            <>
+                                {flattenedNodes.length}
+                                {showAllAccounts && (
+                                    <span className="text-sm font-normal text-foreground-muted ml-2">
+                                        ({flattenedNodes.filter(n => n.hasOwnBudget).length} budgeted)
+                                    </span>
+                                )}
+                            </>
+                        }
+                    />
+                </StatGrid>
                 )}
             </div>
 

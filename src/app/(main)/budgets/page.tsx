@@ -148,13 +148,13 @@ export default function BudgetsPage() {
         fetchBudgets();
     };
 
-    const openScenarioModal = () => {
-        const first = budgets[0];
-        setScenarioSource(first?.guid || '');
+    const openScenarioModal = (source?: Budget) => {
+        const seed = source ?? budgets[0];
+        setScenarioSource(seed?.guid || '');
         setScenarioMode('preset');
         setScenarioFactor(0.9);
         setScenarioCustomPct('');
-        setScenarioName(first ? `${first.name} (Lean −10%)` : '');
+        setScenarioName(seed ? `${seed.name} (Lean −10%)` : '');
         setScenarioError(null);
         setScenarioOpen(true);
     };
@@ -230,7 +230,7 @@ export default function BudgetsPage() {
                 menuActions={[
                     {
                         label: 'Duplicate as scenario…',
-                        onSelect: openScenarioModal,
+                        onSelect: () => openScenarioModal(),
                         disabled: budgets.length === 0,
                     },
                     {
@@ -257,6 +257,7 @@ export default function BudgetsPage() {
                     budgets={budgets}
                     onEdit={handleEdit}
                     onDelete={handleDeleteConfirm}
+                    onScenario={openScenarioModal}
                 />
             )}
 

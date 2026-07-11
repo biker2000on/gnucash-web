@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { FilterBar } from '@/components/ui/FilterBar';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useToast } from '@/contexts/ToastContext';
 import { EnvelopeSettingsModal, type EnvelopeView, type GoalOption } from './BudgetEnvelopes';
@@ -206,57 +207,48 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
     return (
         <div className="space-y-6">
             {/* Current-period summary (matches the editor's stat card row) */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                    <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                        Budgeted · {data.periods[selectedPeriod]?.label ?? ''}
-                    </div>
-                    <div className="text-2xl font-bold font-mono tabular-nums text-foreground">
-                        {formatCurrency(selectedTotals?.budgeted ?? 0, data.currency)}
-                    </div>
-                </div>
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                    <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Spent</div>
-                    <div className="text-2xl font-bold font-mono tabular-nums text-foreground">
-                        {formatCurrency(selectedTotals?.actual ?? 0, data.currency)}
-                    </div>
-                    {selectedTotals?.pctUsed !== null && selectedTotals !== undefined && (
-                        <div className="text-xs text-foreground-secondary mt-1">
-                            {selectedTotals.pctUsed.toFixed(0)}% of budget
-                        </div>
-                    )}
-                </div>
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                    <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Remaining</div>
-                    <div className={`text-2xl font-bold font-mono tabular-nums ${(selectedTotals?.remaining ?? 0) < 0 ? 'text-negative' : 'text-positive'}`}>
-                        {formatCurrency(selectedTotals?.remaining ?? 0, data.currency)}
-                    </div>
-                </div>
-                <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6">
-                    <div className="text-xs text-foreground-muted uppercase tracking-wider mb-1">Projected End of Period</div>
-                    {pacing ? (
-                        <>
-                            <div className={`text-2xl font-bold font-mono tabular-nums ${pacing.status !== 'on-track' ? 'text-negative' : 'text-foreground'}`}>
-                                {formatCurrency(pacing.projected, data.currency)}
-                            </div>
-                            <div className="text-xs mt-1">
-                                {pacing.projectedOver > 0 ? (
-                                    <span className="text-negative font-mono tabular-nums">
-                                        +{formatCurrency(pacing.projectedOver, data.currency)} over budget
-                                    </span>
-                                ) : (
-                                    <span className="text-positive">On pace</span>
-                                )}
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <div className="text-2xl font-bold font-mono tabular-nums text-foreground-muted">—</div>
-                            <div className="text-xs text-foreground-muted mt-1">Current period only</div>
-                        </>
-                    )}
-                </div>
-            </div>
+            <StatGrid cols={4}>
+                <StatCard
+                    label={`Budgeted · ${data.periods[selectedPeriod]?.label ?? ''}`}
+                    value={formatCurrency(selectedTotals?.budgeted ?? 0, data.currency)}
+                />
+                <StatCard
+                    label="Spent"
+                    value={formatCurrency(selectedTotals?.actual ?? 0, data.currency)}
+                    sub={
+                        selectedTotals?.pctUsed !== null && selectedTotals !== undefined
+                            ? `${selectedTotals.pctUsed.toFixed(0)}% of budget`
+                            : undefined
+                    }
+                />
+                <StatCard
+                    label="Remaining"
+                    value={formatCurrency(selectedTotals?.remaining ?? 0, data.currency)}
+                    tone={(selectedTotals?.remaining ?? 0) < 0 ? 'negative' : 'positive'}
+                />
+                {pacing ? (
+                    <StatCard
+                        label="Projected End of Period"
+                        value={formatCurrency(pacing.projected, data.currency)}
+                        tone={pacing.status !== 'on-track' ? 'negative' : 'default'}
+                        sub={
+                            pacing.projectedOver > 0 ? (
+                                <span className="text-negative font-mono tabular-nums">
+                                    +{formatCurrency(pacing.projectedOver, data.currency)} over budget
+                                </span>
+                            ) : (
+                                <span className="text-positive">On pace</span>
+                            )
+                        }
+                    />
+                ) : (
+                    <StatCard
+                        label="Projected End of Period"
+                        value={<span className="text-foreground-muted">—</span>}
+                        sub="Current period only"
+                    />
+                )}
+            </StatGrid>
 
             {/* Progress table (same treatment as the budget editor table) */}
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">

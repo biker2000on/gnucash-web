@@ -7,6 +7,7 @@ import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
 import { DateRangePicker } from '@/components/ui/DateRangePicker';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -95,24 +96,18 @@ export default function SalesTaxPage() {
             {!loading && !error && report && (
                 <>
                     {/* Totals */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-                            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
-                                Invoiced Sales
-                            </div>
-                            <div className="text-lg font-bold font-mono text-foreground" style={TNUM}>
-                                {formatCurrency(report.totals.taxableSales)}
-                            </div>
-                        </div>
-                        <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-                            <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
-                                Tax Collected
-                            </div>
-                            <div className="text-lg font-bold font-mono text-foreground" style={TNUM}>
-                                {formatCurrency(report.totals.taxCollected)}
-                            </div>
-                        </div>
-                    </div>
+                    <StatGrid cols={2}>
+                        <StatCard
+                            label="Invoiced Sales"
+                            value={formatCurrency(report.totals.taxableSales)}
+                            size="compact"
+                        />
+                        <StatCard
+                            label="Tax Collected"
+                            value={formatCurrency(report.totals.taxCollected)}
+                            size="compact"
+                        />
+                    </StatGrid>
 
                     {report.accounts.length === 0 && report.monthly.length === 0 ? (
                         <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center">

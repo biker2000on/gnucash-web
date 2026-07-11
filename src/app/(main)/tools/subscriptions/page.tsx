@@ -3,9 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { RecurringSeries, RecurringTotals, SeriesStatus } from '@/lib/recurring-detection';
 import { formatCurrency } from '@/lib/format';
+import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import SubscriptionsTable from './SubscriptionsTable';
-
-const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
 interface SubscriptionsResponse {
     series: RecurringSeries[];
@@ -15,32 +14,6 @@ interface SubscriptionsResponse {
 
 type StatusFilter = 'all' | SeriesStatus;
 type SortKey = 'monthly' | 'amount' | 'lastSeen' | 'merchant';
-
-/* ------------------------------------------------------------------ */
-/* Summary stat card                                                    */
-/* ------------------------------------------------------------------ */
-
-function StatCard({
-    label,
-    value,
-    sublabel,
-    valueClass = 'text-foreground',
-}: {
-    label: string;
-    value: string;
-    sublabel?: string;
-    valueClass?: string;
-}) {
-    return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-5">
-            <p className="text-xs uppercase tracking-wide text-foreground-muted">{label}</p>
-            <p className={`mt-1 text-2xl font-mono font-semibold ${valueClass}`} style={TNUM}>
-                {value}
-            </p>
-            {sublabel && <p className="mt-1 text-xs text-foreground-muted">{sublabel}</p>}
-        </div>
-    );
-}
 
 /* ------------------------------------------------------------------ */
 /* Page                                                                 */
@@ -136,14 +109,14 @@ export default function SubscriptionsPage() {
 
             {/* Loading */}
             {loading && (
-                <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatGrid cols={4}>
                     {[1, 2, 3, 4].map(i => (
-                        <div key={i} className="bg-surface/30 border border-border rounded-xl p-5 animate-pulse">
-                            <div className="h-3 bg-foreground-muted/20 rounded w-24 mb-3" />
-                            <div className="h-7 bg-foreground-muted/20 rounded w-28" />
+                        <div key={i} className="bg-surface/30 border border-border rounded-lg px-3 py-2 sm:rounded-xl sm:p-5 animate-pulse">
+                            <div className="h-3 bg-foreground-muted/20 rounded w-24 mb-2 sm:mb-3" />
+                            <div className="h-5 sm:h-7 bg-foreground-muted/20 rounded w-28" />
                         </div>
                     ))}
-                </section>
+                </StatGrid>
             )}
 
             {/* Error */}
@@ -162,30 +135,30 @@ export default function SubscriptionsPage() {
 
             {/* Summary stats */}
             {!loading && !error && totals && (
-                <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <StatGrid cols={4}>
                     <StatCard
                         label="Active Subscriptions"
                         value={String(totals.activeCount)}
-                        sublabel={stoppedCount > 0 ? `${stoppedCount} stopped in window` : 'includes new series'}
+                        sub={stoppedCount > 0 ? `${stoppedCount} stopped in window` : 'includes new series'}
                     />
                     <StatCard
                         label="Monthly Total"
                         value={formatCurrency(totals.activeMonthlyTotal)}
-                        sublabel="All cadences normalized to per-month"
-                        valueClass="text-primary"
+                        sub="All cadences normalized to per-month"
+                        tone="primary"
                     />
                     <StatCard
                         label="Annualized Total"
                         value={formatCurrency(totals.activeAnnualTotal)}
-                        sublabel="Monthly total × 12"
+                        sub="Monthly total × 12"
                     />
                     <StatCard
                         label="Price Increases"
                         value={String(totals.priceIncreaseCount)}
-                        sublabel="Latest charge > 5% above typical"
-                        valueClass={totals.priceIncreaseCount > 0 ? 'text-warning' : 'text-foreground'}
+                        sub="Latest charge > 5% above typical"
+                        tone={totals.priceIncreaseCount > 0 ? 'warning' : 'default'}
                     />
-                </section>
+                </StatGrid>
             )}
 
             {/* Filters + table */}

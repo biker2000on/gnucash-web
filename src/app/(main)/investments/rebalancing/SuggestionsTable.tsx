@@ -7,6 +7,8 @@ import { formatCurrency } from '@/lib/format';
 interface SuggestionsTableProps {
     suggestions: RebalanceSuggestion[];
     mode: 'buy-only' | 'full';
+    /** Optional header override (sector mode uses this for net symbol trades). */
+    title?: string;
 }
 
 function termLabel(term: 'short_term' | 'long_term' | null): string {
@@ -21,7 +23,7 @@ function termLabel(term: 'short_term' | 'long_term' | null): string {
  * breakdown, harvested losses framed positively — and expand to show
  * the tax-ordered lot consumption plan.
  */
-export function SuggestionsTable({ suggestions, mode }: SuggestionsTableProps) {
+export function SuggestionsTable({ suggestions, mode, title }: SuggestionsTableProps) {
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
     const toggle = (key: string) => {
@@ -44,7 +46,7 @@ export function SuggestionsTable({ suggestions, mode }: SuggestionsTableProps) {
         <div className="bg-background-secondary rounded-lg border border-border overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
                 <h3 className="text-sm font-semibold text-foreground">
-                    {mode === 'buy-only' ? 'Buy-Only Suggestions (New Cash)' : 'Rebalance Suggestions'}
+                    {title ?? (mode === 'buy-only' ? 'Buy-Only Suggestions (New Cash)' : 'Rebalance Suggestions')}
                 </h3>
                 <div className="flex items-center gap-4 text-xs font-mono tabular-nums">
                     {totalSells > 0 && (

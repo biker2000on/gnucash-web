@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { OwnerSelector, type OwnerDTO } from '@/components/business/OwnerSelector';
 import { PaymentModal } from '@/components/business/PaymentModal';
+import { InvoiceFulfillmentSection } from '@/components/business/InvoiceFulfillmentSection';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { useAccounts } from '@/lib/hooks/useAccounts';
@@ -1049,6 +1050,18 @@ function InvoiceDetailContent() {
                         </table>
                     )}
                 </div>
+            )}
+
+            {/* Inventory fulfillment (posted customer invoices only) */}
+            {!isDraft && invoice && invoice.type === 'invoice' && (
+                <InvoiceFulfillmentSection
+                    invoiceGuid={invoice.guid}
+                    entries={invoice.entries.map((e) => ({
+                        guid: e.guid,
+                        description: e.description,
+                        quantity: e.quantity,
+                    }))}
+                />
             )}
 
             {/* Post modal */}

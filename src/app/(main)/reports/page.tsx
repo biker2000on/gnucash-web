@@ -11,10 +11,11 @@ const CATEGORY_LABELS: Record<string, string> = {
     account: 'Account Reports',
     transaction: 'Transaction Reports',
     investment: 'Investment Reports',
+    business: 'Business Reports',
     chart: 'Chart Reports',
 };
 
-const CATEGORY_ORDER = ['financial', 'account', 'transaction', 'investment', 'chart'];
+const CATEGORY_ORDER = ['financial', 'account', 'transaction', 'investment', 'business', 'chart'];
 
 function ReportIcon({ icon }: { icon: string }) {
     switch (icon) {

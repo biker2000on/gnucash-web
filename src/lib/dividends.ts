@@ -69,6 +69,12 @@ export interface PerSecurityDividend {
     /** ISO date (YYYY-MM-DD) of the most recent payment */
     lastPaymentDate: string | null;
     lastPaymentAmount: number | null;
+    /**
+     * Investment account (STOCK/MUTUAL) that most recently received this
+     * security's dividend, for linking to its ledger. Null when unknown
+     * (cash-only dividends resolved by description).
+     */
+    accountGuid: string | null;
     /** Trailing-12mo dividends / cost basis * 100, or null when unknown */
     yieldOnCost: number | null;
     /** Trailing-12mo dividends / current market value * 100, or null */
@@ -246,12 +252,17 @@ export function perSecurityDividends(
         let totalIncome = 0;
         let yearIncome = 0;
         let last: DividendPayment | null = null;
+        let lastWithAccount: DividendPayment | null = null;
         for (const p of group) {
             totalIncome += p.amount;
             const t = p.date.getTime();
             if (t > ttmStart && t <= asOfMs) ttmIncome += p.amount;
             if (year != null && p.date.getUTCFullYear() === year) yearIncome += p.amount;
             if (!last || p.date.getTime() > last.date.getTime()) last = p;
+            if (p.investmentAccountGuid &&
+                (!lastWithAccount || p.date.getTime() > lastWithAccount.date.getTime())) {
+                lastWithAccount = p;
+            }
         }
 
         const valuation = valuations
@@ -269,6 +280,7 @@ export function perSecurityDividends(
             paymentCount: group.length,
             lastPaymentDate: last ? isoDate(last.date) : null,
             lastPaymentAmount: last ? last.amount : null,
+            accountGuid: lastWithAccount?.investmentAccountGuid ?? null,
             yieldOnCost: costBasis != null ? computeYieldOnCost(ttmIncome, costBasis) : null,
             currentYield: marketValue != null ? computeCurrentYield(ttmIncome, marketValue) : null,
             costBasis,

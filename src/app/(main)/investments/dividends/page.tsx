@@ -7,6 +7,7 @@ import type { DividendSummary } from '@/lib/dividends';
 import { DividendMonthlyChart } from './DividendMonthlyChart';
 import { PerSecurityTable } from './PerSecurityTable';
 import { DividendCalendar } from './DividendCalendar';
+import { TTM_TITLE } from './ttm';
 
 export default function DividendsPage() {
     const [data, setData] = useState<DividendSummary | null>(null);
@@ -79,19 +80,29 @@ export default function DividendsPage() {
 
     const cards = [
         {
-            label: 'TTM Dividend Income',
+            label: (
+                <>
+                    <abbr title={TTM_TITLE} className="no-underline cursor-help border-b border-dotted border-foreground-muted">
+                        TTM
+                    </abbr>{' '}
+                    Dividend Income
+                </>
+            ),
+            key: 'ttm',
             value: formatCurrency(data.ttmTotal),
             sub: 'Trailing 12 months',
             color: 'text-foreground',
         },
         {
             label: 'Projected Next 12mo',
+            key: 'projected',
             value: formatCurrency(data.projectedNext12mo),
             sub: `${data.forwardCalendar.calendar.length} expected payments`,
             color: 'text-primary',
         },
         {
             label: 'Portfolio Yield',
+            key: 'yield',
             value: data.portfolioYield != null ? `${data.portfolioYield.toFixed(2)}%` : '—',
             sub: data.portfolioValue > 0 ? `on ${formatCurrency(data.portfolioValue)}` : 'value unavailable',
             color: 'text-positive',
@@ -107,6 +118,7 @@ export default function DividendsPage() {
                     <div className="flex items-center gap-1">
                         <button
                             onClick={() => setYear(null)}
+                            title={TTM_TITLE}
                             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                                 year == null
                                     ? 'bg-primary text-primary-foreground'
@@ -135,7 +147,7 @@ export default function DividendsPage() {
             {/* Summary cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {cards.map(card => (
-                    <div key={card.label} className="bg-background-secondary rounded-lg p-4 border border-border">
+                    <div key={card.key} className="bg-background-secondary rounded-lg p-4 border border-border">
                         <p className="text-foreground-muted text-sm">{card.label}</p>
                         <p className={`text-2xl font-bold font-mono ${card.color}`} style={mono}>{card.value}</p>
                         <p className="text-xs text-foreground-muted mt-1">{card.sub}</p>

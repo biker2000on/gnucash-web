@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import type { PerSecurityDividend } from '@/lib/dividends';
+import { TTM_TITLE } from './ttm';
 
 function formatPercent(value: number | null): string {
     if (value == null) return '—';
@@ -41,7 +43,12 @@ export function PerSecurityTable({ rows, year }: PerSecurityTableProps) {
                             {year != null && (
                                 <th className="text-right font-medium px-4 py-2.5 whitespace-nowrap">{year}</th>
                             )}
-                            <th className="text-right font-medium px-4 py-2.5 whitespace-nowrap">TTM Income</th>
+                            <th className="text-right font-medium px-4 py-2.5 whitespace-nowrap">
+                                <abbr title={TTM_TITLE} className="no-underline cursor-help border-b border-dotted border-foreground-muted">
+                                    TTM
+                                </abbr>{' '}
+                                Income
+                            </th>
                             <th className="text-right font-medium px-4 py-2.5 whitespace-nowrap">Yield on Cost</th>
                             <th className="text-right font-medium px-4 py-2.5 whitespace-nowrap">Current Yield</th>
                             <th className="text-right font-medium px-4 py-2.5 whitespace-nowrap">Last Paid</th>
@@ -54,7 +61,17 @@ export function PerSecurityTable({ rows, year }: PerSecurityTableProps) {
                                 className="border-b border-border/40 last:border-0 hover:bg-surface-hover transition-colors"
                             >
                                 <td className="px-4 py-2.5">
-                                    <span className="font-medium text-foreground">{row.ticker}</span>
+                                    {row.accountGuid ? (
+                                        <Link
+                                            href={`/accounts/${row.accountGuid}`}
+                                            className="font-medium text-foreground hover:text-primary transition-colors"
+                                            title="Open investment account ledger"
+                                        >
+                                            {row.ticker}
+                                        </Link>
+                                    ) : (
+                                        <span className="font-medium text-foreground">{row.ticker}</span>
+                                    )}
                                     {row.commodityGuid == null && (
                                         <span className="ml-2 text-xs text-foreground-muted">(cash)</span>
                                     )}

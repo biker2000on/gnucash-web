@@ -5,6 +5,8 @@ import type { RebalanceRow } from '@/lib/rebalancing';
 interface DriftBarsProps {
     rows: RebalanceRow[];
     bandPct: number;
+    /** Width class for the key column (sector names need more room). */
+    keyWidthClass?: string;
 }
 
 /**
@@ -12,7 +14,7 @@ interface DriftBarsProps {
  * against target % (tick mark). Overweight positions outside the band are
  * tinted warning/negative; within-band positions stay muted.
  */
-export function DriftBars({ rows, bandPct }: DriftBarsProps) {
+export function DriftBars({ rows, bandPct, keyWidthClass = 'w-16' }: DriftBarsProps) {
     const visible = rows.filter(r => r.currentPct > 0 || r.targetPct > 0);
     const maxPct = Math.max(10, ...visible.map(r => Math.max(r.currentPct, r.targetPct)));
     // Leave headroom so target ticks near the max are still visible
@@ -46,7 +48,10 @@ export function DriftBars({ rows, bandPct }: DriftBarsProps) {
 
                     return (
                         <div key={row.key} className="flex items-center gap-3">
-                            <span className="w-16 shrink-0 font-mono text-xs text-foreground truncate">
+                            <span
+                                className={`${keyWidthClass} shrink-0 font-mono text-xs text-foreground truncate`}
+                                title={row.key}
+                            >
                                 {row.key}
                             </span>
                             <div className="relative flex-1 h-4 bg-background-tertiary rounded-sm overflow-hidden">
