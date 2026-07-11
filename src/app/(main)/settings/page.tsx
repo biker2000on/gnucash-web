@@ -598,14 +598,16 @@ export default function SettingsPage() {
     <div className="max-w-3xl mx-auto space-y-4">
       <PageHeader title="Settings" />
 
-      <div className="bg-surface rounded-xl border border-border px-4 py-3">
+      <CollapsibleConfigSection
+        title="Commodity Quote Settings"
+        summary="Quote flags & price sources"
+        configured
+        storageKey="settings.commodityQuotesOpen"
+      >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Commodity Quote Settings</h2>
-            <p className="text-sm text-foreground-muted mt-0.5">
-              Manage quote flags and price source configuration for all commodities.
-            </p>
-          </div>
+          <p className="text-sm text-foreground-muted">
+            Manage quote flags and price source configuration for all commodities.
+          </p>
           <Link
             href="/settings/commodities"
             className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
@@ -613,16 +615,18 @@ export default function SettingsPage() {
             Open Commodity Settings
           </Link>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
-      <div className="bg-surface rounded-xl border border-border px-4 py-3">
+      <CollapsibleConfigSection
+        title="IRS Contribution Limits"
+        summary="Annual limits for tax tools"
+        configured
+        storageKey="settings.irsLimitsOpen"
+      >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">IRS Contribution Limits</h2>
-            <p className="text-sm text-foreground-muted mt-0.5">
-              Review and update annual contribution limits used by the tax estimator and contribution tracking.
-            </p>
-          </div>
+          <p className="text-sm text-foreground-muted">
+            Review and update annual contribution limits used by the tax estimator and contribution tracking.
+          </p>
           <Link
             href="/settings/limits"
             className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
@@ -630,16 +634,18 @@ export default function SettingsPage() {
             Open Limits Editor
           </Link>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
-      <div className="bg-surface rounded-xl border border-border px-4 py-3">
+      <CollapsibleConfigSection
+        title="Categorization Rules"
+        summary="Bank-import auto-categorization"
+        configured
+        storageKey="settings.categorizationRulesOpen"
+      >
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Categorization Rules</h2>
-            <p className="text-sm text-foreground-muted mt-0.5">
-              Manage auto-categorization rules applied to bank-sync imports, with learned suggestions from your history.
-            </p>
-          </div>
+          <p className="text-sm text-foreground-muted">
+            Manage auto-categorization rules applied to bank-sync imports, with learned suggestions from your history.
+          </p>
           <Link
             href="/settings/rules"
             className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
@@ -647,19 +653,21 @@ export default function SettingsPage() {
             Open Rules Editor
           </Link>
         </div>
-      </div>
+      </CollapsibleConfigSection>
 
       {/* Inventory for household books (business books always have it) */}
       {entity && entity.entityType === 'household' && (
-        <div className="bg-surface rounded-xl border border-border px-4 py-3">
+        <CollapsibleConfigSection
+          title="Inventory Management"
+          summary={householdInventoryEnabled ? 'Enabled' : 'Disabled'}
+          configured
+          storageKey="settings.householdInventoryOpen"
+        >
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Inventory Management</h2>
-              <p className="text-sm text-foreground-muted mt-0.5">
-                Track items, stock levels, and bills of materials in this household book.
-                Adds an Inventory entry to the sidebar.
-              </p>
-            </div>
+            <p className="text-sm text-foreground-muted">
+              Track items, stock levels, and bills of materials in this household book.
+              Adds an Inventory entry to the sidebar.
+            </p>
             <label className="flex items-center gap-2 cursor-pointer shrink-0">
               <input
                 type="checkbox"
@@ -671,7 +679,7 @@ export default function SettingsPage() {
               <span className="text-sm text-foreground-secondary">Enabled</span>
             </label>
           </div>
-        </div>
+        </CollapsibleConfigSection>
       )}
 
       {/* Price Refresh Schedule */}
