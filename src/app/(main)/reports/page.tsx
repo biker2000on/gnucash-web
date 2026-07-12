@@ -317,6 +317,29 @@ export default function ReportsPage() {
                             </div>
                         </div>
                     </Link>
+                    <Link
+                        href="/reports/tax_schedule"
+                        className="group block bg-surface\30 backdrop-blur-xl border border-border rounded-xl p-6 hover:border-primary/50 hover:bg-surface/50 transition-all duration-200"
+                    >
+                        <div className="flex items-start gap-4">
+                            <div className="p-3 bg-primary\20 rounded-xl text-primary group-hover:bg-primary/30 transition-colors">
+                                <ReportIcon icon="account" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
+                                    Tax Schedule Report + TXF Export
+                                </h3>
+                                <p className="mt-1 text-sm text-foreground-muted line-clamp-2">
+                                    Tax-related accounts grouped by TXF code and IRS form (1040, Schedules A–E), exportable as a .txf file for TurboTax / TaxCut import.
+                                </p>
+                            </div>
+                            <div className="text-foreground-muted group-hover:text-primary transition-colors">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                            </div>
+                        </div>
+                    </Link>
                 </div>
             </section>
 

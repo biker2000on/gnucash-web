@@ -26,6 +26,7 @@ export enum ReportType {
   SALES_BY_CUSTOMER = 'sales_by_customer',
   EXPENSES_BY_VENDOR = 'expenses_by_vendor',
   STOCK_VALUATION = 'stock_valuation',
+  TAX_SCHEDULE = 'tax_schedule',
 }
 
 export interface ReportConfig {

@@ -78,6 +78,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'rpt-stock-valuation', title: 'Stock Valuation', group: 'report', href: '/reports/stock_valuation', keywords: 'inventory fifo' },
     { id: 'rpt-capital-gains', title: 'Capital Gains (Form 8949)', group: 'report', href: '/reports/capital-gains', keywords: 'schedule d tax realized' },
     { id: 'rpt-tax-harvesting', title: 'Tax Harvesting', group: 'report', href: '/reports/tax_harvesting', keywords: 'loss tlh' },
+    { id: 'rpt-tax-schedule', title: 'Tax Schedule Report (TXF Export)', group: 'report', href: '/reports/tax_schedule', keywords: 'txf turbotax export irs forms' },
     { id: 'rpt-contributions', title: 'Contribution Summary', group: 'report', href: '/reports/contribution_summary', keywords: 'ira 401k hsa limits retirement' },
     { id: 'rpt-budget', title: 'Budget Report', group: 'report', href: '/reports/budget_report', keywords: 'budgeted actual variance' },
     { id: 'rpt-reconciliation', title: 'Reconciliation Report', group: 'report', href: '/reports/reconciliation' },
