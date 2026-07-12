@@ -55,6 +55,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'nav-settings-rules', title: 'Settings — Rules', group: 'navigate', href: '/settings/rules', keywords: 'categorization auto' },
     { id: 'nav-settings-connections', title: 'Settings — Connections', group: 'navigate', href: '/settings/connections', keywords: 'simplefin bank sync' },
     { id: 'nav-settings-users', title: 'Settings — Users', group: 'navigate', href: '/settings/users', keywords: 'permissions roles' },
+    { id: 'nav-settings-history', title: 'Settings — Change History', group: 'navigate', href: '/settings/history', keywords: 'audit log undo restore trail' },
 
     // ── Reports ──────────────────────────────────────────────────────────
     { id: 'rpt-balance-sheet', title: 'Balance Sheet', group: 'report', href: '/reports/balance_sheet', keywords: 'assets liabilities equity' },

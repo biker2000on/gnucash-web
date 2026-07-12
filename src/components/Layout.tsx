@@ -349,6 +349,7 @@ const navItems: NavItem[] = [
             { name: 'Rules', href: '/settings/rules' },
             { name: 'Connections', href: '/settings/connections' },
             { name: 'Users', href: '/settings/users' },
+            { name: 'History', href: '/settings/history' },
         ],
     },
 ];

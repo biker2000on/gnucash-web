@@ -3,7 +3,7 @@ import prisma, { toDecimal, generateGuid } from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
-import { logAudit } from '@/lib/services/audit.service';
+import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
@@ -128,6 +128,9 @@ export async function PUT(
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }
 
+        // Full before-image for the audit trail (undo-capable)
+        const beforeSnapshot = await snapshotTransactionByGuid(guid);
+
         // Optimistic locking: check enter_date hasn't changed since the client read it
         if (original_enter_date && existingTx.enter_date) {
             const currentEnterDate = existingTx.enter_date.toISOString();
@@ -242,18 +245,9 @@ export async function PUT(
             throw new Error('Failed to update transaction');
         }
 
-        // Log audit event
-        await logAudit('UPDATE', 'TRANSACTION', guid, {
-            description: existingTx.description,
-            post_date: existingTx.post_date,
-            splits_count: existingTx.splits.length,
-        }, {
-            description: body.description,
-            post_date: body.post_date,
-            splits_count: totalSplitsCount,
-            is_multi_currency: isMultiCurrency,
-            trading_splits_added: isMultiCurrency ? totalSplitsCount - body.splits.length : 0,
-        });
+        // Log audit event with full before/after snapshots (undo-capable)
+        const afterSnapshot = await snapshotTransactionByGuid(guid);
+        await logAudit('UPDATE', 'TRANSACTION', guid, beforeSnapshot, afterSnapshot);
 
         // Invalidate caches from the transaction date forward
         try {
@@ -321,6 +315,9 @@ export async function DELETE(
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }
 
+        // Full before-image for the audit trail (restore-capable)
+        const deleteSnapshot = await snapshotTransactionByGuid(guid);
+
         // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
         await prisma.$executeRaw`
             UPDATE gnucash_web_transaction_meta
@@ -349,8 +346,8 @@ export async function DELETE(
             });
         });
 
-        // Log audit event
-        await logAudit('DELETE', 'TRANSACTION', guid, {
+        // Log audit event with the full before-image (restore-capable)
+        await logAudit('DELETE', 'TRANSACTION', guid, deleteSnapshot ?? {
             description: existingTx.description,
             post_date: existingTx.post_date,
             splits_count: existingTx.splits.length,

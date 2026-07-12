@@ -5,7 +5,7 @@ import { CreateTransactionRequest } from '@/lib/types';
 import { validateTransaction } from '@/lib/validation';
 import { isValidGuid } from '@/lib/guid';
 import { Prisma } from '@prisma/client';
-import { logAudit } from '@/lib/services/audit.service';
+import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.service';
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
@@ -402,14 +402,13 @@ export async function POST(request: Request) {
 
         const accountPathMap = await buildAccountPathMap(await getBookAccountGuids());
 
-        // Log audit event
-        await logAudit('CREATE', 'TRANSACTION', txGuid, null, {
-            description: body.description,
-            post_date: body.post_date,
-            splits_count: totalSplitsCount,
-            is_multi_currency: isMultiCurrency,
-            trading_splits_added: isMultiCurrency ? totalSplitsCount - body.splits.length : 0,
-        });
+        // Log audit event with a full snapshot (undo-capable)
+        await logAudit('CREATE', 'TRANSACTION', txGuid, null,
+            await snapshotTransactionByGuid(txGuid) ?? {
+                description: body.description,
+                post_date: body.post_date,
+                splits_count: totalSplitsCount,
+            });
 
         // Invalidate caches from the transaction date forward
         try {
