@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
@@ -635,6 +636,8 @@ export default function SettingsPage() {
           </Link>
         </div>
       </CollapsibleConfigSection>
+
+      <EmailNotificationsSection />
 
       <CollapsibleConfigSection
         title="Categorization Rules"

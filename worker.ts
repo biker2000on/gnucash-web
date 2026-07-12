@@ -298,6 +298,11 @@ async function main() {
           await handleCheckLimitCoverage(job);
           break;
         }
+        case 'send-email': {
+          const { handleSendEmail } = await import('./src/lib/queue/jobs/send-email');
+          await handleSendEmail(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
