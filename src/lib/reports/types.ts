@@ -27,6 +27,8 @@ export enum ReportType {
   EXPENSES_BY_VENDOR = 'expenses_by_vendor',
   STOCK_VALUATION = 'stock_valuation',
   TAX_SCHEDULE = 'tax_schedule',
+  BUDGET_INCOME_STATEMENT = 'budget_income_statement',
+  BUDGET_BALANCE_SHEET = 'budget_balance_sheet',
 }
 
 export interface ReportConfig {
@@ -330,6 +332,20 @@ export const REPORTS: ReportConfig[] = [
     name: 'Budget Report',
     description: 'Budgeted vs actual amounts per account with income and expense subtotals',
     icon: 'account',
+    category: 'financial',
+  },
+  {
+    type: ReportType.BUDGET_INCOME_STATEMENT,
+    name: 'Budget Income Statement',
+    description: 'Budgeted vs actual P&L with favorable/unfavorable variances and per-period barchart',
+    icon: 'trending',
+    category: 'financial',
+  },
+  {
+    type: ReportType.BUDGET_BALANCE_SHEET,
+    name: 'Budget Balance Sheet',
+    description: 'Projected balances at the end of a budget period — opening balances plus budgeted flows',
+    icon: 'balance',
     category: 'financial',
   },
   {

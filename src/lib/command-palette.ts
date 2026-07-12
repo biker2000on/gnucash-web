@@ -81,6 +81,8 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'rpt-tax-schedule', title: 'Tax Schedule Report (TXF Export)', group: 'report', href: '/reports/tax_schedule', keywords: 'txf turbotax export irs forms' },
     { id: 'rpt-contributions', title: 'Contribution Summary', group: 'report', href: '/reports/contribution_summary', keywords: 'ira 401k hsa limits retirement' },
     { id: 'rpt-budget', title: 'Budget Report', group: 'report', href: '/reports/budget_report', keywords: 'budgeted actual variance' },
+    { id: 'rpt-budget-income', title: 'Budget Income Statement', group: 'report', href: '/reports/budget_income_statement', keywords: 'budget pnl variance favorable' },
+    { id: 'rpt-budget-bs', title: 'Budget Balance Sheet', group: 'report', href: '/reports/budget_balance_sheet', keywords: 'projected balances budget' },
     { id: 'rpt-reconciliation', title: 'Reconciliation Report', group: 'report', href: '/reports/reconciliation' },
     { id: 'rpt-treasurer', title: 'Treasurer Report', group: 'report', href: '/reports/treasurer' },
     { id: 'rpt-sales-by-customer', title: 'Sales by Customer', group: 'report', href: '/reports/sales_by_customer' },
