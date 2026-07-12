@@ -9,6 +9,7 @@ import { BackupsSection } from '@/components/settings/BackupsSection';
 import { TwoFactorSection } from '@/components/settings/TwoFactorSection';
 import { ApiTokensSection } from '@/components/settings/ApiTokensSection';
 import { WebhooksSection } from '@/components/settings/WebhooksSection';
+import { ReportSchedulesSection } from '@/components/settings/ReportSchedulesSection';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
@@ -650,6 +651,8 @@ export default function SettingsPage() {
       <ApiTokensSection />
 
       <WebhooksSection />
+
+      <ReportSchedulesSection />
 
       <CollapsibleConfigSection
         title="Categorization Rules"

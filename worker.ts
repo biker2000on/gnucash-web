@@ -308,6 +308,11 @@ async function main() {
           await handleRunBackups(job);
           break;
         }
+        case 'run-report-schedules': {
+          const { handleRunReportSchedules } = await import('./src/lib/queue/jobs/run-report-schedules');
+          await handleRunReportSchedules(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -354,6 +359,18 @@ async function main() {
       await handleRunBackups(fakeJob);
     } catch (err) {
       console.error('Nightly backups failed:', err);
+    }
+  });
+
+  // Daily report-schedule delivery at 06:00 UTC (idempotent per period)
+  setScheduleGeneric('report-schedules', '06:00', async () => {
+    console.log(`[${new Date().toISOString()}] Running due report schedules`);
+    try {
+      const { handleRunReportSchedules } = await import('./src/lib/queue/jobs/run-report-schedules');
+      const fakeJob = { id: `daily-report-schedules-${Date.now()}`, name: 'run-report-schedules', data: {} } as Job;
+      await handleRunReportSchedules(fakeJob);
+    } catch (err) {
+      console.error('Report schedules run failed:', err);
     }
   });
 

@@ -2,6 +2,7 @@ import Layout from "@/components/Layout";
 import { Providers } from "@/app/providers";
 import { BookProvider } from "@/contexts/BookContext";
 import { OnboardingGuard } from "@/components/OnboardingGuard";
+import { PrintStyles } from "@/components/PrintStyles";
 
 // All authenticated pages read the session cookie and load live data, and the
 // sidebar reads the URL query (useSearchParams) for active-nav highlighting, so
@@ -15,6 +16,7 @@ export default async function MainLayout({
 }>) {
     return (
         <Providers>
+            <PrintStyles />
             <BookProvider>
                 <OnboardingGuard>
                     <Layout>{children}</Layout>
