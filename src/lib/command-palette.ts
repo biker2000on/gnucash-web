@@ -51,6 +51,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'nav-goals', title: 'Goals', group: 'navigate', href: '/goals', keywords: 'savings targets', shortcut: 'g o' },
     { id: 'nav-reports', title: 'Reports', group: 'navigate', href: '/reports', shortcut: 'g r' },
     { id: 'nav-import-export', title: 'Import / Export', group: 'navigate', href: '/import-export', keywords: 'xml amazon backup' },
+    { id: 'nav-qif-import', title: 'QIF Import', group: 'navigate', href: '/import-export/qif', keywords: 'quicken import bank transfer' },
     { id: 'nav-scheduled', title: 'Scheduled Transactions', group: 'navigate', href: '/scheduled-transactions', keywords: 'recurring sx' },
     { id: 'nav-settings', title: 'Settings', group: 'navigate', href: '/settings', shortcut: 'g s' },
     { id: 'nav-settings-commodities', title: 'Settings — Commodities', group: 'navigate', href: '/settings/commodities', keywords: 'securities prices quotes' },
