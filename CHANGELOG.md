@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0.0] - 2026-07-12
+
+### Added
+- **Sell Planner**: raise a target amount of cash tax-optimally — losses harvested first with wash-sale screening (incl. IRA buys per Rev. Rul. 2008-5), long-term gains by gain-per-dollar, partial final lots landing exactly on target, incremental federal+state tax via the real engine, and side-by-side savings vs naive FIFO and long-term-only plans
+- **Net-Worth Attribution**: any period's change decomposed into savings, market gains, debt paydown, and an honest residual — cents-exact by construction — with waterfall summary, monthly stacked chart, and drill-downs
+- **Year in Review**: the annual wrapped — net worth arc, savings rate, top categories with YoY deltas, dividends, best/worst holding, taxes paid, subscription changes, streaks
+- **Scenario Sandbox**: one what-if (e.g. the Buy-a-House template) threaded through cash flow, 30-year net worth, current+next-year taxes (itemize-vs-standard decided), and FIRE date, side by side with baseline
+- **Report Schedules**: email any saved report weekly/monthly/quarterly (HTML + CSV, idempotent per period), checked daily by the worker; plus global print stylesheets for clean PDFs from any page
+- **API tokens & webhooks**: hashed personal access tokens (Bearer gcw_…) with live role capping, and HMAC-signed outbound webhooks on notifications with SSRF guards — docs in docs/api-tokens.md
+- **Opt-in TOTP two-factor auth**: RFC 6238 with encrypted secrets and single-use recovery codes; strictly opt-in — nothing changes for un-enrolled users, OIDC untouched
+- **In Case of Emergency**: per-account beneficiary/institution/contact metadata assembled into a printable, grouped account map with book-level instructions
+- **Fixed Income ladder**: bonds/CDs/treasuries with Newton-solved YTM, per-year maturity ladder, weighted averages, 12-month maturity calendar, and coupon estimates
+- **AI additions**: natural-language quick-add ("$40 gas yesterday" → prefilled entry), a factual narrative paragraph atop the monthly digest, and daily proactive insight cards (category spikes, first-time merchants, savings-rate drops, net-worth milestones, cash drops) on the dashboard
+
 ## [0.11.0.0] - 2026-07-12
 
 Closes every "worth building" gap from the GnuCash desktop parity audit
