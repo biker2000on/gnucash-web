@@ -327,6 +327,7 @@ const navItems: NavItem[] = [
             { name: 'Benchmark', href: '/investments/benchmark' },
             { name: 'Dividends', href: '/investments/dividends' },
             { name: 'Equity Comp', href: '/investments/equity-comp' },
+            { name: 'Fixed Income', href: '/investments/fixed-income' },
         ],
     },
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },

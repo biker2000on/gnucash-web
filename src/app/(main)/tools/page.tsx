@@ -219,6 +219,12 @@ export default function ToolsPage() {
             href: '/tools/tax-estimator',
         },
         {
+            title: 'In Case of Emergency',
+            description: 'A printable map of every account — institutions, balances, beneficiaries, and instructions — for the people who would need it.',
+            icon: 'shield',
+            href: '/tools/emergency',
+        },
+        {
             title: 'Asset Analysis',
             description: 'View fixed assets with depreciation schedules, appreciation tracking, and valuation history.',
             icon: 'building',
