@@ -145,6 +145,13 @@ function AccountPageContent() {
                     )}
                 </div>
                 <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
+                    <Link
+                        href={`/accounts/${guid}/reconcile`}
+                        className="px-3 py-2 text-xs font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors whitespace-nowrap"
+                        title="Reconcile this account against a statement ending balance"
+                    >
+                        Reconcile
+                    </Link>
                     <DateRangePicker
                         startDate={startDate}
                         endDate={endDate}
