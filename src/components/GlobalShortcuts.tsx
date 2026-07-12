@@ -1,15 +1,29 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut'
 import { QuickAccountSwitcher } from './QuickAccountSwitcher'
 import { QuickBookSwitcher } from './QuickBookSwitcher'
+import { CommandPalette } from './CommandPalette'
 
 export function GlobalShortcuts() {
   const router = useRouter()
   const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false)
   const [bookSwitcherOpen, setBookSwitcherOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  // Let the command palette (and anything else) open the switchers via events
+  useEffect(() => {
+    const openAccounts = () => setAccountSwitcherOpen(true)
+    const openBooks = () => setBookSwitcherOpen(true)
+    window.addEventListener('open-account-switcher', openAccounts)
+    window.addEventListener('open-book-switcher', openBooks)
+    return () => {
+      window.removeEventListener('open-account-switcher', openAccounts)
+      window.removeEventListener('open-book-switcher', openBooks)
+    }
+  }, [])
 
   // Navigation shortcuts (chords)
   useKeyboardShortcut('nav-dashboard', 'g d', 'Go to Dashboard', () => router.push('/dashboard'))
@@ -24,6 +38,9 @@ export function GlobalShortcuts() {
   useKeyboardShortcut('nav-settings', 'g s', 'Go to Settings', () => router.push('/settings'))
 
   // Quick switchers
+  useKeyboardShortcut('command-palette', 'Ctrl+k', 'Command palette', () => {
+    setPaletteOpen(true)
+  })
   useKeyboardShortcut('quick-account-switcher', 'Ctrl+p', 'Quick account switcher', () => {
     setAccountSwitcherOpen(true)
   })
@@ -54,6 +71,7 @@ export function GlobalShortcuts() {
 
   return (
     <>
+      <CommandPalette isOpen={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <QuickAccountSwitcher isOpen={accountSwitcherOpen} onClose={() => setAccountSwitcherOpen(false)} />
       <QuickBookSwitcher isOpen={bookSwitcherOpen} onClose={() => setBookSwitcherOpen(false)} />
     </>
