@@ -46,6 +46,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'nav-inv-rebalancing', title: 'Rebalancing', group: 'navigate', href: '/investments/rebalancing', keywords: 'allocation drift' },
     { id: 'nav-inv-benchmark', title: 'Benchmark', group: 'navigate', href: '/investments/benchmark', keywords: 'sp500 index compare' },
     { id: 'nav-inv-dividends', title: 'Dividends', group: 'navigate', href: '/investments/dividends', keywords: 'income yield calendar' },
+    { id: 'nav-inv-equity-comp', title: 'Equity Compensation', group: 'navigate', href: '/investments/equity-comp', keywords: 'rsu espp vest stock options sell to cover' },
     { id: 'nav-budgets', title: 'Budgets', group: 'navigate', href: '/budgets', shortcut: 'g u' },
     { id: 'nav-goals', title: 'Goals', group: 'navigate', href: '/goals', keywords: 'savings targets', shortcut: 'g o' },
     { id: 'nav-reports', title: 'Reports', group: 'navigate', href: '/reports', shortcut: 'g r' },

@@ -2,13 +2,11 @@
 
 Items deferred from plan reviews for future implementation.
 
-## P2 - Ledger data cleanup: corrupt FXAIX sale on 2024-05-22
+## P2 - Ledger data cleanup: corrupt FXAIX sale on 2024-05-22 — ✅ ROOT CAUSE FOUND 2026-07-12 (dev-only)
 
 **What:** The FXAIX lot `a125d771` (1.563 shares bought 2024-04-18 for $272) has a "Sale of Assets" split on 2024-05-22 valued at **-$4,272.95** — an implied ~$2,734/share, when every other FXAIX lot sold that same day is ~$178/share. This inflates the lot's realized gain by ~$4,000.
 
-**Why:** Found by /qa on 2026-07-08 while validating the new Capital Gains (Form 8949) report against live data. The report now flags the row with a "review before filing" warning (ISSUE-005), but the underlying transaction is wrong and throws off the 2024 Schedule D. Likely a fat-fingered value or a bad import on that one sale split. Fix it in the ledger so the 8949 is correct.
-
-**Effort:** XS (data fix in the ledger, no code change)
+**Resolution (2026-07-12):** Not a bad import — this is the systematic legacy `splitSellAcrossLots` sign bug: an older engine version dropped the value sign on sell sub-splits, and the remainder sub-split absorbed the error. Audit found 598 corrupted sub-splits across 59 sells / 42 accounts in **gnucash_dev only** — **prod is clean** (0 mismatches; its 654 gains transactions are sign-consistent). Repair for dev when wanted: `npx tsx scripts/fix-lot-scrub-sign-corruption.ts --execute` (table snapshot in schema `backup_20260712` already taken).
 
 ---
 
