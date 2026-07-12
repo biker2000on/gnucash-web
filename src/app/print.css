@@ -1,0 +1,96 @@
+/*
+ * Global print stylesheet.
+ *
+ * Injected via <PrintStyles /> (src/components/PrintStyles.tsx) — mount it
+ * once inside the main layout. Makes any page printable directly with
+ * Ctrl+P / Cmd+P: chrome (sidebar, nav, buttons) is hidden, the scroll
+ * containers are unrolled so the full content paginates, and everything is
+ * flattened to black-on-white.
+ *
+ * The report pages' dedicated "Print" action (ReportViewer) still uses its
+ * own popup renderer; this stylesheet covers everything else.
+ */
+
+@media print {
+    /* ---- Hide app chrome -------------------------------------------- */
+    aside,
+    nav,
+    button,
+    [role='button'],
+    [role='switch'],
+    input[type='button'],
+    input[type='submit'],
+    .no-print {
+        display: none !important;
+    }
+
+    /* ---- Unroll the app's h-screen / overflow-auto shell ------------- */
+    html,
+    body {
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+
+    body > div,
+    main {
+        display: block !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    main {
+        background: #fff !important;
+        background-image: none !important;
+        padding: 0 !important;
+    }
+
+    /* ---- Flatten colors to black-on-white ---------------------------- */
+    * {
+        color: #000 !important;
+        background: transparent !important;
+        background-image: none !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+        border-color: #bbb !important;
+        backdrop-filter: none !important;
+    }
+
+    a {
+        text-decoration: none !important;
+    }
+
+    /* ---- Tables ------------------------------------------------------ */
+    table {
+        border-collapse: collapse !important;
+        width: 100% !important;
+    }
+
+    th,
+    td {
+        border-bottom: 1px solid #ddd !important;
+    }
+
+    thead {
+        display: table-header-group; /* repeat headers on every page */
+    }
+
+    tr,
+    section {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    h1,
+    h2,
+    h3 {
+        break-after: avoid;
+        page-break-after: avoid;
+    }
+
+    /* ---- Page setup --------------------------------------------------- */
+    @page {
+        margin: 1.5cm;
+    }
+}

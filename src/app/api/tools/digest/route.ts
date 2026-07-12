@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     try {
         const roleResult = await requireRole('readonly');
         if (roleResult instanceof NextResponse) return roleResult;
-        const { bookGuid } = roleResult;
+        const { user, bookGuid } = roleResult;
 
         const { searchParams } = new URL(request.url);
         let month: string;
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
         }
 
         const rootGuid = await getActiveBookRootGuid();
-        const digest = await generateDigest(rootGuid, { month });
+        const digest = await generateDigest(rootGuid, { month, aiUserId: user.id });
 
         return NextResponse.json({ ...digest, bookGuid });
     } catch (error) {
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
         }
 
         const rootGuid = await getActiveBookRootGuid();
-        const digest = await generateDigest(rootGuid, { month });
+        const digest = await generateDigest(rootGuid, { month, aiUserId: user.id });
 
         // Dedupe: skip if this month's digest was already delivered to the user.
         await ensureNotificationsTable();

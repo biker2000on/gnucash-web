@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateUser, createSession } from '@/lib/auth';
+import { isTotpEnabled } from '@/lib/totp-store';
+import { createTotpChallenge } from '@/lib/totp-challenge';
 import { z } from 'zod';
 
 const LoginSchema = z.object({
@@ -28,6 +30,13 @@ export async function POST(request: NextRequest) {
                 { error: 'Invalid username or password' },
                 { status: 401 }
             );
+        }
+
+        // Strictly opt-in 2FA: only users who explicitly enrolled get the
+        // TOTP step. Everyone else follows the exact same path as before.
+        if (await isTotpEnabled(user.id)) {
+            await createTotpChallenge(user.id, user.username);
+            return NextResponse.json({ totpRequired: true });
         }
 
         await createSession(user.id, user.username);

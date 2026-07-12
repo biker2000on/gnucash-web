@@ -33,6 +33,8 @@ export enum ReportType {
   PRICE_HISTORY = 'price_history',
   DAY_OF_WEEK = 'day_of_week',
   AVERAGE_BALANCE = 'average_balance',
+  NET_WORTH_ATTRIBUTION = 'net_worth_attribution',
+  YEAR_IN_REVIEW = 'year_in_review',
 }
 
 export interface ReportConfig {
@@ -428,6 +430,20 @@ export const REPORTS: ReportConfig[] = [
     description: 'Average daily balance, minimum, maximum, and ending balance per month for selected cash accounts',
     icon: 'balance',
     category: 'account',
+  },
+  {
+    type: ReportType.NET_WORTH_ATTRIBUTION,
+    name: 'Net-Worth Attribution',
+    description: 'Decomposes net-worth change into savings, market gains, debt paydown, and other — summing exactly to the total',
+    icon: 'trending',
+    category: 'chart',
+  },
+  {
+    type: ReportType.YEAR_IN_REVIEW,
+    name: 'Year in Review',
+    description: 'Annual wrapped: net worth arc, savings rate, top categories, dividends, best/worst holdings, streaks',
+    icon: 'trending',
+    category: 'financial',
   },
 ];
 

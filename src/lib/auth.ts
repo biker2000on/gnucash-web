@@ -7,11 +7,12 @@
 
 import bcrypt from 'bcrypt';
 import { getIronSession, IronSession } from 'iron-session';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import prisma from './prisma';
 import { SessionData, sessionOptions } from './session-config';
 import { getUserRoleForBook, type Role } from './services/permission.service';
+import { authenticateBearer, parseBearerToken } from './api-tokens';
 
 export type { SessionData };
 export type { Role };
@@ -169,13 +170,51 @@ export async function requireAuth(): Promise<
 }
 
 /**
+ * Read a `gcw_...` API token from the request's Authorization header,
+ * or null when absent / not in a request scope.
+ */
+async function getBearerApiToken(): Promise<string | null> {
+    try {
+        const headerStore = await headers();
+        return parseBearerToken(headerStore.get('authorization'));
+    } catch {
+        // headers() throws outside a request scope (e.g. build time)
+        return null;
+    }
+}
+
+/**
  * Require a minimum role for the active book. Returns user + role or error response.
  * The middleware guarantees authentication; this function adds authorization.
+ * Also accepts `Authorization: Bearer gcw_...` personal access tokens — in
+ * that case `viaToken: true` is set on the result and the effective role is
+ * capped at the token's role.
  */
 export async function requireRole(minimumRole: Role): Promise<
-  { user: { id: number; username: string }; role: Role; bookGuid: string } |
+  { user: { id: number; username: string }; role: Role; bookGuid: string; viaToken?: boolean } |
   NextResponse
 > {
+    // --- API token (Bearer gcw_...) path -------------------------------
+    // Personal access tokens bypass the session entirely. The effective
+    // role is capped at BOTH the token's role and the user's actual role
+    // for the book (a token can narrow permissions, never escalate).
+    const bearerToken = await getBearerApiToken();
+    if (bearerToken) {
+        const tokenAuth = await authenticateBearer(bearerToken);
+        if (!tokenAuth) {
+            return NextResponse.json({ error: 'Invalid or expired API token' }, { status: 401 });
+        }
+        const TOKEN_ROLE_HIERARCHY: Record<string, number> = { readonly: 0, edit: 1, admin: 2 };
+        if (TOKEN_ROLE_HIERARCHY[tokenAuth.role] < TOKEN_ROLE_HIERARCHY[minimumRole]) {
+            return NextResponse.json(
+                { error: `Requires ${minimumRole} role, this token grants ${tokenAuth.role}` },
+                { status: 403 }
+            );
+        }
+        return { user: tokenAuth.user, role: tokenAuth.role, bookGuid: tokenAuth.bookGuid, viaToken: true };
+    }
+
+    // --- Session (cookie) path — unchanged ------------------------------
     const authResult = await requireAuth();
     if (authResult instanceof NextResponse) return authResult;
 

@@ -41,6 +41,7 @@ import ArApWidget from '@/components/dashboard/widgets/ArApWidget';
 import DividendsWidget from '@/components/dashboard/widgets/DividendsWidget';
 import SubscriptionsWidget from '@/components/dashboard/widgets/SubscriptionsWidget';
 import DataHealthWidget from '@/components/dashboard/widgets/DataHealthWidget';
+import InsightsWidget from '@/components/dashboard/widgets/InsightsWidget';
 import CustomWidget from '@/components/dashboard/widgets/CustomWidget';
 
 // ------------------------------------------------------------------
@@ -647,6 +648,8 @@ function DashboardContent() {
                 return <SubscriptionsWidget />;
             case 'data-health':
                 return <DataHealthWidget />;
+            case 'insights':
+                return <InsightsWidget />;
             case 'netWorth':
                 return (
                     <ExpandableChart

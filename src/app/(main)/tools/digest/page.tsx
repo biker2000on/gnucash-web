@@ -53,6 +53,25 @@ function deltaClass(n: number, invert = false): string {
 /* Sections                                                             */
 /* ------------------------------------------------------------------ */
 
+/** AI-written 3-5 sentence overview; rendered only when the digest carries one. */
+function NarrativeBlock({ narrative }: { narrative: string }) {
+    return (
+        <section className="bg-primary-light/40 border border-primary/30 rounded-xl p-4 sm:p-6">
+            <p className="text-[10px] sm:text-xs uppercase tracking-wide text-primary mb-2 flex items-center gap-1.5">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                    <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+                    />
+                </svg>
+                Month in review
+            </p>
+            <p className="text-sm sm:text-base leading-relaxed text-foreground">{narrative}</p>
+        </section>
+    );
+}
+
 function NetWorthHero({ digest }: { digest: MonthlyDigest }) {
     const { end, change, changePercent } = digest.netWorth;
     const arrow = change > 0 ? '▲' : change < 0 ? '▼' : '—';
@@ -438,6 +457,7 @@ export default function DigestPage() {
 
             {!loading && !error && digest && (
                 <div className="space-y-6">
+                    {digest.narrative && <NarrativeBlock narrative={digest.narrative} />}
                     <NetWorthHero digest={digest} />
                     <StatRow digest={digest} />
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
