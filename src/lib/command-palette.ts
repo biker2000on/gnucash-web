@@ -68,6 +68,8 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'rpt-income-by-period', title: 'Income Statement by Period', group: 'report', href: '/reports/income_statement_by_period', keywords: 'monthly p&l' },
     { id: 'rpt-cash-flow', title: 'Cash Flow', group: 'report', href: '/reports/cash_flow' },
     { id: 'rpt-net-worth', title: 'Net Worth Chart', group: 'report', href: '/reports/net_worth_chart' },
+    { id: 'rpt-nw-attribution', title: 'Net-Worth Attribution', group: 'report', href: '/reports/net_worth_attribution', keywords: 'why change decompose savings market debt waterfall' },
+    { id: 'rpt-year-in-review', title: 'Year in Review', group: 'report', href: '/reports/year_in_review', keywords: 'wrapped annual summary highlights' },
     { id: 'rpt-net-worth-owner', title: 'Net Worth by Owner', group: 'report', href: '/reports/net_worth_by_owner' },
     { id: 'rpt-equity', title: 'Equity Statement', group: 'report', href: '/reports/equity_statement' },
     { id: 'rpt-trial-balance', title: 'Trial Balance', group: 'report', href: '/reports/trial_balance' },
