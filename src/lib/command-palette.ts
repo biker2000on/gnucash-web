@@ -108,6 +108,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'biz-aging', title: 'AR/AP Aging', group: 'business', href: '/business/reports/aging', keywords: 'receivable payable overdue' },
     { id: 'biz-sales-tax', title: 'Sales Tax Report', group: 'business', href: '/business/reports/sales-tax' },
     { id: 'biz-schedule-c', title: 'Schedule C', group: 'business', href: '/business/reports/schedule-c', keywords: 'sole proprietor tax' },
+    { id: 'biz-schedule-e', title: 'Schedule E', group: 'business', href: '/business/reports/schedule-e', keywords: 'rental property depreciation landlord tax' },
     { id: 'biz-settings', title: 'Business Settings', group: 'business', href: '/business/settings', keywords: 'terms tax tables numbering' },
 ];
 

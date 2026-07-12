@@ -141,6 +141,7 @@ export default function BusinessDashboardPage() {
                         <Link href="/business/reports/aging" className={reportLink}>Aging</Link>
                         <Link href="/business/reports/sales-tax" className={reportLink}>Sales Tax</Link>
                         <Link href="/business/reports/schedule-c" className={reportLink}>Schedule C</Link>
+                        <Link href="/business/reports/schedule-e" className={reportLink}>Schedule E</Link>
                     </>
                 }
             />

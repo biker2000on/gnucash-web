@@ -280,6 +280,7 @@ const businessNavItem: NavItem = {
         { name: 'AR/AP Aging', href: '/business/reports/aging' },
         { name: 'Sales Tax', href: '/business/reports/sales-tax' },
         { name: 'Schedule C', href: '/business/reports/schedule-c' },
+        { name: 'Schedule E', href: '/business/reports/schedule-e' },
         { name: 'Business Settings', href: '/business/settings' },
     ],
 };
