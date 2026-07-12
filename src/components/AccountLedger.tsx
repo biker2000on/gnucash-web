@@ -2166,6 +2166,11 @@ export default function AccountLedger({
                                         {invRow.transactionType === 'return_of_capital' && (
                                             <span className="text-amber-400">Return of Capital</span>
                                         )}
+                                        {invRow.transactionType === 'realized_gain' && invRow.gainAmount !== null && (
+                                            <span className={invRow.gainAmount >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                Realized {invRow.gainAmount >= 0 ? 'Gain' : 'Loss'}: {formatCurrency(Math.abs(invRow.gainAmount), invRow.currencyMnemonic)}
+                                            </span>
+                                        )}
                                         <span>Bal: {invRow.shareBalance.toFixed(sharePrecision)}</span>
                                         <span>Cost: {formatCurrency(invRow.costBasis, invRow.currencyMnemonic)}</span>
                                     </div>
@@ -2854,11 +2859,21 @@ export default function AccountLedger({
                                                 }
 
                                                 if (colId === 'buy') {
+                                                    // Realized gains land in the Buy column (value added to the
+                                                    // account), losses in the Sell column — mirroring GnuCash
+                                                    // desktop's debit/credit register placement.
+                                                    const gainHere = invRow?.transactionType === 'realized_gain'
+                                                        && invRow.gainAmount !== null && invRow.gainAmount >= 0
+                                                        ? invRow.gainAmount : null;
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.buyAmount != null ? (
                                                                 <span className="text-emerald-400">
                                                                     {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}
+                                                                </span>
+                                                            ) : gainHere !== null ? (
+                                                                <span className="text-emerald-400" title="Realized gain">
+                                                                    {formatCurrency(gainHere, invRow!.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
@@ -2868,11 +2883,18 @@ export default function AccountLedger({
                                                 }
 
                                                 if (colId === 'sell') {
+                                                    const lossHere = invRow?.transactionType === 'realized_gain'
+                                                        && invRow.gainAmount !== null && invRow.gainAmount < 0
+                                                        ? Math.abs(invRow.gainAmount) : null;
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.sellAmount != null ? (
                                                                 <span className="text-rose-400">
                                                                     {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}
+                                                                </span>
+                                                            ) : lossHere !== null ? (
+                                                                <span className="text-rose-400" title="Realized loss">
+                                                                    {formatCurrency(lossHere, invRow!.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
                                                                 <span className="opacity-30">&mdash;</span>
