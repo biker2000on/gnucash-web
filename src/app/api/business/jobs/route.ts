@@ -6,17 +6,16 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import {
-  listJobs,
-  createJob,
-  jobInputSchema,
   parseInput,
   BusinessValidationError,
   type JobListOptions,
 } from '@/lib/services/business.service';
+import { listJobsEx, createJobEx, jobExInputSchema } from '@/lib/business/jobs.service';
 
 /**
  * GET /api/business/jobs
  * Query params: owner (customer/vendor guid), search, active (active|inactive|all).
+ * Rows include `rate` (the GnuCash 'job-rate' slot; null when unset).
  */
 export async function GET(request: Request) {
   try {
@@ -31,7 +30,7 @@ export async function GET(request: Request) {
       active: activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all',
     };
 
-    return NextResponse.json(await listJobs(options));
+    return NextResponse.json(await listJobsEx(options));
   } catch (error) {
     console.error('Error listing jobs:', error);
     return NextResponse.json({ error: 'Failed to list jobs' }, { status: 500 });
@@ -40,7 +39,7 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/business/jobs
- * Body: { name, reference?, active?, ownerType: 'customer'|'vendor', ownerGuid }.
+ * Body: { name, reference?, active?, ownerType: 'customer'|'vendor', ownerGuid, rate? }.
  */
 export async function POST(request: Request) {
   try {
@@ -48,8 +47,8 @@ export async function POST(request: Request) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const body = await request.json().catch(() => null);
-    const input = parseInput(jobInputSchema, body);
-    const job = await createJob(input);
+    const input = parseInput(jobExInputSchema, body);
+    const job = await createJobEx(input);
     return NextResponse.json(job, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessValidationError) {
