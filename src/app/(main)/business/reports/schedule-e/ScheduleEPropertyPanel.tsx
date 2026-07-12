@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
-import { generateGuid } from '@/lib/gnucash';
+import { generateGuid } from '@/lib/guid';
 import type {
     DepreciableAsset,
     DepreciationMethod,
