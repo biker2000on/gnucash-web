@@ -70,6 +70,7 @@ export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 export const OWNER_TYPE_CUSTOMER = 2;
 export const OWNER_TYPE_JOB = 3;
 export const OWNER_TYPE_VENDOR = 4;
+export const OWNER_TYPE_EMPLOYEE = 5;
 
 // GnuCash KVP slot types (KvpValue::Type)
 const SLOT_INT64 = 1;
@@ -100,7 +101,7 @@ export class InvoiceStateError extends Error {}
 // Input / output types
 // ---------------------------------------------------------------------------
 
-export type OwnerTypeName = 'customer' | 'vendor' | 'job';
+export type OwnerTypeName = 'customer' | 'vendor' | 'job' | 'employee';
 
 export interface InvoiceEntryInput {
   description?: string;
@@ -162,7 +163,8 @@ export interface PostInvoiceInput {
 }
 
 export interface ApplyPaymentInput {
-  ownerType: 'customer' | 'vendor';
+  /** 'employee' pays expense vouchers (A/P side, like vendor bills). */
+  ownerType: 'customer' | 'vendor' | 'employee';
   ownerGuid: string;
   /** Bank/asset account receiving (customer) or funding (vendor) the payment. */
   transferAccountGuid: string;
@@ -279,8 +281,8 @@ function toIsoDate(d: Date | null | undefined): string | null {
 }
 
 interface ResolvedOwner {
-  /** End owner after job resolution: 2 (customer) or 4 (vendor). */
-  endType: typeof OWNER_TYPE_CUSTOMER | typeof OWNER_TYPE_VENDOR;
+  /** End owner after job resolution: 2 (customer), 4 (vendor) or 5 (employee). */
+  endType: typeof OWNER_TYPE_CUSTOMER | typeof OWNER_TYPE_VENDOR | typeof OWNER_TYPE_EMPLOYEE;
   endGuid: string;
   /** Direct owner as stored on the invoice (may be a job). */
   directType: number;
@@ -308,6 +310,17 @@ async function resolveOwner(db: PrismaTx, ownerType: number, ownerGuid: string):
       name: v.name, currencyGuid: v.currency, termsGuid: v.terms ?? null, kind: 'bill',
     };
   }
+  if (ownerType === OWNER_TYPE_EMPLOYEE) {
+    // Employee-owned documents are EXPENSE VOUCHERS. They post exactly like
+    // vendor bills (credit A/P, debit expense accounts, entries in the b_*
+    // columns), so their kind is 'bill'. Employees carry no bill terms.
+    const e = await db.employees.findUnique({ where: { guid: ownerGuid } });
+    if (!e) throw new InvoiceNotFoundError(`Employee not found: ${ownerGuid}`);
+    return {
+      endType: OWNER_TYPE_EMPLOYEE, endGuid: e.guid, directType: ownerType, directGuid: ownerGuid,
+      name: e.addr_name || e.username, currencyGuid: e.currency, termsGuid: null, kind: 'bill',
+    };
+  }
   if (ownerType === OWNER_TYPE_JOB) {
     const job = await db.jobs.findUnique({ where: { guid: ownerGuid } });
     if (!job) throw new InvoiceNotFoundError(`Job not found: ${ownerGuid}`);
@@ -327,6 +340,7 @@ function ownerTypeNameToInt(name: OwnerTypeName): number {
   if (name === 'customer') return OWNER_TYPE_CUSTOMER;
   if (name === 'vendor') return OWNER_TYPE_VENDOR;
   if (name === 'job') return OWNER_TYPE_JOB;
+  if (name === 'employee') return OWNER_TYPE_EMPLOYEE;
   throw new InvoiceValidationError(`Unsupported owner type: ${name}`);
 }
 
@@ -334,6 +348,7 @@ function ownerTypeIntToName(t: number): OwnerTypeName {
   if (t === OWNER_TYPE_CUSTOMER) return 'customer';
   if (t === OWNER_TYPE_VENDOR) return 'vendor';
   if (t === OWNER_TYPE_JOB) return 'job';
+  if (t === OWNER_TYPE_EMPLOYEE) return 'employee';
   return 'customer';
 }
 
@@ -1075,7 +1090,7 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
   let result: PaymentResult | null = null;
 
   await prisma.$transaction(async (tx) => {
-    const endOwnerType = input.ownerType === 'customer' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
+    const endOwnerType = ownerTypeNameToInt(input.ownerType);
     const owner = await resolveOwner(tx, endOwnerType, input.ownerGuid);
     const kind: InvoiceKind = owner.kind;
 
@@ -1228,10 +1243,10 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
 }
 
 export async function listPayments(
-  ownerType: 'customer' | 'vendor',
+  ownerType: 'customer' | 'vendor' | 'employee',
   ownerGuid: string,
 ): Promise<PaymentView[]> {
-  const endOwnerType = ownerType === 'customer' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
+  const endOwnerType = ownerTypeNameToInt(ownerType);
   const owner = await resolveOwner(prisma as unknown as PrismaTx, endOwnerType, ownerGuid);
   const kind = owner.kind;
 
@@ -1308,7 +1323,7 @@ export async function listPayments(
 
 type InvoiceRow = NonNullable<Awaited<ReturnType<typeof prisma.invoices.findUnique>>>;
 
-async function buildInvoiceView(
+export async function buildInvoiceView(
   db: PrismaTx,
   invoice: InvoiceRow,
   opts: { includeEntries: boolean },

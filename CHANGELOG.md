@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0.0] - 2026-07-12
+
+Closes every "worth building" gap from the GnuCash desktop parity audit
+(docs/gnucash-desktop-parity-2026-07.md).
+
+### Added
+- **Tax Schedule Report + TXF export**: tax-relevant accounts grouped by TXF code and IRS form (1040, Schedules A–E) with per-account drill-down, a per-account TXF override mapper, and a downloadable TXF V042 file for TurboTax/TaxCut import
+- **Budget Income Statement**: budget-vs-actual P&L over any period range with favorable/unfavorable variances, % of budget, rollup subtotals, per-period barchart, and CSV export; **Budget Balance Sheet**: projected end-of-period balances (opening + budgeted flows) with an actual-basis comparison column
+- **Close Book**: year-end closing entries that zero income/expense into a chosen equity account (per currency, cumulative-through-date so re-closing is safe), fully previewed and undoable via History
+- **Account Breakdown**: one parameterized pie/bar report replacing desktop's eight account chart reports — type tabs, depth 1–4, click-to-drill with breadcrumbs, Other bucket
+- **Price History** chart for any commodity's stored quotes with source badges; **Income & Expenses by Day of Week**; **Average Balance** (monthly average/min/max/ending daily balances)
+- **Customer Summary**: per-customer sales, expenses, profit, and markup %
+- **Jobs**: management UI (owner, desktop-compatible rate slot, deactivate) with per-job invoice rollup report
+- **Employees & expense vouchers**: employee CRUD plus vouchers posted through the native invoice engine (A/P credit, expense debits, gncExpVoucher numbering) with reimbursement via the standard payment path and an Employee Report
+- **Manual reconcile window**: reconcile any account against a statement ending balance — tick splits, exact integer-cents difference, server-verified tie-out before marking splits reconciled
+- **QIF import**: Quicken files (bank/cash/card/asset/liability, multi-account, splits, categories) with transfer pairing, duplicate detection, category mapping overrides, and a preview-first flow
+
 ## [0.10.0.0] - 2026-07-12
 
 ### Added

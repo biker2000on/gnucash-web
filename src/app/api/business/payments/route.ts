@@ -4,8 +4,9 @@ import { applyPayment, listPayments } from '@/lib/business/invoice-engine';
 import { mapInvoiceError } from '@/lib/business/api-errors';
 
 /**
- * GET /api/business/payments?ownerType=customer|vendor&ownerGuid=...
- * Lists payment transactions applied to the owner's posted invoices/bills.
+ * GET /api/business/payments?ownerType=customer|vendor|employee&ownerGuid=...
+ * Lists payment transactions applied to the owner's posted invoices/bills
+ * (or, for employees, expense-voucher reimbursements).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -15,14 +16,14 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const ownerType = searchParams.get('ownerType');
     const ownerGuid = searchParams.get('ownerGuid');
-    if (!ownerType || !ownerGuid || !['customer', 'vendor'].includes(ownerType)) {
+    if (!ownerType || !ownerGuid || !['customer', 'vendor', 'employee'].includes(ownerType)) {
       return NextResponse.json(
-        { error: "ownerType ('customer'|'vendor') and ownerGuid are required" },
+        { error: "ownerType ('customer'|'vendor'|'employee') and ownerGuid are required" },
         { status: 400 }
       );
     }
 
-    const payments = await listPayments(ownerType as 'customer' | 'vendor', ownerGuid);
+    const payments = await listPayments(ownerType as 'customer' | 'vendor' | 'employee', ownerGuid);
     return NextResponse.json({ payments });
   } catch (error) {
     return mapInvoiceError(error);
@@ -30,9 +31,10 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/business/payments — apply a payment to open invoices/bills.
- * Body: { ownerType: 'customer'|'vendor', ownerGuid, transferAccountGuid,
- *         amount, date: 'YYYY-MM-DD', num?, memo?,
+ * POST /api/business/payments — apply a payment to open invoices/bills, or
+ * an employee reimbursement to open expense vouchers.
+ * Body: { ownerType: 'customer'|'vendor'|'employee', ownerGuid,
+ *         transferAccountGuid, amount, date: 'YYYY-MM-DD', num?, memo?,
  *         allocations?: [{ invoiceGuid, amount }] }
  * Without allocations, applies oldest-first; overpayments are rejected (400).
  */
@@ -42,9 +44,9 @@ export async function POST(request: NextRequest) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const body = await request.json();
-    if (!body.ownerType || !['customer', 'vendor'].includes(body.ownerType)) {
+    if (!body.ownerType || !['customer', 'vendor', 'employee'].includes(body.ownerType)) {
       return NextResponse.json(
-        { error: "ownerType must be 'customer' or 'vendor'" },
+        { error: "ownerType must be 'customer', 'vendor' or 'employee'" },
         { status: 400 }
       );
     }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { ImportPreview } from '@/components/ImportPreview';
 import { useBooks } from '@/contexts/BookContext';
 
@@ -439,6 +440,23 @@ export default function ImportExportPage() {
             </button>
           </div>
         )}
+      </section>
+
+      {/* QIF Import Section */}
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Import QIF</h2>
+          <p className="text-sm text-foreground-secondary mt-1">
+            Import Quicken Interchange Format files — bank, cash, credit card, asset, and
+            liability accounts with category mapping, transfer matching, and duplicate detection.
+          </p>
+        </div>
+        <Link
+          href="/import-export/qif"
+          className="inline-flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+        >
+          Open QIF Import
+        </Link>
       </section>
 
       {/* Export Section */}

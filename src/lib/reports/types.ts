@@ -26,6 +26,13 @@ export enum ReportType {
   SALES_BY_CUSTOMER = 'sales_by_customer',
   EXPENSES_BY_VENDOR = 'expenses_by_vendor',
   STOCK_VALUATION = 'stock_valuation',
+  TAX_SCHEDULE = 'tax_schedule',
+  BUDGET_INCOME_STATEMENT = 'budget_income_statement',
+  BUDGET_BALANCE_SHEET = 'budget_balance_sheet',
+  ACCOUNT_BREAKDOWN = 'account_breakdown',
+  PRICE_HISTORY = 'price_history',
+  DAY_OF_WEEK = 'day_of_week',
+  AVERAGE_BALANCE = 'average_balance',
 }
 
 export interface ReportConfig {
@@ -332,6 +339,20 @@ export const REPORTS: ReportConfig[] = [
     category: 'financial',
   },
   {
+    type: ReportType.BUDGET_INCOME_STATEMENT,
+    name: 'Budget Income Statement',
+    description: 'Budgeted vs actual P&L with favorable/unfavorable variances and per-period barchart',
+    icon: 'trending',
+    category: 'financial',
+  },
+  {
+    type: ReportType.BUDGET_BALANCE_SHEET,
+    name: 'Budget Balance Sheet',
+    description: 'Projected balances at the end of a budget period — opening balances plus budgeted flows',
+    icon: 'balance',
+    category: 'financial',
+  },
+  {
     type: ReportType.SALES_BY_CUSTOMER,
     name: 'Sales by Customer',
     description: 'Posted customer invoice totals per customer with tax, payments, and balance',
@@ -379,6 +400,34 @@ export const REPORTS: ReportConfig[] = [
     description: 'Monthly income and expenses over time',
     icon: 'cash',
     category: 'chart',
+  },
+  {
+    type: ReportType.ACCOUNT_BREAKDOWN,
+    name: 'Account Breakdown',
+    description: 'Assets, liabilities, income, or expenses grouped by account at a chosen depth — pie or bar',
+    icon: 'cash',
+    category: 'chart',
+  },
+  {
+    type: ReportType.PRICE_HISTORY,
+    name: 'Price History',
+    description: 'Commodity price history from the GnuCash price database',
+    icon: 'trending',
+    category: 'chart',
+  },
+  {
+    type: ReportType.DAY_OF_WEEK,
+    name: 'Income & Expenses by Day of Week',
+    description: 'Totals and daily averages of income and expense flows by weekday',
+    icon: 'cash',
+    category: 'chart',
+  },
+  {
+    type: ReportType.AVERAGE_BALANCE,
+    name: 'Average Balance',
+    description: 'Average daily balance, minimum, maximum, and ending balance per month for selected cash accounts',
+    icon: 'balance',
+    category: 'account',
   },
 ];
 

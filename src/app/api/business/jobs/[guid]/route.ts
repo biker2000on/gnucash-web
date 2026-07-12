@@ -6,15 +6,15 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import {
-  getJob,
   updateJob,
   deleteJob,
   jobInputSchema,
   parseInput,
   BusinessValidationError,
 } from '@/lib/services/business.service';
+import { getJobEx, updateJobPartial, jobPatchSchema } from '@/lib/business/jobs.service';
 
-/** GET /api/business/jobs/{guid} */
+/** GET /api/business/jobs/{guid} — includes `rate` (job-rate slot). */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ guid: string }> }
@@ -24,7 +24,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const job = await getJob(guid);
+    const job = await getJobEx(guid);
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
@@ -32,6 +32,36 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching job:', error);
     return NextResponse.json({ error: 'Failed to fetch job' }, { status: 500 });
+  }
+}
+
+/**
+ * PATCH /api/business/jobs/{guid} — partial update. Any of
+ * { name?, reference?, active?, ownerType?, ownerGuid?, rate? };
+ * rate: null clears the job-rate slot.
+ */
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ guid: string }> }
+) {
+  try {
+    const roleResult = await requireRole('edit');
+    if (roleResult instanceof NextResponse) return roleResult;
+
+    const { guid } = await params;
+    const body = await request.json().catch(() => null);
+    const patch = parseInput(jobPatchSchema, body);
+    const job = await updateJobPartial(guid, patch);
+    if (!job) {
+      return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+    }
+    return NextResponse.json(job);
+  } catch (error) {
+    if (error instanceof BusinessValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error('Error updating job:', error);
+    return NextResponse.json({ error: 'Failed to update job' }, { status: 500 });
   }
 }
 
