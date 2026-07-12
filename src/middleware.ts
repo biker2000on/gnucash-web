@@ -40,6 +40,7 @@ export const config = {
     /*
      * Match all paths except:
      * - / (landing page, public)
+     * - /features/* (public marketing pages)
      * - /login (auth page)
      * - /api/auth/* (auth endpoints)
      * - /_next (Next.js internals)
@@ -49,6 +50,6 @@ export const config = {
      * The regex (?!$) ensures the root path "/" (empty capture after
      * stripping the leading "/") is excluded, keeping the landing page public.
      */
-    '/((?!_next|login|icon\\.svg|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|woff2?|ttf|css|js|json)$)(?!$).*)',
+    '/((?!_next|login|features|icon\\.svg|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|woff2?|ttf|css|js|json)$)(?!$).*)',
   ],
 };
