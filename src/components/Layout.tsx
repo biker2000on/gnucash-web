@@ -267,6 +267,8 @@ interface NavItem {
     name: string;
     href: string;
     icon: string;
+    /** Only shown in the mobile sidebar (e.g. Quick Add's thumb-first capture). */
+    mobileOnly?: boolean;
     children?: Array<{
         name: string;
         href: string;
@@ -303,7 +305,7 @@ const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
-    { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle' },
+    { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle', mobileOnly: true },
     { name: 'Tags', href: '/tags', icon: 'Tag' },
     {
         name: 'Uploads',
@@ -746,10 +748,10 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <BookSwitcher collapsed={collapsed && hydrated} />
                 </div>
 
-                {/* Nav links */}
+                {/* Nav links (mobile-only items like Quick Add are excluded on desktop) */}
                 <nav className={`flex-1 space-y-1 overflow-y-auto overflow-x-hidden transition-all duration-300
                     ${collapsed && hydrated ? 'px-2 py-4' : 'px-4 py-4'}`}>
-                    {effectiveNavItems.map(renderNavItem)}
+                    {effectiveNavItems.filter((item) => !item.mobileOnly).map(renderNavItem)}
                 </nav>
 
                 {/* Drag handle */}

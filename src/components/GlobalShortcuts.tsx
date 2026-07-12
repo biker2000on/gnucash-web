@@ -48,6 +48,27 @@ export function GlobalShortcuts() {
     setBookSwitcherOpen(true)
   })
 
+  // Focus the page's search/filter input ("/" like GitHub/Gmail). Works on
+  // every page: prefers an explicitly tagged input, then falls back to any
+  // visible search/filter field.
+  useKeyboardShortcut('focus-search', '/', 'Focus search / filter', () => {
+    const selectors = [
+      'input[data-search-input]',
+      'input[type="search"]',
+      'input[placeholder*="earch" i]',
+      'input[placeholder*="ilter" i]',
+    ]
+    for (const selector of selectors) {
+      const candidates = Array.from(document.querySelectorAll<HTMLInputElement>(selector))
+      const visible = candidates.find(el => el.offsetParent !== null && !el.disabled && !el.readOnly)
+      if (visible) {
+        visible.focus()
+        visible.select()
+        return
+      }
+    }
+  })
+
   // New transaction shortcut
   useKeyboardShortcut('new-transaction', 'n', 'New Transaction', () => {
     window.dispatchEvent(new CustomEvent('open-new-transaction'))

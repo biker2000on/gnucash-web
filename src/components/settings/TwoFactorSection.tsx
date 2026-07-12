@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 
 interface TotpStatus {
     enabled: boolean;
@@ -209,23 +210,13 @@ export function TwoFactorSection() {
     );
 
     return (
-        <div className="bg-surface border border-border rounded-xl">
-            <div className="px-4 py-3 flex items-center justify-between gap-3">
-                <div className="flex items-baseline gap-3 flex-wrap min-w-0">
-                    <span className="text-sm font-semibold text-foreground">Two-Factor Authentication</span>
-                    {status && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            status.enabled
-                                ? 'bg-primary/10 text-primary border border-primary/30'
-                                : 'bg-surface-hover text-foreground-muted border border-border'
-                        }`}>
-                            {status.enabled ? 'Enabled' : 'Off'}
-                        </span>
-                    )}
-                </div>
-            </div>
-
-            <div className="px-4 pb-4 border-t border-border pt-3 space-y-4">
+        <CollapsibleConfigSection
+            title="Two-Factor Authentication"
+            summary={status?.enabled ? 'Enabled' : 'Off'}
+            configured={Boolean(status?.enabled)}
+            storageKey="settings.twoFactorOpen"
+        >
+            <div className="space-y-4">
                 <p className="text-sm text-foreground-muted">
                     Add an optional second step to password sign-in using a time-based code from an
                     authenticator app (Aegis, Google Authenticator, 1Password, …). This is entirely
@@ -417,6 +408,6 @@ export function TwoFactorSection() {
                     </form>
                 )}
             </div>
-        </div>
+        </CollapsibleConfigSection>
     );
 }

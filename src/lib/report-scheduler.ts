@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { pickCurrentBudget } from '@/lib/budget-select';
 import { sendEmail, isEmailConfigured } from '@/lib/email';
 import { generateBalanceSheet } from '@/lib/reports/balance-sheet';
 import { generateIncomeStatement } from '@/lib/reports/income-statement';
@@ -505,9 +506,17 @@ async function generateBudgetReportData(
     } as const;
 
     const budgetGuid = typeof config.budgetGuid === 'string' ? config.budgetGuid : null;
-    const budget = budgetGuid
-        ? await prisma.budgets.findUnique({ where: { guid: budgetGuid }, include })
-        : await prisma.budgets.findFirst({ include });
+    let budget;
+    if (budgetGuid) {
+        budget = await prisma.budgets.findUnique({ where: { guid: budgetGuid }, include });
+    } else {
+        // Default to the budget covering today (not alphabetical-first)
+        const candidates = await prisma.budgets.findMany({ include: { recurrences: true } });
+        const picked = pickCurrentBudget(candidates);
+        budget = picked
+            ? await prisma.budgets.findUnique({ where: { guid: picked.guid }, include })
+            : null;
+    }
     if (!budget) throw new Error('No budget found for budget report schedule');
 
     const bookGuids = new Set(filters.bookAccountGuids ?? []);

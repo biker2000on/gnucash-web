@@ -15,6 +15,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { pickCurrentBudget } from '@/lib/budget-select';
 import { getBaseCurrency } from '@/lib/currency';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
@@ -531,8 +532,15 @@ async function loadBudgetSection(
     bounds: MonthBounds,
     actualByAccount: Map<string, number>
 ): Promise<DigestBudget | null> {
-    const budget = await prisma.budgets.findFirst({
-        orderBy: { name: 'asc' },
+    // Pick the budget covering the digest month (falling back to the most
+    // recently ended) — never alphabetical-first, which pinned old budgets.
+    const candidates = await prisma.budgets.findMany({ include: { recurrences: true } });
+    const monthDate = new Date(Date.UTC(bounds.year, bounds.monthNumber - 1, 15));
+    const picked = pickCurrentBudget(candidates, monthDate);
+    if (!picked) return null;
+
+    const budget = await prisma.budgets.findUnique({
+        where: { guid: picked.guid },
         include: {
             recurrences: true,
             amounts: {

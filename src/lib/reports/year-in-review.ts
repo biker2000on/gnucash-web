@@ -20,6 +20,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { pickCurrentBudget } from '@/lib/budget-select';
 import { toDecimalNumber } from '@/lib/gnucash';
 import { getBaseCurrency } from '@/lib/currency';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
@@ -553,8 +554,14 @@ async function loadBudgetStreak(
     year: number,
     now: Date
 ): Promise<YirBudgetStreakCard | null> {
-    const budget = await prisma.budgets.findFirst({
-        orderBy: { name: 'asc' },
+    // Prefer the budget covering the review year (mid-year reference), not
+    // the alphabetically-first budget.
+    const candidates = await prisma.budgets.findMany({ include: { recurrences: true } });
+    const picked = pickCurrentBudget(candidates, new Date(Date.UTC(year, 6, 1)));
+    if (!picked) return null;
+
+    const budget = await prisma.budgets.findUnique({
+        where: { guid: picked.guid },
         include: {
             recurrences: true,
             amounts: {

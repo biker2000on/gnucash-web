@@ -25,6 +25,84 @@ export function backupRetention(): number {
     return Number.isFinite(n) && n > 0 ? n : 30;
 }
 
+// ---------------------------------------------------------------------------
+// Backup settings (frequency / hour / retention) — configurable in Settings,
+// stored as a singleton row; BACKUP_RETENTION env remains the fallback.
+// ---------------------------------------------------------------------------
+
+export type BackupFrequency = 'daily' | 'weekly' | 'monthly';
+
+export interface BackupSettings {
+    frequency: BackupFrequency;
+    /** UTC hour (0-23); backups run at HH:30. */
+    hourUtc: number;
+    /** Backups kept per book. */
+    retention: number;
+}
+
+export function defaultBackupSettings(): BackupSettings {
+    return { frequency: 'daily', hourUtc: 2, retention: backupRetention() };
+}
+
+export function parseBackupSettings(raw: unknown): BackupSettings {
+    const defaults = defaultBackupSettings();
+    if (!raw || typeof raw !== 'object') return defaults;
+    const obj = raw as Record<string, unknown>;
+    const frequency = obj.frequency === 'weekly' || obj.frequency === 'monthly' ? obj.frequency : 'daily';
+    const hourRaw = Number(obj.hourUtc);
+    const hourUtc = Number.isInteger(hourRaw) && hourRaw >= 0 && hourRaw <= 23 ? hourRaw : defaults.hourUtc;
+    const retRaw = Number(obj.retention);
+    const retention = Number.isInteger(retRaw) && retRaw >= 1 && retRaw <= 365 ? retRaw : defaults.retention;
+    return { frequency, hourUtc, retention };
+}
+
+/** Whether a run should actually back up today under the given frequency. */
+export function isBackupDue(frequency: BackupFrequency, now: Date): boolean {
+    if (frequency === 'weekly') return now.getUTCDay() === 0; // Sundays
+    if (frequency === 'monthly') return now.getUTCDate() === 1;
+    return true;
+}
+
+let settingsEnsurePromise: Promise<void> | null = null;
+
+function ensureBackupSettingsTable(): Promise<void> {
+    if (!settingsEnsurePromise) {
+        settingsEnsurePromise = (async () => {
+            await prisma.$executeRawUnsafe(`
+                DO $$
+                BEGIN
+                  PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_backup_settings_schema'));
+                  CREATE TABLE IF NOT EXISTS gnucash_web_backup_settings (
+                    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                    settings JSONB NOT NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                  );
+                END $$;
+            `);
+        })();
+    }
+    return settingsEnsurePromise;
+}
+
+export async function getBackupSettings(): Promise<BackupSettings> {
+    await ensureBackupSettingsTable();
+    const rows = await prisma.$queryRaw<Array<{ settings: unknown }>>`
+        SELECT settings FROM gnucash_web_backup_settings WHERE id = 1
+    `;
+    return parseBackupSettings(rows[0]?.settings);
+}
+
+export async function saveBackupSettings(input: unknown): Promise<BackupSettings> {
+    await ensureBackupSettingsTable();
+    const settings = parseBackupSettings(input);
+    await prisma.$executeRaw`
+        INSERT INTO gnucash_web_backup_settings (id, settings, updated_at)
+        VALUES (1, ${JSON.stringify(settings)}::jsonb, NOW())
+        ON CONFLICT (id) DO UPDATE SET settings = EXCLUDED.settings, updated_at = NOW()
+    `;
+    return settings;
+}
+
 /** Pure helper: which backups (sorted or not) fall beyond the newest `keep`. */
 export function selectBackupsToPrune<T extends { createdAt: Date }>(backups: T[], keep: number): T[] {
     if (keep <= 0) return [];
@@ -125,16 +203,17 @@ export async function runBookBackup(bookGuid: string, rootAccountGuid: string): 
         VALUES (${bookGuid}, ${key}, ${buffer.length})
     `;
 
-    // Retention: prune oldest beyond the keep count
+    // Retention: prune oldest beyond the configured keep count
     const all = await prisma.$queryRaw<BackupRow[]>`
         SELECT id, book_guid, storage_key, size_bytes, created_at
         FROM gnucash_web_backups
         WHERE book_guid = ${bookGuid}
         ORDER BY created_at DESC
     `;
+    const settings = await getBackupSettings();
     const prune = selectBackupsToPrune(
         all.map(r => ({ ...r, createdAt: r.created_at })),
-        backupRetention(),
+        settings.retention,
     );
     for (const victim of prune) {
         try {

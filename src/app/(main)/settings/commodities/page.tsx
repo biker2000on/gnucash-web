@@ -7,7 +7,9 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getSortedRowModel,
   useReactTable,
+  type SortingState,
 } from '@tanstack/react-table';
 import { useToast } from '@/contexts/ToastContext';
 import { CommodityEditorModal, type CommodityFormValues } from '@/components/commodities/CommodityEditorModal';
@@ -97,6 +99,7 @@ export default function CommodityPriceSettingsPage() {
   const [commodities, setCommodities] = useState<EditableCommodityRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [hideCurrencyAccounts, setHideCurrencyAccounts] = useState(true);
   const [savingAll, setSavingAll] = useState(false);
 
@@ -593,9 +596,11 @@ export default function CommodityPriceSettingsPage() {
   const table = useReactTable({
     data: visibleCommodities,
     columns,
-    state: { globalFilter: search },
+    state: { globalFilter: search, sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     globalFilterFn: (row, _columnId, filterValue) => {
       const searchValue = String(filterValue).toLowerCase();
       return [
@@ -765,7 +770,21 @@ export default function CommodityPriceSettingsPage() {
                         key={header.id}
                         className="px-3 py-3 text-left text-sm font-medium text-foreground-secondary whitespace-nowrap"
                       >
-                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                        {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                          <button
+                            type="button"
+                            onClick={header.column.getToggleSortingHandler()}
+                            className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                            title="Sort"
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            <span className="text-xs text-foreground-tertiary w-3">
+                              {header.column.getIsSorted() === 'asc' ? '▲' : header.column.getIsSorted() === 'desc' ? '▼' : ''}
+                            </span>
+                          </button>
+                        ) : (
+                          flexRender(header.column.columnDef.header, header.getContext())
+                        )}
                       </th>
                     ))}
                   </tr>

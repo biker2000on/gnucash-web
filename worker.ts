@@ -308,6 +308,10 @@ async function main() {
           await handleRunBackups(job);
           break;
         }
+        case 'backup-settings-changed': {
+          await scheduleBackups();
+          break;
+        }
         case 'run-report-schedules': {
           const { handleRunReportSchedules } = await import('./src/lib/queue/jobs/run-report-schedules');
           await handleRunReportSchedules(job);
@@ -355,17 +359,32 @@ async function main() {
     }
   });
 
-  // Nightly book backups at 02:30 UTC (retention via BACKUP_RETENTION, default 30)
-  setScheduleGeneric('nightly-backups', '02:30', async () => {
-    console.log(`[${new Date().toISOString()}] Running nightly book backups`);
+  // Scheduled book backups — frequency, hour, and retention are configurable
+  // in Settings (gnucash_web_backup_settings); re-scheduled on save via the
+  // backup-settings-changed job. Runs at HH:30 of the configured UTC hour;
+  // weekly = Sundays, monthly = the 1st.
+  const scheduleBackups = async () => {
     try {
-      const { handleRunBackups } = await import('./src/lib/queue/jobs/run-backups');
-      const fakeJob = { id: `nightly-backups-${Date.now()}`, name: 'run-backups', data: {} } as Job;
-      await handleRunBackups(fakeJob);
+      const { getBackupSettings, isBackupDue } = await import('./src/lib/backup');
+      const settings = await getBackupSettings();
+      const time = `${String(settings.hourUtc).padStart(2, '0')}:30`;
+      setScheduleGeneric('scheduled-backups', time, async () => {
+        const current = await getBackupSettings();
+        if (!isBackupDue(current.frequency, new Date())) return;
+        console.log(`[${new Date().toISOString()}] Running scheduled book backups (${current.frequency})`);
+        try {
+          const { handleRunBackups } = await import('./src/lib/queue/jobs/run-backups');
+          const fakeJob = { id: `scheduled-backups-${Date.now()}`, name: 'run-backups', data: {} } as Job;
+          await handleRunBackups(fakeJob);
+        } catch (err) {
+          console.error('Scheduled backups failed:', err);
+        }
+      });
     } catch (err) {
-      console.error('Nightly backups failed:', err);
+      console.error('Failed to schedule backups:', err);
     }
-  });
+  };
+  await scheduleBackups();
 
   // Daily report-schedule delivery at 06:00 UTC (idempotent per period)
   setScheduleGeneric('report-schedules', '06:00', async () => {

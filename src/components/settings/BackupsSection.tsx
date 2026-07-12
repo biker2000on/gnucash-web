@@ -10,6 +10,12 @@ interface BackupItem {
     createdAt: string;
 }
 
+interface BackupSettingsState {
+    frequency: 'daily' | 'weekly' | 'monthly';
+    hourUtc: number;
+    retention: number;
+}
+
 function formatSize(bytes: number): string {
     if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
@@ -19,16 +25,39 @@ function formatSize(bytes: number): string {
 export function BackupsSection() {
     const { success, error } = useToast();
     const [backups, setBackups] = useState<BackupItem[]>([]);
+    const [settings, setSettings] = useState<BackupSettingsState>({ frequency: 'daily', hourUtc: 2, retention: 30 });
+    const [savingSettings, setSavingSettings] = useState(false);
     const [loaded, setLoaded] = useState(false);
     const [running, setRunning] = useState(false);
 
     const refresh = useCallback(() => {
         fetch('/api/settings/backups')
             .then(r => (r.ok ? r.json() : null))
-            .then(data => setBackups(data?.backups ?? []))
+            .then(data => {
+                setBackups(data?.backups ?? []);
+                if (data?.settings) setSettings(data.settings);
+            })
             .catch(() => undefined)
             .finally(() => setLoaded(true));
     }, []);
+
+    const saveSettings = async (next: BackupSettingsState) => {
+        setSettings(next);
+        setSavingSettings(true);
+        try {
+            const res = await fetch('/api/settings/backups', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ settings: next }),
+            });
+            if (!res.ok) throw new Error();
+            success('Backup schedule saved');
+        } catch {
+            error('Failed to save backup schedule');
+        } finally {
+            setSavingSettings(false);
+        }
+    };
 
     useEffect(() => {
         refresh();
@@ -75,9 +104,8 @@ export function BackupsSection() {
             <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <p className="text-sm text-foreground-muted">
-                        Every book is exported nightly (02:30 UTC) to compressed GnuCash XML — openable in
-                        GnuCash desktop or restorable via Import/Export. Retention keeps the newest{' '}
-                        {process.env.NEXT_PUBLIC_BACKUP_RETENTION || '30'} per book (BACKUP_RETENTION).
+                        Every book is exported on schedule to compressed GnuCash XML — openable in GnuCash
+                        desktop or restorable via Import/Export.
                     </p>
                     <button
                         onClick={runNow}
@@ -86,6 +114,48 @@ export function BackupsSection() {
                     >
                         {running ? 'Running…' : 'Back up now'}
                     </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="block">
+                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Frequency</span>
+                        <select
+                            value={settings.frequency}
+                            disabled={savingSettings}
+                            onChange={e => void saveSettings({ ...settings, frequency: e.target.value as BackupSettingsState['frequency'] })}
+                            className="mt-1 block w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
+                        >
+                            <option value="daily">Daily</option>
+                            <option value="weekly">Weekly (Sundays)</option>
+                            <option value="monthly">Monthly (the 1st)</option>
+                        </select>
+                    </label>
+                    <label className="block">
+                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Time (UTC)</span>
+                        <select
+                            value={settings.hourUtc}
+                            disabled={savingSettings}
+                            onChange={e => void saveSettings({ ...settings, hourUtc: parseInt(e.target.value, 10) })}
+                            className="mt-1 block w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground font-mono"
+                        >
+                            {Array.from({ length: 24 }, (_, h) => (
+                                <option key={h} value={h}>{String(h).padStart(2, '0')}:30</option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="block">
+                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Keep per book</span>
+                        <input
+                            type="number"
+                            min={1}
+                            max={365}
+                            value={settings.retention}
+                            disabled={savingSettings}
+                            onChange={e => setSettings({ ...settings, retention: parseInt(e.target.value, 10) || 1 })}
+                            onBlur={() => void saveSettings(settings)}
+                            className="mt-1 block w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground font-mono"
+                        />
+                    </label>
                 </div>
 
                 {!loaded ? (
