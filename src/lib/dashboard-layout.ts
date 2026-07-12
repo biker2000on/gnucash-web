@@ -23,7 +23,8 @@ export type BuiltinWidgetId =
     | 'ar-ap'
     | 'dividends'
     | 'subscriptions'
-    | 'data-health';
+    | 'data-health'
+    | 'insights';
 
 export type CustomWidgetId = `custom:${string}`;
 
@@ -59,6 +60,7 @@ export const WIDGET_META: Record<BuiltinWidgetId, WidgetMeta> = {
     dividends: { title: 'Dividend Income', description: 'Trailing-12-month and projected dividend income' },
     subscriptions: { title: 'Subscriptions', description: 'Detected recurring charges and monthly total' },
     'data-health': { title: 'Data Health', description: 'Book data quality score and grade' },
+    insights: { title: 'Insights', description: 'Proactive alerts: spending spikes, new merchants, milestones' },
 };
 
 export const ALL_WIDGET_IDS = Object.keys(WIDGET_META) as BuiltinWidgetId[];

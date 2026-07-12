@@ -139,6 +139,7 @@ export const WIDGET_REGISTRY: WidgetRegistryEntry[] = [
     entry('ar-ap', 'business', 'third', true),
     entry('subscriptions', 'tools', 'third'),
     entry('data-health', 'tools', 'third'),
+    entry('insights', 'overview', 'third'),
 ];
 
 export function getRegistryEntry(id: string): WidgetRegistryEntry | undefined {

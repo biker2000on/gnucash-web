@@ -23,6 +23,8 @@ import {
 import { AmountKeypad } from './AmountKeypad';
 import { AccountPickerSheet, PickerAccount } from './AccountPickerSheet';
 import { PendingQueueBanner } from './PendingQueueBanner';
+import { MagicAddInput } from './MagicAddInput';
+import type { ParsedNlTransaction } from '@/lib/nl-parse';
 
 // localStorage keys
 const LAST_FROM_KEY = 'quickAdd.lastFromAccount';
@@ -106,6 +108,8 @@ export default function QuickAddPage() {
     const [fromGuid, setFromGuid] = useState('');
     const [toGuid, setToGuid] = useState('');
     const [description, setDescription] = useState('');
+    /** YYYY-MM-DD from the NL parser; null = today (the default) */
+    const [postDate, setPostDate] = useState<string | null>(null);
     const [recentCategories, setRecentCategories] = useState<string[]>([]);
     const [pickerOpen, setPickerOpen] = useState<'from' | 'to' | null>(null);
     const [saving, setSaving] = useState(false);
@@ -182,6 +186,21 @@ export default function QuickAddPage() {
         [recentCategories]
     );
 
+    // Prefill the form from an AI parse result — user still confirms with Save.
+    const handleParsed = useCallback(
+        (parsed: ParsedNlTransaction) => {
+            setKind(parsed.direction);
+            setAmount(parsed.amount.toFixed(2));
+            setDescription(parsed.description);
+            setPostDate(parsed.date);
+            if (parsed.suggestedCategoryGuid && accountMap.has(parsed.suggestedCategoryGuid)) {
+                setToGuid(parsed.suggestedCategoryGuid);
+            }
+            info('Prefilled from your text — review and save');
+        },
+        [accountMap, info]
+    );
+
     const handleSave = useCallback(async () => {
         if (!canSave) return;
 
@@ -203,6 +222,7 @@ export default function QuickAddPage() {
                 description:
                     description.trim() ||
                     (toAccount ? `Quick add: ${toAccount.name}` : 'Quick add'),
+                postDate: postDate ?? undefined,
             });
         } catch (err) {
             toastError(err instanceof Error ? err.message : 'Invalid entry');
@@ -235,6 +255,7 @@ export default function QuickAddPage() {
             // Reset for the next entry (keep account selections)
             setAmount('');
             setDescription('');
+            setPostDate(null);
         } finally {
             setSaving(false);
         }
@@ -247,6 +268,7 @@ export default function QuickAddPage() {
         fromAccount,
         toAccount,
         description,
+        postDate,
         rememberSelections,
         success,
         info,
@@ -267,6 +289,9 @@ export default function QuickAddPage() {
                     </span>
                 )}
             </div>
+
+            {/* Natural-language magic input (hidden when AI is unconfigured) */}
+            <MagicAddInput isOnline={queueState.isOnline} onParsed={handleParsed} />
 
             {/* Pending queue */}
             <PendingQueueBanner
@@ -311,6 +336,23 @@ export default function QuickAddPage() {
                         <span className="text-base text-foreground-muted ml-2">{currencyLabel}</span>
                     )}
                 </div>
+                {postDate && (
+                    <div className="mt-2 flex justify-center">
+                        <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-surface border border-border text-foreground-secondary">
+                            <span className="font-mono" style={{ fontFeatureSettings: "'tnum'" }}>
+                                {postDate}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setPostDate(null)}
+                                aria-label="Use today's date instead"
+                                className="text-foreground-muted hover:text-foreground transition-colors"
+                            >
+                                ×
+                            </button>
+                        </span>
+                    </div>
+                )}
             </div>
 
             {/* Keypad */}

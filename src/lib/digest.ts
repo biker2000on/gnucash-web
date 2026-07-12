@@ -126,11 +126,21 @@ export interface MonthlyDigest {
     subscriptions: DigestSubscriptions;
     upcomingBills: DigestBill[];
     budget: DigestBudget | null;
+    /**
+     * Optional AI-written 3-5 sentence narrative. Present only when an AI
+     * provider is configured AND the call succeeded — strictly best-effort.
+     */
+    narrative?: string;
 }
 
 export interface GenerateDigestOptions {
     /** Target month as YYYY-MM. Defaults to the current calendar month (UTC). */
     month?: string;
+    /**
+     * When set, an AI narrative is attempted using this user's AI config
+     * (falls back to env config). Failures never block digest generation.
+     */
+    aiUserId?: number;
 }
 
 /** Amount lookup accepting either a Map or a plain record. */
@@ -409,6 +419,11 @@ export function digestToSummaryText(digest: MonthlyDigest): string {
     lines.push(`## Monthly Financial Digest — ${digest.monthLabel}`);
     lines.push('');
 
+    if (digest.narrative) {
+        lines.push(digest.narrative);
+        lines.push('');
+    }
+
     const nwArrow = digest.netWorth.change > 0 ? '▲' : digest.netWorth.change < 0 ? '▼' : '—';
     lines.push(
         `**Net worth:** ${fmt(digest.netWorth.end)} ` +
@@ -665,7 +680,7 @@ export async function generateDigest(
         console.error('Digest: budget section failed:', error);
     }
 
-    return {
+    const digest: MonthlyDigest = {
         month: bounds.month,
         monthLabel: bounds.label,
         generatedAt: new Date().toISOString(),
@@ -685,4 +700,23 @@ export async function generateDigest(
         upcomingBills,
         budget,
     };
+
+    // Optional AI narrative — strictly best-effort, never blocks the digest.
+    if (options.aiUserId !== undefined) {
+        try {
+            const { getAiConfig } = await import('@/lib/ai-config');
+            const { isAiConfigured } = await import('@/lib/ai-query/client');
+            const { generateDigestNarrative, narrativeClientFor } = await import('@/lib/digest-narrative');
+
+            const config = await getAiConfig(options.aiUserId);
+            if (isAiConfigured(config)) {
+                const result = await generateDigestNarrative(digest, narrativeClientFor(config));
+                if (result) digest.narrative = result.narrative;
+            }
+        } catch (error) {
+            console.error('Digest: narrative generation failed:', error);
+        }
+    }
+
+    return digest;
 }
