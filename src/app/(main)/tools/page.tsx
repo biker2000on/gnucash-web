@@ -38,6 +38,12 @@ function ToolIcon({ icon }: { icon: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
                 </svg>
             );
+        case 'chat':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+            );
         case 'trend':
             return (
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -187,6 +193,12 @@ export default function ToolsPage() {
             description: 'Estimate payoff timeline with extra payments or calculate the payment needed for a target date.',
             icon: 'calendar',
             href: '/tools/mortgage#payoff',
+        },
+        {
+            title: 'Ask Your Books',
+            description: 'Ask questions in plain English, answered by read-only queries against your book.',
+            icon: 'chat',
+            href: '/tools/ask',
         },
         {
             title: 'Tax Estimator',

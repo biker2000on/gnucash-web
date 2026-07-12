@@ -323,6 +323,7 @@ const navItems: NavItem[] = [
         icon: 'Wrench',
         children: [
             { name: 'All Tools', href: '/tools' },
+            { name: 'Ask Your Books', href: '/tools/ask' },
             { name: 'Cash Flow Forecast', href: '/tools/cash-flow-forecast' },
             { name: 'Subscriptions', href: '/tools/subscriptions' },
             { name: 'Spending Watch', href: '/tools/anomalies' },

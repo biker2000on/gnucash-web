@@ -84,6 +84,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
 
     // ── Tools ────────────────────────────────────────────────────────────
     { id: 'tool-hub', title: 'All Tools', group: 'tool', href: '/tools', shortcut: 'g w' },
+    { id: 'tool-ask', title: 'Ask Your Books', group: 'tool', href: '/tools/ask', keywords: 'ai chat question natural language query' },
     { id: 'tool-forecast', title: 'Cash Flow Forecast', group: 'tool', href: '/tools/cash-flow-forecast', keywords: 'projection 90 days' },
     { id: 'tool-subscriptions', title: 'Subscriptions', group: 'tool', href: '/tools/subscriptions', keywords: 'recurring charges' },
     { id: 'tool-anomalies', title: 'Spending Watch', group: 'tool', href: '/tools/anomalies', keywords: 'fraud alerts anomaly duplicate' },
