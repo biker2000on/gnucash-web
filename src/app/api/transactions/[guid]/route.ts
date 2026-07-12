@@ -62,10 +62,17 @@ export async function GET(
         `;
         const fullnameMap = new Map(accountHierarchy.map(a => [a.guid, a.fullname]));
 
+        // Transaction currency (splits' values are denominated in it)
+        const currency = await prisma.commodities.findUnique({
+            where: { guid: transaction.currency_guid },
+            select: { mnemonic: true },
+        });
+
         // Transform to response format
         const result = {
             guid: transaction.guid,
             currency_guid: transaction.currency_guid,
+            currency_mnemonic: currency?.mnemonic ?? 'USD',
             num: transaction.num,
             post_date: transaction.post_date,
             enter_date: transaction.enter_date,

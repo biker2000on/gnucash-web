@@ -8,9 +8,8 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
             <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-6">
                     <Link href="/" className="flex items-center gap-2.5 shrink-0">
-                        <span className="inline-flex w-8 h-8 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-sm">
-                            G
-                        </span>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- app favicon, plain svg */}
+                        <img src="/icon.svg" alt="" className="w-8 h-8" />
                         <span className="text-lg font-bold text-foreground tracking-tight">GnuCash Web</span>
                     </Link>
 
@@ -65,9 +64,8 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                 <div className="max-w-7xl mx-auto px-6 py-12 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                         <div className="flex items-center gap-2.5 mb-3">
-                            <span className="inline-flex w-7 h-7 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">
-                                G
-                            </span>
+                            {/* eslint-disable-next-line @next/next/no-img-element -- app favicon, plain svg */}
+                            <img src="/icon.svg" alt="" className="w-7 h-7" />
                             <span className="font-bold text-foreground">GnuCash Web</span>
                         </div>
                         <p className="text-sm text-foreground-muted leading-relaxed">

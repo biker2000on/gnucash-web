@@ -679,10 +679,12 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                         </div>
                     ) : (
                         transactions.map(tx => {
-                            const debits = tx.splits?.filter(s => parseFloat(s.quantity_decimal || '0') >= 0) || [];
-                            const credits = tx.splits?.filter(s => parseFloat(s.quantity_decimal || '0') < 0) || [];
-                            const debitTotal = debits.reduce((sum, s) => sum + parseFloat(s.quantity_decimal || '0'), 0);
-                            const creditTotal = credits.reduce((sum, s) => sum + Math.abs(parseFloat(s.quantity_decimal || '0')), 0);
+                            const splitValue = (s: { value_decimal?: string; quantity_decimal?: string }) =>
+                                parseFloat(s.value_decimal ?? s.quantity_decimal ?? '0');
+                            const debits = tx.splits?.filter(s => splitValue(s) >= 0) || [];
+                            const credits = tx.splits?.filter(s => splitValue(s) < 0) || [];
+                            const debitTotal = debits.reduce((sum, s) => sum + splitValue(s), 0);
+                            const creditTotal = credits.reduce((sum, s) => sum + Math.abs(splitValue(s)), 0);
                             return (
                                 <MobileCard
                                     key={tx.guid}
@@ -782,10 +784,18 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-4 py-2 text-sm font-mono text-right align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => {
-                                                    const val = parseFloat(split.quantity_decimal || '0');
+                                                    // Money columns show the split VALUE (transaction
+                                                    // currency). Zero-share splits like realized gains
+                                                    // have qty 0 but a real value; stock legs show their
+                                                    // cash value here (share counts live in details).
+                                                    const val = parseFloat(split.value_decimal ?? split.quantity_decimal ?? '0');
+                                                    const qty = parseFloat(split.quantity_decimal ?? '0');
+                                                    const isCurrencyLeg = qty === val;
                                                     return (
                                                         <div key={split.guid} className="text-emerald-400">
-                                                            {val >= 0 ? formatCurrency(val, split.commodity_mnemonic) : '\u00A0'}
+                                                            {val > 0 ? formatCurrency(val, isCurrencyLeg ? split.commodity_mnemonic : undefined)
+                                                                : val === 0 && qty > 0 ? <span className="text-foreground-muted">{`+${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic ?? ''}`}</span>
+                                                                : '\u00A0'}
                                                         </div>
                                                     );
                                                 })}
@@ -794,10 +804,14 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         <td className="px-4 py-2 text-sm font-mono text-right align-top">
                                             <div className="space-y-1">
                                                 {tx.splits?.map(split => {
-                                                    const val = parseFloat(split.quantity_decimal || '0');
+                                                    const val = parseFloat(split.value_decimal ?? split.quantity_decimal ?? '0');
+                                                    const qty = parseFloat(split.quantity_decimal ?? '0');
+                                                    const isCurrencyLeg = qty === val;
                                                     return (
                                                         <div key={split.guid} className="text-rose-400">
-                                                            {val < 0 ? formatCurrency(Math.abs(val), split.commodity_mnemonic) : '\u00A0'}
+                                                            {val < 0 ? formatCurrency(Math.abs(val), isCurrencyLeg ? split.commodity_mnemonic : undefined)
+                                                                : val === 0 && qty < 0 ? <span className="text-foreground-muted">{`${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic ?? ''}`}</span>
+                                                                : '\u00A0'}
                                                         </div>
                                                     );
                                                 })}

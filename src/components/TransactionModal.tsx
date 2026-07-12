@@ -28,6 +28,7 @@ interface TransactionModalProps {
 }
 
 interface TransactionDetail extends Transaction {
+    currency_mnemonic?: string;
     splits: (Split & {
         account_name: string;
         account_fullname?: string;
@@ -184,9 +185,21 @@ export function TransactionModal({
                                 </thead>
                                 <tbody className="divide-y divide-border">
                                     {transaction.splits.map(split => {
-                                        const amount = parseFloat(split.quantity_decimal);
-                                        const debit = amount > 0 ? amount : 0;
-                                        const credit = amount < 0 ? Math.abs(amount) : 0;
+                                        // Debit/credit columns show the split VALUE in the
+                                        // transaction currency. Quantity is only the money
+                                        // amount for currency accounts — zero-share splits
+                                        // (realized gains) and stock legs would render blank
+                                        // or in the wrong unit otherwise.
+                                        const txCurrency = transaction.currency_mnemonic || 'USD';
+                                        const value = parseFloat(split.value_decimal);
+                                        const qty = parseFloat(split.quantity_decimal);
+                                        // Show the commodity quantity when it is denominated
+                                        // differently from the value (stock/fund/crypto legs,
+                                        // multi-currency transfers)
+                                        const showQty = qty !== 0 && split.commodity_mnemonic !== txCurrency;
+                                        const qtyLine = showQty
+                                            ? `${qty > 0 ? '+' : ''}${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic}`
+                                            : null;
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
                                             <tr key={split.guid} className="hover:bg-surface-hover/30">
@@ -210,11 +223,29 @@ export function TransactionModal({
                                                         {split.reconcile_state.toUpperCase()}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-mono text-emerald-400 whitespace-nowrap">
-                                                    {debit > 0 ? formatCurrency(debit.toString(), split.commodity_mnemonic) : ''}
+                                                <td className="px-4 py-3 text-right font-mono text-emerald-400 whitespace-nowrap align-top">
+                                                    {value > 0 ? (
+                                                        <>
+                                                            {formatCurrency(value.toString(), txCurrency)}
+                                                            {qtyLine && (
+                                                                <div className="text-xs text-foreground-muted">{qtyLine}</div>
+                                                            )}
+                                                        </>
+                                                    ) : value === 0 && qty > 0 ? (
+                                                        <span className="text-foreground-secondary">{qtyLine}</span>
+                                                    ) : ''}
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-mono text-rose-400 whitespace-nowrap">
-                                                    {credit > 0 ? formatCurrency(credit.toString(), split.commodity_mnemonic) : ''}
+                                                <td className="px-4 py-3 text-right font-mono text-rose-400 whitespace-nowrap align-top">
+                                                    {value < 0 ? (
+                                                        <>
+                                                            {formatCurrency(Math.abs(value).toString(), txCurrency)}
+                                                            {qtyLine && (
+                                                                <div className="text-xs text-foreground-muted">{qtyLine}</div>
+                                                            )}
+                                                        </>
+                                                    ) : value === 0 && qty < 0 ? (
+                                                        <span className="text-foreground-secondary">{qtyLine}</span>
+                                                    ) : ''}
                                                 </td>
                                             </tr>
                                         );
