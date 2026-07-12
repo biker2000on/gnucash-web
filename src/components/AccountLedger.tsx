@@ -44,6 +44,7 @@ import LotAssignmentPopover from './ledger/LotAssignmentPopover';
 import { ReceiptIndicator } from '@/components/receipts/ReceiptIndicator';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
+import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from '@/components/ledger/BulkEditModals';
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useQueryClient } from '@tanstack/react-query';
@@ -144,6 +145,9 @@ export default function AccountLedger({
     const [isDeleting, setIsDeleting] = useState(false);
     const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
     const [showMoveDialog, setShowMoveDialog] = useState(false);
+    const [bulkDescOpen, setBulkDescOpen] = useState(false);
+    const [bulkRecatOpen, setBulkRecatOpen] = useState(false);
+    const [bulkTagsOpen, setBulkTagsOpen] = useState(false);
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tx: AccountTransaction } | null>(null);
 
     // Keyboard navigation state
@@ -1085,6 +1089,44 @@ export default function AccountLedger({
         }
     }, [transactions, editSelectedGuids, accountGuid, fetchTransactions, success, error]);
 
+    // Shared bulk-edit runner: PATCH /api/transactions/bulk with the ledger
+    // account as the anchor (its split is never the one recategorized).
+    const runBulkEdit = useCallback(async (set: Record<string, unknown>, label: string) => {
+        const transactionGuids = Array.from(editSelectedGuids);
+        if (transactionGuids.length === 0) return;
+        try {
+            const res = await fetch('/api/transactions/bulk', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transactionGuids, anchorAccountGuid: accountGuid, set }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `${label} failed`);
+            setEditSelectedGuids(new Set());
+            await fetchTransactions();
+            const skipped: { error?: string }[] = (data.results ?? []).filter((r: { ok: boolean }) => !r.ok);
+            if (skipped.length > 0) {
+                error(`${label}: ${data.updated} updated, ${skipped.length} skipped (${skipped[0].error ?? 'see server log'})`);
+            } else {
+                success(`${label}: ${data.updated} transaction${data.updated !== 1 ? 's' : ''} updated`);
+            }
+        } catch (err) {
+            error(err instanceof Error ? err.message : `${label} failed`);
+        }
+    }, [editSelectedGuids, accountGuid, fetchTransactions, success, error]);
+
+    const handleBulkDescription = useCallback(async (payload: BulkDescriptionPayload) => {
+        await runBulkEdit({ ...payload }, 'Description update');
+    }, [runBulkEdit]);
+
+    const handleBulkRecategorize = useCallback(async (targetAccountGuid: string, targetAccountName: string) => {
+        await runBulkEdit({ recategorize: { toAccountGuid: targetAccountGuid } }, `Recategorize to ${targetAccountName}`);
+    }, [runBulkEdit]);
+
+    const handleBulkTags = useCallback(async (addTagIds: number[], removeTagIds: number[]) => {
+        await runBulkEdit({ addTagIds, removeTagIds }, 'Tag update');
+    }, [runBulkEdit]);
+
     // Open TransactionFormModal directly for edit mode edit button
     const handleEditDirect = useCallback((guid: string) => {
         const tx = transactions.find(t => t.guid === guid);
@@ -2011,6 +2053,27 @@ export default function AccountLedger({
                                         className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-colors flex items-center"
                                     >
                                         Delete Selected ({editSelectedGuids.size})
+                                    </button>
+                                    <button
+                                        onClick={() => setBulkDescOpen(true)}
+                                        title="Edit description of selected transactions"
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center"
+                                    >
+                                        Edit Description ({editSelectedGuids.size})
+                                    </button>
+                                    <button
+                                        onClick={() => setBulkRecatOpen(true)}
+                                        title="Recategorize the counter-split of selected transactions"
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-colors flex items-center"
+                                    >
+                                        Recategorize ({editSelectedGuids.size})
+                                    </button>
+                                    <button
+                                        onClick={() => setBulkTagsOpen(true)}
+                                        title="Add or remove tags on selected transactions"
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors flex items-center"
+                                    >
+                                        Tags ({editSelectedGuids.size})
                                     </button>
                                 </>
                             )}
@@ -3071,6 +3134,32 @@ export default function AccountLedger({
             excludeAccountGuid={accountGuid}
             commodityGuid={accountCommodityGuid}
             title={`Move ${editSelectedGuids.size} transaction${editSelectedGuids.size !== 1 ? 's' : ''} to...`}
+        />
+
+        <AccountPickerDialog
+            isOpen={bulkRecatOpen}
+            onClose={() => setBulkRecatOpen(false)}
+            onSelect={(guid, name) => {
+                void handleBulkRecategorize(guid, name);
+                setBulkRecatOpen(false);
+            }}
+            excludeAccountGuid={accountGuid}
+            commodityGuid={isInvestmentAccount ? undefined : accountCommodityGuid}
+            title={`Recategorize ${editSelectedGuids.size} transaction${editSelectedGuids.size !== 1 ? 's' : ''} to...`}
+        />
+
+        <BulkDescriptionModal
+            isOpen={bulkDescOpen}
+            count={editSelectedGuids.size}
+            onClose={() => setBulkDescOpen(false)}
+            onSubmit={handleBulkDescription}
+        />
+
+        <BulkTagsModal
+            isOpen={bulkTagsOpen}
+            count={editSelectedGuids.size}
+            onClose={() => setBulkTagsOpen(false)}
+            onSubmit={handleBulkTags}
         />
 
         <Modal

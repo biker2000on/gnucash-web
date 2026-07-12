@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import AccountPickerDialog from '@/components/AccountPickerDialog';
+import ApplyHistoryModal from './ApplyHistoryModal';
 
 type MatchType = 'contains' | 'exact' | 'regex';
 
@@ -86,6 +87,9 @@ export default function CategorizationRulesPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Apply-to-history modal state
+  const [applyRule, setApplyRule] = useState<Rule | null>(null);
 
   // Test box state
   const [testInput, setTestInput] = useState('');
@@ -404,6 +408,13 @@ export default function CategorizationRulesPage() {
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2 justify-end">
                       <button
+                        onClick={() => setApplyRule(rule)}
+                        title="Retroactively apply this rule to historical transactions"
+                        className="px-2 py-1 text-xs text-foreground-secondary hover:text-primary hover:bg-surface-hover rounded transition-colors whitespace-nowrap"
+                      >
+                        Apply to history
+                      </button>
+                      <button
                         onClick={() => startEdit(rule)}
                         className="px-2 py-1 text-xs text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded transition-colors"
                       >
@@ -533,6 +544,11 @@ export default function CategorizationRulesPage() {
           }));
         }}
         title="Select target account"
+      />
+
+      <ApplyHistoryModal
+        rule={applyRule}
+        onClose={() => setApplyRule(null)}
       />
     </div>
   );
