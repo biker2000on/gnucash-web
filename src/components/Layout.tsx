@@ -347,6 +347,7 @@ const navItems: NavItem[] = [
             { name: 'Monthly Digest', href: '/tools/digest' },
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
             { name: 'Drawdown Planner', href: '/tools/drawdown' },
+            { name: 'Sell Planner', href: '/tools/sell-planner' },
             { name: 'Tax Estimator', href: '/tools/tax-estimator' },
             { name: 'Withholding Checkup', href: '/tools/withholding' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },

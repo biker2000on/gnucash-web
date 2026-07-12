@@ -207,6 +207,12 @@ export default function ToolsPage() {
             href: '/tools/drawdown',
         },
         {
+            title: 'Sell Planner',
+            description: 'Raise a target amount of cash tax-optimally — loss harvesting first, wash-sale screening, and the incremental federal + state tax of each plan vs naive FIFO.',
+            icon: 'trend',
+            href: '/tools/sell-planner',
+        },
+        {
             title: 'Tax Estimator',
             description: 'Estimate federal and state taxes from your book data, with contribution scenarios and IRS limit tracking.',
             icon: 'percent',
