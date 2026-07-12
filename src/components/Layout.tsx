@@ -144,10 +144,20 @@ function IconPayslip({ className = "w-5 h-5" }: { className?: string }) {
 }
 
 // ---------------------------------------------------------------------------
+function IconPlusCircle({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" strokeWidth={2} />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v8M8 12h8" />
+        </svg>
+    );
+}
+
 // Icon registry map
 // ---------------------------------------------------------------------------
 
 const iconMap: Record<string, ({ className }: { className?: string }) => ReactElement> = {
+    PlusCircle: IconPlusCircle,
     LayoutDashboard: IconLayoutDashboard,
     List: IconList,
     BookOpen: IconBookOpen,
@@ -289,6 +299,7 @@ const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
+    { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle' },
     { name: 'Tags', href: '/tags', icon: 'Tag' },
     {
         name: 'Uploads',

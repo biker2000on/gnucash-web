@@ -35,6 +35,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'nav-dashboard', title: 'Dashboard', group: 'navigate', href: '/dashboard', shortcut: 'g d' },
     { id: 'nav-accounts', title: 'Account Hierarchy', group: 'navigate', href: '/accounts', keywords: 'tree chart of accounts', shortcut: 'g a' },
     { id: 'nav-ledger', title: 'General Ledger', group: 'navigate', href: '/ledger', keywords: 'transactions journal', shortcut: 'g l' },
+    { id: 'nav-quick-add', title: 'Quick Add', group: 'navigate', href: '/quick-add', keywords: 'capture expense mobile offline fast entry' },
     { id: 'nav-tags', title: 'Tags', group: 'navigate', href: '/tags', shortcut: 'g t' },
     { id: 'nav-receipts', title: 'Receipts', group: 'navigate', href: '/receipts', keywords: 'uploads' },
     { id: 'nav-payslips', title: 'Payslips', group: 'navigate', href: '/payslips', keywords: 'uploads paycheck payroll' },
