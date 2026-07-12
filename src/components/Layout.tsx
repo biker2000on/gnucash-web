@@ -144,10 +144,20 @@ function IconPayslip({ className = "w-5 h-5" }: { className?: string }) {
 }
 
 // ---------------------------------------------------------------------------
+function IconPlusCircle({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" strokeWidth={2} />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v8M8 12h8" />
+        </svg>
+    );
+}
+
 // Icon registry map
 // ---------------------------------------------------------------------------
 
 const iconMap: Record<string, ({ className }: { className?: string }) => ReactElement> = {
+    PlusCircle: IconPlusCircle,
     LayoutDashboard: IconLayoutDashboard,
     List: IconList,
     BookOpen: IconBookOpen,
@@ -280,6 +290,7 @@ const businessNavItem: NavItem = {
         { name: 'AR/AP Aging', href: '/business/reports/aging' },
         { name: 'Sales Tax', href: '/business/reports/sales-tax' },
         { name: 'Schedule C', href: '/business/reports/schedule-c' },
+        { name: 'Schedule E', href: '/business/reports/schedule-e' },
         { name: 'Business Settings', href: '/business/settings' },
     ],
 };
@@ -288,6 +299,7 @@ const navItems: NavItem[] = [
     { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
     { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
+    { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle' },
     { name: 'Tags', href: '/tags', icon: 'Tag' },
     {
         name: 'Uploads',
@@ -310,6 +322,7 @@ const navItems: NavItem[] = [
             { name: 'Rebalancing', href: '/investments/rebalancing' },
             { name: 'Benchmark', href: '/investments/benchmark' },
             { name: 'Dividends', href: '/investments/dividends' },
+            { name: 'Equity Comp', href: '/investments/equity-comp' },
         ],
     },
     { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
@@ -322,12 +335,14 @@ const navItems: NavItem[] = [
         icon: 'Wrench',
         children: [
             { name: 'All Tools', href: '/tools' },
+            { name: 'Ask Your Books', href: '/tools/ask' },
             { name: 'Cash Flow Forecast', href: '/tools/cash-flow-forecast' },
             { name: 'Subscriptions', href: '/tools/subscriptions' },
             { name: 'Spending Watch', href: '/tools/anomalies' },
             { name: 'Debt Payoff', href: '/tools/debt-payoff' },
             { name: 'Monthly Digest', href: '/tools/digest' },
             { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
+            { name: 'Drawdown Planner', href: '/tools/drawdown' },
             { name: 'Tax Estimator', href: '/tools/tax-estimator' },
             { name: 'Withholding Checkup', href: '/tools/withholding' },
             { name: 'Mortgage Calculator', href: '/tools/mortgage' },
@@ -346,6 +361,7 @@ const navItems: NavItem[] = [
             { name: 'Rules', href: '/settings/rules' },
             { name: 'Connections', href: '/settings/connections' },
             { name: 'Users', href: '/settings/users' },
+            { name: 'History', href: '/settings/history' },
         ],
     },
 ];

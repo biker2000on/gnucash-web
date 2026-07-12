@@ -8,6 +8,8 @@
  */
 
 import prisma from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
+import { selectHistoryCounterSplit } from '@/lib/bulk-edit';
 
 export type MatchType = 'contains' | 'exact' | 'regex';
 
@@ -199,6 +201,21 @@ export async function listRules(bookGuid: string): Promise<CategorizationRule[]>
     ORDER BY r.priority DESC, r.id ASC
   `;
   return rows.map(rowToRule);
+}
+
+/** Fetch a single rule by id (book-scoped), with the target account fullname. */
+export async function getRule(bookGuid: string, id: number): Promise<CategorizationRule | null> {
+  await ensureTable();
+  const rows = await prisma.$queryRaw<RuleRow[]>`
+    SELECT
+      r.id, r.book_guid, r.pattern, r.match_type, r.account_guid,
+      r.priority, r.enabled, r.hit_count, r.last_hit_at, r.created_at,
+      ah.fullname AS account_name
+    FROM gnucash_web_categorization_rules r
+    LEFT JOIN account_hierarchy ah ON ah.guid = r.account_guid
+    WHERE r.id = ${id} AND r.book_guid = ${bookGuid}
+  `;
+  return rows.length > 0 ? rowToRule(rows[0]) : null;
 }
 
 /** List only enabled rules (no account name join; used on the sync hot path). */
@@ -474,4 +491,212 @@ export async function suggestRules(bookGuid: string): Promise<RuleSuggestion[]> 
   }
 
   return suggestions;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Retroactive rule application ("apply to history")
+ * ------------------------------------------------------------------------- */
+
+/** Maximum number of changes returned/applied per call. */
+export const HISTORY_APPLY_CAP = 500;
+
+export interface HistoricalMatch {
+  /** Transaction guid. */
+  guid: string;
+  /** The counter-split that will be moved. */
+  splitGuid: string;
+  /** Post date, YYYY-MM-DD (UTC). */
+  date: string;
+  description: string;
+  currentAccountGuid: string;
+  currentAccount: string;
+  newAccountGuid: string;
+  newAccount: string;
+  /** Counter-split value in the transaction currency. */
+  amount: number;
+}
+
+export interface HistoricalSkip {
+  guid: string;
+  date: string;
+  description: string;
+  reason: string;
+}
+
+export interface HistoryPlan {
+  matches: HistoricalMatch[];
+  skipped: HistoricalSkip[];
+  /** True when more qualifying changes exist beyond the cap. */
+  moreRemain: boolean;
+}
+
+export interface PlanHistoryOptions {
+  /** Inclusive, YYYY-MM-DD. Omit for "all history". */
+  startDate?: string;
+  /** Inclusive, YYYY-MM-DD. */
+  endDate?: string;
+  /** Only recategorize splits sitting on Imbalance-* / Orphan-* accounts (default true). */
+  onlyUncategorized?: boolean;
+  /** Change cap; clamped to HISTORY_APPLY_CAP. */
+  limit?: number;
+}
+
+/**
+ * Find historical transactions in the given book whose description matches the
+ * rule (identical semantics to the import path: matchRule) and whose
+ * counter-split can safely be moved to the rule's target account.
+ *
+ * Read-only: performs no writes, so it doubles as the dry-run implementation.
+ * The rule's enabled flag is intentionally ignored — applying to history is an
+ * explicit user action.
+ */
+export async function planHistoricalApplication(
+  rule: CategorizationRule,
+  bookAccountGuids: string[],
+  options: PlanHistoryOptions = {},
+): Promise<HistoryPlan> {
+  const onlyUncategorized = options.onlyUncategorized ?? true;
+  const limit = Math.max(1, Math.min(options.limit ?? HISTORY_APPLY_CAP, HISTORY_APPLY_CAP));
+  const bookSet = new Set(bookAccountGuids);
+
+  const target = await prisma.accounts.findUnique({
+    where: { guid: rule.accountGuid },
+    select: { guid: true, name: true, commodity_guid: true },
+  });
+  if (!target) {
+    throw new Error('Rule target account no longer exists');
+  }
+
+  const where: Prisma.transactionsWhereInput = {
+    splits: { some: { account_guid: { in: bookAccountGuids } } },
+  };
+  // 'contains' can be prefiltered in SQL; exact/regex are filtered in JS below
+  // with matchRule so the semantics stay identical to the import path.
+  const trimmedPattern = (rule.pattern || '').trim();
+  if (rule.matchType === 'contains' && trimmedPattern) {
+    where.description = { contains: trimmedPattern, mode: 'insensitive' };
+  } else {
+    where.description = { not: null };
+  }
+  if (options.startDate || options.endDate) {
+    where.post_date = {
+      ...(options.startDate ? { gte: new Date(`${options.startDate}T00:00:00.000Z`) } : {}),
+      ...(options.endDate ? { lte: new Date(`${options.endDate}T23:59:59.999Z`) } : {}),
+    };
+  }
+
+  const txs = await prisma.transactions.findMany({
+    where,
+    select: { guid: true, post_date: true, description: true },
+    orderBy: [{ post_date: 'asc' }, { guid: 'asc' }],
+  });
+
+  // Reuse the exact import-time matcher (force-enabled for this explicit action).
+  const matcherRule: CategorizationRule = { ...rule, enabled: true };
+  const matched = txs.filter(t => matchRule([matcherRule], t.description ?? '') !== null);
+
+  const matches: HistoricalMatch[] = [];
+  const skipped: HistoricalSkip[] = [];
+  let moreRemain = false;
+
+  const CHUNK = 200;
+  outer: for (let i = 0; i < matched.length; i += CHUNK) {
+    const chunk = matched.slice(i, i + CHUNK);
+    const splitRows = await prisma.splits.findMany({
+      where: { tx_guid: { in: chunk.map(t => t.guid) } },
+      select: {
+        guid: true,
+        tx_guid: true,
+        value_num: true,
+        value_denom: true,
+        account: {
+          select: { guid: true, name: true, account_type: true, commodity_guid: true },
+        },
+      },
+    });
+    const byTx = new Map<string, typeof splitRows>();
+    for (const row of splitRows) {
+      const list = byTx.get(row.tx_guid);
+      if (list) list.push(row);
+      else byTx.set(row.tx_guid, [row]);
+    }
+
+    for (const tx of chunk) {
+      const rows = byTx.get(tx.guid) ?? [];
+      const infos = rows.map(r => ({
+        guid: r.guid,
+        accountGuid: r.account.guid,
+        accountName: r.account.name,
+        accountType: r.account.account_type,
+        commodityGuid: r.account.commodity_guid,
+      }));
+      const decision = selectHistoryCounterSplit(infos, {
+        targetAccountGuid: rule.accountGuid,
+        onlyUncategorized,
+      });
+      if (decision.kind === 'none') continue;
+
+      const date = tx.post_date ? tx.post_date.toISOString().slice(0, 10) : '';
+      const description = tx.description ?? '';
+      if (decision.kind === 'skip') {
+        skipped.push({ guid: tx.guid, date, description, reason: decision.reason });
+        continue;
+      }
+      if (!bookSet.has(decision.split.accountGuid)) {
+        skipped.push({ guid: tx.guid, date, description, reason: 'counter-split outside the active book' });
+        continue;
+      }
+      if (
+        target.commodity_guid &&
+        decision.split.commodityGuid &&
+        decision.split.commodityGuid !== target.commodity_guid
+      ) {
+        skipped.push({ guid: tx.guid, date, description, reason: 'currency mismatch with target account' });
+        continue;
+      }
+
+      if (matches.length >= limit) {
+        moreRemain = true;
+        break outer;
+      }
+
+      const row = rows.find(r => r.guid === decision.split.guid)!;
+      const denom = Number(row.value_denom);
+      matches.push({
+        guid: tx.guid,
+        splitGuid: decision.split.guid,
+        date,
+        description,
+        currentAccountGuid: decision.split.accountGuid,
+        currentAccount: decision.split.accountName,
+        newAccountGuid: rule.accountGuid,
+        newAccount: target.name,
+        amount: denom !== 0 ? Number(row.value_num) / denom : 0,
+      });
+    }
+  }
+
+  return { matches, skipped, moreRemain };
+}
+
+/**
+ * Apply a set of planned historical matches inside a single Prisma
+ * transaction. Each split move is guarded on the split still being on the
+ * account we planned to move it from, so a concurrently-edited transaction is
+ * silently left alone rather than corrupted. Returns the number of splits
+ * actually moved.
+ */
+export async function applyHistoricalMatches(matches: HistoricalMatch[]): Promise<number> {
+  if (matches.length === 0) return 0;
+  let applied = 0;
+  await prisma.$transaction(async tx => {
+    for (const m of matches) {
+      const res = await tx.splits.updateMany({
+        where: { guid: m.splitGuid, account_guid: m.currentAccountGuid },
+        data: { account_guid: m.newAccountGuid },
+      });
+      applied += res.count;
+    }
+  });
+  return applied;
 }

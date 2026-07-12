@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import { getRedis } from '@/lib/redis';
+import { enqueueJob } from '@/lib/queue/queues';
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -171,7 +172,33 @@ export async function createNotification(input: CreateNotificationInput): Promis
   };
 
   await publishNotification(notification);
+  void deliverByEmail(notification);
   return notification;
+}
+
+/**
+ * Fire-and-forget email delivery for a notification. Preference checks and
+ * SMTP config happen in the job (or inline fallback) so this stays cheap.
+ */
+async function deliverByEmail(notification: AppNotification): Promise<void> {
+  const jobData = {
+    userId: notification.userId,
+    type: notification.type,
+    severity: notification.severity,
+    title: notification.title,
+    message: notification.message,
+    href: notification.href,
+  };
+  try {
+    const jobId = await enqueueJob('send-email', jobData);
+    if (jobId === undefined) {
+      // Redis unavailable — send inline without blocking the caller.
+      const { handleSendEmail } = await import('@/lib/queue/jobs/send-email');
+      await handleSendEmail({ data: jobData } as Parameters<typeof handleSendEmail>[0]);
+    }
+  } catch (error) {
+    console.warn('Email delivery for notification failed:', error);
+  }
 }
 
 export async function listNotifications(userId: number, bookGuid: string, limit = 20) {

@@ -7,6 +7,7 @@ export type InvestmentTransactionType =
     | 'stock_split'
     | 'return_of_capital'
     | 'reinvested_dividend'
+    | 'realized_gain'
     | 'other';
 
 interface TransactionTypeIconProps {
@@ -21,6 +22,7 @@ const TYPE_CONFIG: Record<InvestmentTransactionType, { icon: string; label: stri
     stock_split:           { icon: '⇅', label: 'Split',       color: 'text-blue-400' },
     return_of_capital:     { icon: '↩', label: 'ROC',         color: 'text-purple-400' },
     reinvested_dividend:   { icon: '⟳', label: 'DRIP',        color: 'text-amber-400' },
+    realized_gain:         { icon: '±', label: 'Realized G/L', color: 'text-teal-400' },
     other:                 { icon: '·', label: 'Other',        color: 'text-foreground-muted' },
 };
 

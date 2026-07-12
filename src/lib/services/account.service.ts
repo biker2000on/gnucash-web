@@ -172,6 +172,16 @@ export class AccountService {
       return acct;
     });
 
+    const { logAudit } = await import('@/lib/services/audit.service');
+    await logAudit('CREATE', 'ACCOUNT', account.guid, null, {
+      name: account.name,
+      account_type: account.account_type,
+      parent_guid: account.parent_guid,
+      commodity_guid: account.commodity_guid,
+      code: account.code,
+      description: account.description,
+    });
+
     return serializeBigInts(account);
   }
 
@@ -323,6 +333,32 @@ export class AccountService {
       return acct;
     });
 
+    const { logAudit } = await import('@/lib/services/audit.service');
+    await logAudit('UPDATE', 'ACCOUNT', guid, {
+      name: existing.name,
+      code: existing.code,
+      description: existing.description,
+      hidden: existing.hidden,
+      placeholder: existing.placeholder,
+      parent_guid: existing.parent_guid,
+      commodity_guid: existing.commodity_guid,
+    }, {
+      name: account.name,
+      code: account.code,
+      description: account.description,
+      hidden: account.hidden,
+      placeholder: account.placeholder,
+      parent_guid: account.parent_guid,
+      commodity_guid: account.commodity_guid,
+      preference_changes: {
+        ...(data.tax_related !== undefined && { tax_related: data.tax_related }),
+        ...(data.is_retirement !== undefined && { is_retirement: data.is_retirement }),
+        ...(data.retirement_account_type !== undefined && { retirement_account_type: data.retirement_account_type }),
+        ...(data.owner !== undefined && { owner: data.owner }),
+        ...(data.notes !== undefined && { notes: data.notes }),
+      },
+    });
+
     return serializeBigInts(account);
   }
 
@@ -367,6 +403,16 @@ export class AccountService {
     await prisma.accounts.delete({
       where: { guid },
     });
+
+    const { logAudit } = await import('@/lib/services/audit.service');
+    await logAudit('DELETE', 'ACCOUNT', guid, {
+      name: account.name,
+      account_type: account.account_type,
+      parent_guid: account.parent_guid,
+      commodity_guid: account.commodity_guid,
+      code: account.code,
+      description: account.description,
+    }, null);
 
     return { success: true, guid };
   }

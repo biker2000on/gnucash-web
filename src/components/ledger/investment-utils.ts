@@ -27,9 +27,10 @@ export interface InvestmentRowData {
     price: number | null;        // null when shares is 0
     buyAmount: number | null;    // positive number or null
     sellAmount: number | null;   // positive number or null
+    gainAmount: number | null;   // signed realized gain (+gain / -loss) for realized_gain rows
     shareBalance: number;        // from server-side computation
     costBasis: number;           // from server-side computation
-    transactionType: 'buy' | 'sell' | 'dividend' | 'stock_split' | 'return_of_capital' | 'reinvested_dividend' | 'other';
+    transactionType: 'buy' | 'sell' | 'dividend' | 'stock_split' | 'return_of_capital' | 'reinvested_dividend' | 'realized_gain' | 'other';
 }
 
 export interface InvestmentApiResponse {
@@ -87,16 +88,26 @@ function findTransferSplit(splits: Split[], accountGuid: string): Split | undefi
  */
 // ── Account name pattern helpers ─────────────────────────────────────
 
+/**
+ * Check whether a colon path starts with the given root segment, tolerating
+ * one leading placeholder segment (some books nest everything under a
+ * book-name account, e.g. "My Finances:Income:...").
+ */
+function hasRootSegment(name: string, segment: string): boolean {
+    const segs = name.split(':');
+    return segs[0] === segment || segs[1] === segment;
+}
+
 function isIncomeAccount(name: string): boolean {
-    return name.startsWith('Income:') || name === 'Income';
+    return hasRootSegment(name, 'Income');
 }
 
 function isTradingAccount(name: string): boolean {
-    return name.startsWith('Trading:') || name === 'Trading';
+    return hasRootSegment(name, 'Trading');
 }
 
 function isExpenseAccount(name: string): boolean {
-    return name.startsWith('Expenses:') || name.startsWith('Expense:') || name === 'Expenses' || name === 'Expense';
+    return hasRootSegment(name, 'Expenses') || hasRootSegment(name, 'Expense');
 }
 
 function isCashLikeAccount(name: string): boolean {
@@ -173,17 +184,26 @@ function classifyInvestmentTransaction(
         return 'sell';
     }
 
-    // 5. Return of capital: zero shares, sell value present, income source
-    if (!hasShares && absValue > 0 && hasIncomeSplit) {
+    // 5. Realized gain/loss: zero shares, value present, offset entirely by an
+    //    income (capital gains) account with no cash movement. This is the
+    //    double-balance gains transaction GnuCash creates when closing a lot
+    //    (and what our lot-scrub engine generates).
+    if (!hasShares && absValue > 0 && hasIncomeSplit && !hasCashSplit) {
+        return 'realized_gain';
+    }
+
+    // 6. Return of capital: zero shares, value present, cash received with no
+    //    income offset (GnuCash ROC reduces basis: stock -value, cash +value).
+    if (!hasShares && absValue > 0 && hasCashSplit && !hasIncomeSplit) {
         return 'return_of_capital';
     }
 
-    // 6. Dividend: zero shares, income source, cash to bank
+    // 7. Dividend: zero shares, income source, cash to bank
     if (!hasShares && hasIncomeSplit && hasCashSplit) {
         return 'dividend';
     }
 
-    // 7. Fallback: use simple classifier for anything else
+    // 8. Fallback: use simple classifier for anything else
     if (!hasShares) {
         // Zero shares with cash but no income → could be fees, etc.
         return hasCashSplit ? 'dividend' : 'other';
@@ -230,6 +250,10 @@ export function transformToInvestmentRow(
 
     const transactionType = classifyInvestmentTransaction(shares, value, splits, accountGuid);
 
+    // For realized gain/loss rows the account split's value IS the gain:
+    // the lot-close gains split is valued +gain (loss = negative).
+    const gainAmount = transactionType === 'realized_gain' ? value : null;
+
     // Transfer account info
     const transferSplit = findTransferSplit(splits, accountGuid);
     const transferAccount = transferSplit?.account_fullname
@@ -256,6 +280,7 @@ export function transformToInvestmentRow(
         price,
         buyAmount,
         sellAmount,
+        gainAmount,
         shareBalance,
         costBasis,
         transactionType,

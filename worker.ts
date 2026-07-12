@@ -298,6 +298,16 @@ async function main() {
           await handleCheckLimitCoverage(job);
           break;
         }
+        case 'send-email': {
+          const { handleSendEmail } = await import('./src/lib/queue/jobs/send-email');
+          await handleSendEmail(job);
+          break;
+        }
+        case 'run-backups': {
+          const { handleRunBackups } = await import('./src/lib/queue/jobs/run-backups');
+          await handleRunBackups(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -332,6 +342,18 @@ async function main() {
       console.log(`[${new Date().toISOString()}] Nightly thumbnails: ${result.regenerated} regenerated, ${result.skipped} skipped`);
     } catch (err) {
       console.error('Nightly thumbnail regeneration failed:', err);
+    }
+  });
+
+  // Nightly book backups at 02:30 UTC (retention via BACKUP_RETENTION, default 30)
+  setScheduleGeneric('nightly-backups', '02:30', async () => {
+    console.log(`[${new Date().toISOString()}] Running nightly book backups`);
+    try {
+      const { handleRunBackups } = await import('./src/lib/queue/jobs/run-backups');
+      const fakeJob = { id: `nightly-backups-${Date.now()}`, name: 'run-backups', data: {} } as Job;
+      await handleRunBackups(fakeJob);
+    } catch (err) {
+      console.error('Nightly backups failed:', err);
     }
   });
 
