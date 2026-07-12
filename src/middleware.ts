@@ -17,6 +17,12 @@ export async function middleware(request: NextRequest) {
 
   // Protected API routes -- return 401 if not authenticated
   if (pathname.startsWith('/api/')) {
+    // API tokens: pass Bearer gcw_ requests through; requireRole() in the
+    // route handler validates the token and enforces roles.
+    const authHeader = request.headers.get('authorization');
+    if (authHeader?.startsWith('Bearer gcw_')) {
+      return NextResponse.next();
+    }
     if (!session.isLoggedIn || !session.userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { getRedis } from '@/lib/redis';
 import { enqueueJob } from '@/lib/queue/queues';
+import { deliverWebhooks } from '@/lib/webhooks';
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -173,6 +174,7 @@ export async function createNotification(input: CreateNotificationInput): Promis
 
   await publishNotification(notification);
   void deliverByEmail(notification);
+  void deliverWebhooks(notification);
   return notification;
 }
 

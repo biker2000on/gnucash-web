@@ -7,6 +7,8 @@ import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSecti
 import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
 import { BackupsSection } from '@/components/settings/BackupsSection';
 import { TwoFactorSection } from '@/components/settings/TwoFactorSection';
+import { ApiTokensSection } from '@/components/settings/ApiTokensSection';
+import { WebhooksSection } from '@/components/settings/WebhooksSection';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
@@ -644,6 +646,10 @@ export default function SettingsPage() {
       <BackupsSection />
 
       <TwoFactorSection />
+
+      <ApiTokensSection />
+
+      <WebhooksSection />
 
       <CollapsibleConfigSection
         title="Categorization Rules"
