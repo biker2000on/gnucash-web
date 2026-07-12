@@ -29,6 +29,10 @@ export enum ReportType {
   TAX_SCHEDULE = 'tax_schedule',
   BUDGET_INCOME_STATEMENT = 'budget_income_statement',
   BUDGET_BALANCE_SHEET = 'budget_balance_sheet',
+  ACCOUNT_BREAKDOWN = 'account_breakdown',
+  PRICE_HISTORY = 'price_history',
+  DAY_OF_WEEK = 'day_of_week',
+  AVERAGE_BALANCE = 'average_balance',
 }
 
 export interface ReportConfig {
@@ -396,6 +400,34 @@ export const REPORTS: ReportConfig[] = [
     description: 'Monthly income and expenses over time',
     icon: 'cash',
     category: 'chart',
+  },
+  {
+    type: ReportType.ACCOUNT_BREAKDOWN,
+    name: 'Account Breakdown',
+    description: 'Assets, liabilities, income, or expenses grouped by account at a chosen depth — pie or bar',
+    icon: 'cash',
+    category: 'chart',
+  },
+  {
+    type: ReportType.PRICE_HISTORY,
+    name: 'Price History',
+    description: 'Commodity price history from the GnuCash price database',
+    icon: 'trending',
+    category: 'chart',
+  },
+  {
+    type: ReportType.DAY_OF_WEEK,
+    name: 'Income & Expenses by Day of Week',
+    description: 'Totals and daily averages of income and expense flows by weekday',
+    icon: 'cash',
+    category: 'chart',
+  },
+  {
+    type: ReportType.AVERAGE_BALANCE,
+    name: 'Average Balance',
+    description: 'Average daily balance, minimum, maximum, and ending balance per month for selected cash accounts',
+    icon: 'balance',
+    category: 'account',
   },
 ];
 
