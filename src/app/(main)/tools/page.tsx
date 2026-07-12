@@ -86,6 +86,15 @@ function ToolIcon({ icon }: { icon: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 19l4-6" />
                 </svg>
             );
+        case 'sliders':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h9M17 18h3" />
+                    <circle cx="15" cy="6" r="2" strokeWidth={1.5} />
+                    <circle cx="9" cy="12" r="2" strokeWidth={1.5} />
+                    <circle cx="15" cy="18" r="2" strokeWidth={1.5} />
+                </svg>
+            );
         case 'heartbeat':
             return (
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -205,6 +214,12 @@ export default function ToolsPage() {
             description: 'Model retirement spend-down year by year — withdrawal sequencing, SECURE 2.0 RMDs, IRMAA warnings, and bracket-filling Roth conversions.',
             icon: 'trend',
             href: '/tools/drawdown',
+        },
+        {
+            title: 'Scenario Sandbox',
+            description: 'Model one what-if — buy a house, take a raise, add a loan — and compare cash flow, net worth, taxes, and your FI date against baseline.',
+            icon: 'sliders',
+            href: '/tools/scenario',
         },
         {
             title: 'Sell Planner',

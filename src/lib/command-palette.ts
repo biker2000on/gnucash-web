@@ -108,6 +108,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'tool-fire', title: 'FIRE Calculator', group: 'tool', href: '/tools/fire-calculator', keywords: 'retire monte carlo independence' },
     { id: 'tool-drawdown', title: 'Drawdown & Roth Planner', group: 'tool', href: '/tools/drawdown', keywords: 'retirement withdrawal rmd irmaa conversion sequencing' },
     { id: 'tool-sell-planner', title: 'Sell Planner', group: 'tool', href: '/tools/sell-planner', keywords: 'tax optimal lots raise cash harvest wash sale' },
+    { id: 'tool-scenario', title: 'Scenario Sandbox', group: 'tool', href: '/tools/scenario', keywords: 'what if buy house loan purchase model compare' },
     { id: 'tool-tax', title: 'Tax Estimator', group: 'tool', href: '/tools/tax-estimator', keywords: 'federal state 1040 quarterly' },
     { id: 'tool-withholding', title: 'Withholding Checkup', group: 'tool', href: '/tools/withholding', keywords: 'w4 paycheck safe harbor' },
     { id: 'tool-mortgage', title: 'Mortgage Calculator', group: 'tool', href: '/tools/mortgage', keywords: 'amortization loan' },
