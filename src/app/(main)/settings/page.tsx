@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
 import { BackupsSection } from '@/components/settings/BackupsSection';
+import { TwoFactorSection } from '@/components/settings/TwoFactorSection';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
@@ -641,6 +642,8 @@ export default function SettingsPage() {
       <EmailNotificationsSection />
 
       <BackupsSection />
+
+      <TwoFactorSection />
 
       <CollapsibleConfigSection
         title="Categorization Rules"

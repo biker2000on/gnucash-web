@@ -23,6 +23,19 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
     const [confirmPassword, setConfirmPassword] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    // Second step shown only for users who opted into two-factor authentication
+    const [totpStep, setTotpStep] = useState(false);
+    const [totpCode, setTotpCode] = useState('');
+    const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+
+    const completeLogin = () => {
+        sessionStorage.setItem(LOGIN_INSTALL_PENDING_KEY, 'true');
+        window.dispatchEvent(new Event(INSTALL_STATE_CHANGE_EVENT));
+
+        // Hard redirect to ensure the session cookie is fully committed
+        // before any useEffect hooks fire API calls on the destination page
+        window.location.href = redirectTo;
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -49,17 +62,61 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                 throw new Error(data.error || 'Authentication failed');
             }
 
-            sessionStorage.setItem(LOGIN_INSTALL_PENDING_KEY, 'true');
-            window.dispatchEvent(new Event(INSTALL_STATE_CHANGE_EVENT));
+            // Users with two-factor authentication enabled get a code prompt
+            // before the session is created. Everyone else proceeds as usual.
+            if (data.totpRequired) {
+                setTotpStep(true);
+                setTotpCode('');
+                setUseRecoveryCode(false);
+                return;
+            }
 
-            // Hard redirect to ensure the session cookie is fully committed
-            // before any useEffect hooks fire API calls on the destination page
-            window.location.href = redirectTo;
+            completeLogin();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleTotpSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
+
+        try {
+            const res = await fetch('/api/auth/totp/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: totpCode.trim() }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                if (data.challengeExpired) {
+                    // Challenge expired or too many attempts — back to password step
+                    setTotpStep(false);
+                    setTotpCode('');
+                    setUseRecoveryCode(false);
+                    setPassword('');
+                }
+                throw new Error(data.error || 'Verification failed');
+            }
+
+            completeLogin();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An error occurred');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const backToLogin = () => {
+        setTotpStep(false);
+        setTotpCode('');
+        setUseRecoveryCode(false);
+        setError(null);
     };
 
     // Password strength indicator for registration
@@ -78,6 +135,95 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
     };
 
     const passwordStrength = getPasswordStrength(password);
+
+    if (totpStep) {
+        return (
+            <div className="w-full max-w-md">
+                <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-2xl p-8">
+                    <div className="text-center mb-8">
+                        <h1 className="text-2xl font-bold text-primary">
+                            GnuCash Web
+                        </h1>
+                        <p className="text-foreground-muted mt-2">
+                            Two-factor authentication
+                        </p>
+                    </div>
+
+                    {error && (
+                        <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
+                            {error}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleTotpSubmit} className="space-y-6">
+                        <div>
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
+                                {useRecoveryCode ? 'Recovery code' : 'Authentication code'}
+                            </label>
+                            <input
+                                key={useRecoveryCode ? 'recovery' : 'totp'}
+                                type="text"
+                                inputMode={useRecoveryCode ? 'text' : 'numeric'}
+                                autoComplete="one-time-code"
+                                autoFocus
+                                value={totpCode}
+                                onChange={e =>
+                                    setTotpCode(
+                                        useRecoveryCode
+                                            ? e.target.value
+                                            : e.target.value.replace(/\D/g, '').slice(0, 6)
+                                    )
+                                }
+                                required
+                                maxLength={useRecoveryCode ? 16 : 6}
+                                className="w-full bg-input-bg border border-input-border rounded-lg px-4 py-3 text-foreground text-center text-xl tracking-[0.3em] font-mono focus:outline-none focus:border-primary/50 transition-colors"
+                                placeholder={useRecoveryCode ? 'xxxx-xxxx' : '000000'}
+                            />
+                            <p className="mt-2 text-xs text-foreground-muted">
+                                {useRecoveryCode
+                                    ? 'Enter one of the recovery codes you saved when enabling two-factor authentication. Each code works once.'
+                                    : 'Enter the 6-digit code from your authenticator app.'}
+                            </p>
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={loading || totpCode.trim().length === 0}
+                            className="w-full py-3 bg-primary hover:bg-primary-hover disabled:bg-foreground-muted text-primary-foreground font-medium rounded-lg transition-all"
+                        >
+                            {loading ? (
+                                <span className="flex items-center justify-center gap-2">
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    Verifying...
+                                </span>
+                            ) : (
+                                'Verify'
+                            )}
+                        </button>
+                    </form>
+
+                    <div className="mt-6 flex items-center justify-between text-sm">
+                        <button
+                            onClick={backToLogin}
+                            className="text-foreground-secondary hover:text-primary-hover transition-colors"
+                        >
+                            Back to login
+                        </button>
+                        <button
+                            onClick={() => {
+                                setUseRecoveryCode(!useRecoveryCode);
+                                setTotpCode('');
+                                setError(null);
+                            }}
+                            className="text-foreground-secondary hover:text-primary-hover transition-colors"
+                        >
+                            {useRecoveryCode ? 'Use authenticator code' : 'Use a recovery code'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="w-full max-w-md">
