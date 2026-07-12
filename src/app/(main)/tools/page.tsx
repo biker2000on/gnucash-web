@@ -201,6 +201,12 @@ export default function ToolsPage() {
             href: '/tools/ask',
         },
         {
+            title: 'Drawdown & Roth Conversion Planner',
+            description: 'Model retirement spend-down year by year — withdrawal sequencing, SECURE 2.0 RMDs, IRMAA warnings, and bracket-filling Roth conversions.',
+            icon: 'trend',
+            href: '/tools/drawdown',
+        },
+        {
             title: 'Tax Estimator',
             description: 'Estimate federal and state taxes from your book data, with contribution scenarios and IRS limit tracking.',
             icon: 'percent',

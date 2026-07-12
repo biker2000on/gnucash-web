@@ -91,6 +91,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     { id: 'tool-debt', title: 'Debt Payoff Planner', group: 'tool', href: '/tools/debt-payoff', keywords: 'snowball avalanche' },
     { id: 'tool-digest', title: 'Monthly Digest', group: 'tool', href: '/tools/digest', keywords: 'summary month' },
     { id: 'tool-fire', title: 'FIRE Calculator', group: 'tool', href: '/tools/fire-calculator', keywords: 'retire monte carlo independence' },
+    { id: 'tool-drawdown', title: 'Drawdown & Roth Planner', group: 'tool', href: '/tools/drawdown', keywords: 'retirement withdrawal rmd irmaa conversion sequencing' },
     { id: 'tool-tax', title: 'Tax Estimator', group: 'tool', href: '/tools/tax-estimator', keywords: 'federal state 1040 quarterly' },
     { id: 'tool-withholding', title: 'Withholding Checkup', group: 'tool', href: '/tools/withholding', keywords: 'w4 paycheck safe harbor' },
     { id: 'tool-mortgage', title: 'Mortgage Calculator', group: 'tool', href: '/tools/mortgage', keywords: 'amortization loan' },
