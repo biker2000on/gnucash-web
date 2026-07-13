@@ -55,7 +55,19 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Amazon order import', description: 'Match order history to card charges with item-level splits and learned category mappings.' },
                     { name: 'Payslip import', description: 'PDF paystubs extracted into full split transactions — taxes, deductions, and retirement contributions itemized.' },
                     { name: 'Multiple books', description: 'Household, business, or organization books in one database with per-book roles and permissions.' },
-                    { name: 'Nightly backups', description: 'Every book exported nightly to desktop-compatible GnuCash XML with retention, download, and restore.' },
+                    { name: 'Scheduled backups', description: 'Every book exported on your schedule to desktop-compatible GnuCash XML with retention, download, and restore.' },
+                ],
+            },
+            {
+                heading: 'Close the books with confidence',
+                lead: 'The rigor of desktop accounting, without leaving the browser.',
+                items: [
+                    { name: 'Manual reconcile', description: 'Tick splits against a paper statement’s ending balance — exact to the cent, verified server-side.' },
+                    { name: 'Close Book', description: 'Year-end closing entries into equity, previewed first and undoable afterward.' },
+                    { name: 'QIF import', description: 'Bring decades of Quicken history over with transfer matching and duplicate detection.' },
+                    { name: 'Document search', description: 'One search across receipt OCR text, statement lines, payslips, and transactions.' },
+                    { name: 'Time machine', description: 'See the whole book exactly as it stood on any past date — and what changed since.' },
+                    { name: 'Email-in ingestion', description: 'Forward a receipt or statement to your private mailbox; it lands in the book, extracted.' },
                 ],
             },
         ],
@@ -93,6 +105,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Data health', description: 'Continuous checks for unbalanced transactions, stale prices, and structural corruption, rolled into a 0–100 score.' },
                 ],
             },
+            {
+                heading: 'Decide what to sell — and when',
+                lead: 'The tax engine and the lot engine, working together.',
+                items: [
+                    { name: 'Sell Planner', description: '“Raise $25,000” — the exact lots that do it with minimum tax, wash sales screened, savings shown vs naive FIFO.' },
+                    { name: 'Fixed-income ladder', description: 'Bonds, CDs, and Treasuries with solved YTM, a maturity ladder, and a reinvestment calendar.' },
+                    { name: 'Price alerts', description: 'Get notified the day a holding crosses your target — checked right after each daily quote refresh.' },
+                    { name: 'Net-worth attribution', description: 'Savings vs market gains vs debt paydown — why your net worth moved, summing exactly to the change.' },
+                    { name: 'Account performance', description: 'Time-weighted returns per account that survive rebalances and provider switches.' },
+                    { name: 'FX revaluation', description: 'Foreign-currency holdings with average acquisition rates and unrealized gains.' },
+                ],
+            },
         ],
     },
     {
@@ -126,6 +150,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Budgets with envelopes', description: 'Rollover budgeting, overspend alerts, pace markers, auto-budget from history, and scenario comparison.' },
                     { name: 'Monthly digest', description: 'Net-worth change, cash flow, category deltas, subscription changes, and upcoming bills — in app or by email.' },
                     { name: 'Contribution scenarios', description: 'Model a bigger 401(k) deferral or an IRA top-up and see the tax delta instantly.' },
+                ],
+            },
+            {
+                heading: 'Big decisions, tested first',
+                lead: 'Model the move before you make it.',
+                items: [
+                    { name: 'Scenario Sandbox', description: '“What if we buy the house?” One change threaded through cash flow, net worth, taxes, and your FIRE date — side by side with baseline.' },
+                    { name: 'Year in Review', description: 'The annual wrapped: your money’s whole year on one printable page.' },
+                    { name: 'TXF tax export', description: 'Tax-related accounts grouped by IRS form and exported straight into TurboTax or TaxCut.' },
+                    { name: 'Budget Income Statement', description: 'The monthly read: budget vs actual with favorable/unfavorable variances.' },
+                    { name: 'In Case of Emergency', description: 'A printable map of every account, institution, and beneficiary for the people who would need it.' },
+                    { name: 'Spending vs national averages', description: 'Your categories against BLS Consumer Expenditure figures for your household size.' },
                 ],
             },
         ],
@@ -163,6 +199,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Household inventory option', description: 'Track home stock and supplies with reorder points on personal books too.' },
                 ],
             },
+            {
+                heading: 'Know your customers and your crew',
+                lead: 'The rest of the desktop business suite, modernized.',
+                items: [
+                    { name: 'Customer Summary', description: 'Sales, attributable expenses, profit, and markup % per customer.' },
+                    { name: 'Jobs', description: 'Customer and vendor jobs with rates and per-job invoice rollups.' },
+                    { name: 'Employee expense vouchers', description: 'Reimbursements posted through the native invoice engine, paid through the standard payment path.' },
+                    { name: 'Accountant share links', description: 'Time-boxed read-only report links — your accountant sees the statements, never your login.' },
+                    { name: 'Scheduled report delivery', description: 'The month-end pack emailed automatically, HTML plus CSV.' },
+                    { name: 'Print-ready everything', description: 'Global print stylesheets turn any report into a clean PDF via your browser.' },
+                ],
+            },
         ],
     },
     {
@@ -198,6 +246,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'PWA everywhere', description: 'Installable on phone and desktop with offline capture and keyboard-driven power use (Ctrl+K).' },
                 ],
             },
+            {
+                heading: 'Open to everything you run',
+                lead: 'A self-hoster’s integration surface.',
+                items: [
+                    { name: 'API tokens', description: 'Scoped personal access tokens for scripts, Grafana, or Home Assistant — hashed at rest, role-capped live.' },
+                    { name: 'Outbound webhooks', description: 'HMAC-signed deliveries on every alert, ready for anything that speaks HTTP.' },
+                    { name: 'iCal feeds', description: 'Subscribe your calendar to upcoming bills, bond maturities, and RMD deadlines.' },
+                    { name: 'Natural-language entry', description: 'Type “$40 gas yesterday” and confirm the prefilled transaction.' },
+                    { name: 'Daily insights', description: 'Category spikes, first-time merchants, and milestone crossings surface on the dashboard by themselves.' },
+                    { name: 'Opt-in two-factor auth', description: 'RFC 6238 TOTP with recovery codes — entirely optional, never forced.' },
+                ],
+            },
         ],
     },
 ];
@@ -213,8 +273,8 @@ export const PILLARS = FEATURE_PAGES.map(p => ({
 }));
 
 export const LANDING_STATS = [
-    { value: '25+', label: 'report types' },
-    { value: '14', label: 'planning & analysis tools' },
+    { value: '35+', label: 'report types' },
+    { value: '20+', label: 'planning & analysis tools' },
     { value: '100%', label: 'GnuCash-compatible schema' },
     { value: '0', label: 'third parties holding your data' },
 ];
