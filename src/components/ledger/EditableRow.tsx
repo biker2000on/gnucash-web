@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useCallback, useImperativeHandle, useRef, forwardRef } from 'react';
+import React, { useState, useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
 import { AccountTransaction } from '@/components/AccountLedger';
 import { DateCell } from './cells/DateCell';
 import { DescriptionCell } from './cells/DescriptionCell';
@@ -107,6 +107,34 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         // and doesn't overwrite the multi-split transaction with stale 2-split state.
         const skipSaveRef = useRef(false);
 
+        // Re-seed the inline edit fields whenever the persisted transaction changes
+        // out from under this row (e.g. an advanced-modal edit followed by a refetch).
+        // The row is keyed by guid, so React keeps this instance mounted and its
+        // useState values would otherwise stay frozen at their mount-time (pre-edit)
+        // values. The next inline save (Ctrl+R, or Enter/Tab/Arrow navigation) would
+        // then flush that stale 2-split state and clobber the modal's edit. In-progress
+        // inline typing doesn't change the transaction prop, so this never discards
+        // active edits.
+        const txSignature = [
+            transaction.post_date,
+            transaction.description ?? '',
+            transaction.account_split_value ?? '',
+            (transaction.splits ?? [])
+                .map((s) => `${s.account_guid}:${s.value_num}/${s.value_denom}`)
+                .join(','),
+        ].join('|');
+        useEffect(() => {
+            setPostDate(transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : '');
+            setDescription(transaction.description || '');
+            const nextOther = transaction.splits?.find((s) => s.account_guid !== accountGuid);
+            setOtherAccountGuid(nextOther?.account_guid || '');
+            setOtherAccountName(nextOther?.account_name || '');
+            const nextSplitValue = parseFloat(transaction.account_split_value);
+            setDebit(nextSplitValue >= 0 ? Math.abs(nextSplitValue).toFixed(2) : '');
+            setCredit(nextSplitValue < 0 ? Math.abs(nextSplitValue).toFixed(2) : '');
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [txSignature]);
+
         const handleDescriptionSuggestion = useCallback(async (suggestion: TransactionSuggestion) => {
             if (isSlimMode) {
                 // In slim mode, forward to parent so it can update EditableSplitRows
@@ -186,6 +214,9 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         }, [accountGuid, isSlimMode, onDescriptionSuggestion, debit, credit, postDate, transaction.guid, originalEnterDate, onSave]);
 
         const isDirty = useCallback(() => {
+            // A multi-split transaction cannot be represented by this inline 2-split
+            // editor, so it is never "dirty" from here and must never be saved from here.
+            if (isMultiSplit) return false;
             const origDate = transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : '';
             const origDebit = splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '';
             const origCredit = splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '';
@@ -194,10 +225,11 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 || otherAccountGuid !== (otherSplit?.account_guid || '')
                 || debit !== origDebit
                 || credit !== origCredit;
-        }, [postDate, description, otherAccountGuid, debit, credit, splitValue, transaction, otherSplit]);
+        }, [postDate, description, otherAccountGuid, debit, credit, splitValue, transaction, otherSplit, isMultiSplit]);
 
         const save = useCallback(async (): Promise<boolean> => {
             if (isSlimMode) return true; // Parent handles save in journal/autosplit
+            if (isMultiSplit) return true; // Never overwrite a multi-split from the inline 2-split editor
             if (skipSaveRef.current) return true; // Multi-split suggestion already saved
             if (!isDirty()) return true;
             const hasAmount = (debit && parseFloat(debit) > 0) || (credit && parseFloat(credit) > 0);
@@ -221,7 +253,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 setSaveError(true);
                 return false;
             }
-        }, [isDirty, isSlimMode, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
+        }, [isDirty, isSlimMode, isMultiSplit, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
 
         useImperativeHandle(ref, () => ({
             save,
