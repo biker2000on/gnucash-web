@@ -44,17 +44,19 @@
  * it is fully unit-testable; DB loading lives in generateNetWorthAttribution.
  *
  * Assumptions / caveats:
- *  - Split values are in the transaction currency, assumed to be the book
- *    base currency. Foreign-currency cash balances are carried at their
- *    accumulated base-currency value (no FX revaluation); any transaction
- *    imbalance from multi-currency entry lands in `other`.
+ *  - Multi-currency: the DB loader converts each currency-denominated account
+ *    to the base currency using its own-commodity `quantity` and the FX rate
+ *    (start rate for opening balances, end rate for period flows), matching
+ *    FinancialSummaryService. Foreign-currency opening balances are revalued
+ *    start→end and that pure FX effect is folded into `other`. The pure
+ *    computation itself therefore operates entirely in base-currency values.
  *  - Hidden accounts are INCLUDED (excluding them would break the invariant
  *    when money moves through them).
  */
 
 import prisma from '@/lib/prisma';
 import { toDecimalNumber } from '@/lib/gnucash';
-import { getBaseCurrency } from '@/lib/currency';
+import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -661,11 +663,60 @@ export async function loadAttributionInput(
         GROUP BY s.account_guid
     `;
 
+    /* ---- multi-currency conversion to the book base currency ----
+     * A split's `value` is denominated in the TRANSACTION currency, which is
+     * NOT reliably the base currency (e.g. a USD checking account used for an
+     * ATM withdrawal recorded in VND carries the VND amount in `value`). So for
+     * currency-denominated accounts we use `quantity` (the amount in the
+     * account's own commodity) and convert to base via the FX rate — matching
+     * FinancialSummaryService. Non-currency holdings (STOCK/MUTUAL) keep their
+     * transaction-currency `value`, which is the base-currency cost.
+     */
+    const baseGuid = (await getBaseCurrency())?.guid ?? null;
+
+    const acctMeta = new Map<string, { commodityGuid: string | null; namespace: string | null }>();
+    for (const a of accounts) {
+        acctMeta.set(a.guid, { commodityGuid: a.commodityGuid, namespace: a.commodityNamespace });
+    }
+
+    // Fetch start/end FX rates for every non-base currency referenced by an account.
+    const nonBaseCurrencyGuids = new Set<string>();
+    for (const a of accounts) {
+        if (a.commodityNamespace === 'CURRENCY' && a.commodityGuid && a.commodityGuid !== baseGuid) {
+            nonBaseCurrencyGuids.add(a.commodityGuid);
+        }
+    }
+    const startRates = new Map<string, number>();
+    const endRates = new Map<string, number>();
+    if (baseGuid) {
+        for (const g of nonBaseCurrencyGuids) {
+            const sr = await findExchangeRate(g, baseGuid, periodStart);
+            const er = await findExchangeRate(g, baseGuid, periodEnd);
+            startRates.set(g, sr?.rate ?? 1);
+            endRates.set(g, er?.rate ?? 1);
+        }
+    }
+
+    /** Rate to convert an account's own-commodity amount into base currency. */
+    const rateFor = (commodityGuid: string | null, namespace: string | null, which: 'start' | 'end'): number => {
+        if (namespace !== 'CURRENCY' || !commodityGuid) return 1;
+        if (!baseGuid || commodityGuid === baseGuid) return 1;
+        return (which === 'start' ? startRates : endRates).get(commodityGuid) ?? 1;
+    };
+
     const startingCashValues = new Map<string, number>();
     const startingInvestmentQty = new Map<string, number>();
     for (const row of balanceRows) {
-        startingCashValues.set(row.account_guid, toNum(row.value_sum));
-        startingInvestmentQty.set(row.account_guid, toNum(row.qty_sum));
+        const meta = acctMeta.get(row.account_guid);
+        const isCurrency = meta?.namespace === 'CURRENCY';
+        const qty = toNum(row.qty_sum);
+        startingCashValues.set(
+            row.account_guid,
+            isCurrency
+                ? qty * rateFor(meta?.commodityGuid ?? null, meta?.namespace ?? null, 'start')
+                : toNum(row.value_sum)
+        );
+        startingInvestmentQty.set(row.account_guid, qty);
     }
 
     // Period splits
@@ -683,13 +734,52 @@ export async function loadAttributionInput(
           AND t.post_date <= ${periodEnd}
     `;
 
-    const periodSplits: AttributionSplitInput[] = splitRows.map(r => ({
-        txGuid: r.tx_guid,
-        accountGuid: r.account_guid,
-        postDate: r.post_date,
-        value: toDecimalNumber(r.value_num, r.value_denom),
-        quantity: toDecimalNumber(r.quantity_num, r.quantity_denom),
-    }));
+    const periodSplits: AttributionSplitInput[] = splitRows.map(r => {
+        const meta = acctMeta.get(r.account_guid);
+        const quantity = toDecimalNumber(r.quantity_num, r.quantity_denom);
+        const rawValue = toDecimalNumber(r.value_num, r.value_denom);
+        // Currency accounts: value the period flow in base at the end rate
+        // (consistent with the end-of-period boundary valuation, so the only
+        // residual FX effect is the opening-balance revaluation injected below).
+        const value = meta?.namespace === 'CURRENCY'
+            ? quantity * rateFor(meta.commodityGuid, meta.namespace, 'end')
+            : rawValue;
+        return {
+            txGuid: r.tx_guid,
+            accountGuid: r.account_guid,
+            postDate: r.post_date,
+            value,
+            quantity,
+        };
+    });
+
+    /* ---- opening-balance FX revaluation ----
+     * Cash/asset balances held in a foreign currency change in base-currency
+     * terms as the exchange rate moves, independent of any flow. We value the
+     * opening balance at the start rate and flows at the end rate, so the pure
+     * engine's end balance (start + flows) is short by startQty × (endRate −
+     * startRate). Inject that as a single-split synthetic entry on the account:
+     * it corrects the end balance AND lands in `other` (the chosen home for FX),
+     * without disturbing savings/debt. (Applied to cash-group accounts only, so
+     * debt paydown stays a pure principal figure; no foreign-currency
+     * liabilities exist in practice.)
+     */
+    for (const a of accounts) {
+        const group = classifyAccount(a);
+        if (group !== 'cash') continue;
+        if (a.commodityNamespace !== 'CURRENCY' || !a.commodityGuid || a.commodityGuid === baseGuid) continue;
+        const startQty = startingInvestmentQty.get(a.guid) ?? 0;
+        if (Math.abs(startQty) < 1e-9) continue;
+        const reval = startQty * ((endRates.get(a.commodityGuid) ?? 1) - (startRates.get(a.commodityGuid) ?? 1));
+        if (Math.abs(reval) < 0.005) continue;
+        periodSplits.push({
+            txGuid: `__fx_reval_${a.guid}`,
+            accountGuid: a.guid,
+            postDate: periodEnd,
+            value: reval,
+            quantity: 0,
+        });
+    }
 
     // Prices for the priced holdings
     const investmentCommodityGuids = [
