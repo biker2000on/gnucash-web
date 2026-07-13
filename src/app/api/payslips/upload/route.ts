@@ -1,20 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { createPayslip } from '@/lib/payslips';
-import { getStorageBackend, generateStorageKey, thumbnailKeyFrom } from '@/lib/storage/storage-backend';
-import { generateThumbnail } from '@/lib/storage/thumbnail';
-import { enqueueJob } from '@/lib/queue/queues';
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-
-function detectMimeType(buffer: Buffer): string | null {
-  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
-  return null;
-}
-
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-}
+import { intakePayslip } from '@/lib/services/document-intake';
 
 export async function POST(request: Request) {
   try {
@@ -29,78 +15,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No files provided' }, { status: 400 });
     }
 
-    const storage = await getStorageBackend();
     const results: { id: number; filename: string; status: string }[] = [];
 
     for (const file of files) {
       const buffer = Buffer.from(await file.arrayBuffer());
 
-      // Enforce size limit on actual buffer
-      if (buffer.byteLength > MAX_FILE_SIZE) {
-        results.push({ id: 0, filename: file.name, status: `error: exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit` });
-        continue;
-      }
-
-      // Only accept PDFs (magic bytes: %PDF)
-      const detectedMime = detectMimeType(buffer);
-      if (!detectedMime) {
-        results.push({ id: 0, filename: file.name, status: 'error: unsupported file type (must be PDF)' });
-        continue;
-      }
-
-      const sanitizedName = sanitizeFilename(file.name);
-      const storageKey = generateStorageKey(sanitizedName);
-      const thumbKey = thumbnailKeyFrom(storageKey);
-
-      await storage.put(storageKey, buffer, detectedMime);
-
-      let savedThumbKey: string | null = null;
-      try {
-        const thumbBuffer = await generateThumbnail(buffer, detectedMime);
-        await storage.put(thumbKey, thumbBuffer, 'image/jpeg');
-        savedThumbKey = thumbKey;
-      } catch (err) {
-        console.warn(`Thumbnail generation failed for ${sanitizedName}:`, err);
-      }
-
-      // Create DB record with placeholder values; extraction job will update them
-      let payslip;
-      try {
-        payslip = await createPayslip({
-          book_guid: bookGuid,
-          pay_date: new Date(),
-          employer_name: 'Unknown',
-          storage_key: storageKey,
-          thumbnail_key: savedThumbKey ?? undefined,
-          created_by: user.id,
-        });
-      } catch (dbErr) {
-        // Clean up orphaned files
-        try { await storage.delete(storageKey); } catch { /* best effort */ }
-        if (savedThumbKey) {
-          try { await storage.delete(savedThumbKey); } catch { /* best effort */ }
-        }
-        console.error(`DB insert failed for ${sanitizedName}, cleaned up files:`, dbErr);
-        results.push({ id: 0, filename: sanitizedName, status: 'error: failed to save payslip record' });
-        continue;
-      }
-
-      const jobId = await enqueueJob('extract-payslip', {
-        payslipId: payslip.id,
+      const result = await intakePayslip({
         bookGuid,
+        userId: user.id,
+        filename: file.name,
+        buffer,
       });
 
-      if (!jobId) {
-        // Redis unavailable — run extraction inline (synchronously)
-        try {
-          const { runPayslipExtraction } = await import('@/lib/payslip-extract-core');
-          await runPayslipExtraction(payslip.id, bookGuid, `[inline-${payslip.id}]`);
-        } catch (extractErr) {
-          console.error(`Inline extraction failed for payslip ${payslip.id}:`, extractErr);
-        }
+      if (result.ok) {
+        results.push({ id: result.id, filename: result.filename, status: 'uploaded' });
+      } else {
+        results.push({ id: 0, filename: result.filename, status: `error: ${result.error}` });
       }
-
-      results.push({ id: payslip.id, filename: sanitizedName, status: 'uploaded' });
     }
 
     return NextResponse.json({ results }, { status: 201 });

@@ -53,6 +53,13 @@ async function runRefreshForBook(bookGuid: string) {
     const fakeJob = { id: `scheduled-${Date.now()}`, name: 'refresh-prices', data: { bookGuid } } as Job;
     await handleRefreshPrices(fakeJob);
     console.log(`[${new Date().toISOString()}] Scheduled refresh completed for book ${bookGuid}`);
+    // Fresh prices in hand — evaluate price alerts
+    try {
+      const { handleCheckPriceAlerts } = await import('./src/lib/queue/jobs/check-price-alerts');
+      await handleCheckPriceAlerts({ id: `post-refresh-alerts-${Date.now()}`, name: 'check-price-alerts', data: {} } as Job);
+    } catch (err) {
+      console.error('Price alert check failed:', err);
+    }
   } catch (err) {
     console.error(`Scheduled refresh failed for book ${bookGuid}:`, err);
   }
@@ -312,6 +319,16 @@ async function main() {
           await scheduleBackups();
           break;
         }
+        case 'check-price-alerts': {
+          const { handleCheckPriceAlerts } = await import('./src/lib/queue/jobs/check-price-alerts');
+          await handleCheckPriceAlerts(job);
+          break;
+        }
+        case 'poll-email-ingest': {
+          const { handlePollEmailIngest } = await import('./src/lib/queue/jobs/poll-email-ingest');
+          await handlePollEmailIngest(job);
+          break;
+        }
         case 'run-report-schedules': {
           const { handleRunReportSchedules } = await import('./src/lib/queue/jobs/run-report-schedules');
           await handleRunReportSchedules(job);
@@ -397,6 +414,22 @@ async function main() {
       console.error('Report schedules run failed:', err);
     }
   });
+
+  // Poll the email-ingest mailbox every 15 minutes (no-op unless INGEST_IMAP_* is set)
+  const pollIngest = async () => {
+    try {
+      const { isEmailIngestConfigured, pollEmailIngest } = await import('./src/lib/email-ingest');
+      if (!isEmailIngestConfigured()) return;
+      const result = await pollEmailIngest();
+      if (result.checked > 0) {
+        console.log(`[${new Date().toISOString()}] Email ingest: ${result.checked} checked, ${result.ingested} ingested, ${result.skipped} skipped, ${result.errors} errors`);
+      }
+    } catch (err) {
+      console.error('Email ingest poll failed:', err);
+    }
+  };
+  setInterval(() => { void pollIngest(); }, 15 * 60 * 1000);
+  void pollIngest();
 
   // Daily proactive-insights scan at 06:00 UTC
   setScheduleGeneric('daily-insights', '06:00', async () => {

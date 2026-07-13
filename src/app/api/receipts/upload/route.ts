@@ -1,23 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { createReceipt } from '@/lib/receipts';
-import { getStorageBackend, generateStorageKey, thumbnailKeyFrom } from '@/lib/storage/storage-backend';
-import { generateThumbnail } from '@/lib/storage/thumbnail';
-import { enqueueJob } from '@/lib/queue/queues';
-
-const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-
-function detectMimeType(buffer: Buffer): string | null {
-  if (buffer[0] === 0xFF && buffer[1] === 0xD8) return 'image/jpeg';
-  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return 'image/png';
-  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return 'application/pdf';
-  return null;
-}
-
-function sanitizeFilename(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
-}
+import { intakeReceipt } from '@/lib/services/document-intake';
 
 export async function POST(request: Request) {
   try {
@@ -45,74 +28,24 @@ export async function POST(request: Request) {
       }
     }
 
-    const storage = await getStorageBackend();
     const results: { id: number; filename: string; status: string }[] = [];
 
     for (const file of files) {
       const buffer = Buffer.from(await file.arrayBuffer());
 
-      // Validate actual buffer size, not client-reported file.size
-      if (buffer.byteLength > MAX_FILE_SIZE) {
-        results.push({ id: 0, filename: file.name, status: `error: exceeds ${MAX_FILE_SIZE / 1024 / 1024}MB limit` });
-        continue;
-      }
-
-      const detectedMime = detectMimeType(buffer);
-      if (!detectedMime || !ALLOWED_MIME_TYPES.includes(detectedMime)) {
-        results.push({ id: 0, filename: file.name, status: 'error: unsupported file type (must be JPEG, PNG, or PDF)' });
-        continue;
-      }
-
-      const sanitizedName = sanitizeFilename(file.name);
-      const storageKey = generateStorageKey(sanitizedName);
-      const thumbKey = thumbnailKeyFrom(storageKey);
-
-      await storage.put(storageKey, buffer, detectedMime);
-
-      let savedThumbKey: string | null = null;
-      try {
-        const thumbBuffer = await generateThumbnail(buffer, detectedMime);
-        await storage.put(thumbKey, thumbBuffer, 'image/jpeg');
-        savedThumbKey = thumbKey;
-      } catch (err) {
-        console.warn(`Thumbnail generation failed for ${sanitizedName}:`, err);
-      }
-
-      // Create DB record — clean up stored files on failure to prevent orphans
-      let receipt;
-      try {
-        receipt = await createReceipt({
-          book_guid: bookGuid,
-          transaction_guid: transactionGuid || null,
-          filename: sanitizedName,
-          storage_key: storageKey,
-          thumbnail_key: savedThumbKey,
-          mime_type: detectedMime,
-          file_size: buffer.byteLength,
-          created_by: user.id,
-        });
-      } catch (dbErr) {
-        // Clean up orphaned files
-        try { await storage.delete(storageKey); } catch { /* best effort */ }
-        if (savedThumbKey) {
-          try { await storage.delete(savedThumbKey); } catch { /* best effort */ }
-        }
-        console.error(`DB insert failed for ${sanitizedName}, cleaned up files:`, dbErr);
-        results.push({ id: 0, filename: sanitizedName, status: 'error: failed to save receipt record' });
-        continue;
-      }
-
-      const jobId = await enqueueJob('ocr-receipt', {
-        receiptId: receipt.id,
+      const result = await intakeReceipt({
         bookGuid,
+        userId: user.id,
+        filename: file.name,
+        buffer,
+        transactionGuid,
       });
 
-      if (!jobId) {
-        const { updateOcrResults } = await import('@/lib/receipts');
-        await updateOcrResults(receipt.id, null, 'enqueue_failed');
+      if (result.ok) {
+        results.push({ id: result.id, filename: result.filename, status: 'uploaded' });
+      } else {
+        results.push({ id: 0, filename: result.filename, status: `error: ${result.error}` });
       }
-
-      results.push({ id: receipt.id, filename: sanitizedName, status: 'uploaded' });
     }
 
     return NextResponse.json({ results }, { status: 201 });
