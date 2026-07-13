@@ -35,6 +35,8 @@ export enum ReportType {
   AVERAGE_BALANCE = 'average_balance',
   NET_WORTH_ATTRIBUTION = 'net_worth_attribution',
   YEAR_IN_REVIEW = 'year_in_review',
+  FX_REVALUATION = 'fx_revaluation',
+  BLS_COMPARISON = 'bls_comparison',
 }
 
 export interface ReportConfig {
@@ -444,6 +446,20 @@ export const REPORTS: ReportConfig[] = [
     description: 'Annual wrapped: net worth arc, savings rate, top categories, dividends, best/worst holdings, streaks',
     icon: 'trending',
     category: 'financial',
+  },
+  {
+    type: ReportType.FX_REVALUATION,
+    name: 'FX Revaluation',
+    description: 'Foreign-currency holdings with average acquisition rates and unrealized/realized FX gains',
+    icon: 'cash',
+    category: 'financial',
+  },
+  {
+    type: ReportType.BLS_COMPARISON,
+    name: 'Spending vs National Averages',
+    description: 'Your categories vs BLS Consumer Expenditure Survey averages for your household size',
+    icon: 'cash',
+    category: 'chart',
   },
 ];
 

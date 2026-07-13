@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0.0] - 2026-07-12
+
+### Changed — Unification
+- **Task-oriented navigation**: the sidebar regroups by life domain — Home, Money, Budgets & Goals, Investments, Taxes, Planning, Reports, Business, Settings — driven by a new single-source feature registry
+- **Domain hubs**: /money, /taxes, and /planning are curated landing pages with stats and task-grouped feature cards, replacing the flat Tools/Reports card walls as entry points
+- **Command palette upgrades**: entries derive from the registry, descriptions are searchable ("raise cash" finds the Sell Planner), recently used commands lead when opened, and a visible Search button in the sidebar opens it for mouse users
+- **Feature Catalog** (/catalog): the searchable everything-directory with star pinning — pinned features appear in a Pinned sidebar group
+- **Related links**: cross-link strips on key pages (8949 ↔ Sell Planner, budgets → Budget Income Statement, FIRE → Drawdown/Scenario, digest → Year in Review, holdings → rebalancing/lots)
+
+### Added
+- **iCal calendar feeds**: subscribe Google/Apple Calendar to tokenized feeds of upcoming scheduled transactions, bond maturities/coupons, and RMD deadlines
+- **Price alerts**: per-commodity above/below thresholds checked after each daily price refresh, delivered through notifications/email/webhooks
+- **Email-in ingestion**: forward receipts, statements, or payslips to an IMAP mailbox (INGEST_IMAP_*); the worker polls every 15 minutes with a sender allowlist and Message-ID dedupe, feeding the existing extraction pipelines
+- **Accountant share links**: admin-created, time-boxed public URLs rendering a self-contained read-only report document — no app access, secret shown once, view counting
+- **Time Machine** (/tools/time-machine): the whole book as of any date, with historical security prices and a two-date compare mode
+- **Document Search** (/search): one query across receipt OCR text, statement lines, payslips, and transactions with highlighted snippets
+- **FX Revaluation report**: foreign-currency holdings with average acquisition rates and unrealized/realized FX gains
+- **Spending vs National Averages**: your categories against approximate BLS Consumer Expenditure Survey figures for your household size
+
 ## [0.12.0.0] - 2026-07-12
 
 ### Added

@@ -10,6 +10,7 @@ import type {
     DigestBudgetRow,
 } from '@/lib/digest';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { RelatedLinks } from '@/components/RelatedLinks';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -475,6 +476,7 @@ export default function DigestPage() {
                     </p>
                 </div>
             )}
+            <RelatedLinks ids={['rpt-year-in-review', 'rpt-nw-attribution']} />
         </div>
     );
 }

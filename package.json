@@ -31,6 +31,7 @@
     "fast-xml-parser": "^5.3.5",
     "fastest-levenshtein": "^1.0.16",
     "fflate": "^0.8.2",
+    "imapflow": "^1.4.7",
     "ioredis": "^5.9.3",
     "iron-session": "^8.0.4",
     "next": "16.1.1",

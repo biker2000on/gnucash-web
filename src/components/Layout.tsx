@@ -8,6 +8,7 @@ import { NotificationBell } from './NotificationBell';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
+import { FEATURES, featureById, type FeatureDomain } from '@/lib/feature-registry';
 
 // ---------------------------------------------------------------------------
 // Inline SVG icon components (no external icon library)
@@ -144,6 +145,16 @@ function IconPayslip({ className = "w-5 h-5" }: { className?: string }) {
 }
 
 // ---------------------------------------------------------------------------
+function IconPercent({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 5L5 19" />
+            <circle cx="7.5" cy="7.5" r="2.5" strokeWidth={2} />
+            <circle cx="16.5" cy="16.5" r="2.5" strokeWidth={2} />
+        </svg>
+    );
+}
+
 function IconPlusCircle({ className = "w-5 h-5" }: { className?: string }) {
     return (
         <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -156,8 +167,18 @@ function IconPlusCircle({ className = "w-5 h-5" }: { className?: string }) {
 // Icon registry map
 // ---------------------------------------------------------------------------
 
+function IconStar({ className = "w-5 h-5" }: { className?: string }) {
+    return (
+        <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.48 3.5c.2-.4.84-.4 1.04 0l2.13 4.35 4.8.7c.45.06.63.62.3.94l-3.47 3.38.82 4.78c.08.44-.39.78-.79.57L12 15.97l-4.3 2.25c-.4.21-.87-.13-.8-.57l.83-4.78-3.48-3.38c-.32-.32-.14-.88.3-.94l4.8-.7 2.13-4.34z" />
+        </svg>
+    );
+}
+
 const iconMap: Record<string, ({ className }: { className?: string }) => ReactElement> = {
     PlusCircle: IconPlusCircle,
+    Percent: IconPercent,
+    Star: IconStar,
     LayoutDashboard: IconLayoutDashboard,
     List: IconList,
     BookOpen: IconBookOpen,
@@ -275,104 +296,55 @@ interface NavItem {
     }>;
 }
 
+// Sidebar children derive from the feature registry (single source of truth).
+// Task-oriented domains: Home, Money, Budgets & Goals, Investments, Taxes,
+// Planning, Reports, Business, Settings.
+function registryNavChildren(domain: FeatureDomain): Array<{ name: string; href: string }> {
+    return FEATURES
+        .filter(f => f.domain === domain && f.nav && !f.mobileOnly)
+        .map(f => ({ name: f.navTitle ?? f.title, href: f.href }));
+}
+
 // Shown only when the active book's entity profile is a business type.
 const businessNavItem: NavItem = {
     name: 'Business',
     href: '/business',
     icon: 'Briefcase',
     children: [
-        { name: 'Dashboard', href: '/business' },
-        { name: 'Customers', href: '/business/customers' },
-        { name: 'Vendors', href: '/business/vendors' },
-        { name: 'Jobs', href: '/business/jobs' },
-        { name: 'Employees', href: '/business/employees' },
-        { name: 'Invoices', href: '/business/invoices' },
-        { name: 'Bills', href: '/business/invoices?type=bill' },
-        { name: 'Vouchers', href: '/business/vouchers' },
-        { name: 'Payments', href: '/business/payments' },
-        { name: 'Recurring', href: '/business/recurring' },
-        { name: 'Inventory', href: '/business/inventory' },
-        { name: 'AR/AP Aging', href: '/business/reports/aging' },
-        { name: 'Customer Summary', href: '/business/reports/customer-summary' },
-        { name: 'Sales Tax', href: '/business/reports/sales-tax' },
+        ...registryNavChildren('business'),
+        // Schedule C/E live in the Taxes domain but stay reachable here too
         { name: 'Schedule C', href: '/business/reports/schedule-c' },
         { name: 'Schedule E', href: '/business/reports/schedule-e' },
-        { name: 'Business Settings', href: '/business/settings' },
     ],
 };
 
 const navItems: NavItem[] = [
-    { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
-    { name: 'Account Hierarchy', href: '/accounts', icon: 'List' },
-    { name: 'General Ledger', href: '/ledger', icon: 'BookOpen' },
-    { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle', mobileOnly: true },
-    { name: 'Tags', href: '/tags', icon: 'Tag' },
     {
-        name: 'Uploads',
-        href: '/receipts',
-        icon: 'Paperclip',
+        name: 'Dashboard',
+        href: '/dashboard',
+        icon: 'LayoutDashboard',
         children: [
-            { name: 'Receipts', href: '/receipts' },
-            { name: 'Payslips', href: '/payslips' },
-            { name: 'Statements', href: '/statements' },
-        ],
-    },
-    {
-        name: 'Investments',
-        href: '/investments',
-        icon: 'TrendingUp',
-        children: [
-            { name: 'Holdings', href: '/investments' },
-            { name: 'Cash', href: '/investments/cash' },
-            { name: 'Accounts', href: '/investments/accounts' },
-            { name: 'Rebalancing', href: '/investments/rebalancing' },
-            { name: 'Benchmark', href: '/investments/benchmark' },
-            { name: 'Dividends', href: '/investments/dividends' },
-            { name: 'Equity Comp', href: '/investments/equity-comp' },
-            { name: 'Fixed Income', href: '/investments/fixed-income' },
-        ],
-    },
-    { name: 'Budgets', href: '/budgets', icon: 'PiggyBank' },
-    { name: 'Goals', href: '/goals', icon: 'Target' },
-    { name: 'Reports', href: '/reports', icon: 'BarChart3' },
-    { name: 'Import/Export', href: '/import-export', icon: 'ArrowUpDown' },
-    {
-        name: 'Tools',
-        href: '/tools',
-        icon: 'Wrench',
-        children: [
-            { name: 'All Tools', href: '/tools' },
+            { name: 'Overview', href: '/dashboard' },
             { name: 'Ask Your Books', href: '/tools/ask' },
-            { name: 'Cash Flow Forecast', href: '/tools/cash-flow-forecast' },
-            { name: 'Subscriptions', href: '/tools/subscriptions' },
-            { name: 'Spending Watch', href: '/tools/anomalies' },
-            { name: 'Debt Payoff', href: '/tools/debt-payoff' },
-            { name: 'Monthly Digest', href: '/tools/digest' },
-            { name: 'FIRE Calculator', href: '/tools/fire-calculator' },
-            { name: 'Drawdown Planner', href: '/tools/drawdown' },
-            { name: 'Sell Planner', href: '/tools/sell-planner' },
-            { name: 'Scenario Sandbox', href: '/tools/scenario' },
-            { name: 'Tax Estimator', href: '/tools/tax-estimator' },
-            { name: 'Withholding Checkup', href: '/tools/withholding' },
-            { name: 'Mortgage Calculator', href: '/tools/mortgage' },
-            { name: 'Data Health', href: '/tools/data-health' },
-            { name: 'Scheduled Transactions', href: '/scheduled-transactions' },
-            { name: 'Asset Analysis', href: '/assets' },
+            { name: 'Feature Catalog', href: '/catalog' },
         ],
     },
+    { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle', mobileOnly: true },
+    { name: 'Money', href: '/money', icon: 'BookOpen', children: registryNavChildren('money') },
     {
-        name: 'Settings',
-        href: '/settings',
-        icon: 'Settings',
+        name: 'Budgets & Goals',
+        href: '/budgets',
+        icon: 'PiggyBank',
         children: [
-            { name: 'General', href: '/settings' },
-            { name: 'Commodities', href: '/settings/commodities' },
-            { name: 'Rules', href: '/settings/rules' },
-            { name: 'Connections', href: '/settings/connections' },
-            { name: 'Users', href: '/settings/users' },
-            { name: 'History', href: '/settings/history' },
+            ...registryNavChildren('budgets'),
+            { name: 'Budget Income Statement', href: '/reports/budget_income_statement' },
         ],
     },
+    { name: 'Investments', href: '/investments', icon: 'TrendingUp', children: registryNavChildren('investments') },
+    { name: 'Taxes', href: '/taxes', icon: 'Percent', children: registryNavChildren('taxes') },
+    { name: 'Planning', href: '/planning', icon: 'Wrench', children: registryNavChildren('planning') },
+    { name: 'Reports', href: '/reports', icon: 'BarChart3' },
+    { name: 'Settings', href: '/settings', icon: 'Settings', children: registryNavChildren('settings') },
 ];
 
 // ---------------------------------------------------------------------------
@@ -439,23 +411,54 @@ export default function Layout({ children }: { children: ReactNode }) {
         };
     }, []);
 
+    // Pinned favorites (feature ids) — synced via user preferences; the
+    // catalog page edits them and fires 'pinned-features-changed'.
+    const [pinnedFeatureIds, setPinnedFeatureIds] = useState<string[]>([]);
+    useEffect(() => {
+        const load = () => {
+            fetch('/api/user/preferences?key=pinned_features')
+                .then(r => (r.ok ? r.json() : null))
+                .then(data => {
+                    const pins = data?.preferences?.pinned_features;
+                    setPinnedFeatureIds(Array.isArray(pins) ? pins.filter((p: unknown) => typeof p === 'string') : []);
+                })
+                .catch(() => undefined);
+        };
+        load();
+        window.addEventListener('pinned-features-changed', load);
+        return () => window.removeEventListener('pinned-features-changed', load);
+    }, []);
+
     const effectiveNavItems = (() => {
+        // Pinned favorites float to the top, just under Home
+        const withPins = (items: NavItem[]): NavItem[] => {
+            if (pinnedFeatureIds.length === 0) return items;
+            const children = pinnedFeatureIds
+                .map(id => featureById(id))
+                .filter((f): f is NonNullable<ReturnType<typeof featureById>> => Boolean(f))
+                .map(f => ({ name: f.navTitle ?? f.title, href: f.href }));
+            if (children.length === 0) return items;
+            const pinnedItem: NavItem = { name: 'Pinned', href: children[0].href, icon: 'Star', children };
+            return [items[0], pinnedItem, ...items.slice(1)];
+        };
+
+        // Business (or the standalone Inventory item) slots before Settings
+        const settingsAnchor = (items: NavItem[]) => {
+            const idx = items.findIndex(i => i.href === '/settings');
+            return idx >= 0 ? idx : items.length;
+        };
         if (isBusinessBook) {
             const items = [...navItems];
-            const budgetsIdx = items.findIndex(i => i.href === '/budgets');
-            items.splice(budgetsIdx >= 0 ? budgetsIdx : items.length, 0, businessNavItem);
-            return items;
+            items.splice(settingsAnchor(items), 0, businessNavItem);
+            return withPins(items);
         }
         if (householdInventory) {
-            // Household book with inventory enabled: standalone Inventory item
-            // (no Business group) in the same slot.
             const items = [...navItems];
-            const budgetsIdx = items.findIndex(i => i.href === '/budgets');
             const inventoryItem: NavItem = { name: 'Inventory', href: '/business/inventory', icon: 'Briefcase' };
-            items.splice(budgetsIdx >= 0 ? budgetsIdx : items.length, 0, inventoryItem);
-            return items;
+            items.splice(settingsAnchor(items), 0, inventoryItem);
+            return withPins(items);
         }
-        return navItems;
+        return withPins([...navItems]);
     })();
 
     // Data-dense pages use the full content width to reduce horizontal scrolling.
@@ -748,6 +751,28 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <BookSwitcher collapsed={collapsed && hydrated} />
                 </div>
 
+                {/* Global search (opens the command palette) */}
+                <div className={`transition-all duration-300 ${collapsed && hydrated ? 'px-2 pt-3' : 'px-4 pt-3'}`}>
+                    <button
+                        type="button"
+                        onClick={() => window.dispatchEvent(new CustomEvent('open-command-palette'))}
+                        className={`w-full flex items-center gap-2 rounded-lg border border-sidebar-border bg-background/40 text-sidebar-text hover:text-foreground hover:border-border-hover transition-colors duration-150 ${
+                            collapsed && hydrated ? 'justify-center px-0 py-2' : 'px-3 py-2'
+                        }`}
+                        title="Search everything (Ctrl+K)"
+                    >
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        {!(collapsed && hydrated) && (
+                            <>
+                                <span className="flex-1 text-left text-sm">Search…</span>
+                                <kbd className="text-[10px] px-1.5 py-0.5 rounded border border-sidebar-border">Ctrl K</kbd>
+                            </>
+                        )}
+                    </button>
+                </div>
+
                 {/* Nav links (mobile-only items like Quick Add are excluded on desktop) */}
                 <nav className={`flex-1 space-y-1 overflow-y-auto overflow-x-hidden transition-all duration-300
                     ${collapsed && hydrated ? 'px-2 py-4' : 'px-4 py-4'}`}>
@@ -798,6 +823,23 @@ export default function Layout({ children }: { children: ReactNode }) {
                 {/* Mobile Book Switcher */}
                 <div className="px-4 py-2 border-b border-sidebar-border">
                     <BookSwitcher />
+                </div>
+
+                {/* Global search (opens the command palette) */}
+                <div className="px-4 pt-3">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setMobileSidebarState({ open: false, pathname });
+                            window.dispatchEvent(new CustomEvent('open-command-palette'));
+                        }}
+                        className="w-full flex items-center gap-2 rounded-lg border border-sidebar-border bg-background/40 text-sidebar-text px-3 py-2.5"
+                    >
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <span className="flex-1 text-left text-sm">Search everything…</span>
+                    </button>
                 </div>
 
                 {/* Mobile nav links (always expanded) */}

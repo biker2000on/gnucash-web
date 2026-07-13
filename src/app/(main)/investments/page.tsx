@@ -11,6 +11,7 @@ import ExpandableChart from '@/components/charts/ExpandableChart';
 import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib/investment-performance';
 import { ScrubAllButton } from '@/components/investments/ScrubAllButton';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { RelatedLinks } from '@/components/RelatedLinks';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'cashAcct' | 'sector';
 
@@ -195,6 +196,7 @@ export default function HoldingsPage() {
         holdings={portfolio.holdings}
         consolidatedHoldings={portfolio.consolidatedHoldings}
       />
+      <RelatedLinks ids={['nav-inv-rebalancing', 'tool-sell-planner', 'rpt-lots', 'rpt-nw-attribution']} />
     </div>
   );
 }

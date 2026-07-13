@@ -7,6 +7,7 @@ import { BudgetList } from '@/components/BudgetList';
 import { BudgetForm } from '@/components/BudgetForm';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { RelatedLinks } from '@/components/RelatedLinks';
 import { useToast } from '@/contexts/ToastContext';
 
 interface Budget {
@@ -260,6 +261,7 @@ export default function BudgetsPage() {
                     onScenario={openScenarioModal}
                 />
             )}
+            <RelatedLinks ids={['rpt-budget-income', 'rpt-budget', 'nav-goals']} />
 
             {/* Budget Form Modal */}
             <Modal
