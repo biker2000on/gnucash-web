@@ -173,7 +173,7 @@ export function EmailIngestSection() {
             summary={configured
                 ? `${senders.length} allowed sender${senders.length === 1 ? '' : 's'}`
                 : 'Not configured'}
-            configured={configured && senders.length > 0}
+            configured
             storageKey="settings.emailIngestOpen"
         >
             <div className="space-y-4">

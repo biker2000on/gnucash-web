@@ -78,7 +78,7 @@ export function EmailNotificationsSection() {
         <CollapsibleConfigSection
             title="Email Notifications"
             summary={prefs.enabled ? 'Enabled' : 'Off'}
-            configured={prefs.enabled}
+            configured
             storageKey="settings.emailNotificationsOpen"
         >
             <div className="space-y-4">

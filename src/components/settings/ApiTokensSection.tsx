@@ -123,7 +123,7 @@ export function ApiTokensSection() {
         <CollapsibleConfigSection
             title="API Tokens"
             summary={tokens.length > 0 ? `${tokens.length} active token${tokens.length === 1 ? '' : 's'}` : 'None'}
-            configured={tokens.length > 0}
+            configured
             storageKey="settings.apiTokensOpen"
         >
             <div className="space-y-4">

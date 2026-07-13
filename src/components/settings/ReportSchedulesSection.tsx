@@ -233,7 +233,7 @@ export function ReportSchedulesSection() {
         <CollapsibleConfigSection
             title="Report Schedules"
             summary={schedules.length > 0 ? `${enabledCount} of ${schedules.length} active` : 'Email reports on a schedule'}
-            configured={schedules.length > 0}
+            configured
             storageKey="settings.reportSchedulesOpen"
         >
             <div className="space-y-4">

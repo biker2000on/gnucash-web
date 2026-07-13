@@ -18,6 +18,9 @@ import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/con
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
 
+// Group heading style for the settings page — matches the sidebar section labels.
+const SETTINGS_GROUP_HEADING = 'text-[11px] font-semibold uppercase tracking-wider text-foreground-muted px-1';
+
 const COST_BASIS_METHOD_OPTIONS: { value: CostBasisMethod; label: string; description: string }[] = [
   { value: 'fifo', label: 'FIFO', description: 'First-in, first-out. Oldest shares are used first.' },
   { value: 'lifo', label: 'LIFO', description: 'Last-in, first-out. Newest shares are used first.' },
@@ -604,510 +607,12 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <div className="max-w-3xl mx-auto space-y-8">
       <PageHeader title="Settings" />
 
-      <CollapsibleConfigSection
-        title="Commodity Quote Settings"
-        summary="Quote flags & price sources"
-        configured
-        storageKey="settings.commodityQuotesOpen"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <p className="text-sm text-foreground-muted">
-            Manage quote flags and price source configuration for all commodities.
-          </p>
-          <Link
-            href="/settings/commodities"
-            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
-          >
-            Open Commodity Settings
-          </Link>
-        </div>
-      </CollapsibleConfigSection>
-
-      <CollapsibleConfigSection
-        title="IRS Contribution Limits"
-        summary="Annual limits for tax tools"
-        configured
-        storageKey="settings.irsLimitsOpen"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <p className="text-sm text-foreground-muted">
-            Review and update annual contribution limits used by the tax estimator and contribution tracking.
-          </p>
-          <Link
-            href="/settings/limits"
-            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
-          >
-            Open Limits Editor
-          </Link>
-        </div>
-      </CollapsibleConfigSection>
-
-      <EmailNotificationsSection />
-
-      <BackupsSection />
-
-      <TwoFactorSection />
-
-      <ApiTokensSection />
-
-      <WebhooksSection />
-
-      <ReportSchedulesSection />
-
-      <ShareLinksSection />
-
-      <CalendarFeedSection />
-
-      <EmailIngestSection />
-
-      <CollapsibleConfigSection
-        title="Categorization Rules"
-        summary="Bank-import auto-categorization"
-        configured
-        storageKey="settings.categorizationRulesOpen"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <p className="text-sm text-foreground-muted">
-            Manage auto-categorization rules applied to bank-sync imports, with learned suggestions from your history.
-          </p>
-          <Link
-            href="/settings/rules"
-            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
-          >
-            Open Rules Editor
-          </Link>
-        </div>
-      </CollapsibleConfigSection>
-
-      {/* Inventory for household books (business books always have it) */}
-      {entity && entity.entityType === 'household' && (
-        <CollapsibleConfigSection
-          title="Inventory Management"
-          summary={householdInventoryEnabled ? 'Enabled' : 'Disabled'}
-          configured
-          storageKey="settings.householdInventoryOpen"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <p className="text-sm text-foreground-muted">
-              Track items, stock levels, and bills of materials in this household book.
-              Adds an Inventory entry to the sidebar.
-            </p>
-            <label className="flex items-center gap-2 cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={householdInventoryEnabled}
-                onChange={(e) => handleToggleHouseholdInventory(e.target.checked)}
-                disabled={savingHouseholdInventory}
-                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
-              />
-              <span className="text-sm text-foreground-secondary">Enabled</span>
-            </label>
-          </div>
-        </CollapsibleConfigSection>
-      )}
-
-      {/* Price Refresh Schedule */}
-      <CollapsibleConfigSection
-        title="Price Refresh Schedule"
-        summary={scheduleSummary}
-        configured
-        storageKey="settings.priceRefreshOpen"
-      >
-        <div className="space-y-4">
-          {/* Enable/Disable Toggle */}
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={schedule.enabled}
-              onChange={(e) => handleScheduleToggle(e.target.checked)}
-              className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
-            />
-            <span className="text-sm text-foreground">Enable automatic price refresh</span>
-          </label>
-
-          {/* SimpleFin Sync Toggle - only show if connected */}
-          {simplefinConnected && (
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={simplefinSyncEnabled}
-                onChange={(e) => updateSimplefinSync(e.target.checked)}
-                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
-              />
-              <span className="text-sm text-foreground">Sync SimpleFin transactions with each refresh</span>
-            </label>
-          )}
-
-          {/* Refresh Frequency */}
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">Refresh Frequency</label>
-            <select
-              value={schedule.intervalHours}
-              onChange={(e) => handleIntervalChange(Number(e.target.value))}
-              disabled={!schedule.enabled}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {INTERVAL_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Refresh Time */}
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">
-              Refresh Time
-            </label>
-            <input
-              type="time"
-              value={utcToLocal(schedule.refreshTime)}
-              onChange={(e) => handleTimeChange(e.target.value)}
-              disabled={!schedule.enabled}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
-            />
-            <p className="text-xs text-foreground-muted">
-              Schedule after US market close (4 PM ET) for complete daily prices.
-            </p>
-          </div>
-
-          {/* Refresh Now Button */}
-          <button
-            onClick={handleRefreshNow}
-            disabled={refreshing}
-            className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {refreshing && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            )}
-            <span>{refreshing ? 'Refreshing...' : 'Refresh Now'}</span>
-          </button>
-        </div>
-      </CollapsibleConfigSection>
-
-      {/* Index Data */}
-      <CollapsibleConfigSection
-        title="Index Data"
-        summary={indexDataSummary}
-        configured
-        storageKey="settings.indexDataOpen"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-foreground-muted">
-            Historical price data for market indices (S&P 500, DJIA) used in performance charts.
-          </p>
-
-          {indexCoverage && (
-            <div className="space-y-2">
-              {indexCoverage.indices.map((idx) => (
-                <div key={idx.symbol} className="flex items-center justify-between text-sm py-1.5 px-3 bg-background-tertiary rounded-lg">
-                  <span className="font-medium text-foreground">{idx.name}</span>
-                  <span className="text-foreground-secondary">
-                    {idx.count > 0
-                      ? `${idx.earliest} — ${idx.latest} (${Number(idx.count).toLocaleString()} prices)`
-                      : 'No data'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {indexCoverage?.isUpToDate && (
-            <p className="text-sm text-primary flex items-center gap-1.5">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Index data is up to date
-            </p>
-          )}
-
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button
-              onClick={handleBackfillIndices}
-              disabled={backfilling || (indexCoverage?.isUpToDate ?? false)}
-              className="flex-1 bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {backfilling && (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              )}
-              <span>{backfilling ? 'Backfilling...' : 'Backfill Historical Index Data'}</span>
-            </button>
-            <button
-              onClick={handleRunPriceAudit}
-              disabled={auditing}
-              title="Audits every commodity held in this book, fills gaps, and backfills history from Yahoo Finance. Runs in the background worker."
-              className="flex-1 bg-surface-elevated hover:bg-surface-hover disabled:opacity-60 text-foreground border border-border font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {auditing && (
-                <div className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
-              )}
-              <span>{auditing ? 'Queuing…' : 'Run Full Price Audit'}</span>
-            </button>
-          </div>
-        </div>
-      </CollapsibleConfigSection>
-
-      {/* Cache Management */}
-      <CollapsibleConfigSection
-        title="Cache Management"
-        summary="Redis cache"
-        configured
-        storageKey="settings.cacheOpen"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-foreground-muted">
-            Clears all cached dashboard calculations. Data will be recalculated on next visit.
-          </p>
-
-          <button
-            onClick={handleClearCache}
-            disabled={clearing}
-            className="w-full bg-rose-600 hover:bg-rose-700 disabled:bg-rose-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {clearing && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            )}
-            <span>{clearing ? 'Clearing...' : 'Clear All Caches'}</span>
-          </button>
-        </div>
-      </CollapsibleConfigSection>
-
-      {/* Tax Rate */}
-      <CollapsibleConfigSection
-        title="Default Tax Rate"
-        summary={taxRateSummary}
-        configured
-        storageKey="settings.taxRateOpen"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-foreground-muted">
-            Set a default tax rate to quickly apply to transaction amounts using the T keyboard shortcut.
-          </p>
-
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">Default Tax Rate</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                max="100"
-                value={taxRateInput}
-                onChange={(e) => setTaxRateInput(e.target.value)}
-                onBlur={() => {
-                  const pct = parseFloat(taxRateInput);
-                  if (!isNaN(pct) && pct >= 0 && pct <= 100) {
-                    setDefaultTaxRate(pct / 100);
-                  } else if (taxRateInput === '') {
-                    setDefaultTaxRate(0);
-                  }
-                }}
-                placeholder="0.00"
-                className="w-32 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-              />
-              <span className="text-sm text-foreground-muted">%</span>
-            </div>
-            <p className="text-xs text-foreground-muted">
-              Press{' '}
-              <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover text-xs">
-                T
-              </kbd>{' '}
-              in amount fields to apply this tax rate to the current value.
-            </p>
-          </div>
-        </div>
-      </CollapsibleConfigSection>
-
-      {/* Balance Display */}
-      <CollapsibleConfigSection
-        title="Balance Display"
-        summary={balanceDisplaySummary}
-        configured
-        storageKey="settings.balanceDisplayOpen"
-      >
-        <p className="text-sm text-foreground-muted mb-4">
-          Choose how account balances are displayed throughout the app.
-        </p>
-
-        <div className="space-y-3">
-          {BALANCE_REVERSAL_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              className={`block p-4 rounded-xl border cursor-pointer transition-all ${
-                balanceReversal === option.value
-                  ? 'bg-primary/10 border-primary/50'
-                  : 'bg-surface border-border hover:border-border-hover'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <input
-                  type="radio"
-                  name="balanceReversal"
-                  value={option.value}
-                  checked={balanceReversal === option.value}
-                  onChange={() => handleBalanceReversalChange(option.value)}
-                  disabled={savingBalance}
-                  className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-foreground">{option.label}</span>
-                    {savingBalance && balanceReversal === option.value && (
-                      <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                    )}
-                  </div>
-                  <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
-                </div>
-              </div>
-            </label>
-          ))}
-        </div>
-
-        <details className="mt-4">
-          <summary className="text-sm text-foreground-secondary cursor-pointer hover:text-foreground">
-            Understanding Balance Reversal
-          </summary>
-          <div className="mt-2 text-sm text-foreground-muted space-y-2">
-            <p>
-              In double-entry accounting, some accounts naturally have credit balances (shown as negative in GnuCash):
-            </p>
-            <ul className="list-disc list-inside space-y-1">
-              <li><strong className="text-foreground-secondary">Income</strong> - Money you earn appears negative</li>
-              <li><strong className="text-foreground-secondary">Liabilities</strong> - Debts you owe appear negative</li>
-              <li><strong className="text-foreground-secondary">Equity</strong> - Net worth appears negative</li>
-            </ul>
-            <p>
-              The balance reversal setting displays these with positive values for easier reading,
-              while maintaining proper accounting relationships.
-            </p>
-          </div>
-        </details>
-      </CollapsibleConfigSection>
-
-      {/* Cost Basis */}
-      <CollapsibleConfigSection
-        title="Cost Basis"
-        summary={costBasisSummary}
-        configured
-        storageKey="settings.costBasisOpen"
-      >
-        <p className="text-sm text-foreground-muted mb-4">
-          Control how cost basis is calculated when shares are transferred between investment accounts.
-        </p>
-
-        <div className="space-y-4">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={costBasisCarryOver}
-              onChange={(e) => setCostBasisCarryOver(e.target.checked)}
-              className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
-            />
-            <div>
-              <span className="text-sm text-foreground">Carry over cost basis on transfers</span>
-              <p className="text-xs text-foreground-muted mt-0.5">
-                When shares are transferred between accounts, trace the original purchase cost instead of showing $0.
-              </p>
-            </div>
-          </label>
-
-          {costBasisCarryOver && (
-            <div className="space-y-2 pl-7">
-              <label className="block text-sm text-foreground-secondary">Cost Basis Method</label>
-              <div className="space-y-2">
-                {COST_BASIS_METHOD_OPTIONS.map((option) => (
-                  <label
-                    key={option.value}
-                    className={`block p-3 rounded-lg border cursor-pointer transition-all ${
-                      costBasisMethod === option.value
-                        ? 'bg-primary/10 border-primary/50'
-                        : 'bg-surface border-border hover:border-border-hover'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="radio"
-                        name="costBasisMethod"
-                        value={option.value}
-                        checked={costBasisMethod === option.value}
-                        onChange={() => setCostBasisMethod(option.value)}
-                        className="mt-0.5 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
-                      />
-                      <div className="flex-1">
-                        <span className="font-medium text-foreground text-sm">{option.label}</span>
-                        <p className="text-xs text-foreground-muted mt-0.5">{option.description}</p>
-                      </div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </CollapsibleConfigSection>
-
-      {/* Display Preferences */}
-      <CollapsibleConfigSection
-        title="Display Preferences"
-        summary={displayPrefsSummary}
-        configured
-        storageKey="settings.displayPrefsOpen"
-      >
-        <div className="space-y-4">
-          {/* Date Format */}
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">Date Format</label>
-            <select
-              value={dateFormat}
-              onChange={(e) => setDateFormat(e.target.value as DateFormat)}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-            >
-              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-              <option value="MM-DD-YYYY">MM-DD-YYYY</option>
-            </select>
-            <p className="text-xs text-foreground-muted">
-              Format used for all date fields in the application.
-            </p>
-          </div>
-
-          {/* Default Ledger Mode */}
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">Default Ledger Mode</label>
-            <select
-              value={defaultLedgerMode}
-              onChange={(e) => setDefaultLedgerMode(e.target.value as 'readonly' | 'edit')}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-            >
-              <option value="readonly">Read-only</option>
-              <option value="edit">Edit Mode</option>
-            </select>
-            <p className="text-xs text-foreground-muted">
-              Whether account ledgers open in read-only or edit mode by default.
-            </p>
-          </div>
-
-          {/* Home Screen */}
-          <div className="space-y-2">
-            <label className="block text-sm text-foreground-secondary">Home Screen</label>
-            <select
-              value={homeScreen}
-              onChange={(e) => setHomeScreen(e.target.value as HomeScreen)}
-              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-            >
-              <option value="dashboard">Dashboard</option>
-              <option value="accounts">Account Hierarchy</option>
-            </select>
-            <p className="text-xs text-foreground-muted">
-              The screen shown after login and when opening the app while signed in.
-            </p>
-          </div>
-        </div>
-      </CollapsibleConfigSection>
+      {/* ── Book & Entity ─────────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className={SETTINGS_GROUP_HEADING}>Book &amp; Entity</h2>
 
       {/* Entity profile (household / business / nonprofit) */}
       <CollapsibleConfigSection
@@ -1319,6 +824,525 @@ export default function SettingsPage() {
           </div>
         )}
       </CollapsibleConfigSection>
+
+      <CollapsibleConfigSection
+        title="IRS Contribution Limits"
+        summary="Annual limits for tax tools"
+        configured
+        storageKey="settings.irsLimitsOpen"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-foreground-muted">
+            Review and update annual contribution limits used by the tax estimator and contribution tracking.
+          </p>
+          <Link
+            href="/settings/limits"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
+          >
+            Open Limits Editor
+          </Link>
+        </div>
+      </CollapsibleConfigSection>
+
+      <CollapsibleConfigSection
+        title="Categorization Rules"
+        summary="Bank-import auto-categorization"
+        configured
+        storageKey="settings.categorizationRulesOpen"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-foreground-muted">
+            Manage auto-categorization rules applied to bank-sync imports, with learned suggestions from your history.
+          </p>
+          <Link
+            href="/settings/rules"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
+          >
+            Open Rules Editor
+          </Link>
+        </div>
+      </CollapsibleConfigSection>
+
+      {/* Inventory for household books (business books always have it) */}
+      {entity && entity.entityType === 'household' && (
+        <CollapsibleConfigSection
+          title="Inventory Management"
+          summary={householdInventoryEnabled ? 'Enabled' : 'Disabled'}
+          configured
+          storageKey="settings.householdInventoryOpen"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-foreground-muted">
+              Track items, stock levels, and bills of materials in this household book.
+              Adds an Inventory entry to the sidebar.
+            </p>
+            <label className="flex items-center gap-2 cursor-pointer shrink-0">
+              <input
+                type="checkbox"
+                checked={householdInventoryEnabled}
+                onChange={(e) => handleToggleHouseholdInventory(e.target.checked)}
+                disabled={savingHouseholdInventory}
+                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+              />
+              <span className="text-sm text-foreground-secondary">Enabled</span>
+            </label>
+          </div>
+        </CollapsibleConfigSection>
+      )}
+      </section>
+
+      {/* ── Display & Preferences ─────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className={SETTINGS_GROUP_HEADING}>Display &amp; Preferences</h2>
+
+      {/* Display Preferences */}
+      <CollapsibleConfigSection
+        title="Display Preferences"
+        summary={displayPrefsSummary}
+        configured
+        storageKey="settings.displayPrefsOpen"
+      >
+        <div className="space-y-4">
+          {/* Date Format */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Date Format</label>
+            <select
+              value={dateFormat}
+              onChange={(e) => setDateFormat(e.target.value as DateFormat)}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+              <option value="MM-DD-YYYY">MM-DD-YYYY</option>
+            </select>
+            <p className="text-xs text-foreground-muted">
+              Format used for all date fields in the application.
+            </p>
+          </div>
+
+          {/* Default Ledger Mode */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Default Ledger Mode</label>
+            <select
+              value={defaultLedgerMode}
+              onChange={(e) => setDefaultLedgerMode(e.target.value as 'readonly' | 'edit')}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="readonly">Read-only</option>
+              <option value="edit">Edit Mode</option>
+            </select>
+            <p className="text-xs text-foreground-muted">
+              Whether account ledgers open in read-only or edit mode by default.
+            </p>
+          </div>
+
+          {/* Home Screen */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Home Screen</label>
+            <select
+              value={homeScreen}
+              onChange={(e) => setHomeScreen(e.target.value as HomeScreen)}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+            >
+              <option value="dashboard">Dashboard</option>
+              <option value="accounts">Account Hierarchy</option>
+            </select>
+            <p className="text-xs text-foreground-muted">
+              The screen shown after login and when opening the app while signed in.
+            </p>
+          </div>
+        </div>
+      </CollapsibleConfigSection>
+
+      {/* Balance Display */}
+      <CollapsibleConfigSection
+        title="Balance Display"
+        summary={balanceDisplaySummary}
+        configured
+        storageKey="settings.balanceDisplayOpen"
+      >
+        <p className="text-sm text-foreground-muted mb-4">
+          Choose how account balances are displayed throughout the app.
+        </p>
+
+        <div className="space-y-3">
+          {BALANCE_REVERSAL_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className={`block p-4 rounded-xl border cursor-pointer transition-all ${
+                balanceReversal === option.value
+                  ? 'bg-primary/10 border-primary/50'
+                  : 'bg-surface border-border hover:border-border-hover'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="balanceReversal"
+                  value={option.value}
+                  checked={balanceReversal === option.value}
+                  onChange={() => handleBalanceReversalChange(option.value)}
+                  disabled={savingBalance}
+                  className="mt-1 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground">{option.label}</span>
+                    {savingBalance && balanceReversal === option.value && (
+                      <div className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                    )}
+                  </div>
+                  <p className="text-sm text-foreground-muted mt-1">{option.description}</p>
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <details className="mt-4">
+          <summary className="text-sm text-foreground-secondary cursor-pointer hover:text-foreground">
+            Understanding Balance Reversal
+          </summary>
+          <div className="mt-2 text-sm text-foreground-muted space-y-2">
+            <p>
+              In double-entry accounting, some accounts naturally have credit balances (shown as negative in GnuCash):
+            </p>
+            <ul className="list-disc list-inside space-y-1">
+              <li><strong className="text-foreground-secondary">Income</strong> - Money you earn appears negative</li>
+              <li><strong className="text-foreground-secondary">Liabilities</strong> - Debts you owe appear negative</li>
+              <li><strong className="text-foreground-secondary">Equity</strong> - Net worth appears negative</li>
+            </ul>
+            <p>
+              The balance reversal setting displays these with positive values for easier reading,
+              while maintaining proper accounting relationships.
+            </p>
+          </div>
+        </details>
+      </CollapsibleConfigSection>
+
+      {/* Cost Basis */}
+      <CollapsibleConfigSection
+        title="Cost Basis"
+        summary={costBasisSummary}
+        configured
+        storageKey="settings.costBasisOpen"
+      >
+        <p className="text-sm text-foreground-muted mb-4">
+          Control how cost basis is calculated when shares are transferred between investment accounts.
+        </p>
+
+        <div className="space-y-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={costBasisCarryOver}
+              onChange={(e) => setCostBasisCarryOver(e.target.checked)}
+              className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+            />
+            <div>
+              <span className="text-sm text-foreground">Carry over cost basis on transfers</span>
+              <p className="text-xs text-foreground-muted mt-0.5">
+                When shares are transferred between accounts, trace the original purchase cost instead of showing $0.
+              </p>
+            </div>
+          </label>
+
+          {costBasisCarryOver && (
+            <div className="space-y-2 pl-7">
+              <label className="block text-sm text-foreground-secondary">Cost Basis Method</label>
+              <div className="space-y-2">
+                {COST_BASIS_METHOD_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className={`block p-3 rounded-lg border cursor-pointer transition-all ${
+                      costBasisMethod === option.value
+                        ? 'bg-primary/10 border-primary/50'
+                        : 'bg-surface border-border hover:border-border-hover'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="radio"
+                        name="costBasisMethod"
+                        value={option.value}
+                        checked={costBasisMethod === option.value}
+                        onChange={() => setCostBasisMethod(option.value)}
+                        className="mt-0.5 w-4 h-4 text-primary bg-background-tertiary border-border-hover focus:ring-primary/50"
+                      />
+                      <div className="flex-1">
+                        <span className="font-medium text-foreground text-sm">{option.label}</span>
+                        <p className="text-xs text-foreground-muted mt-0.5">{option.description}</p>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </CollapsibleConfigSection>
+
+      {/* Tax Rate */}
+      <CollapsibleConfigSection
+        title="Default Tax Rate"
+        summary={taxRateSummary}
+        configured
+        storageKey="settings.taxRateOpen"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-foreground-muted">
+            Set a default tax rate to quickly apply to transaction amounts using the T keyboard shortcut.
+          </p>
+
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Default Tax Rate</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max="100"
+                value={taxRateInput}
+                onChange={(e) => setTaxRateInput(e.target.value)}
+                onBlur={() => {
+                  const pct = parseFloat(taxRateInput);
+                  if (!isNaN(pct) && pct >= 0 && pct <= 100) {
+                    setDefaultTaxRate(pct / 100);
+                  } else if (taxRateInput === '') {
+                    setDefaultTaxRate(0);
+                  }
+                }}
+                placeholder="0.00"
+                className="w-32 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+              />
+              <span className="text-sm text-foreground-muted">%</span>
+            </div>
+            <p className="text-xs text-foreground-muted">
+              Press{' '}
+              <kbd className="px-1.5 py-0.5 bg-background-tertiary rounded border border-border-hover text-xs">
+                T
+              </kbd>{' '}
+              in amount fields to apply this tax rate to the current value.
+            </p>
+          </div>
+        </div>
+      </CollapsibleConfigSection>
+      </section>
+
+      {/* ── Prices & Market Data ──────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className={SETTINGS_GROUP_HEADING}>Prices &amp; Market Data</h2>
+
+      <CollapsibleConfigSection
+        title="Commodity Quote Settings"
+        summary="Quote flags & price sources"
+        configured
+        storageKey="settings.commodityQuotesOpen"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <p className="text-sm text-foreground-muted">
+            Manage quote flags and price source configuration for all commodities.
+          </p>
+          <Link
+            href="/settings/commodities"
+            className="inline-flex items-center justify-center px-4 py-2 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-lg transition-colors shrink-0"
+          >
+            Open Commodity Settings
+          </Link>
+        </div>
+      </CollapsibleConfigSection>
+
+      {/* Price Refresh Schedule */}
+      <CollapsibleConfigSection
+        title="Price Refresh Schedule"
+        summary={scheduleSummary}
+        configured
+        storageKey="settings.priceRefreshOpen"
+      >
+        <div className="space-y-4">
+          {/* Enable/Disable Toggle */}
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={schedule.enabled}
+              onChange={(e) => handleScheduleToggle(e.target.checked)}
+              className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+            />
+            <span className="text-sm text-foreground">Enable automatic price refresh</span>
+          </label>
+
+          {/* SimpleFin Sync Toggle - only show if connected */}
+          {simplefinConnected && (
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={simplefinSyncEnabled}
+                onChange={(e) => updateSimplefinSync(e.target.checked)}
+                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+              />
+              <span className="text-sm text-foreground">Sync SimpleFin transactions with each refresh</span>
+            </label>
+          )}
+
+          {/* Refresh Frequency */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">Refresh Frequency</label>
+            <select
+              value={schedule.intervalHours}
+              onChange={(e) => handleIntervalChange(Number(e.target.value))}
+              disabled={!schedule.enabled}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {INTERVAL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Refresh Time */}
+          <div className="space-y-2">
+            <label className="block text-sm text-foreground-secondary">
+              Refresh Time
+            </label>
+            <input
+              type="time"
+              value={utcToLocal(schedule.refreshTime)}
+              onChange={(e) => handleTimeChange(e.target.value)}
+              disabled={!schedule.enabled}
+              className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            <p className="text-xs text-foreground-muted">
+              Schedule after US market close (4 PM ET) for complete daily prices.
+            </p>
+          </div>
+
+          {/* Refresh Now Button */}
+          <button
+            onClick={handleRefreshNow}
+            disabled={refreshing}
+            className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {refreshing && (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            )}
+            <span>{refreshing ? 'Refreshing...' : 'Refresh Now'}</span>
+          </button>
+        </div>
+      </CollapsibleConfigSection>
+
+      {/* Index Data */}
+      <CollapsibleConfigSection
+        title="Index Data"
+        summary={indexDataSummary}
+        configured
+        storageKey="settings.indexDataOpen"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-foreground-muted">
+            Historical price data for market indices (S&P 500, DJIA) used in performance charts.
+          </p>
+
+          {indexCoverage && (
+            <div className="space-y-2">
+              {indexCoverage.indices.map((idx) => (
+                <div key={idx.symbol} className="flex items-center justify-between text-sm py-1.5 px-3 bg-background-tertiary rounded-lg">
+                  <span className="font-medium text-foreground">{idx.name}</span>
+                  <span className="text-foreground-secondary">
+                    {idx.count > 0
+                      ? `${idx.earliest} — ${idx.latest} (${Number(idx.count).toLocaleString()} prices)`
+                      : 'No data'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {indexCoverage?.isUpToDate && (
+            <p className="text-sm text-primary flex items-center gap-1.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Index data is up to date
+            </p>
+          )}
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={handleBackfillIndices}
+              disabled={backfilling || (indexCoverage?.isUpToDate ?? false)}
+              className="flex-1 bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {backfilling && (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              )}
+              <span>{backfilling ? 'Backfilling...' : 'Backfill Historical Index Data'}</span>
+            </button>
+            <button
+              onClick={handleRunPriceAudit}
+              disabled={auditing}
+              title="Audits every commodity held in this book, fills gaps, and backfills history from Yahoo Finance. Runs in the background worker."
+              className="flex-1 bg-surface-elevated hover:bg-surface-hover disabled:opacity-60 text-foreground border border-border font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {auditing && (
+                <div className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
+              )}
+              <span>{auditing ? 'Queuing…' : 'Run Full Price Audit'}</span>
+            </button>
+          </div>
+        </div>
+      </CollapsibleConfigSection>
+      </section>
+
+      {/* ── Notifications & Delivery ──────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className={SETTINGS_GROUP_HEADING}>Notifications &amp; Delivery</h2>
+        <EmailNotificationsSection />
+        <ReportSchedulesSection />
+        <CalendarFeedSection />
+      </section>
+
+      {/* ── Integrations & Automation ─────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className={SETTINGS_GROUP_HEADING}>Integrations &amp; Automation</h2>
+        <EmailIngestSection />
+        <ApiTokensSection />
+        <WebhooksSection />
+        <ShareLinksSection />
+      </section>
+
+      {/* ── Security & Backups ────────────────────────────────────────── */}
+      <section className="space-y-3">
+        <h2 className={SETTINGS_GROUP_HEADING}>Security &amp; Backups</h2>
+        <TwoFactorSection />
+        <BackupsSection />
+
+      {/* Cache Management */}
+      <CollapsibleConfigSection
+        title="Cache Management"
+        summary="Redis cache"
+        configured
+        storageKey="settings.cacheOpen"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-foreground-muted">
+            Clears all cached dashboard calculations. Data will be recalculated on next visit.
+          </p>
+
+          <button
+            onClick={handleClearCache}
+            disabled={clearing}
+            className="w-full bg-rose-600 hover:bg-rose-700 disabled:bg-rose-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {clearing && (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            )}
+            <span>{clearing ? 'Clearing...' : 'Clear All Caches'}</span>
+          </button>
+        </div>
+      </CollapsibleConfigSection>
+      </section>
     </div>
   );
 }

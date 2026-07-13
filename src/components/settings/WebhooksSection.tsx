@@ -173,7 +173,7 @@ export function WebhooksSection() {
         <CollapsibleConfigSection
             title="Webhooks"
             summary={webhooks.length > 0 ? `${webhooks.length} endpoint${webhooks.length === 1 ? '' : 's'}` : 'None'}
-            configured={webhooks.length > 0}
+            configured
             storageKey="settings.webhooksOpen"
         >
             <div className="space-y-4">

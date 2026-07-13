@@ -98,7 +98,7 @@ export function BackupsSection() {
         <CollapsibleConfigSection
             title="Book Backups"
             summary={backups.length > 0 ? `${backups.length} stored` : 'Nightly'}
-            configured={backups.length > 0}
+            configured
             storageKey="settings.backupsOpen"
         >
             <div className="space-y-4">

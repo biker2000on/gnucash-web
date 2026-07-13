@@ -213,7 +213,7 @@ export function TwoFactorSection() {
         <CollapsibleConfigSection
             title="Two-Factor Authentication"
             summary={status?.enabled ? 'Enabled' : 'Off'}
-            configured={Boolean(status?.enabled)}
+            configured
             storageKey="settings.twoFactorOpen"
         >
             <div className="space-y-4">

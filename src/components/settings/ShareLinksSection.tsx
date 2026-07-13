@@ -138,7 +138,7 @@ export function ShareLinksSection() {
         <CollapsibleConfigSection
             title="Accountant Share Links"
             summary={active.length > 0 ? `${active.length} active link${active.length === 1 ? '' : 's'}` : 'None'}
-            configured={links.length > 0}
+            configured
             storageKey="settings.shareLinksOpen"
         >
             <div className="space-y-4">

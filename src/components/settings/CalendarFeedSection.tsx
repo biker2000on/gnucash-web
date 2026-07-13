@@ -122,7 +122,7 @@ export function CalendarFeedSection() {
         <CollapsibleConfigSection
             title="Calendar Feeds (iCal)"
             summary={feeds.length > 0 ? `${feeds.length} active feed${feeds.length === 1 ? '' : 's'}` : 'None'}
-            configured={feeds.length > 0}
+            configured
             storageKey="settings.calendarFeedsOpen"
         >
             <div className="space-y-4">
