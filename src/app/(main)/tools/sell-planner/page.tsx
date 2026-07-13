@@ -16,6 +16,7 @@ import type {
 } from '@/lib/sell-planner';
 import PlanComparisonCards from './PlanComparisonCards';
 import PlanLotTable from './PlanLotTable';
+import { RelatedLinks } from '@/components/RelatedLinks';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -357,6 +358,7 @@ export default function SellPlannerPage() {
                     )}
                 </>
             )}
+            <RelatedLinks ids={['rpt-capital-gains', 'rpt-tax-harvesting', 'nav-inv-rebalancing']} />
         </div>
     );
 }

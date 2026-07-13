@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 import ReconciliationPanel from './ReconciliationPanel';
+import { RelatedLinks } from '@/components/RelatedLinks';
 
 interface TermTotals {
   proceeds: number;
@@ -286,6 +287,7 @@ export default function CapitalGainsPage() {
           <ReconciliationPanel year={year} />
         </>
       )}
+      <RelatedLinks ids={['tool-sell-planner', 'rpt-tax-harvesting', 'rpt-tax-schedule', 'rpt-tax-package']} />
     </div>
   );
 }

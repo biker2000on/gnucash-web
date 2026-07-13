@@ -34,6 +34,7 @@ import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSecti
 import MonteCarloChart from './MonteCarloChart';
 import AssumptionsPanel from './AssumptionsPanel';
 import { FiAgeHistogram, SensitivityRow } from './FiInsights';
+import { RelatedLinks } from '@/components/RelatedLinks';
 
 /* ------------------------------------------------------------------ */
 /* Debounce hook                                                       */
@@ -1085,6 +1086,7 @@ export default function FireCalculatorPage() {
           contributions are invested at year end. Past performance does not guarantee future results.
         </p>
       )}
+      <RelatedLinks ids={['tool-drawdown', 'tool-scenario', 'rpt-nw-attribution']} />
     </div>
   );
 }
