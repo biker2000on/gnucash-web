@@ -171,6 +171,9 @@ export const FEATURES: Feature[] = [
     { id: 'nav-settings-history', title: 'Change History', description: 'The audit trail — every mutation, with one-click undo.', href: '/settings/history', domain: 'settings', task: 'Configuration', kind: 'page', keywords: 'audit log undo restore trail', nav: true },
     { id: 'tool-close-book', title: 'Close Book', description: 'Year-end closing entries into equity, previewed and undoable.', href: '/tools/close-book', domain: 'money', task: 'Accounts & ledgers', kind: 'tool', keywords: 'year end closing entries equity retained earnings' },
     { id: 'nav-catalog', title: 'Feature Catalog', description: 'Everything this app can do, searchable, with pinning.', href: '/catalog', domain: 'home', task: 'Overview', kind: 'page', keywords: 'directory all features help discover', nav: true },
+    { id: 'nav-doc-search', title: 'Document Search', description: 'One search across receipt OCR text, statement lines, payslips, and transactions.', href: '/search', domain: 'money', task: 'Documents & import', kind: 'page', keywords: 'full text find receipts statements ocr', nav: true },
+    { id: 'rpt-fx-revaluation', title: 'FX Revaluation', description: 'Foreign-currency holdings with average acquisition rates and unrealized/realized FX gains.', href: '/reports/fx_revaluation', domain: 'reports', task: 'Statements', kind: 'report', keywords: 'currency exchange foreign gains' },
+    { id: 'rpt-bls-comparison', title: 'Spending vs National Averages', description: 'Your categories vs BLS Consumer Expenditure Survey averages for your household size.', href: '/reports/bls_comparison', domain: 'reports', task: 'Charts', kind: 'report', keywords: 'bls benchmark average compare household' },
 ];
 
 export function featuresByDomain(domain: FeatureDomain, opts?: { businessBook?: boolean }): Feature[] {
