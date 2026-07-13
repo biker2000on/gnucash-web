@@ -17,11 +17,14 @@ export function GlobalShortcuts() {
   useEffect(() => {
     const openAccounts = () => setAccountSwitcherOpen(true)
     const openBooks = () => setBookSwitcherOpen(true)
+    const openPalette = () => setPaletteOpen(true)
     window.addEventListener('open-account-switcher', openAccounts)
     window.addEventListener('open-book-switcher', openBooks)
+    window.addEventListener('open-command-palette', openPalette)
     return () => {
       window.removeEventListener('open-account-switcher', openAccounts)
       window.removeEventListener('open-book-switcher', openBooks)
+      window.removeEventListener('open-command-palette', openPalette)
     }
   }, [])
 

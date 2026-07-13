@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom'
 import { useAccounts } from '@/lib/hooks/useAccounts'
 import { useKeyboardShortcuts } from '@/contexts/KeyboardShortcutContext'
 import { Account } from '@/lib/types'
-import { searchCommands, fuzzyScore, ScoredCommand } from '@/lib/command-palette'
+import { searchCommands, fuzzyScore, recordPaletteUse, recentPaletteCommands, ScoredCommand } from '@/lib/command-palette'
 import { formatCurrency } from '@/lib/format'
 
 /** Strip the root/book account name (first colon-delimited segment) from fullname */
@@ -79,9 +79,18 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
   const rows = useMemo<PaletteRow[]>(() => {
     const q = query.trim()
-    const commandRows: PaletteRow[] = searchCommands(q)
-      .slice(0, q ? 8 : 12)
-      .map(command => ({ kind: 'command', command }))
+    // Empty query: recently used commands lead, then actions + navigation
+    const recents: PaletteRow[] = !q
+      ? recentPaletteCommands().map(command => ({ kind: 'command' as const, command: { ...command, score: 3 } }))
+      : []
+    const recentIds = new Set(recents.map(r => (r as { command: ScoredCommand }).command.id))
+    const commandRows: PaletteRow[] = [
+      ...recents,
+      ...searchCommands(q)
+        .filter(c => !recentIds.has(c.id))
+        .slice(0, q ? 8 : 10)
+        .map(command => ({ kind: 'command' as const, command })),
+    ]
 
     let accountRows: PaletteRow[] = []
     if (q && accounts) {
@@ -134,6 +143,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     onClose()
     if (row.kind === 'command') {
       const { command } = row
+      recordPaletteUse(command.id)
       if (command.event === 'open-shortcut-help') {
         setHelpOpen(true)
       } else if (command.event) {
