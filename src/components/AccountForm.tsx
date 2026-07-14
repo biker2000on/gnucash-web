@@ -69,9 +69,10 @@ const OWNER_ELIGIBLE_ACCOUNT_TYPES = new Set([
 
 const OWNER_VALUES = new Set(['self', 'spouse', 'joint']);
 
-// HSAs are the one "retirement" type that can cover the whole family, so the
-// Owner select additionally offers Family (stored as 'joint') for them.
-const HSA_RETIREMENT_TYPES = new Set(['hsa', 'hsa_family']);
+// Health-plan account types (HSA/HRA/FSA) can cover the whole family under a
+// joint insurance plan, so the Owner select additionally offers Family
+// (stored as 'joint') for them. IRAs/401ks stay individually owned.
+const FAMILY_RETIREMENT_TYPES = new Set(['hsa', 'hsa_family', 'hra', 'fsa']);
 
 function isCurrencyCommodity(c: Commodity): boolean {
     return c.namespace === 'CURRENCY' || c.namespace === 'ISO4217';
@@ -591,12 +592,12 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                 is_retirement: e.target.checked,
                                 retirement_account_type: e.target.checked ? prev.retirement_account_type : null,
                                 // Retirement accounts are individually owned; a joint
-                                // owner isn't valid there — except HSAs, which can
-                                // cover the whole family. Keep self/spouse as-is when
-                                // toggling either way.
+                                // owner isn't valid there — except health-plan types
+                                // (HSA/HRA/FSA), which can cover the whole family.
+                                // Keep self/spouse as-is when toggling either way.
                                 owner: e.target.checked
                                     && prev.owner === 'joint'
-                                    && !HSA_RETIREMENT_TYPES.has(prev.retirement_account_type ?? '')
+                                    && !FAMILY_RETIREMENT_TYPES.has(prev.retirement_account_type ?? '')
                                     ? 'self'
                                     : prev.owner,
                             }))}
@@ -611,9 +612,9 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             onChange={e => setFormData(prev => ({
                                 ...prev,
                                 retirement_account_type: e.target.value || null,
-                                // Family (joint) ownership is only valid for HSA
-                                // types; reset to Self when switching away.
-                                owner: prev.owner === 'joint' && !HSA_RETIREMENT_TYPES.has(e.target.value)
+                                // Family (joint) ownership is only valid for health-plan
+                                // types (HSA/HRA/FSA); reset to Self when switching away.
+                                owner: prev.owner === 'joint' && !FAMILY_RETIREMENT_TYPES.has(e.target.value)
                                     ? 'self'
                                     : prev.owner,
                             }))}
@@ -643,15 +644,15 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             {formData.is_retirement ? (
                                 // Retirement accounts are individually owned: no Joint,
                                 // and unset displays as Self (matching how the reports
-                                // attribute unset retirement owners). HSAs additionally
-                                // allow Family (stored as 'joint') since one HSA can
-                                // cover the whole household.
+                                // attribute unset retirement owners). Health-plan types
+                                // (HSA/HRA/FSA) additionally allow Family (stored as
+                                // 'joint') since one plan can cover the whole household.
                                 <select
                                     value={
                                         formData.owner === 'spouse'
                                             ? 'spouse'
                                             : formData.owner === 'joint'
-                                                && HSA_RETIREMENT_TYPES.has(formData.retirement_account_type ?? '')
+                                                && FAMILY_RETIREMENT_TYPES.has(formData.retirement_account_type ?? '')
                                                 ? 'joint'
                                                 : 'self'
                                     }
@@ -663,7 +664,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                 >
                                     <option value="self">{selfName ?? 'Self'}</option>
                                     <option value="spouse">{spouseName ?? 'Spouse'}</option>
-                                    {HSA_RETIREMENT_TYPES.has(formData.retirement_account_type ?? '') && (
+                                    {FAMILY_RETIREMENT_TYPES.has(formData.retirement_account_type ?? '') && (
                                         <option value="joint">Family</option>
                                     )}
                                 </select>
