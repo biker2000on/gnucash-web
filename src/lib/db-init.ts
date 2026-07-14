@@ -796,6 +796,27 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Entity-level book links: a business book points at the household book(s)
+    // of its owner(s) with an ownership percent. Powers cross-book 1040
+    // aggregation (Schedule C / K-1 share), the S-corp analyzer's household
+    // marginal rates, and self-employed retirement capacity.
+    const bookLinksTableDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_book_links_schema'));
+            CREATE TABLE IF NOT EXISTS gnucash_web_book_links (
+                business_book_guid VARCHAR(32) NOT NULL,
+                household_book_guid VARCHAR(32) NOT NULL,
+                ownership_percent DOUBLE PRECISION NOT NULL DEFAULT 100,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (business_book_guid, household_book_guid)
+            );
+            CREATE INDEX IF NOT EXISTS idx_book_links_household
+                ON gnucash_web_book_links(household_book_guid);
+        END $$;
+    `;
+
     // Membership management (501c3 clubs/charities): members, dues levels with
     // renewal policy, payments (with paid-through periods), meetings, and
     // attendance. GnuCash rows are referenced by loose guid columns only.
@@ -965,6 +986,7 @@ async function createExtensionTables() {
         await query(entityProfilesTableDDL);
         await query(entityProfilesTaxColumnsDDL);
         await query(bookFeaturesTableDDL);
+        await query(bookLinksTableDDL);
         await query(membershipTablesDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions

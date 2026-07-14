@@ -72,6 +72,20 @@ interface EstimatePayload {
     hsaFamily?: LimitInfo | null;
     spouseIra: LimitInfo | null;
   };
+  /**
+   * Business books linked to this household book — their profit shares are
+   * already folded into bookData; listed here for provenance display.
+   */
+  linkedBusinesses?: Array<{
+    businessBookGuid: string;
+    businessBookName: string | null;
+    entityName: string | null;
+    entityType: string;
+    ownershipPercent: number;
+    netProfit: number;
+    share: number;
+    treatment: 'schedule_c' | 'k1' | 'none';
+  }>;
 }
 
 const BUSINESS_ENTITY_LABELS: Record<string, string> = {
@@ -793,6 +807,32 @@ export default function TaxEstimatorPage() {
         </div>
         )}
       </CollapsibleConfigSection>
+
+      {/* Linked business profit provenance (shares already folded into bookData) */}
+      {Array.isArray(estimate?.linkedBusinesses) && estimate.linkedBusinesses.length > 0 && (
+        <div className="border border-border rounded-lg px-3 py-2 bg-background-tertiary space-y-1">
+          {estimate.linkedBusinesses.map(lb => {
+            const name = lb.entityName || lb.businessBookName || 'Linked business';
+            if (lb.treatment === 'none') {
+              return (
+                <p key={lb.businessBookGuid} className="text-xs text-foreground-muted">
+                  {name} ({BUSINESS_ENTITY_LABELS[lb.entityType] ?? lb.entityType}) — C-corp profit
+                  is taxed at the corporate level and isn&apos;t passed through to this estimate.
+                </p>
+              );
+            }
+            return (
+              <p key={lb.businessBookGuid} className="text-xs text-foreground-muted">
+                <span className="text-foreground font-medium">{name}</span>
+                {' — '}{lb.ownershipPercent}% of {formatCurrency(lb.netProfit)} YTD net profit
+                included as {lb.treatment === 'k1'
+                  ? 'K-1 pass-through income'
+                  : 'Schedule C self-employment income'}.
+              </p>
+            );
+          })}
+        </div>
+      )}
 
       {/* Setup guide */}
       <CollapsibleConfigSection

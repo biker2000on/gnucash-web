@@ -930,6 +930,21 @@ model gnucash_web_book_features {
   @@map("gnucash_web_book_features")
 }
 
+// Entity-level book links: business book → owner household book(s) with
+// ownership percent. Powers cross-book 1040 aggregation and the S-corp
+// analyzer's household tax context.
+model gnucash_web_book_links {
+  business_book_guid  String   @db.VarChar(32)
+  household_book_guid String   @db.VarChar(32)
+  ownership_percent   Float    @default(100)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @default(now())
+
+  @@id([business_book_guid, household_book_guid])
+  @@index([household_book_guid], map: "idx_book_links_household")
+  @@map("gnucash_web_book_links")
+}
+
 // Membership management for clubs/charities (501c3 books): members, dues
 // levels with renewal policy, payments, meetings, and attendance.
 model gnucash_web_membership_types {

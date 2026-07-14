@@ -4,6 +4,7 @@ import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
 import { getContributionLimit } from '@/lib/reports/irs-limits';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
+import { getLinkedBusinessIncome, applyLinkedBusinessIncome } from '@/lib/tax/linked-business';
 import { calculateAge } from '@/lib/reports/irs-limits';
 import { getEntityProfile } from '@/lib/services/entity.service';
 import { FILING_STATUSES, type FilingStatus } from '@/lib/tax/types';
@@ -71,6 +72,19 @@ export async function GET(request: NextRequest) {
 
     const bookData = await aggregateBookTaxData(bookAccountGuids, year, effectiveBirthday);
 
+    // Household books include their share of linked business books' profit
+    // (Schedule C for pass-throughs, K-1 ordinary income for S-corps) — a
+    // pass-through's profit is taxed on the owner's 1040 whether drawn or not.
+    let linkedBusinesses: Awaited<ReturnType<typeof getLinkedBusinessIncome>> = [];
+    if (entity.entityType === 'household') {
+      try {
+        linkedBusinesses = await getLinkedBusinessIncome(bookGuid, year);
+        applyLinkedBusinessIncome(bookData, linkedBusinesses);
+      } catch (err) {
+        console.error('Linked-business income aggregation failed:', err);
+      }
+    }
+
     // Resolved IRS limits for scenario validation (catch-up by birthday).
     // Spouse IRA limits use the spouse's birthday so catch-up eligibility is per person.
     const [limit401k, limitIra, limitHsa, limitHsaFamily, limitSpouseIra] = await Promise.all([
@@ -95,6 +109,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       bookData,
+      linkedBusinesses,
       preferences: {
         filingStatus,
         state: effectiveState,

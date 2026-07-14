@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
 import { BookFeaturesSection } from '@/components/settings/BookFeaturesSection';
+import { BookLinksSection } from '@/components/settings/BookLinksSection';
 import { BackupsSection } from '@/components/settings/BackupsSection';
 import { TwoFactorSection } from '@/components/settings/TwoFactorSection';
 import { ApiTokensSection } from '@/components/settings/ApiTokensSection';
@@ -828,6 +829,9 @@ export default function SettingsPage() {
 
       {/* Feature modules (business/nonprofit books only; renders null for household) */}
       <BookFeaturesSection />
+
+      {/* Book links (business books link to household books; households see incoming links) */}
+      <BookLinksSection />
 
       <CollapsibleConfigSection
         title="IRS Contribution Limits"

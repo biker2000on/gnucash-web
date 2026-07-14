@@ -101,6 +101,30 @@ export async function getBookAccountGuids(): Promise<string[]> {
 }
 
 /**
+ * Returns all account GUIDs under a specific book (by book guid, not the
+ * session's active book). Used for cross-book features like linked-business
+ * tax aggregation. Uncached — call sparingly.
+ */
+export async function getAccountGuidsForBook(bookGuid: string): Promise<string[]> {
+    const book = await prisma.books.findUnique({
+        where: { guid: bookGuid },
+        select: { root_account_guid: true },
+    });
+    if (!book) return [];
+
+    const accounts = await prisma.$queryRaw<{ guid: string }[]>`
+        WITH RECURSIVE account_tree AS (
+            SELECT guid FROM accounts WHERE guid = ${book.root_account_guid}
+            UNION ALL
+            SELECT a.guid FROM accounts a
+            JOIN account_tree t ON a.parent_guid = t.guid
+        )
+        SELECT guid FROM account_tree
+    `;
+    return accounts.map(a => a.guid);
+}
+
+/**
  * Invalidate the book account GUIDs cache. Call this after account creation,
  * deletion, or reparenting so subsequent requests see the fresh tree.
  */
