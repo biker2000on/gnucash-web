@@ -10,6 +10,7 @@ import {
     NAV_DOMAIN_ORDER,
     type Feature,
 } from '@/lib/feature-registry';
+import { isFeatureVisible, useBookGating } from '@/lib/hooks/useBookGating';
 
 function matchesQuery(feature: Feature, query: string): boolean {
     if (!query) return true;
@@ -102,6 +103,9 @@ function CatalogCard({
 export default function CatalogPage() {
     const [query, setQuery] = useState('');
     const [pinned, setPinned] = useState<string[]>([]);
+    // Book gating: business books hide personal-only features; disabled
+    // feature modules hide their gated business features.
+    const { businessBook, features: bookFeatures } = useBookGating();
 
     // Load pinned feature ids.
     useEffect(() => {
@@ -141,8 +145,11 @@ export default function CatalogPage() {
     }, [pinned]);
 
     const filtered = useMemo(
-        () => FEATURES.filter(f => matchesQuery(f, query)),
-        [query],
+        () =>
+            FEATURES.filter(
+                f => isFeatureVisible(f, businessBook, bookFeatures) && matchesQuery(f, query),
+            ),
+        [query, businessBook, bookFeatures],
     );
 
     const pinnedFeatures = useMemo(

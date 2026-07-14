@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import {
     featuresByDomain,
@@ -5,6 +7,8 @@ import {
     type FeatureDomain,
     type FeatureKind,
 } from '@/lib/feature-registry';
+import { isFeatureIdEnabled } from '@/lib/book-features';
+import { useBookGating } from '@/lib/hooks/useBookGating';
 
 const KIND_LABEL: Record<FeatureKind, string> = {
     page: 'Page',
@@ -53,10 +57,18 @@ export function FeatureCard({ feature }: { feature: Feature }) {
 
 /**
  * All of a domain's features grouped by task (section headings in registry
- * order). Used by the /money, /taxes, and /planning hub pages.
+ * order). Used by the /money, /taxes, and /planning hub pages. Gated by the
+ * active book: business books hide personal-only features, and disabled
+ * feature modules hide their gated business features.
  */
 export function DomainFeatureSections({ domain }: { domain: FeatureDomain }) {
-    const features = featuresByDomain(domain);
+    const { businessBook, features: bookFeatures } = useBookGating();
+    const features = featuresByDomain(domain, {
+        businessBook,
+        enabledFeatureIds: bookFeatures
+            ? id => isFeatureIdEnabled(id, bookFeatures)
+            : undefined,
+    });
 
     // Group by task, preserving registry order of first appearance.
     const groups: { task: string; items: Feature[] }[] = [];

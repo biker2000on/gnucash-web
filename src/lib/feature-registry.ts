@@ -36,6 +36,12 @@ export interface Feature {
     mobileOnly?: boolean;
     /** Only relevant on business-entity books. */
     businessOnly?: boolean;
+    /**
+     * Personal-finance feature that makes no sense on a business/nonprofit
+     * book (FIRE, withholding checkup, …). Hidden when the active book's
+     * entity type isn't 'household'.
+     */
+    personalOnly?: boolean;
     /** Appears as a sidebar child entry (hubs list everything regardless). */
     nav?: boolean;
     /** Shorter label for the sidebar (falls back to title). */
@@ -94,19 +100,19 @@ export const FEATURES: Feature[] = [
 
     // ── Taxes ────────────────────────────────────────────────────────────
     { id: 'tool-tax', title: 'Tax Estimator', description: 'Live federal + state liability from your book, with contribution scenarios.', href: '/tools/tax-estimator', domain: 'taxes', task: 'Plan ahead', kind: 'tool', keywords: 'federal state 1040 quarterly', nav: true },
-    { id: 'tool-withholding', title: 'Withholding Checkup', description: 'Projected year-end liability vs withholding, with safe-harbor targets.', href: '/tools/withholding', domain: 'taxes', task: 'Plan ahead', kind: 'tool', keywords: 'w4 paycheck safe harbor', nav: true },
+    { id: 'tool-withholding', title: 'Withholding Checkup', description: 'Projected year-end liability vs withholding, with safe-harbor targets.', href: '/tools/withholding', domain: 'taxes', task: 'Plan ahead', kind: 'tool', keywords: 'w4 paycheck safe harbor', nav: true, personalOnly: true },
     { id: 'tool-sell-planner', title: 'Sell Planner', description: 'Raise a target amount of cash tax-optimally, with wash-sale screening.', href: '/tools/sell-planner', domain: 'taxes', task: 'Plan ahead', kind: 'tool', keywords: 'tax optimal lots raise cash harvest wash sale', nav: true },
     { id: 'rpt-tax-harvesting', title: 'Tax-Loss Harvesting', description: 'Ranked harvesting opportunities with wash-sale risk flags.', href: '/reports/tax_harvesting', domain: 'taxes', task: 'Plan ahead', kind: 'report', keywords: 'loss tlh' },
     { id: 'rpt-capital-gains', title: 'Capital Gains (Form 8949)', description: 'Realized sales in IRS boxes with Schedule D totals and 1099-B reconciliation.', href: '/reports/capital-gains', domain: 'taxes', task: 'File', kind: 'report', keywords: 'schedule d tax realized 8949', nav: true },
     { id: 'rpt-tax-schedule', title: 'Tax Schedule (TXF Export)', description: 'Tax-related accounts by IRS form, exportable to TurboTax/TaxCut.', href: '/reports/tax_schedule', domain: 'taxes', task: 'File', kind: 'report', keywords: 'txf turbotax export irs forms', nav: true },
     { id: 'rpt-tax-package', title: 'Year-End Tax Package', description: 'One ZIP for your accountant: 8949, Schedule D, contributions, Schedule C, charitable giving.', href: '/reports/tax-package', domain: 'taxes', task: 'File', kind: 'report', keywords: 'accountant zip bundle', nav: true },
-    { id: 'rpt-contributions', title: 'Contribution Summary', description: '401(k)/IRA/HSA contributions measured against IRS limits.', href: '/reports/contribution_summary', domain: 'taxes', task: 'File', kind: 'report', keywords: 'ira 401k hsa limits retirement' },
+    { id: 'rpt-contributions', title: 'Contribution Summary', description: '401(k)/IRA/HSA contributions measured against IRS limits.', href: '/reports/contribution_summary', domain: 'taxes', task: 'File', kind: 'report', keywords: 'ira 401k hsa limits retirement', personalOnly: true },
     { id: 'biz-schedule-c', title: 'Schedule C', description: 'Sole-proprietor income and expense lines with a keyword mapper.', href: '/business/reports/schedule-c', domain: 'taxes', task: 'File', kind: 'report', keywords: 'sole proprietor tax', businessOnly: false },
     { id: 'biz-schedule-e', title: 'Schedule E', description: 'Rental property rollups with straight-line depreciation.', href: '/business/reports/schedule-e', domain: 'taxes', task: 'File', kind: 'report', keywords: 'rental property depreciation landlord tax' },
 
     // ── Planning ─────────────────────────────────────────────────────────
-    { id: 'tool-fire', title: 'FIRE Calculator', description: 'Monte Carlo over a century of returns: when can you stop working?', href: '/tools/fire-calculator', domain: 'planning', task: 'Long term', kind: 'tool', keywords: 'retire monte carlo independence', nav: true },
-    { id: 'tool-drawdown', title: 'Drawdown & Roth Planner', description: 'Retirement spend-down with RMDs, IRMAA warnings, and bracket-filling conversions.', href: '/tools/drawdown', domain: 'planning', task: 'Long term', kind: 'tool', keywords: 'retirement withdrawal rmd irmaa conversion sequencing', nav: true },
+    { id: 'tool-fire', title: 'FIRE Calculator', description: 'Monte Carlo over a century of returns: when can you stop working?', href: '/tools/fire-calculator', domain: 'planning', task: 'Long term', kind: 'tool', keywords: 'retire monte carlo independence', nav: true, personalOnly: true },
+    { id: 'tool-drawdown', title: 'Drawdown & Roth Planner', description: 'Retirement spend-down with RMDs, IRMAA warnings, and bracket-filling conversions.', href: '/tools/drawdown', domain: 'planning', task: 'Long term', kind: 'tool', keywords: 'retirement withdrawal rmd irmaa conversion sequencing', nav: true, personalOnly: true },
     { id: 'tool-scenario', title: 'Scenario Sandbox', description: 'What if you buy the house? One change threaded through every engine vs baseline.', href: '/tools/scenario', domain: 'planning', task: 'Long term', kind: 'tool', keywords: 'what if buy house loan purchase model compare', nav: true },
     { id: 'tool-forecast', title: 'Cash Flow Forecast', description: '30–180 day balance projections with low-balance warnings.', href: '/tools/cash-flow-forecast', domain: 'planning', task: 'Near term', kind: 'tool', keywords: 'projection 90 days', nav: true },
     { id: 'tool-debt', title: 'Debt Payoff Planner', description: 'Snowball vs avalanche across every liability, with payoff dates.', href: '/tools/debt-payoff', domain: 'planning', task: 'Near term', kind: 'tool', keywords: 'snowball avalanche', nav: true },
@@ -115,7 +121,7 @@ export const FEATURES: Feature[] = [
     { id: 'tool-digest', title: 'Monthly Digest', description: 'The month at a glance — net worth change, cash flow, category deltas.', href: '/tools/digest', domain: 'planning', task: 'Review', kind: 'tool', keywords: 'summary month', nav: true },
     { id: 'rpt-year-in-review', title: 'Year in Review', description: 'The annual wrapped: your money’s whole year on one page.', href: '/reports/year_in_review', domain: 'planning', task: 'Review', kind: 'report', keywords: 'wrapped annual summary highlights' },
     { id: 'rpt-nw-attribution', title: 'Net-Worth Attribution', description: 'Why did net worth change? Savings vs market vs debt paydown, exactly.', href: '/reports/net_worth_attribution', domain: 'planning', task: 'Review', kind: 'report', keywords: 'why change decompose savings market debt waterfall' },
-    { id: 'tool-emergency', title: 'In Case of Emergency', description: 'A printable account map with beneficiaries for the people who would need it.', href: '/tools/emergency', domain: 'planning', task: 'Protect', kind: 'tool', keywords: 'beneficiary estate death printable account map', nav: true },
+    { id: 'tool-emergency', title: 'In Case of Emergency', description: 'A printable account map with beneficiaries for the people who would need it.', href: '/tools/emergency', domain: 'planning', task: 'Protect', kind: 'tool', keywords: 'beneficiary estate death printable account map', nav: true, personalOnly: true },
     { id: 'tool-data-health', title: 'Data Health', description: 'Unbalanced transactions, stale prices, and structural checks in one score.', href: '/tools/data-health', domain: 'planning', task: 'Protect', kind: 'tool', keywords: 'integrity check repair score', nav: true },
     { id: 'tool-time-machine', title: 'Time Machine', description: 'Your book as of any date — balances at historical prices, and what changed since.', href: '/tools/time-machine', domain: 'planning', task: 'Review', kind: 'tool', keywords: 'as of historical snapshot past balances compare rewind', nav: true },
     { id: 'tool-mortgage', title: 'Mortgage Calculator', description: 'Payoff timelines with extra payments, from your detected mortgage terms.', href: '/tools/mortgage', domain: 'planning', task: 'Near term', kind: 'tool', keywords: 'amortization loan' },
@@ -160,6 +166,8 @@ export const FEATURES: Feature[] = [
     { id: 'biz-sales-tax', title: 'Sales Tax', description: 'Collected tax by period with a filing summary.', href: '/business/reports/sales-tax', domain: 'business', task: 'Reports', kind: 'report', businessOnly: true, nav: true },
     { id: 'rpt-sales-by-customer', title: 'Sales by Customer', description: 'Posted invoice totals per customer.', href: '/reports/sales_by_customer', domain: 'business', task: 'Reports', kind: 'report', businessOnly: true },
     { id: 'rpt-expenses-by-vendor', title: 'Expenses by Vendor', description: 'Spend per vendor with payments and balances.', href: '/reports/expenses_by_vendor', domain: 'business', task: 'Reports', kind: 'report', businessOnly: true },
+    { id: 'biz-membership', title: 'Members', description: 'Member roster with dues, paid-through status, and renewal tracking.', href: '/business/membership', domain: 'business', task: 'Membership', kind: 'page', keywords: 'membership dues renewals roster club 501c3', businessOnly: true, nav: true },
+    { id: 'biz-meetings', title: 'Meetings', description: 'Meeting log with per-member attendance tracking.', href: '/business/membership/meetings', domain: 'business', task: 'Membership', kind: 'page', keywords: 'attendance minutes roll call', businessOnly: true, nav: true },
     { id: 'biz-settings', title: 'Business Settings', description: 'Terms, tax tables, and document numbering.', href: '/business/settings', domain: 'business', task: 'Operations', kind: 'page', keywords: 'terms tax tables numbering', businessOnly: true, nav: true },
 
     // ── Settings ─────────────────────────────────────────────────────────
@@ -173,12 +181,23 @@ export const FEATURES: Feature[] = [
     { id: 'nav-catalog', title: 'Feature Catalog', description: 'Everything this app can do, searchable, with pinning.', href: '/catalog', domain: 'home', task: 'Overview', kind: 'page', keywords: 'directory all features help discover', nav: true },
     { id: 'nav-doc-search', title: 'Document Search', description: 'One search across receipt OCR text, statement lines, payslips, and transactions.', href: '/search', domain: 'money', task: 'Documents & import', kind: 'page', keywords: 'full text find receipts statements ocr', nav: true },
     { id: 'rpt-fx-revaluation', title: 'FX Revaluation', description: 'Foreign-currency holdings with average acquisition rates and unrealized/realized FX gains.', href: '/reports/fx_revaluation', domain: 'reports', task: 'Statements', kind: 'report', keywords: 'currency exchange foreign gains' },
-    { id: 'rpt-bls-comparison', title: 'Spending vs National Averages', description: 'Your categories vs BLS Consumer Expenditure Survey averages for your household size.', href: '/reports/bls_comparison', domain: 'reports', task: 'Charts', kind: 'report', keywords: 'bls benchmark average compare household' },
+    { id: 'rpt-bls-comparison', title: 'Spending vs National Averages', description: 'Your categories vs BLS Consumer Expenditure Survey averages for your household size.', href: '/reports/bls_comparison', domain: 'reports', task: 'Charts', kind: 'report', keywords: 'bls benchmark average compare household', personalOnly: true },
 ];
 
-export function featuresByDomain(domain: FeatureDomain, opts?: { businessBook?: boolean }): Feature[] {
+export function featuresByDomain(
+    domain: FeatureDomain,
+    opts?: {
+        businessBook?: boolean;
+        /** Resolved feature-module map (src/lib/book-features.ts); filters gated business features. */
+        enabledFeatureIds?: (id: string) => boolean;
+    },
+): Feature[] {
     return FEATURES.filter(f =>
-        f.domain === domain && (opts?.businessBook !== false || !f.businessOnly),
+        f.domain === domain
+        && (opts?.businessBook !== false || !f.businessOnly)
+        // Business books hide personal-finance features (FIRE, withholding, …)
+        && (opts?.businessBook !== true || !f.personalOnly)
+        && (opts?.enabledFeatureIds === undefined || opts.enabledFeatureIds(f.id)),
     );
 }
 

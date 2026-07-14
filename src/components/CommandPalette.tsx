@@ -7,6 +7,8 @@ import { useAccounts } from '@/lib/hooks/useAccounts'
 import { useKeyboardShortcuts } from '@/contexts/KeyboardShortcutContext'
 import { Account } from '@/lib/types'
 import { searchCommands, fuzzyScore, recordPaletteUse, recentPaletteCommands, ScoredCommand } from '@/lib/command-palette'
+import { FEATURES } from '@/lib/feature-registry'
+import { isFeatureVisible, useBookGating } from '@/lib/hooks/useBookGating'
 import { formatCurrency } from '@/lib/format'
 
 /** Strip the root/book account name (first colon-delimited segment) from fullname */
@@ -57,6 +59,17 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const { data: accounts } = useAccounts({ flat: true })
 
+  // Book gating: business books hide personal-only features; disabled
+  // feature modules hide their gated business features.
+  const { businessBook, features: bookFeatures } = useBookGating()
+  const hiddenFeatureIds = useMemo(() => {
+    const hidden = new Set<string>()
+    for (const f of FEATURES) {
+      if (!isFeatureVisible(f, businessBook, bookFeatures)) hidden.add(f.id)
+    }
+    return hidden
+  }, [businessBook, bookFeatures])
+
   // Debounced transaction search once the query is meaningful
   useEffect(() => {
     if (!isOpen) return
@@ -81,13 +94,15 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     const q = query.trim()
     // Empty query: recently used commands lead, then actions + navigation
     const recents: PaletteRow[] = !q
-      ? recentPaletteCommands().map(command => ({ kind: 'command' as const, command: { ...command, score: 3 } }))
+      ? recentPaletteCommands()
+          .filter(c => !hiddenFeatureIds.has(c.id))
+          .map(command => ({ kind: 'command' as const, command: { ...command, score: 3 } }))
       : []
     const recentIds = new Set(recents.map(r => (r as { command: ScoredCommand }).command.id))
     const commandRows: PaletteRow[] = [
       ...recents,
       ...searchCommands(q)
-        .filter(c => !recentIds.has(c.id))
+        .filter(c => !recentIds.has(c.id) && !hiddenFeatureIds.has(c.id))
         .slice(0, q ? 8 : 10)
         .map(command => ({ kind: 'command' as const, command })),
     ]
@@ -114,7 +129,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     const strong = commandRows.filter(r => r.kind === 'command' && r.command.score >= 250)
     const weak = commandRows.filter(r => r.kind === 'command' && r.command.score < 250)
     return [...strong, ...accountRows, ...weak, ...txRows]
-  }, [query, accounts, txHits])
+  }, [query, accounts, txHits, hiddenFeatureIds])
 
   useEffect(() => {
     if (isOpen) {

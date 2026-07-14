@@ -25,6 +25,7 @@ import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import DrawdownChart, { BUCKET_COLORS } from './DrawdownChart';
 import DrawdownTable from './DrawdownTable';
+import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 
 /* ------------------------------------------------------------------ */
 /* Scenario parameters (persisted to localStorage)                     */
@@ -317,6 +318,8 @@ export default function DrawdownPlannerPage() {
                     IRMAA warnings, and bracket-filling Roth conversions. Estimates only — not tax advice.
                 </p>
             </header>
+
+            <PersonalToolNotice />
 
             {/* Headline stats */}
             <StatGrid cols={5}>

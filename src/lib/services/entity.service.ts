@@ -59,6 +59,10 @@ export interface EntityProfile {
   entityType: EntityType;
   entityName: string | null;
   taxState: string | null;
+  /** 1040 filing status for household/pass-through books (null = unset). */
+  filingStatus: string | null;
+  /** Flat state rate (0-1) used when taxState is 'OTHER' (null = unset). */
+  stateFlatRate: number | null;
   notes: string | null;
   members: EntityMember[];
   /** True when no profile row exists and this was built from user preferences. */
@@ -120,13 +124,15 @@ function parseBirthday(value: string | null): Date | null {
  * Used when the book has no persisted entity profile yet.
  */
 async function synthesizeHouseholdProfile(userId: number): Promise<EntityProfile> {
-  const [birthday, coveredSelf, spouseBirthday, coveredSpouse, filingStatus] =
+  const [birthday, coveredSelf, spouseBirthday, coveredSpouse, filingStatus, taxState, flatRate] =
     await Promise.all([
       getPreference<string | null>(userId, 'birthday', null),
       getPreference<boolean>(userId, 'tax_covered_by_employer_plan', true),
       getPreference<string | null>(userId, 'spouse_birthday', null),
       getPreference<boolean>(userId, 'tax_spouse_covered_by_employer_plan', false),
       getPreference<string | null>(userId, 'tax_filing_status', null),
+      getPreference<string | null>(userId, 'tax_state', null),
+      getPreference<number | null>(userId, 'tax_state_flat_rate', null),
     ]);
 
   const members: EntityMember[] = [
@@ -156,7 +162,9 @@ async function synthesizeHouseholdProfile(userId: number): Promise<EntityProfile
   return {
     entityType: 'household',
     entityName: null,
-    taxState: null,
+    taxState: typeof taxState === 'string' ? taxState : null,
+    filingStatus: typeof filingStatus === 'string' ? filingStatus : null,
+    stateFlatRate: typeof flatRate === 'number' ? flatRate : null,
     notes: null,
     members,
     synthesized: true,
@@ -189,6 +197,8 @@ export async function getEntityProfile(
     entityType: profile.entity_type as EntityType,
     entityName: profile.entity_name,
     taxState: profile.tax_state,
+    filingStatus: profile.filing_status,
+    stateFlatRate: profile.state_flat_rate,
     notes: profile.notes,
     members: sortMembers(
       members.map((m) => ({
@@ -208,6 +218,8 @@ export interface SaveEntityProfileInput {
   entityType: EntityType;
   entityName?: string | null;
   taxState?: string | null;
+  filingStatus?: string | null;
+  stateFlatRate?: number | null;
   notes?: string | null;
   members: Array<{
     role: EntityMemberRole;
@@ -262,12 +274,18 @@ export async function saveEntityProfile(
         entity_type: input.entityType,
         entity_name: input.entityName?.trim() || null,
         tax_state: input.taxState?.trim() || null,
+        filing_status: input.filingStatus?.trim() || null,
+        state_flat_rate: input.stateFlatRate ?? null,
         notes: input.notes?.trim() || null,
       },
       update: {
         entity_type: input.entityType,
         entity_name: input.entityName?.trim() || null,
         tax_state: input.taxState?.trim() || null,
+        // undefined = caller didn't send the field; keep the stored value
+        filing_status:
+          input.filingStatus === undefined ? undefined : input.filingStatus?.trim() || null,
+        state_flat_rate: input.stateFlatRate === undefined ? undefined : input.stateFlatRate,
         notes: input.notes?.trim() || null,
         updated_at: new Date(),
       },
@@ -280,10 +298,17 @@ export async function saveEntityProfile(
     }),
   ]);
 
+  // Re-read the row so omitted tax fields reflect what is actually stored.
+  const saved = await prisma.gnucash_web_entity_profiles.findUnique({
+    where: { book_guid: bookGuid },
+  });
+
   return {
     entityType: input.entityType,
     entityName: input.entityName?.trim() || null,
     taxState: input.taxState?.trim() || null,
+    filingStatus: saved?.filing_status ?? null,
+    stateFlatRate: saved?.state_flat_rate ?? null,
     notes: input.notes?.trim() || null,
     members: sortMembers(
       memberRows.map((m) => ({
@@ -297,4 +322,36 @@ export async function saveEntityProfile(
     ),
     synthesized: false,
   };
+}
+
+export interface UpdateBookTaxFieldsInput {
+  filingStatus?: string | null;
+  taxState?: string | null;
+  stateFlatRate?: number | null;
+}
+
+/**
+ * Partial update of the book's tax profile fields (filing status, state,
+ * flat rate). When the book has no persisted entity profile yet, the current
+ * synthesized profile is materialized first so the fields land on the book —
+ * this is what makes the tax estimator's inline controls book-scoped.
+ */
+export async function updateBookTaxProfile(
+  bookGuid: string,
+  userId: number,
+  fields: UpdateBookTaxFieldsInput
+): Promise<EntityProfile> {
+  const current = await getEntityProfile(bookGuid, userId);
+
+  return saveEntityProfile(bookGuid, {
+    entityType: current.entityType,
+    entityName: current.entityName,
+    taxState: fields.taxState === undefined ? current.taxState : fields.taxState,
+    filingStatus:
+      fields.filingStatus === undefined ? current.filingStatus : fields.filingStatus,
+    stateFlatRate:
+      fields.stateFlatRate === undefined ? current.stateFlatRate : fields.stateFlatRate,
+    notes: current.notes,
+    members: current.members,
+  });
 }

@@ -15,7 +15,7 @@ interface WithholdingCheckupSummary {
     status: 'refund' | 'owe' | 'balanced';
 }
 
-type LoadState = 'loading' | 'ready' | 'setup';
+type LoadState = 'loading' | 'ready' | 'setup' | 'hidden';
 
 export default function TaxesHubPage() {
     const [state, setState] = useState<LoadState>('loading');
@@ -25,9 +25,12 @@ export default function TaxesHubPage() {
         let cancelled = false;
         fetch('/api/tools/withholding')
             .then(res => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-            .then((data: { checkup?: WithholdingCheckupSummary }) => {
+            .then((data: { applicable?: boolean; checkup?: WithholdingCheckupSummary }) => {
                 if (cancelled) return;
-                if (data.checkup?.hasData) {
+                // Books that don't file a personal 1040 skip the withholding widget.
+                if (data.applicable === false) {
+                    setState('hidden');
+                } else if (data.checkup?.hasData) {
                     setCheckup(data.checkup);
                     setState('ready');
                 } else {

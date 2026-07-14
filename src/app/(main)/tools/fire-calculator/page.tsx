@@ -35,6 +35,7 @@ import MonteCarloChart from './MonteCarloChart';
 import AssumptionsPanel from './AssumptionsPanel';
 import { FiAgeHistogram, SensitivityRow } from './FiInsights';
 import { RelatedLinks } from '@/components/RelatedLinks';
+import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 
 /* ------------------------------------------------------------------ */
 /* Debounce hook                                                       */
@@ -651,6 +652,8 @@ export default function FireCalculatorPage() {
           All values in today&apos;s dollars.
         </p>
       </header>
+
+      <PersonalToolNotice />
 
       {/* Loading State */}
       {isLoading && (

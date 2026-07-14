@@ -329,18 +329,33 @@ export default function TaxEstimatorPage() {
       coveredByPlan: boolean;
       spouseCovered: boolean;
     }>) => {
+      // Filing status, state, and flat rate belong to the active book's
+      // entity profile — editing them on one book never affects another.
+      const taxFields: Record<string, unknown> = {};
+      if (patch.filingStatus) taxFields.filingStatus = patch.filingStatus;
+      if (patch.state) taxFields.taxState = patch.state;
+      if (patch.flatRate !== undefined) taxFields.stateFlatRate = patch.flatRate;
+      if (Object.keys(taxFields).length > 0) {
+        fetch('/api/entity/tax', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(taxFields),
+        }).catch(() => {});
+      }
+
+      // Personal details stay user-scoped (they feed synthesized household
+      // profiles; persisted profiles manage these in Settings instead).
       const preferences: Record<string, unknown> = {};
-      if (patch.filingStatus) preferences.tax_filing_status = patch.filingStatus;
-      if (patch.state) preferences.tax_state = patch.state;
-      if (patch.flatRate !== undefined) preferences.tax_state_flat_rate = patch.flatRate;
       if (patch.spouseBirthday !== undefined) preferences.spouse_birthday = patch.spouseBirthday || null;
       if (patch.coveredByPlan !== undefined) preferences.tax_covered_by_employer_plan = patch.coveredByPlan;
       if (patch.spouseCovered !== undefined) preferences.tax_spouse_covered_by_employer_plan = patch.spouseCovered;
-      fetch('/api/user/preferences', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences }),
-      }).catch(() => {});
+      if (Object.keys(preferences).length > 0) {
+        fetch('/api/user/preferences', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ preferences }),
+        }).catch(() => {});
+      }
     },
     [],
   );
@@ -553,12 +568,19 @@ export default function TaxEstimatorPage() {
     return { revenue: rev, expenses: exp, net };
   }, [estimate, showPersonalEstimate]);
 
-  const settingsSummary = [
-    String(year),
-    FILING_STATUS_LABELS[filingStatus],
-    stateCode === 'OTHER' ? `Flat ${(stateFlatRate * 100).toFixed(1)}%` : stateCode,
-    annualize && isCurrentYear ? 'Annualized' : null,
-  ].filter(Boolean).join(' · ');
+  const settingsSummary = (showPersonalEstimate
+    ? [
+        String(year),
+        FILING_STATUS_LABELS[filingStatus],
+        stateCode === 'OTHER' ? `Flat ${(stateFlatRate * 100).toFixed(1)}%` : stateCode,
+        annualize && isCurrentYear ? 'Annualized' : null,
+      ]
+    : [
+        String(year),
+        BUSINESS_ENTITY_LABELS[entityType] ?? entityType,
+        annualize && isCurrentYear ? 'Annualized' : null,
+      ]
+  ).filter(Boolean).join(' · ');
 
   /* ---- Render ---- */
 
@@ -607,36 +629,40 @@ export default function TaxEstimatorPage() {
                 <option key={y} value={y}>Tax year {y}</option>
               ))}
             </select>
-            <select
-              value={filingStatus}
-              onChange={e => {
-                const fs = e.target.value as FilingStatus;
-                setFilingStatus(fs);
-                savePreferences({ filingStatus: fs });
-              }}
-              aria-label="Filing status"
-              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
-            >
-              {FILING_STATUSES.map(fs => (
-                <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
-              ))}
-            </select>
-            <select
-              value={stateCode}
-              onChange={e => {
-                setStateCode(e.target.value);
-                savePreferences({ state: e.target.value });
-              }}
-              aria-label="State"
-              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
-            >
-              {STATE_OPTIONS.map(s => (
-                <option key={s.code} value={s.code}>{s.name}</option>
-              ))}
-            </select>
+            {showPersonalEstimate && (
+              <select
+                value={filingStatus}
+                onChange={e => {
+                  const fs = e.target.value as FilingStatus;
+                  setFilingStatus(fs);
+                  savePreferences({ filingStatus: fs });
+                }}
+                aria-label="Filing status"
+                className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              >
+                {FILING_STATUSES.map(fs => (
+                  <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
+                ))}
+              </select>
+            )}
+            {showPersonalEstimate && (
+              <select
+                value={stateCode}
+                onChange={e => {
+                  setStateCode(e.target.value);
+                  savePreferences({ state: e.target.value });
+                }}
+                aria-label="State"
+                className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              >
+                {STATE_OPTIONS.map(s => (
+                  <option key={s.code} value={s.code}>{s.name}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {stateCode === 'OTHER' && (
+            {showPersonalEstimate && stateCode === 'OTHER' && (
               <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
                 Flat rate %
                 <input
@@ -666,22 +692,41 @@ export default function TaxEstimatorPage() {
                 Annualize YTD
               </label>
             )}
-            <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
-              Filers 65+
-              <select
-                value={filersAge65Plus}
-                onChange={e => setFilersAge65Plus(parseInt(e.target.value, 10))}
-                className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
-              >
-                <option value={0}>0</option>
-                <option value={1}>1</option>
-                <option value={2}>2</option>
-              </select>
-            </label>
+            {showPersonalEstimate && (
+              <label className="flex items-center gap-1.5 text-xs text-foreground-secondary">
+                Filers 65+
+                <select
+                  value={filersAge65Plus}
+                  onChange={e => setFilersAge65Plus(parseInt(e.target.value, 10))}
+                  className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                >
+                  <option value={0}>0</option>
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                </select>
+              </label>
+            )}
           </div>
         </div>
 
+        {/* Business entities don't file a personal 1040 on this book */}
+        {!showPersonalEstimate && (
+          <div className="mt-3 pt-3 border-t border-border/60 text-xs text-foreground-muted">
+            This book is a{' '}
+            <span className="text-foreground font-medium">
+              {BUSINESS_ENTITY_LABELS[entityType] ?? entityType}
+            </span>
+            {estimate?.entity?.entityName ? <> ({estimate.entity.entityName})</> : null} — personal
+            filing settings don&apos;t apply. The estimate below reflects the organization&apos;s
+            mapped book activity. Entity details are managed in{' '}
+            <Link href="/settings" className="text-primary hover:text-primary-hover underline underline-offset-2">
+              Settings → Household &amp; entity
+            </Link>.
+          </div>
+        )}
+
         {/* Retirement plan coverage & spouse (drives IRA deduction phase-outs) */}
+        {showPersonalEstimate && (
         <div className="mt-3 pt-3 border-t border-border/60 flex flex-wrap items-center gap-x-4 gap-y-2">
           {estimate?.entity && !estimate.entity.synthesized ? (
             <span className="text-xs text-foreground-muted">
@@ -746,6 +791,7 @@ export default function TaxEstimatorPage() {
           </>
           )}
         </div>
+        )}
       </CollapsibleConfigSection>
 
       {/* Setup guide */}

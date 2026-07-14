@@ -13,6 +13,7 @@ import { generateScheduleC } from '@/lib/business/business-reports';
 import { getMappings } from '@/lib/business/schedule-c-mappings';
 import { generateCharitableGiving } from '@/lib/reports/charitable-giving';
 import { loadWithholdingCheckup } from '@/lib/withholding';
+import { getEntityProfile } from '@/lib/services/entity.service';
 import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/tax/types';
 import {
   contributionSummaryToCSV,
@@ -123,11 +124,19 @@ export async function GET(request: NextRequest) {
     }
 
     // --- Withholding checkup (supported engine years only) -----------------
-    if (isSupportedTaxYear(year)) {
+    // Only for books filing a personal 1040; skipped for business entities.
+    const entity = await getEntityProfile(roleResult.bookGuid, user.id);
+    const filesPersonal1040 =
+      entity.entityType === 'household' ||
+      entity.entityType === 'sole_prop' ||
+      entity.entityType === 'llc_single';
+    if (isSupportedTaxYear(year) && filesPersonal1040) {
       try {
         const filingStatusPref = await getPreference<string>(user.id, 'tax_filing_status', 'single');
-        const filingStatus: FilingStatus = (FILING_STATUSES as readonly string[]).includes(filingStatusPref)
-          ? (filingStatusPref as FilingStatus)
+        // Book profile → user preference → default
+        const filingStatusRaw = entity.filingStatus ?? filingStatusPref;
+        const filingStatus: FilingStatus = (FILING_STATUSES as readonly string[]).includes(filingStatusRaw)
+          ? (filingStatusRaw as FilingStatus)
           : 'single';
         const birthday = await getPreference<string | null>(user.id, 'birthday', null);
         const withholding = await loadWithholdingCheckup({

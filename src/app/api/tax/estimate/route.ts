@@ -39,14 +39,21 @@ export async function GET(request: NextRequest) {
       getPreference<boolean>(userId, 'tax_spouse_covered_by_employer_plan', false),
     ]);
 
-    const filingStatus: FilingStatus = (FILING_STATUSES as readonly string[]).includes(filingStatusPref)
-      ? (filingStatusPref as FilingStatus)
-      : 'single';
-
     // The entity profile is the canonical household/business description for
     // the active book (synthesized from preferences when not yet persisted).
     const bookGuid = await getActiveBookGuid();
     const entity = await getEntityProfile(bookGuid, userId);
+
+    // Filing status, state, and flat rate are book-scoped (entity profile);
+    // user preferences remain the fallback for profiles saved before these
+    // fields existed, so pre-existing household setups keep their values.
+    const filingStatusRaw = entity.filingStatus ?? filingStatusPref;
+    const filingStatus: FilingStatus = (FILING_STATUSES as readonly string[]).includes(filingStatusRaw)
+      ? (filingStatusRaw as FilingStatus)
+      : 'single';
+    const effectiveState = entity.taxState || statePref || 'OTHER';
+    const effectiveFlatRate =
+      entity.stateFlatRate ?? (typeof flatRatePref === 'number' ? flatRatePref : 0);
     const selfMember = entity.members.find(m => m.role === 'self') ?? null;
     const spouseMember = entity.members.find(m => m.role === 'spouse') ?? null;
 
@@ -90,8 +97,8 @@ export async function GET(request: NextRequest) {
       bookData,
       preferences: {
         filingStatus,
-        state: statePref || 'OTHER',
-        stateFlatRate: typeof flatRatePref === 'number' ? flatRatePref : 0,
+        state: effectiveState,
+        stateFlatRate: effectiveFlatRate,
         birthday: effectiveBirthday,
         ageAtYearEnd,
         spouseBirthday: effectiveSpouseBirthday,

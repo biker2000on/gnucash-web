@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
+import { BookFeaturesSection } from '@/components/settings/BookFeaturesSection';
 import { BackupsSection } from '@/components/settings/BackupsSection';
 import { TwoFactorSection } from '@/components/settings/TwoFactorSection';
 import { ApiTokensSection } from '@/components/settings/ApiTokensSection';
@@ -824,6 +825,9 @@ export default function SettingsPage() {
           </div>
         )}
       </CollapsibleConfigSection>
+
+      {/* Feature modules (business/nonprofit books only; renders null for household) */}
+      <BookFeaturesSection />
 
       <CollapsibleConfigSection
         title="IRS Contribution Limits"

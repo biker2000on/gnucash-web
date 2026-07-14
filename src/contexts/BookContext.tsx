@@ -7,6 +7,8 @@ interface Book {
     name: string;
     description?: string | null;
     accountCount?: number;
+    /** The current user's role on this book: readonly | edit | admin. */
+    role?: string;
 }
 
 interface BookContextType {

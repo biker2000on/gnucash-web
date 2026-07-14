@@ -765,6 +765,101 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_entity_members_book ON gnucash_web_entity_members(book_guid);
     `;
 
+    // Per-book tax profile fields: filing status and flat state rate move onto
+    // the entity profile so the tax estimator follows the active book instead
+    // of user-global preferences (which remain the synthesized fallback).
+    const entityProfilesTaxColumnsDDL = `
+        ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS filing_status VARCHAR(10);
+        ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS state_flat_rate DOUBLE PRECISION;
+    `;
+
+    // Per-book feature-module overrides. Absence of a row means "use the
+    // default for the book's entity type" (see src/lib/book-features.ts).
+    const bookFeaturesTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_book_features (
+            book_guid VARCHAR(32) NOT NULL,
+            feature_key VARCHAR(50) NOT NULL,
+            enabled BOOLEAN NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (book_guid, feature_key)
+        );
+    `;
+
+    // Membership management (501c3 clubs/charities): members, dues levels with
+    // renewal policy, payments (with paid-through periods), meetings, and
+    // attendance. GnuCash rows are referenced by loose guid columns only.
+    const membershipTablesDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_membership_types (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+            renewal_mode VARCHAR(20) NOT NULL DEFAULT 'calendar_year',
+            grace_days INTEGER NOT NULL DEFAULT 0,
+            active BOOLEAN NOT NULL DEFAULT true,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_membership_types_book ON gnucash_web_membership_types(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_members (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            email VARCHAR(255),
+            phone VARCHAR(50),
+            address TEXT,
+            membership_type_id INTEGER,
+            joined_date DATE,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            notes TEXT,
+            customer_guid VARCHAR(32),
+            external_ref VARCHAR(100),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_members_book ON gnucash_web_members(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_membership_payments (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            member_id INTEGER NOT NULL REFERENCES gnucash_web_members(id) ON DELETE CASCADE,
+            membership_type_id INTEGER,
+            amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+            paid_date DATE NOT NULL,
+            period_start DATE NOT NULL,
+            period_end DATE,
+            method VARCHAR(30) NOT NULL DEFAULT 'cash',
+            reference VARCHAR(100),
+            txn_guid VARCHAR(32),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_membership_payments_member ON gnucash_web_membership_payments(member_id);
+        CREATE INDEX IF NOT EXISTS idx_membership_payments_book ON gnucash_web_membership_payments(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_meetings (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            meeting_date DATE NOT NULL,
+            location VARCHAR(255),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_meetings_book ON gnucash_web_meetings(book_guid, meeting_date DESC);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_meeting_attendance (
+            meeting_id INTEGER NOT NULL REFERENCES gnucash_web_meetings(id) ON DELETE CASCADE,
+            member_id INTEGER NOT NULL REFERENCES gnucash_web_members(id) ON DELETE CASCADE,
+            status VARCHAR(20) NOT NULL DEFAULT 'present',
+            notes VARCHAR(255),
+            PRIMARY KEY (meeting_id, member_id)
+        );
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -853,6 +948,9 @@ async function createExtensionTables() {
         await query(tagsTableDDL);
         await query(taxMappingsTableDDL);
         await query(entityProfilesTableDDL);
+        await query(entityProfilesTaxColumnsDDL);
+        await query(bookFeaturesTableDDL);
+        await query(membershipTablesDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

@@ -1,6 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { FEATURES } from '@/lib/feature-registry';
+
+// Hrefs of personal-finance tools (FIRE, withholding, …) that are hidden
+// when the active book is a business/nonprofit.
+const PERSONAL_ONLY_HREFS = new Set(FEATURES.filter(f => f.personalOnly).map(f => f.href));
 
 function ToolIcon({ icon }: { icon: string }) {
     switch (icon) {
@@ -142,6 +148,21 @@ function ToolCard({ title, description, icon, href }: ToolCardProps) {
 }
 
 export default function ToolsPage() {
+    // Business/nonprofit books hide the personal-only tools.
+    const [isBusinessBook, setIsBusinessBook] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/entity')
+            .then(res => (res.ok ? res.json() : null))
+            .then(profile => {
+                if (!cancelled && profile?.entityType) {
+                    setIsBusinessBook(profile.entityType !== 'household');
+                }
+            })
+            .catch(() => { /* show everything on failure */ });
+        return () => { cancelled = true; };
+    }, []);
+
     const tools = [
         {
             title: 'Cash Flow Forecast',
@@ -247,6 +268,10 @@ export default function ToolsPage() {
         },
     ];
 
+    const visibleTools = isBusinessBook
+        ? tools.filter(tool => !PERSONAL_ONLY_HREFS.has(tool.href.split('#')[0]))
+        : tools;
+
     return (
         <div className="space-y-8">
             <header>
@@ -258,7 +283,7 @@ export default function ToolsPage() {
 
             <section className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {tools.map(tool => (
+                    {visibleTools.map(tool => (
                         <ToolCard
                             key={tool.href}
                             title={tool.title}

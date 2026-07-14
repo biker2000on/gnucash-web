@@ -9,6 +9,7 @@ import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
 import { FEATURES, featureById, type FeatureDomain } from '@/lib/feature-registry';
+import { isFeatureIdEnabled, type ResolvedBookFeatures } from '@/lib/book-features';
 
 // ---------------------------------------------------------------------------
 // Inline SVG icon components (no external icon library)
@@ -299,24 +300,36 @@ interface NavItem {
 // Sidebar children derive from the feature registry (single source of truth).
 // Task-oriented domains: Home, Money, Budgets & Goals, Investments, Taxes,
 // Planning, Reports, Business, Settings.
-function registryNavChildren(domain: FeatureDomain): Array<{ name: string; href: string }> {
-    return FEATURES
-        .filter(f => f.domain === domain && f.nav && !f.mobileOnly)
-        .map(f => ({ name: f.navTitle ?? f.title, href: f.href }));
+function registryNavFeatures(domain: FeatureDomain) {
+    return FEATURES.filter(f => f.domain === domain && f.nav && !f.mobileOnly);
 }
 
+function registryNavChildren(domain: FeatureDomain): Array<{ name: string; href: string }> {
+    return registryNavFeatures(domain).map(f => ({ name: f.navTitle ?? f.title, href: f.href }));
+}
+
+// Hrefs of personal-finance features (FIRE, withholding, …) that are hidden
+// from the sidebar when the active book is a business/nonprofit.
+const PERSONAL_ONLY_HREFS = new Set(FEATURES.filter(f => f.personalOnly).map(f => f.href));
+
 // Shown only when the active book's entity profile is a business type.
-const businessNavItem: NavItem = {
-    name: 'Business',
-    href: '/business',
-    icon: 'Briefcase',
-    children: [
-        ...registryNavChildren('business'),
-        // Schedule C/E live in the Taxes domain but stay reachable here too
-        { name: 'Schedule C', href: '/business/reports/schedule-c' },
-        { name: 'Schedule E', href: '/business/reports/schedule-e' },
-    ],
-};
+// Children are filtered by the book's enabled feature modules (invoicing,
+// membership, …); a null features map means "not loaded yet — show all".
+function buildBusinessNavItem(features: ResolvedBookFeatures | null): NavItem {
+    return {
+        name: 'Business',
+        href: '/business',
+        icon: 'Briefcase',
+        children: [
+            ...registryNavFeatures('business')
+                .filter(f => features === null || isFeatureIdEnabled(f.id, features))
+                .map(f => ({ name: f.navTitle ?? f.title, href: f.href })),
+            // Schedule C/E live in the Taxes domain but stay reachable here too
+            { name: 'Schedule C', href: '/business/reports/schedule-c' },
+            { name: 'Schedule E', href: '/business/reports/schedule-e' },
+        ],
+    };
+}
 
 const navItems: NavItem[] = [
     {
@@ -371,11 +384,22 @@ export default function Layout({ children }: { children: ReactNode }) {
     // books never see AR/AP features. Re-checked when the book changes (the
     // BookSwitcher triggers a full navigation, so mount-time fetch suffices).
     const [isBusinessBook, setIsBusinessBook] = useState(false);
+    // Feature modules enabled on the active book (invoicing, membership, …);
+    // null until loaded. Filters the Business nav group's children.
+    const [bookFeatures, setBookFeatures] = useState<ResolvedBookFeatures | null>(null);
     // Household books can opt in to inventory via Settings (inventory_settings
     // tool config); business books always have it inside the Business group.
     const [householdInventory, setHouseholdInventory] = useState(false);
     useEffect(() => {
         let cancelled = false;
+        const fetchBookFeatures = () => {
+            fetch('/api/book-features')
+                .then(res => (res.ok ? res.json() : null))
+                .then(data => {
+                    if (!cancelled && data?.features) setBookFeatures(data.features);
+                })
+                .catch(() => { /* show all business children on failure */ });
+        };
         const refresh = () => {
             fetch('/api/entity')
                 .then(res => (res.ok ? res.json() : null))
@@ -385,6 +409,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                     }
                 })
                 .catch(() => { /* stay hidden on failure */ });
+            fetchBookFeatures();
             fetch('/api/inventory/settings')
                 .then(res => (res.ok ? res.json() : null))
                 .then(s => {
@@ -395,6 +420,9 @@ export default function Layout({ children }: { children: ReactNode }) {
         refresh();
         window.addEventListener('inventory-settings-updated', refresh);
 
+        // React immediately when a module is toggled on the settings page.
+        window.addEventListener('book-features-updated', fetchBookFeatures);
+
         // React immediately when the entity type is changed on the settings
         // page — no refresh needed to reveal/hide the Business nav group.
         // (Book switches do a full page reload, which re-runs the fetch above.)
@@ -402,11 +430,14 @@ export default function Layout({ children }: { children: ReactNode }) {
             const type = (e as CustomEvent<{ entityType?: string }>).detail?.entityType;
             if (type) setIsBusinessBook(type !== 'household');
             else refresh();
+            // The entity type drives the module defaults, so re-resolve them.
+            fetchBookFeatures();
         };
         window.addEventListener('entity-updated', onEntityUpdated);
         return () => {
             cancelled = true;
             window.removeEventListener('entity-updated', onEntityUpdated);
+            window.removeEventListener('book-features-updated', fetchBookFeatures);
             window.removeEventListener('inventory-settings-updated', refresh);
         };
     }, []);
@@ -430,12 +461,24 @@ export default function Layout({ children }: { children: ReactNode }) {
     }, []);
 
     const effectiveNavItems = (() => {
+        // Business books hide personal-finance children (FIRE, withholding, …)
+        const stripPersonalOnly = (items: NavItem[]): NavItem[] =>
+            !isBusinessBook
+                ? items
+                : items.map(item =>
+                    item.children
+                        ? { ...item, children: item.children.filter(c => !PERSONAL_ONLY_HREFS.has(c.href)) }
+                        : item,
+                );
+
         // Pinned favorites float to the top, just under Home
         const withPins = (items: NavItem[]): NavItem[] => {
             if (pinnedFeatureIds.length === 0) return items;
             const children = pinnedFeatureIds
                 .map(id => featureById(id))
                 .filter((f): f is NonNullable<ReturnType<typeof featureById>> => Boolean(f))
+                .filter(f => (!isBusinessBook || !f.personalOnly)
+                    && (bookFeatures === null || isFeatureIdEnabled(f.id, bookFeatures)))
                 .map(f => ({ name: f.navTitle ?? f.title, href: f.href }));
             if (children.length === 0) return items;
             const pinnedItem: NavItem = { name: 'Pinned', href: children[0].href, icon: 'Star', children };
@@ -448,8 +491,8 @@ export default function Layout({ children }: { children: ReactNode }) {
             return idx >= 0 ? idx : items.length;
         };
         if (isBusinessBook) {
-            const items = [...navItems];
-            items.splice(settingsAnchor(items), 0, businessNavItem);
+            const items = stripPersonalOnly([...navItems]);
+            items.splice(settingsAnchor(items), 0, buildBusinessNavItem(bookFeatures));
             return withPins(items);
         }
         if (householdInventory) {

@@ -38,7 +38,8 @@ export async function PUT(request: Request) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const body = await request.json();
-    const { entityType, entityName, taxState, notes, members } = body ?? {};
+    const { entityType, entityName, taxState, filingStatus, stateFlatRate, notes, members } =
+      body ?? {};
 
     if (!ENTITY_TYPES.includes(entityType as EntityType)) {
       return NextResponse.json(
@@ -62,6 +63,10 @@ export async function PUT(request: Request) {
       entityType: entityType as EntityType,
       entityName: typeof entityName === 'string' ? entityName : null,
       taxState: typeof taxState === 'string' ? taxState : null,
+      // Omitted = keep stored values (the tax estimator manages these inline)
+      filingStatus: typeof filingStatus === 'string' ? filingStatus : undefined,
+      stateFlatRate:
+        typeof stateFlatRate === 'number' && isFinite(stateFlatRate) ? stateFlatRate : undefined,
       notes: typeof notes === 'string' ? notes : null,
       members: members.map((m: Record<string, unknown>, i: number) => ({
         role: m.role as EntityMemberRole,

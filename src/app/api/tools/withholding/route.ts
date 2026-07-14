@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
+import { getEntityProfile } from '@/lib/services/entity.service';
 import { loadWithholdingCheckup } from '@/lib/withholding';
 import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/tax/types';
 
@@ -36,15 +37,32 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // A W-4 withholding checkup only makes sense for books that file a
+    // personal 1040 (households and Schedule-C pass-throughs).
+    const entity = await getEntityProfile(bookGuid, user.id);
+    const filesPersonal1040 =
+      entity.entityType === 'household' ||
+      entity.entityType === 'sole_prop' ||
+      entity.entityType === 'llc_single';
+    if (!filesPersonal1040) {
+      return NextResponse.json({
+        applicable: false,
+        entityType: entity.entityType,
+        entityName: entity.entityName,
+      });
+    }
+
     const filingStatusPref = await getPreference<string>(user.id, 'tax_filing_status', 'single');
     const birthday = await getPreference<string | null>(user.id, 'birthday', null);
 
+    // Book profile → user preference → default (book-scoped like the estimator)
+    const filingStatusFallback = entity.filingStatus ?? filingStatusPref;
     const filingStatusParam = searchParams.get('filingStatus');
     const filingStatus: FilingStatus =
       filingStatusParam && (FILING_STATUSES as readonly string[]).includes(filingStatusParam)
         ? (filingStatusParam as FilingStatus)
-        : (FILING_STATUSES as readonly string[]).includes(filingStatusPref)
-          ? (filingStatusPref as FilingStatus)
+        : (FILING_STATUSES as readonly string[]).includes(filingStatusFallback)
+          ? (filingStatusFallback as FilingStatus)
           : 'single';
 
     const filersAge65Plus = Math.max(

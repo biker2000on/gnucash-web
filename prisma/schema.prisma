@@ -891,13 +891,15 @@ model gnucash_web_amazon_orders {
 // Entity/household profile per book: consumed by the tax estimator and
 // contribution tracking. Kept in sync with the raw DDL in src/lib/db-init.ts.
 model gnucash_web_entity_profiles {
-  book_guid   String   @id @db.VarChar(32)
-  entity_type String   @default("household") @db.VarChar(20)
-  entity_name String?  @db.VarChar(255)
-  tax_state   String?  @db.VarChar(10)
-  notes       String?  @db.Text
-  created_at  DateTime @default(now())
-  updated_at  DateTime @default(now())
+  book_guid       String   @id @db.VarChar(32)
+  entity_type     String   @default("household") @db.VarChar(20)
+  entity_name     String?  @db.VarChar(255)
+  tax_state       String?  @db.VarChar(10)
+  filing_status   String?  @db.VarChar(10)
+  state_flat_rate Float?
+  notes           String?  @db.Text
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now())
 
   @@map("gnucash_web_entity_profiles")
 }
@@ -914,4 +916,113 @@ model gnucash_web_entity_members {
 
   @@index([book_guid], map: "idx_entity_members_book")
   @@map("gnucash_web_entity_members")
+}
+
+// Per-book feature-module overrides on top of entity-type defaults
+// (src/lib/book-features.ts). Absence of a row = use the default.
+model gnucash_web_book_features {
+  book_guid   String   @db.VarChar(32)
+  feature_key String   @db.VarChar(50)
+  enabled     Boolean
+  updated_at  DateTime @default(now())
+
+  @@id([book_guid, feature_key])
+  @@map("gnucash_web_book_features")
+}
+
+// Membership management for clubs/charities (501c3 books): members, dues
+// levels with renewal policy, payments, meetings, and attendance.
+model gnucash_web_membership_types {
+  id           Int      @id @default(autoincrement())
+  book_guid    String   @db.VarChar(32)
+  name         String   @db.VarChar(255)
+  amount       Decimal  @default(0) @db.Decimal(12, 2)
+  /// calendar_year | anniversary | lifetime
+  renewal_mode String   @default("calendar_year") @db.VarChar(20)
+  grace_days   Int      @default(0)
+  active       Boolean  @default(true)
+  sort_order   Int      @default(0)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @default(now())
+
+  @@index([book_guid], map: "idx_membership_types_book")
+  @@map("gnucash_web_membership_types")
+}
+
+model gnucash_web_members {
+  id                 Int       @id @default(autoincrement())
+  book_guid          String    @db.VarChar(32)
+  name               String    @db.VarChar(255)
+  email              String?   @db.VarChar(255)
+  phone              String?   @db.VarChar(50)
+  address            String?   @db.Text
+  membership_type_id Int?
+  joined_date        DateTime? @db.Date
+  /// active | lapsed | resigned | honorary
+  status             String    @default("active") @db.VarChar(20)
+  notes              String?   @db.Text
+  customer_guid      String?   @db.VarChar(32)
+  external_ref       String?   @db.VarChar(100)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @default(now())
+
+  payments   gnucash_web_membership_payments[]
+  attendance gnucash_web_meeting_attendance[]
+
+  @@index([book_guid], map: "idx_members_book")
+  @@map("gnucash_web_members")
+}
+
+model gnucash_web_membership_payments {
+  id                 Int       @id @default(autoincrement())
+  book_guid          String    @db.VarChar(32)
+  member_id          Int
+  membership_type_id Int?
+  amount             Decimal   @default(0) @db.Decimal(12, 2)
+  paid_date          DateTime  @db.Date
+  period_start       DateTime  @db.Date
+  /// NULL = lifetime membership
+  period_end         DateTime? @db.Date
+  /// cash | check | card | zeffy | other
+  method             String    @default("cash") @db.VarChar(30)
+  reference          String?   @db.VarChar(100)
+  txn_guid           String?   @db.VarChar(32)
+  notes              String?   @db.Text
+  created_at         DateTime  @default(now())
+
+  member gnucash_web_members @relation(fields: [member_id], references: [id], onDelete: Cascade)
+
+  @@index([member_id], map: "idx_membership_payments_member")
+  @@index([book_guid], map: "idx_membership_payments_book")
+  @@map("gnucash_web_membership_payments")
+}
+
+model gnucash_web_meetings {
+  id           Int      @id @default(autoincrement())
+  book_guid    String   @db.VarChar(32)
+  title        String   @db.VarChar(255)
+  meeting_date DateTime @db.Date
+  location     String?  @db.VarChar(255)
+  notes        String?  @db.Text
+  created_at   DateTime @default(now())
+  updated_at   DateTime @default(now())
+
+  attendance gnucash_web_meeting_attendance[]
+
+  @@index([book_guid, meeting_date(sort: Desc)], map: "idx_meetings_book")
+  @@map("gnucash_web_meetings")
+}
+
+model gnucash_web_meeting_attendance {
+  meeting_id Int
+  member_id  Int
+  /// present | absent | excused
+  status     String  @default("present") @db.VarChar(20)
+  notes      String? @db.VarChar(255)
+
+  meeting gnucash_web_meetings @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  member  gnucash_web_members  @relation(fields: [member_id], references: [id], onDelete: Cascade)
+
+  @@id([meeting_id, member_id])
+  @@map("gnucash_web_meeting_attendance")
 }

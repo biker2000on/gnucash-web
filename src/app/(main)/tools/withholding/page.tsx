@@ -16,6 +16,24 @@ import WithholdingHeadline from './WithholdingHeadline';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
+
+/** GET /api/tools/withholding shape when the book doesn't file a personal 1040. */
+interface NotApplicableResponse {
+  applicable: false;
+  entityType: string;
+  entityName: string | null;
+}
+
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  household: 'household',
+  sole_prop: 'sole proprietorship',
+  llc_single: 'single-member LLC',
+  llc_partnership: 'partnership LLC',
+  s_corp: 'S-Corp',
+  c_corp: 'C-Corp',
+  nonprofit_501c3: '501(c)(3) nonprofit',
+};
+
 const PAY_FREQUENCIES: Array<{ value: number; label: string }> = [
   { value: 52, label: 'Weekly (52)' },
   { value: 26, label: 'Biweekly (26)' },
@@ -63,6 +81,7 @@ export default function WithholdingCheckupPage() {
   const [payFrequency, setPayFrequency] = useState<number | 'auto'>('auto');
 
   const [data, setData] = useState<WithholdingCheckupPayload | null>(null);
+  const [notApplicable, setNotApplicable] = useState<NotApplicableResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -88,13 +107,19 @@ export default function WithholdingCheckupPage() {
           const body = await res.json().catch(() => null);
           throw new Error(body?.error ?? 'Failed to load withholding checkup');
         }
-        return (await res.json()) as WithholdingCheckupPayload;
+        return (await res.json()) as WithholdingCheckupPayload | NotApplicableResponse;
       })
       .then(payload => {
         if (cancelled) return;
-        setData(payload);
-        if (!prefsLoaded) {
-          setFilingStatus(payload.meta.filingStatus);
+        // Books that don't file a personal 1040 get no checkup payload.
+        if ('applicable' in payload && payload.applicable === false) {
+          setNotApplicable(payload);
+          return;
+        }
+        const checkupPayload = payload as WithholdingCheckupPayload;
+        setData(checkupPayload);
+        if (!prefsLoaded && checkupPayload.meta?.filingStatus) {
+          setFilingStatus(checkupPayload.meta.filingStatus);
           setPrefsLoaded(true);
         }
       })
@@ -124,6 +149,36 @@ export default function WithholdingCheckupPage() {
     }
     return null;
   }, [checkup]);
+
+  if (notApplicable) {
+    const entityLabel = ENTITY_TYPE_LABELS[notApplicable.entityType] ?? notApplicable.entityType;
+    return (
+      <div className="space-y-6 max-w-[1100px]">
+        <header>
+          <h1 className="text-3xl font-bold text-foreground">Withholding Checkup</h1>
+          <p className="text-foreground-muted mt-1 text-sm">
+            Projects year-end federal tax from year-to-date book data and compares it against
+            what you have withheld.
+          </p>
+        </header>
+        <div className="rounded-lg border border-border bg-surface/30 p-6 space-y-3">
+          <p className="text-sm text-foreground-secondary">
+            Withholding checkup applies to books that file a personal 1040. This book is a{' '}
+            {entityLabel}
+            {notApplicable.entityName ? <> ({notApplicable.entityName})</> : null}, so W-4
+            withholding and per-paycheck adjustments don&apos;t apply here.
+          </p>
+          <Link
+            href="/tools/tax-estimator"
+            className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary-hover transition-colors"
+          >
+            Go to the Tax Estimator
+            <span aria-hidden>&rarr;</span>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-[1100px]">
