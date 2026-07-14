@@ -15,6 +15,8 @@ interface ReportViewerProps {
     error?: string | null;
     children: ReactNode;
     showCompare?: boolean;
+    /** Show the Accrual/Cash basis select in the filter bar. */
+    showBasis?: boolean;
     reportData?: ReportData;
 }
 
@@ -27,6 +29,7 @@ export function ReportViewer({
     error,
     children,
     showCompare = true,
+    showBasis = false,
     reportData,
 }: ReportViewerProps) {
     const reportContentRef = useRef<HTMLDivElement>(null);
@@ -163,6 +166,7 @@ export function ReportViewer({
                 filters={filters}
                 onChange={onFilterChange}
                 showCompare={showCompare}
+                showBasis={showBasis}
             />
 
             {/* Content */}

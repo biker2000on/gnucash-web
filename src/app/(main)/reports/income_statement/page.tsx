@@ -31,6 +31,7 @@ export default function IncomeStatementPage() {
             if (filters.endDate) params.set('endDate', filters.endDate);
             if (filters.compareToPrevious) params.set('compareToPrevious', 'true');
             if (filters.showZeroBalances) params.set('showZeroBalances', 'true');
+            params.set('basis', filters.basis === 'cash' ? 'cash' : 'accrual');
 
             const res = await fetch(`/api/reports/income-statement?${params}`);
             if (!res.ok) {
@@ -58,6 +59,7 @@ export default function IncomeStatementPage() {
             isLoading={isLoading}
             error={error}
             showCompare={true}
+            showBasis={true}
             reportData={reportData ?? undefined}
         >
             {reportData && (
@@ -84,6 +86,15 @@ export default function IncomeStatementPage() {
                                 )}
                             </div>
                         </div>
+                    </div>
+
+                    {/* Basis footnote (included in print output) */}
+                    <div className="px-4 py-3 border-t border-border/50">
+                        <p className="text-xs text-foreground-muted">
+                            {filters.basis === 'cash'
+                                ? 'Basis: Cash — invoice and bill postings (transactions touching Accounts Receivable/Payable) are excluded; invoice payments are recognized instead, allocated to income and expense accounts pro-rata by the paid invoice’s line totals.'
+                                : 'Basis: Accrual — income and expenses are recognized when posted, including invoice and bill postings.'}
+                        </p>
                     </div>
                 </>
             )}

@@ -19,7 +19,10 @@ export type BookFeatureKey =
     | 'inventory'
     | 'sales_tax'
     | 'membership'
-    | 'owner_planning';
+    | 'owner_planning'
+    | 'packages'
+    | 'funds'
+    | 'documents';
 
 export interface BookFeatureModule {
     key: BookFeatureKey;
@@ -36,6 +39,9 @@ export const BOOK_FEATURE_MODULES: BookFeatureModule[] = [
     { key: 'sales_tax', label: 'Sales Tax', description: 'Tax tables and the collected-tax filing report.' },
     { key: 'membership', label: 'Membership', description: 'Members, dues with renewal tracking, meetings, and attendance.' },
     { key: 'owner_planning', label: 'Owner Tax Planning', description: 'S-corp election analyzer and self-employed retirement planning.' },
+    { key: 'packages', label: 'Prepaid Packages', description: 'Sell session packs as deferred revenue and draw them down per visit.' },
+    { key: 'funds', label: 'Restricted Funds', description: 'Fund accounting: tag accounts by fund and report restricted vs unrestricted.' },
+    { key: 'documents', label: 'Entity Documents', description: 'Formation docs, EIN letter, elections, insurance certs with expiry reminders.' },
 ];
 
 export const BOOK_FEATURE_KEYS: BookFeatureKey[] = BOOK_FEATURE_MODULES.map(m => m.key);
@@ -45,30 +51,37 @@ export const BOOK_FEATURE_DEFAULTS: Record<EntityType, Record<BookFeatureKey, bo
     household: {
         customers: false, invoicing: false, bills: false, employees: false,
         inventory: false, sales_tax: false, membership: false, owner_planning: false,
+        packages: false, funds: false, documents: false,
     },
     sole_prop: {
         customers: true, invoicing: true, bills: true, employees: false,
         inventory: false, sales_tax: true, membership: false, owner_planning: true,
+        packages: true, funds: false, documents: true,
     },
     llc_single: {
         customers: true, invoicing: true, bills: true, employees: false,
         inventory: false, sales_tax: true, membership: false, owner_planning: true,
+        packages: true, funds: false, documents: true,
     },
     llc_partnership: {
         customers: true, invoicing: true, bills: true, employees: true,
         inventory: false, sales_tax: true, membership: false, owner_planning: true,
+        packages: true, funds: false, documents: true,
     },
     s_corp: {
         customers: true, invoicing: true, bills: true, employees: true,
         inventory: false, sales_tax: true, membership: false, owner_planning: true,
+        packages: true, funds: false, documents: true,
     },
     c_corp: {
         customers: true, invoicing: true, bills: true, employees: true,
         inventory: false, sales_tax: true, membership: false, owner_planning: false,
+        packages: false, funds: false, documents: true,
     },
     nonprofit_501c3: {
         customers: false, invoicing: false, bills: true, employees: false,
         inventory: false, sales_tax: false, membership: true, owner_planning: false,
+        packages: false, funds: true, documents: true,
     },
 };
 
@@ -111,6 +124,10 @@ export const FEATURE_ID_TO_MODULE: Record<string, BookFeatureKey | BookFeatureKe
     'biz-meetings': 'membership',
     'biz-scorp-analyzer': 'owner_planning',
     'biz-retirement-planner': 'owner_planning',
+    'biz-1099': 'bills',
+    'biz-packages': 'packages',
+    'biz-funds': 'funds',
+    'biz-documents': 'documents',
     // Cross-module documents: visible when any source module is enabled.
     'biz-payments': ['invoicing', 'bills', 'employees'],
     'biz-aging': ['invoicing', 'bills'],

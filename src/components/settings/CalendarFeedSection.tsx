@@ -16,6 +16,7 @@ const EVENT_TYPE_OPTIONS: Array<{ key: string; label: string }> = [
     { key: 'scheduled', label: 'Scheduled transactions (next 90 days)' },
     { key: 'fixed_income', label: 'Bond/CD maturities & coupon payments' },
     { key: 'rmd', label: 'RMD deadlines' },
+    { key: 'compliance', label: 'Tax & compliance deadlines (next 12 months)' },
 ];
 
 function typeLabel(key: string): string {

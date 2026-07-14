@@ -47,12 +47,21 @@ export interface ReportConfig {
   category: 'financial' | 'account' | 'transaction' | 'investment' | 'business' | 'chart';
 }
 
+/** Income statement accounting basis. */
+export type ReportBasis = 'accrual' | 'cash';
+
 export interface ReportFilters {
   startDate: string | null;
   endDate: string | null;
   compareToPrevious?: boolean;
   accountTypes?: string[];
   showZeroBalances?: boolean;
+  /**
+   * Accounting basis for P&L-style reports. 'accrual' (default) sums all
+   * income/expense splits; 'cash' excludes invoice/bill posting transactions
+   * (those touching AR/AP) and recognizes invoice payments instead.
+   */
+  basis?: ReportBasis;
   /** Book-scoped account GUIDs. When set, restrict queries to these accounts. */
   bookAccountGuids?: string[];
 }

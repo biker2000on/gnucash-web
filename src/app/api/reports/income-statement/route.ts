@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
             endDate: searchParams.get('endDate'),
             compareToPrevious: searchParams.get('compareToPrevious') === 'true',
             showZeroBalances: searchParams.get('showZeroBalances') === 'true',
+            basis: searchParams.get('basis') === 'cash' ? 'cash' : 'accrual',
             bookAccountGuids,
         };
 

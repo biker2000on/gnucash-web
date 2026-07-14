@@ -339,6 +339,11 @@ async function main() {
           await handleRunInsights(job);
           break;
         }
+        case 'compliance-reminders': {
+          const { handleComplianceReminders } = await import('./src/lib/queue/jobs/compliance-reminders');
+          await handleComplianceReminders(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -440,6 +445,19 @@ async function main() {
       await handleRunInsights(fakeJob);
     } catch (err) {
       console.error('Daily insights scan failed:', err);
+    }
+  });
+
+  // Daily compliance-deadline reminders at 06:15 UTC (deduped per
+  // user/book/item/period via notification source ids, so re-runs are safe).
+  setScheduleGeneric('compliance-reminders', '06:15', async () => {
+    console.log(`[${new Date().toISOString()}] Running compliance-deadline reminders`);
+    try {
+      const { handleComplianceReminders } = await import('./src/lib/queue/jobs/compliance-reminders');
+      const fakeJob = { id: `daily-compliance-${Date.now()}`, name: 'compliance-reminders', data: {} } as Job;
+      await handleComplianceReminders(fakeJob);
+    } catch (err) {
+      console.error('Compliance reminders run failed:', err);
     }
   });
 

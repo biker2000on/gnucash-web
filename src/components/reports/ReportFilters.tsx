@@ -11,6 +11,8 @@ interface ReportFiltersProps {
     onChange: (filters: ReportFiltersType) => void;
     showCompare?: boolean;
     showAccountTypes?: boolean;
+    /** Show the Accrual/Cash basis select (income-statement style reports). */
+    showBasis?: boolean;
 }
 
 const PRESETS = [
@@ -69,8 +71,8 @@ function getLastYear() {
     };
 }
 
-export function ReportFilters({ filters, onChange, showCompare = true, showAccountTypes = false }: ReportFiltersProps) {
-    const filtersKey = `${filters.startDate ?? ''}|${filters.endDate ?? ''}|${filters.compareToPrevious ?? false}|${showCompare}|${showAccountTypes}`;
+export function ReportFilters({ filters, onChange, showCompare = true, showAccountTypes = false, showBasis = false }: ReportFiltersProps) {
+    const filtersKey = `${filters.startDate ?? ''}|${filters.endDate ?? ''}|${filters.compareToPrevious ?? false}|${filters.basis ?? 'accrual'}|${showCompare}|${showAccountTypes}|${showBasis}`;
 
     return (
         <ReportFiltersForm
@@ -79,11 +81,12 @@ export function ReportFilters({ filters, onChange, showCompare = true, showAccou
             onChange={onChange}
             showCompare={showCompare}
             showAccountTypes={showAccountTypes}
+            showBasis={showBasis}
         />
     );
 }
 
-function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFiltersProps) {
+function ReportFiltersForm({ filters, onChange, showCompare = true, showBasis = false }: ReportFiltersProps) {
     const { dateFormat } = useUserPreferences();
     const [localFilters, setLocalFilters] = useState(filters);
     const [startDateDisplay, setStartDateDisplay] = useState(() => filters.startDate ? formatDateForDisplay(filters.startDate, dateFormat) : '');
@@ -190,6 +193,26 @@ function ReportFiltersForm({ filters, onChange, showCompare = true }: ReportFilt
                                 className="w-full md:w-auto bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             />
                         </div>
+                        {showBasis && (
+                            <div className="min-w-0">
+                                <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                    Basis
+                                </label>
+                                <select
+                                    value={localFilters.basis ?? 'accrual'}
+                                    onChange={e => {
+                                        const basis = e.target.value === 'cash' ? 'cash' as const : 'accrual' as const;
+                                        const newFilters = { ...localFilters, basis };
+                                        setLocalFilters(newFilters);
+                                        onChange(newFilters);
+                                    }}
+                                    className="w-full md:w-auto bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                >
+                                    <option value="accrual">Accrual</option>
+                                    <option value="cash">Cash</option>
+                                </select>
+                            </div>
+                        )}
                     </div>
                 }
             >

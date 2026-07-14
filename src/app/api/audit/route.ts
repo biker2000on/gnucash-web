@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
+import { getActiveBookGuid } from '@/lib/book-scope';
 import { listAuditEntries, type AuditAction, type EntityType } from '@/lib/services/audit.service';
 
 const ENTITY_TYPES: EntityType[] = ['TRANSACTION', 'ACCOUNT', 'SPLIT', 'PRICE', 'BUDGET', 'SCHEDULED_TRANSACTION', 'TAG', 'INVOICE'];
@@ -18,8 +19,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const entityTypeParam = searchParams.get('entityType');
     const actionParam = searchParams.get('action');
+    const bookGuid = await getActiveBookGuid();
 
     const result = await listAuditEntries({
+      bookGuid,
       limit: parseInt(searchParams.get('limit') ?? '50', 10) || 50,
       offset: parseInt(searchParams.get('offset') ?? '0', 10) || 0,
       entityType: ENTITY_TYPES.includes(entityTypeParam as EntityType) ? (entityTypeParam as EntityType) : undefined,

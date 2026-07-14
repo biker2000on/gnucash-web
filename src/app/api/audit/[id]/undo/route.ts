@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
+import { getActiveBookGuid } from '@/lib/book-scope';
 import { undoAuditEntry } from '@/lib/services/audit.service';
 
 /**
@@ -21,7 +22,8 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid audit id' }, { status: 400 });
     }
 
-    const result = await undoAuditEntry(id);
+    const bookGuid = await getActiveBookGuid();
+    const result = await undoAuditEntry(id, bookGuid);
     if (!result.ok) {
       return NextResponse.json({ error: result.message }, { status: 409 });
     }

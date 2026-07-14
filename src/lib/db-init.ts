@@ -796,6 +796,255 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Book-scope the audit trail: history must never leak across books/users.
+    // Adds book_guid, backfills legacy rows by walking each book's account
+    // tree (ACCOUNT entries directly; TRANSACTION entries via their splits).
+    // Rows that can't be attributed (e.g. deleted transactions whose splits
+    // are gone) stay NULL and are hidden from per-book history.
+    const auditBookScopeDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_audit_book_scope'));
+            ALTER TABLE gnucash_web_audit ADD COLUMN IF NOT EXISTS book_guid VARCHAR(32);
+            CREATE INDEX IF NOT EXISTS idx_audit_book_created
+                ON gnucash_web_audit(book_guid, created_at DESC);
+
+            IF EXISTS (SELECT 1 FROM gnucash_web_audit WHERE book_guid IS NULL LIMIT 1) THEN
+                WITH RECURSIVE tree AS (
+                    SELECT b.guid AS book_guid, b.root_account_guid AS account_guid FROM books b
+                    UNION ALL
+                    SELECT t.book_guid, a.guid FROM accounts a
+                    JOIN tree t ON a.parent_guid = t.account_guid
+                )
+                UPDATE gnucash_web_audit au SET book_guid = t.book_guid
+                FROM tree t
+                WHERE au.book_guid IS NULL
+                  AND au.entity_type = 'ACCOUNT'
+                  AND au.entity_guid = t.account_guid;
+
+                WITH RECURSIVE tree AS (
+                    SELECT b.guid AS book_guid, b.root_account_guid AS account_guid FROM books b
+                    UNION ALL
+                    SELECT t.book_guid, a.guid FROM accounts a
+                    JOIN tree t ON a.parent_guid = t.account_guid
+                ), txmap AS (
+                    -- scoped to the transactions that actually need backfill
+                    SELECT DISTINCT s.tx_guid, t.book_guid
+                    FROM splits s
+                    JOIN tree t ON s.account_guid = t.account_guid
+                    WHERE s.tx_guid IN (
+                        SELECT entity_guid FROM gnucash_web_audit
+                        WHERE book_guid IS NULL AND entity_type = 'TRANSACTION'
+                    )
+                )
+                UPDATE gnucash_web_audit au SET book_guid = m.book_guid
+                FROM txmap m
+                WHERE au.book_guid IS NULL
+                  AND au.entity_type = 'TRANSACTION'
+                  AND au.entity_guid = m.tx_guid;
+            END IF;
+        END $$;
+    `;
+
+    // Book-scope tags: tag names were globally unique, so every book saw
+    // every tag. Adds book_guid, attributes each tag to the book(s) it's
+    // used in (cloning tags used across multiple books and repointing the
+    // junction rows), then swaps the global name uniqueness for per-book.
+    const tagsBookScopeDDL = `
+        DO $$
+        DECLARE
+            v_rec RECORD;
+            v_new_id INTEGER;
+            v_first_book VARCHAR(32);
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_tags_book_scope'));
+            ALTER TABLE gnucash_web_tags ADD COLUMN IF NOT EXISTS book_guid VARCHAR(32);
+
+            IF EXISTS (SELECT 1 FROM gnucash_web_tags WHERE book_guid IS NULL LIMIT 1) THEN
+                -- account -> book map, built once and reused below
+                CREATE TEMP TABLE _acct_books ON COMMIT DROP AS
+                WITH RECURSIVE tree AS (
+                    SELECT b.guid AS book_guid, b.root_account_guid AS account_guid FROM books b
+                    UNION ALL
+                    SELECT t.book_guid, a.guid FROM accounts a
+                    JOIN tree t ON a.parent_guid = t.account_guid
+                )
+                SELECT account_guid, book_guid FROM tree;
+                CREATE INDEX ON _acct_books(account_guid);
+
+                CREATE TEMP TABLE _tag_books ON COMMIT DROP AS
+                SELECT DISTINCT tag_id, book_guid FROM (
+                    SELECT tt.tag_id, ab.book_guid
+                    FROM gnucash_web_transaction_tags tt
+                    JOIN splits s ON s.tx_guid = tt.transaction_guid
+                    JOIN _acct_books ab ON ab.account_guid = s.account_guid
+                    UNION
+                    SELECT at.tag_id, ab.book_guid
+                    FROM gnucash_web_account_tags at
+                    JOIN _acct_books ab ON ab.account_guid = at.account_guid
+                ) usage;
+
+                -- Home book per tag: the first book it's used in.
+                UPDATE gnucash_web_tags g SET book_guid = tb.book_guid
+                FROM (
+                    SELECT DISTINCT ON (tag_id) tag_id, book_guid
+                    FROM _tag_books ORDER BY tag_id, book_guid
+                ) tb
+                WHERE g.book_guid IS NULL AND g.id = tb.tag_id;
+
+                -- Unused tags land in the first book so they stay visible somewhere.
+                SELECT guid INTO v_first_book FROM books ORDER BY guid LIMIT 1;
+                UPDATE gnucash_web_tags SET book_guid = v_first_book WHERE book_guid IS NULL;
+
+                -- Tags used in more than one book: clone per extra book and
+                -- repoint that book's junction rows to the clone.
+                FOR v_rec IN
+                    SELECT tb.tag_id, tb.book_guid
+                    FROM _tag_books tb
+                    JOIN gnucash_web_tags g ON g.id = tb.tag_id
+                    WHERE g.book_guid <> tb.book_guid
+                LOOP
+                    SELECT id INTO v_new_id FROM gnucash_web_tags
+                    WHERE book_guid = v_rec.book_guid
+                      AND name = (SELECT name FROM gnucash_web_tags WHERE id = v_rec.tag_id);
+                    IF v_new_id IS NULL THEN
+                        INSERT INTO gnucash_web_tags (name, color, description, book_guid)
+                        SELECT name, color, description, v_rec.book_guid
+                        FROM gnucash_web_tags WHERE id = v_rec.tag_id
+                        RETURNING id INTO v_new_id;
+                    END IF;
+
+                    INSERT INTO gnucash_web_transaction_tags (transaction_guid, tag_id)
+                    SELECT DISTINCT tt.transaction_guid, v_new_id
+                    FROM gnucash_web_transaction_tags tt
+                    JOIN splits s ON s.tx_guid = tt.transaction_guid
+                    JOIN _acct_books ab ON ab.account_guid = s.account_guid
+                    WHERE tt.tag_id = v_rec.tag_id AND ab.book_guid = v_rec.book_guid
+                    ON CONFLICT DO NOTHING;
+                    DELETE FROM gnucash_web_transaction_tags tt
+                    WHERE tt.tag_id = v_rec.tag_id
+                      AND EXISTS (SELECT 1 FROM gnucash_web_transaction_tags x
+                                  WHERE x.transaction_guid = tt.transaction_guid AND x.tag_id = v_new_id);
+
+                    INSERT INTO gnucash_web_account_tags (account_guid, tag_id)
+                    SELECT at.account_guid, v_new_id
+                    FROM gnucash_web_account_tags at
+                    JOIN _acct_books ab ON ab.account_guid = at.account_guid
+                    WHERE at.tag_id = v_rec.tag_id AND ab.book_guid = v_rec.book_guid
+                    ON CONFLICT DO NOTHING;
+                    DELETE FROM gnucash_web_account_tags at
+                    WHERE at.tag_id = v_rec.tag_id
+                      AND EXISTS (SELECT 1 FROM gnucash_web_account_tags x
+                                  WHERE x.account_guid = at.account_guid AND x.tag_id = v_new_id);
+                END LOOP;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gnucash_web_tags_name_key') THEN
+                ALTER TABLE gnucash_web_tags DROP CONSTRAINT gnucash_web_tags_name_key;
+            END IF;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_book_name
+                ON gnucash_web_tags(book_guid, name);
+            CREATE INDEX IF NOT EXISTS idx_tags_book ON gnucash_web_tags(book_guid);
+        END $$;
+    `;
+
+    // SMB suite: compliance-deadline status, 1099 vendor tax info, prepaid
+    // packages, restricted funds, and the entity document vault.
+    const smbTablesDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_smb_suite_schema'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_compliance_status (
+            book_guid VARCHAR(32) NOT NULL,
+            item_key VARCHAR(80) NOT NULL,
+            period VARCHAR(20) NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'done',
+            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (book_guid, item_key, period)
+        );
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_vendor_tax_info (
+            vendor_guid VARCHAR(32) PRIMARY KEY,
+            book_guid VARCHAR(32),
+            legal_name VARCHAR(255),
+            tax_classification VARCHAR(40),
+            tax_id_masked VARCHAR(20),
+            w9_received BOOLEAN NOT NULL DEFAULT false,
+            w9_received_date DATE,
+            exempt_from_1099 BOOLEAN NOT NULL DEFAULT false,
+            address TEXT,
+            notes TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_packages (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            customer_guid VARCHAR(32),
+            client_name VARCHAR(255),
+            name VARCHAR(255) NOT NULL,
+            sessions_total INTEGER NOT NULL,
+            price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+            sold_date DATE NOT NULL,
+            liability_account_guid VARCHAR(32),
+            income_account_guid VARCHAR(32),
+            sale_txn_guid VARCHAR(32),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_packages_book ON gnucash_web_packages(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_package_redemptions (
+            id SERIAL PRIMARY KEY,
+            package_id INTEGER NOT NULL REFERENCES gnucash_web_packages(id) ON DELETE CASCADE,
+            redeemed_date DATE NOT NULL,
+            sessions INTEGER NOT NULL DEFAULT 1,
+            txn_guid VARCHAR(32),
+            notes VARCHAR(255),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_package_redemptions_package
+            ON gnucash_web_package_redemptions(package_id);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_funds (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            restriction VARCHAR(30) NOT NULL DEFAULT 'unrestricted',
+            description TEXT,
+            active BOOLEAN NOT NULL DEFAULT true,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_funds_book ON gnucash_web_funds(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_account_funds (
+            account_guid VARCHAR(32) PRIMARY KEY,
+            fund_id INTEGER NOT NULL REFERENCES gnucash_web_funds(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_funds_fund ON gnucash_web_account_funds(fund_id);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_entity_documents (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            doc_type VARCHAR(40) NOT NULL DEFAULT 'other',
+            file_key VARCHAR(500),
+            file_name VARCHAR(255),
+            mime_type VARCHAR(100),
+            size_bytes BIGINT,
+            expires_on DATE,
+            notes TEXT,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_documents_book
+            ON gnucash_web_entity_documents(book_guid);
+        END $$;
+    `;
+
     // Entity-level book links: a business book points at the household book(s)
     // of its owner(s) with an ownership percent. Powers cross-book 1040
     // aggregation (Schedule C / K-1 share), the S-corp analyzer's household
@@ -988,6 +1237,9 @@ async function createExtensionTables() {
         await query(bookFeaturesTableDDL);
         await query(bookLinksTableDDL);
         await query(membershipTablesDDL);
+        await query(auditBookScopeDDL);
+        await query(tagsBookScopeDDL);
+        await query(smbTablesDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

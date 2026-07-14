@@ -23,7 +23,7 @@ import type { UpcomingMaturity, CouponPaymentEstimate } from '@/lib/fixed-income
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-export const CALENDAR_EVENT_TYPES = ['scheduled', 'fixed_income', 'rmd'] as const;
+export const CALENDAR_EVENT_TYPES = ['scheduled', 'fixed_income', 'rmd', 'compliance'] as const;
 export type CalendarEventType = (typeof CALENDAR_EVENT_TYPES)[number];
 
 export interface IcsEvent {
@@ -335,6 +335,50 @@ export function rmdEvents(
 }
 
 /* ------------------------------------------------------------------ */
+/* Collector 4: compliance deadlines (pure)                            */
+/* ------------------------------------------------------------------ */
+
+export const COMPLIANCE_HORIZON_DAYS = 365;
+
+/** Structural subset of ComplianceItem from '@/lib/compliance'. */
+export interface ComplianceEventSource {
+    key: string;
+    title: string;
+    description: string;
+    /** ISO YYYY-MM-DD */
+    dueDate: string;
+    period: string;
+}
+
+/**
+ * Calendar events for still-pending compliance deadlines within
+ * [today, today + horizonDays]. `resolvedKeys` holds `${key}|${period}`
+ * entries for items already marked done/dismissed — those are skipped.
+ */
+export function complianceDeadlineEvents(
+    items: ComplianceEventSource[],
+    resolvedKeys: Set<string>,
+    now: Date,
+    horizonDays: number = COMPLIANCE_HORIZON_DAYS,
+): IcsEvent[] {
+    const today = toIsoDate(startOfDay(now));
+    const horizon = toIsoDate(addDays(startOfDay(now), horizonDays));
+
+    return items
+        .filter(i =>
+            i.dueDate >= today &&
+            i.dueDate <= horizon &&
+            !resolvedKeys.has(`${i.key}|${i.period}`),
+        )
+        .map(i => ({
+            uid: `compliance-${i.key}-${i.period}@gnucash-web`,
+            date: i.dueDate,
+            summary: `Due: ${i.title}`,
+            description: i.description,
+        }));
+}
+
+/* ------------------------------------------------------------------ */
 /* Async orchestrator (DB access lives here)                           */
 /* ------------------------------------------------------------------ */
 
@@ -411,6 +455,37 @@ export async function buildCalendarFeed(
             events.push(...rmdEvents(birthday, now));
         } catch (err) {
             console.warn('Calendar feed: RMD collector failed:', err);
+        }
+    }
+
+    if (eventTypes.includes('compliance')) {
+        try {
+            const prisma = (await import('@/lib/prisma')).default;
+            const { complianceItemsForYear } = await import('@/lib/compliance');
+            const { ENTITY_TYPES } = await import('@/lib/services/entity.service');
+
+            const profile = await prisma.gnucash_web_entity_profiles.findUnique({
+                where: { book_guid: bookGuid },
+            });
+            const entityType =
+                profile && (ENTITY_TYPES as readonly string[]).includes(profile.entity_type)
+                    ? (profile.entity_type as (typeof ENTITY_TYPES)[number])
+                    : 'household';
+            const taxState = profile?.tax_state ?? null;
+
+            const year = now.getFullYear();
+            const items = [
+                ...complianceItemsForYear(entityType, taxState, year),
+                ...complianceItemsForYear(entityType, taxState, year + 1),
+            ];
+            const statusRows = await prisma.gnucash_web_compliance_status.findMany({
+                where: { book_guid: bookGuid },
+                select: { item_key: true, period: true },
+            });
+            const resolvedKeys = new Set(statusRows.map(r => `${r.item_key}|${r.period}`));
+            events.push(...complianceDeadlineEvents(items, resolvedKeys, now));
+        } catch (err) {
+            console.warn('Calendar feed: compliance collector failed:', err);
         }
     }
 

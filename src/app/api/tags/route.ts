@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { getActiveBookGuid } from '@/lib/book-scope';
 import { normalizeTagName, isValidTagName, pickTagColor, TAG_COLORS } from '@/lib/tags';
 
 /**
  * GET /api/tags
- * Lists all tags with usage counts (transaction_count, account_count).
+ * Lists the active book's tags with usage counts (transaction_count, account_count).
  * Optional: ?include=accounts adds account_guids per tag (for the account tree).
  */
 export async function GET(request: Request) {
@@ -15,8 +16,10 @@ export async function GET(request: Request) {
 
         const { searchParams } = new URL(request.url);
         const includeAccounts = searchParams.get('include') === 'accounts';
+        const bookGuid = await getActiveBookGuid();
 
         const tags = await prisma.gnucash_web_tags.findMany({
+            where: { book_guid: bookGuid },
             orderBy: { name: 'asc' },
             include: {
                 _count: {
@@ -51,8 +54,8 @@ export async function GET(request: Request) {
 
 /**
  * POST /api/tags
- * Creates a tag. Body: { name: string, color?: string, description?: string }.
- * Color is auto-assigned from the palette when omitted.
+ * Creates a tag in the active book. Body: { name: string, color?: string, description?: string }.
+ * Color is auto-assigned from the palette when omitted. Names are unique per book.
  */
 export async function POST(request: Request) {
     try {
@@ -76,19 +79,27 @@ export async function POST(request: Request) {
             );
         }
 
-        const existing = await prisma.gnucash_web_tags.findUnique({ where: { name } });
+        const bookGuid = await getActiveBookGuid();
+
+        const existing = await prisma.gnucash_web_tags.findFirst({
+            where: { book_guid: bookGuid, name },
+        });
         if (existing) {
             return NextResponse.json({ error: `Tag "${name}" already exists` }, { status: 409 });
         }
 
         let color: string | null = body.color ?? null;
         if (!color) {
-            const used = await prisma.gnucash_web_tags.findMany({ select: { color: true } });
+            const used = await prisma.gnucash_web_tags.findMany({
+                where: { book_guid: bookGuid },
+                select: { color: true },
+            });
             color = pickTagColor(used.map(t => t.color));
         }
 
         const tag = await prisma.gnucash_web_tags.create({
             data: {
+                book_guid: bookGuid,
                 name,
                 color,
                 description: body.description ? String(body.description) : null,

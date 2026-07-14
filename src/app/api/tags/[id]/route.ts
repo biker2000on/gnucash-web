@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { getActiveBookGuid } from '@/lib/book-scope';
 import { normalizeTagName, isValidTagName, TAG_COLORS } from '@/lib/tags';
 
 /**
  * PATCH /api/tags/{id}
  * Rename/recolor/redescribe a tag. Body: { name?, color?, description? }.
+ * Tags belonging to another book are reported as not found.
  */
 export async function PATCH(
     request: Request,
@@ -21,8 +23,9 @@ export async function PATCH(
             return NextResponse.json({ error: 'Invalid tag id' }, { status: 400 });
         }
 
+        const bookGuid = await getActiveBookGuid();
         const tag = await prisma.gnucash_web_tags.findUnique({ where: { id } });
-        if (!tag) {
+        if (!tag || tag.book_guid !== bookGuid) {
             return NextResponse.json({ error: 'Tag not found' }, { status: 404 });
         }
 
@@ -38,7 +41,9 @@ export async function PATCH(
                 );
             }
             if (name !== tag.name) {
-                const existing = await prisma.gnucash_web_tags.findUnique({ where: { name } });
+                const existing = await prisma.gnucash_web_tags.findFirst({
+                    where: { book_guid: bookGuid, name },
+                });
                 if (existing) {
                     return NextResponse.json({ error: `Tag "${name}" already exists` }, { status: 409 });
                 }
@@ -87,7 +92,8 @@ export async function PATCH(
 
 /**
  * DELETE /api/tags/{id}
- * Deletes a tag; junction rows cascade.
+ * Deletes a tag; junction rows cascade. Tags belonging to another book are
+ * reported as not found.
  */
 export async function DELETE(
     request: Request,
@@ -103,8 +109,9 @@ export async function DELETE(
             return NextResponse.json({ error: 'Invalid tag id' }, { status: 400 });
         }
 
+        const bookGuid = await getActiveBookGuid();
         const tag = await prisma.gnucash_web_tags.findUnique({ where: { id } });
-        if (!tag) {
+        if (!tag || tag.book_guid !== bookGuid) {
             return NextResponse.json({ error: 'Tag not found' }, { status: 404 });
         }
 

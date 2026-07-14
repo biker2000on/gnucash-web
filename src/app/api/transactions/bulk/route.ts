@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import {
     selectRecategorizeSplit,
@@ -163,10 +163,12 @@ export async function PATCH(request: Request) {
             return NextResponse.json({ error: 'set must include at least one operation' }, { status: 400 });
         }
 
-        // Tags being added must exist (FK); removals of unknown ids are no-ops.
+        // Tags being added must exist (FK) and belong to the active book;
+        // removals of unknown ids are no-ops.
         if (addIds.length > 0) {
+            const activeBookGuid = await getActiveBookGuid();
             const found = await prisma.gnucash_web_tags.findMany({
-                where: { id: { in: addIds } },
+                where: { id: { in: addIds }, book_guid: activeBookGuid },
                 select: { id: true },
             });
             if (found.length !== addIds.length) {

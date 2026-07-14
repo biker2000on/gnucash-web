@@ -10,6 +10,7 @@
 
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { getActiveBookGuid } from '@/lib/book-scope';
 
 export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE';
 export type EntityType =
@@ -41,9 +42,19 @@ export async function logAudit(
     try {
         const user = await getCurrentUser();
 
+        // Attribute the entry to the active book; if resolution fails the
+        // entry is still written (book_guid null) so the mutation isn't lost.
+        let bookGuid: string | null = null;
+        try {
+            bookGuid = await getActiveBookGuid();
+        } catch {
+            bookGuid = null;
+        }
+
         await prisma.gnucash_web_audit.create({
             data: {
                 user_id: user?.id ?? null,
+                book_guid: bookGuid,
                 action,
                 entity_type: entityType,
                 entity_guid: entityId,
@@ -219,10 +230,17 @@ export interface UndoResult {
     action?: AuditAction;
 }
 
-/** Execute the undo for one audit entry and log the undo itself. */
-export async function undoAuditEntry(auditId: number): Promise<UndoResult> {
+/**
+ * Execute the undo for one audit entry and log the undo itself.
+ * The entry must belong to `activeBookGuid` — entries from other books (or
+ * unattributable legacy rows with a NULL book_guid) are reported as not found
+ * so a user cannot undo another book's mutations by id.
+ */
+export async function undoAuditEntry(auditId: number, activeBookGuid: string): Promise<UndoResult> {
     const entry = await prisma.gnucash_web_audit.findUnique({ where: { id: auditId } });
-    if (!entry) return { ok: false, message: 'Audit entry not found' };
+    if (!entry || entry.book_guid !== activeBookGuid) {
+        return { ok: false, message: 'Audit entry not found' };
+    }
 
     const { plan, reason } = buildUndoPlan(entry);
     if (!plan) return { ok: false, message: reason ?? 'Not undoable' };
@@ -264,6 +282,8 @@ export async function undoAuditEntry(auditId: number): Promise<UndoResult> {
 // ---------------------------------------------------------------------------
 
 export interface AuditListFilters {
+    /** Active book — only this book's entries are returned (NULL rows excluded). */
+    bookGuid: string;
     limit?: number;
     offset?: number;
     entityType?: EntityType;
@@ -271,11 +291,12 @@ export interface AuditListFilters {
     entityGuid?: string;
 }
 
-export async function listAuditEntries(filters: AuditListFilters = {}) {
+export async function listAuditEntries(filters: AuditListFilters) {
     const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
     const offset = Math.max(filters.offset ?? 0, 0);
 
-    const where: Record<string, unknown> = {};
+    // Equality also excludes unattributable legacy rows (book_guid IS NULL).
+    const where: Record<string, unknown> = { book_guid: filters.bookGuid };
     if (filters.entityType) where.entity_type = filters.entityType;
     if (filters.action) where.action = filters.action;
     if (filters.entityGuid) where.entity_guid = filters.entityGuid;

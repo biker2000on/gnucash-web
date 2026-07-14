@@ -1,9 +1,11 @@
 import prisma from '@/lib/prisma';
+import { getActiveBookGuid } from '@/lib/book-scope';
 import { normalizeTagName, isValidTagName, pickTagColor, type Tag } from '@/lib/tags';
 
 /**
- * Resolve a list of raw tag names to tag rows, creating any that don't exist
- * (with auto-assigned palette colors). Throws on invalid names.
+ * Resolve a list of raw tag names to tag rows in the active book, creating
+ * any that don't exist (with auto-assigned palette colors, under the active
+ * book). Throws on invalid names.
  */
 export async function resolveOrCreateTags(rawNames: string[]): Promise<Tag[]> {
     const names: string[] = [];
@@ -21,20 +23,25 @@ export async function resolveOrCreateTags(rawNames: string[]): Promise<Tag[]> {
 
     if (names.length === 0) return [];
 
+    const bookGuid = await getActiveBookGuid();
+
     const existing = await prisma.gnucash_web_tags.findMany({
-        where: { name: { in: names } },
+        where: { book_guid: bookGuid, name: { in: names } },
     });
     const existingByName = new Map(existing.map(t => [t.name, t]));
 
     const missing = names.filter(n => !existingByName.has(n));
     if (missing.length > 0) {
-        const allColors = await prisma.gnucash_web_tags.findMany({ select: { color: true } });
+        const allColors = await prisma.gnucash_web_tags.findMany({
+            where: { book_guid: bookGuid },
+            select: { color: true },
+        });
         const usedColors = allColors.map(t => t.color);
         for (const name of missing) {
             const color = pickTagColor(usedColors);
             usedColors.push(color);
             const created = await prisma.gnucash_web_tags.create({
-                data: { name, color },
+                data: { book_guid: bookGuid, name, color },
             });
             existingByName.set(name, created);
         }

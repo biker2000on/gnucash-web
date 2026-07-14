@@ -439,6 +439,8 @@ model gnucash_web_users {
 model gnucash_web_audit {
   id          Int       @id @default(autoincrement())
   user_id     Int?
+  /// Book the mutation happened in; NULL only for unattributable legacy rows
+  book_guid   String?   @db.VarChar(32)
   action      String    @db.VarChar(50) // CREATE, UPDATE, DELETE
   entity_type String    @db.VarChar(50) // transaction, account, etc.
   entity_guid String    @db.VarChar(32)
@@ -448,6 +450,8 @@ model gnucash_web_audit {
 
   // Relations
   user        gnucash_web_users? @relation(fields: [user_id], references: [id])
+
+  @@index([book_guid, created_at(sort: Desc)], map: "idx_audit_book_created")
 }
 
 model gnucash_web_saved_reports {
@@ -795,13 +799,18 @@ model gnucash_web_simplefin_account_map {
 // relations below are app-level joins only.
 model gnucash_web_tags {
   id          Int       @id @default(autoincrement())
-  name        String    @unique @db.VarChar(100)
+  /// Tags are book-scoped; name is unique per book, not globally
+  book_guid   String?   @db.VarChar(32)
+  name        String    @db.VarChar(100)
   color       String?   @db.VarChar(20)
   description String?   @db.Text
   created_at  DateTime? @default(now())
 
   transaction_tags gnucash_web_transaction_tags[]
   account_tags     gnucash_web_account_tags[]
+
+  @@unique([book_guid, name], map: "idx_tags_book_name")
+  @@index([book_guid], map: "idx_tags_book")
 }
 
 model gnucash_web_transaction_tags {
@@ -943,6 +952,121 @@ model gnucash_web_book_links {
   @@id([business_book_guid, household_book_guid])
   @@index([household_book_guid], map: "idx_book_links_household")
   @@map("gnucash_web_book_links")
+}
+
+// SMB suite: compliance-deadline status, 1099 vendor tax info, prepaid
+// packages, restricted funds, and the entity document vault.
+model gnucash_web_compliance_status {
+  book_guid    String   @db.VarChar(32)
+  item_key     String   @db.VarChar(80)
+  /// e.g. '2026' or '2026-Q3'
+  period       String   @db.VarChar(20)
+  /// done | dismissed
+  status       String   @default("done") @db.VarChar(20)
+  completed_at DateTime @default(now())
+
+  @@id([book_guid, item_key, period])
+  @@map("gnucash_web_compliance_status")
+}
+
+model gnucash_web_vendor_tax_info {
+  vendor_guid        String    @id @db.VarChar(32)
+  book_guid          String?   @db.VarChar(32)
+  legal_name         String?   @db.VarChar(255)
+  tax_classification String?   @db.VarChar(40)
+  /// Masked TIN for display only (e.g. ***-**-1234); never store the full TIN
+  tax_id_masked      String?   @db.VarChar(20)
+  w9_received        Boolean   @default(false)
+  w9_received_date   DateTime? @db.Date
+  exempt_from_1099   Boolean   @default(false)
+  address            String?   @db.Text
+  notes              String?   @db.Text
+  updated_at         DateTime  @default(now())
+
+  @@map("gnucash_web_vendor_tax_info")
+}
+
+model gnucash_web_packages {
+  id                     Int       @id @default(autoincrement())
+  book_guid              String    @db.VarChar(32)
+  customer_guid          String?   @db.VarChar(32)
+  client_name            String?   @db.VarChar(255)
+  name                   String    @db.VarChar(255)
+  sessions_total         Int
+  price                  Decimal   @default(0) @db.Decimal(12, 2)
+  sold_date              DateTime  @db.Date
+  liability_account_guid String?   @db.VarChar(32)
+  income_account_guid    String?   @db.VarChar(32)
+  sale_txn_guid          String?   @db.VarChar(32)
+  notes                  String?   @db.Text
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @default(now())
+
+  redemptions gnucash_web_package_redemptions[]
+
+  @@index([book_guid], map: "idx_packages_book")
+  @@map("gnucash_web_packages")
+}
+
+model gnucash_web_package_redemptions {
+  id            Int      @id @default(autoincrement())
+  package_id    Int
+  redeemed_date DateTime @db.Date
+  sessions      Int      @default(1)
+  txn_guid      String?  @db.VarChar(32)
+  notes         String?  @db.VarChar(255)
+  created_at    DateTime @default(now())
+
+  package gnucash_web_packages @relation(fields: [package_id], references: [id], onDelete: Cascade)
+
+  @@index([package_id], map: "idx_package_redemptions_package")
+  @@map("gnucash_web_package_redemptions")
+}
+
+model gnucash_web_funds {
+  id          Int      @id @default(autoincrement())
+  book_guid   String   @db.VarChar(32)
+  name        String   @db.VarChar(255)
+  /// unrestricted | temporarily_restricted | permanently_restricted
+  restriction String   @default("unrestricted") @db.VarChar(30)
+  description String?  @db.Text
+  active      Boolean  @default(true)
+  sort_order  Int      @default(0)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  account_funds gnucash_web_account_funds[]
+
+  @@index([book_guid], map: "idx_funds_book")
+  @@map("gnucash_web_funds")
+}
+
+model gnucash_web_account_funds {
+  account_guid String @id @db.VarChar(32)
+  fund_id      Int
+
+  fund gnucash_web_funds @relation(fields: [fund_id], references: [id], onDelete: Cascade)
+
+  @@index([fund_id], map: "idx_account_funds_fund")
+  @@map("gnucash_web_account_funds")
+}
+
+model gnucash_web_entity_documents {
+  id          Int       @id @default(autoincrement())
+  book_guid   String    @db.VarChar(32)
+  title       String    @db.VarChar(255)
+  /// formation | ein | election | insurance | license | agreement | other
+  doc_type    String    @default("other") @db.VarChar(40)
+  file_key    String?   @db.VarChar(500)
+  file_name   String?   @db.VarChar(255)
+  mime_type   String?   @db.VarChar(100)
+  size_bytes  BigInt?
+  expires_on  DateTime? @db.Date
+  notes       String?   @db.Text
+  uploaded_at DateTime  @default(now())
+
+  @@index([book_guid], map: "idx_entity_documents_book")
+  @@map("gnucash_web_entity_documents")
 }
 
 // Membership management for clubs/charities (501c3 books): members, dues
