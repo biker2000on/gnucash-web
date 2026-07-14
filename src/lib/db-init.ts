@@ -768,27 +768,41 @@ async function createExtensionTables() {
     // Per-book tax profile fields: filing status and flat state rate move onto
     // the entity profile so the tax estimator follows the active book instead
     // of user-global preferences (which remain the synthesized fallback).
+    // Advisory-locked: app and worker run db-init concurrently at startup, and
+    // unguarded CREATE TABLE IF NOT EXISTS races fail on pg_type uniqueness
+    // (same reason notificationsTableDDL locks).
     const entityProfilesTaxColumnsDDL = `
-        ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS filing_status VARCHAR(10);
-        ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS state_flat_rate DOUBLE PRECISION;
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_entity_profiles_tax_columns'));
+            ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS filing_status VARCHAR(10);
+            ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS state_flat_rate DOUBLE PRECISION;
+        END $$;
     `;
 
     // Per-book feature-module overrides. Absence of a row means "use the
     // default for the book's entity type" (see src/lib/book-features.ts).
     const bookFeaturesTableDDL = `
-        CREATE TABLE IF NOT EXISTS gnucash_web_book_features (
-            book_guid VARCHAR(32) NOT NULL,
-            feature_key VARCHAR(50) NOT NULL,
-            enabled BOOLEAN NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (book_guid, feature_key)
-        );
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_book_features_schema'));
+            CREATE TABLE IF NOT EXISTS gnucash_web_book_features (
+                book_guid VARCHAR(32) NOT NULL,
+                feature_key VARCHAR(50) NOT NULL,
+                enabled BOOLEAN NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (book_guid, feature_key)
+            );
+        END $$;
     `;
 
     // Membership management (501c3 clubs/charities): members, dues levels with
     // renewal policy, payments (with paid-through periods), meetings, and
     // attendance. GnuCash rows are referenced by loose guid columns only.
     const membershipTablesDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_membership_schema'));
         CREATE TABLE IF NOT EXISTS gnucash_web_membership_types (
             id SERIAL PRIMARY KEY,
             book_guid VARCHAR(32) NOT NULL,
@@ -858,6 +872,7 @@ async function createExtensionTables() {
             notes VARCHAR(255),
             PRIMARY KEY (meeting_id, member_id)
         );
+        END $$;
     `;
 
     const importBatchesTableDDL = `
