@@ -21,7 +21,12 @@ vi.mock('@/lib/prisma', () => ({
   },
 }));
 
-import { resolveOwnersFromData, resolveAccountOwners } from '../ownership';
+import {
+  resolveOwnersFromData,
+  resolveAccountOwners,
+  withRetirementSelfDefault,
+  type AccountOwner,
+} from '../ownership';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -148,5 +153,28 @@ describe('resolveAccountOwners', () => {
     expect(map.get('brokerage')).toBe('spouse');
     expect(map.get('brokerage-vti')).toBe('spouse');
     expect(map.has('unrelated')).toBe(false);
+  });
+});
+
+describe('withRetirementSelfDefault', () => {
+  it('defaults ownerless retirement accounts to self', () => {
+    const owners = new Map<string, AccountOwner>([['taxable', 'joint']]);
+    const merged = withRetirementSelfDefault(owners, ['ira', '401k']);
+    expect(merged.get('ira')).toBe('self');
+    expect(merged.get('401k')).toBe('self');
+    expect(merged.get('taxable')).toBe('joint');
+  });
+
+  it('never overrides an explicit or inherited owner', () => {
+    const owners = new Map<string, AccountOwner>([['spouse-ira', 'spouse']]);
+    const merged = withRetirementSelfDefault(owners, ['spouse-ira', 'my-ira']);
+    expect(merged.get('spouse-ira')).toBe('spouse');
+    expect(merged.get('my-ira')).toBe('self');
+  });
+
+  it('does not mutate the input map', () => {
+    const owners = new Map<string, AccountOwner>();
+    withRetirementSelfDefault(owners, ['ira']);
+    expect(owners.size).toBe(0);
   });
 });

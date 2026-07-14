@@ -89,6 +89,24 @@ export function resolveOwnersFromData(
 }
 
 /**
+ * Retirement accounts are individually owned: the account editor displays an
+ * unset owner as Self, and contribution/IRS-limit tracking attributes unset
+ * retirement accounts to self. Apply the same default so unset retirement
+ * accounts don't fall into the Unassigned bucket in ownership reports.
+ * Explicit/inherited owners always win.
+ */
+export function withRetirementSelfDefault(
+  owners: Map<string, AccountOwner>,
+  retirementGuids: Iterable<string>,
+): Map<string, AccountOwner> {
+  const merged = new Map(owners);
+  for (const guid of retirementGuids) {
+    if (!merged.has(guid)) merged.set(guid, 'self');
+  }
+  return merged;
+}
+
+/**
  * Load owner preferences for the given book accounts and resolve effective
  * ownership with ancestor inheritance.
  */

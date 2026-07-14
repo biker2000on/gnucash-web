@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
-import { resolveAccountOwners, AccountOwner } from '@/lib/ownership';
+import { resolveAccountOwners, withRetirementSelfDefault, AccountOwner } from '@/lib/ownership';
+import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 import { ReportType, ReportData, ReportFilters, ReportSection } from './types';
 import { buildAccountPathMap } from './utils';
 
@@ -10,8 +11,10 @@ import { buildAccountPathMap } from './utils';
  * Groups balance-sheet accounts (assets + liabilities, no equity) by their
  * effective owner — an account's own owner preference, inherited from the
  * nearest ancestor when unset (see src/lib/ownership.ts). Joint accounts are
- * their own bucket; they are NOT split 50/50. Accounts with no owner anywhere
- * in their ancestry land in the Unassigned bucket.
+ * their own bucket; they are NOT split 50/50. Retirement accounts with no
+ * owner anywhere default to Self (they're individually owned and the account
+ * editor displays unset as Self); all other ownerless accounts land in the
+ * Unassigned bucket.
  *
  * Account-type classification and sign conventions mirror
  * src/lib/reports/balance-sheet.ts: asset balances keep their natural sign,
@@ -245,10 +248,14 @@ export async function generateNetWorthByOwner(
     : [];
   const quantityByGuid = new Map(balanceRows.map(r => [r.account_guid, r.quantity]));
 
-  const [pathMap, ownerMap] = await Promise.all([
+  const [pathMap, explicitOwners, retirementGuids] = await Promise.all([
     buildAccountPathMap(scopeGuids),
     resolveAccountOwners(scopeGuids),
+    getRetirementAccountGuids(scopeGuids),
   ]);
+  // Unset retirement accounts belong to Self (matches the account editor's
+  // display and contribution tracking) instead of landing in Unassigned.
+  const ownerMap = withRetirementSelfDefault(explicitOwners, retirementGuids);
 
   const rows: OwnerBalanceInput[] = accounts.map(account => {
     const quantity = quantityByGuid.get(account.guid) ?? 0;
