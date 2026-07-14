@@ -6,6 +6,13 @@ export interface PeriodTransactionInput {
   startDate: string; // 'YYYY-MM-DD'
   endDate: string;   // 'YYYY-MM-DD'
   bookAccountGuids?: string[];
+  /**
+   * Restrict the candidate account tree to these types. The income statement
+   * passes ['INCOME','EXPENSE'] to preserve its exact scoping; the generic
+   * report drill-down omits it to allow any account type (assets, liabilities,
+   * holdings, equity).
+   */
+  accountTypes?: string[];
 }
 
 export interface PeriodTransactionRow {
@@ -53,13 +60,15 @@ function toIsoDate(d: Date): string {
 export async function fetchPeriodTransactions(
   input: PeriodTransactionInput,
 ): Promise<PeriodTransactionResponse> {
-  const { accountGuid, startDate, endDate, bookAccountGuids } = input;
+  const { accountGuid, startDate, endDate, bookAccountGuids, accountTypes } = input;
 
-  // 1. Fetch the candidate INCOME/EXPENSE accounts (same scope as the report itself).
+  // 1. Fetch the candidate accounts (same book scope as the report itself). The
+  //    caller may restrict to specific account types; otherwise any type is
+  //    eligible so the drill-down works for assets, liabilities and holdings.
   const accounts: AccountRow[] = await prisma.accounts.findMany({
     where: {
       ...(bookAccountGuids ? { guid: { in: bookAccountGuids } } : {}),
-      account_type: { in: ['INCOME', 'EXPENSE'] },
+      ...(accountTypes ? { account_type: { in: accountTypes } } : {}),
       hidden: 0,
     },
     select: {

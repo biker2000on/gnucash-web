@@ -6,6 +6,7 @@ import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters, ReportType, SavedReport, SavedReportInput } from '@/lib/reports/types';
 import type { BudgetReportData, BudgetReportRow } from '@/lib/reports/budget-report';
 import SaveReportDialog from '@/components/reports/SaveReportDialog';
+import { TransactionDrilldownModal, DrilldownTarget } from '@/components/reports/TransactionDrilldownModal';
 import { escapeCSVField, downloadCSV } from '@/lib/reports/csv-export';
 import { formatCurrency } from '@/lib/format';
 
@@ -70,6 +71,7 @@ function BudgetReportContent() {
 
     const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
     const [currentSavedReport, setCurrentSavedReport] = useState<SavedReport | null>(null);
+    const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
 
     // Load available budgets; auto-select the first when none chosen yet.
     useEffect(() => {
@@ -167,6 +169,9 @@ function BudgetReportContent() {
     };
 
     const currency = reportData?.currency ?? 'USD';
+    const periods = reportData?.periods ?? [];
+    const drillStartDate = periods.length > 0 ? periods[0].start : null;
+    const drillEndDate = periods.length > 0 ? periods[periods.length - 1].end : null;
     const periodSummary = reportData && reportData.periods.length > 0
         ? reportData.periods.length === reportData.numPeriods
             ? `All ${reportData.numPeriods} periods (${reportData.periods[0].label} – ${reportData.periods[reportData.periods.length - 1].label})`
@@ -257,7 +262,25 @@ function BudgetReportContent() {
                                         <tbody className="divide-y divide-border/50">
                                             {group.rows.map(row => (
                                                 <tr key={row.guid} className="hover:bg-surface-hover/20 transition-colors">
-                                                    <td className="py-2 px-4 text-sm text-foreground-secondary">{row.name}</td>
+                                                    <td className="py-2 px-4 text-sm text-foreground-secondary">
+                                                        {row.guid && drillStartDate && drillEndDate ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setDrilldown({
+                                                                    accountGuid: row.guid,
+                                                                    accountName: row.name,
+                                                                    periodLabel: `${drillStartDate} → ${drillEndDate}`,
+                                                                    startDate: drillStartDate,
+                                                                    endDate: drillEndDate,
+                                                                })}
+                                                                className="text-primary hover:underline text-left focus:outline-none focus:underline"
+                                                            >
+                                                                {row.name}
+                                                            </button>
+                                                        ) : (
+                                                            row.name
+                                                        )}
+                                                    </td>
                                                     <AmountCell value={row.budgeted} currency={currency} muted />
                                                     <AmountCell value={row.actual} currency={currency} />
                                                     <AmountCell value={row.difference} currency={currency} />
@@ -337,6 +360,8 @@ function BudgetReportContent() {
                 }}
                 currentFilters={filters}
             />
+
+            <TransactionDrilldownModal target={drilldown} onClose={() => setDrilldown(null)} />
         </div>
     );
 }

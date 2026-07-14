@@ -4,8 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { ReportViewer } from '@/components/reports/ReportViewer';
 import { MobileCard } from '@/components/ui/MobileCard';
 import { ReportFilters } from '@/lib/reports/types';
-import type { NetWorthByOwnerData, OwnerBucket } from '@/lib/reports/net-worth-by-owner';
+import type { NetWorthByOwnerData, OwnerBucket, OwnerAccountRow } from '@/lib/reports/net-worth-by-owner';
 import { formatCurrency } from '@/lib/format';
+import { TransactionDrilldownModal, DrilldownTarget } from '@/components/reports/TransactionDrilldownModal';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -57,7 +58,15 @@ function OwnerSummaryCard({ bucket, currency }: { bucket: OwnerBucket; currency:
     );
 }
 
-function OwnerSection({ bucket, currency }: { bucket: OwnerBucket; currency: string }) {
+function OwnerSection({
+    bucket,
+    currency,
+    onAccountClick,
+}: {
+    bucket: OwnerBucket;
+    currency: string;
+    onAccountClick: (row: OwnerAccountRow) => void;
+}) {
     return (
         <section className="space-y-2">
             <div className="flex items-baseline justify-between gap-4 px-4 sm:px-6">
@@ -80,7 +89,19 @@ function OwnerSection({ bucket, currency }: { bucket: OwnerBucket; currency: str
                     <tbody className="divide-y divide-border/40">
                         {bucket.accounts.map(account => (
                             <tr key={account.guid}>
-                                <td className="py-1.5 pr-4 text-sm text-foreground-secondary">{account.fullname}</td>
+                                <td className="py-1.5 pr-4 text-sm text-foreground-secondary">
+                                    {account.guid ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => onAccountClick(account)}
+                                            className="text-primary hover:underline text-left focus:outline-none focus:underline"
+                                        >
+                                            {account.fullname}
+                                        </button>
+                                    ) : (
+                                        account.fullname
+                                    )}
+                                </td>
                                 <td className="py-1.5 pr-4 text-sm text-foreground-muted whitespace-nowrap">
                                     {ACCOUNT_TYPE_LABELS[account.account_type] ?? account.account_type}
                                 </td>
@@ -112,7 +133,20 @@ function OwnerSection({ bucket, currency }: { bucket: OwnerBucket; currency: str
                     <MobileCard
                         key={account.guid}
                         fields={[
-                            { label: 'Account', value: account.fullname },
+                            {
+                                label: 'Account',
+                                value: account.guid ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onAccountClick(account)}
+                                        className="text-primary hover:underline text-left focus:outline-none focus:underline"
+                                    >
+                                        {account.fullname}
+                                    </button>
+                                ) : (
+                                    account.fullname
+                                ),
+                            },
                             { label: 'Type', value: ACCOUNT_TYPE_LABELS[account.account_type] ?? account.account_type },
                             {
                                 label: 'Balance',
@@ -136,6 +170,7 @@ export default function NetWorthByOwnerPage() {
     const [reportData, setReportData] = useState<NetWorthByOwnerData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
 
     const fetchReport = useCallback(async () => {
         setIsLoading(true);
@@ -163,6 +198,23 @@ export default function NetWorthByOwnerPage() {
     }, [fetchReport]);
 
     const currency = reportData?.currency ?? 'USD';
+
+    const handleAccountClick = useCallback(
+        (row: OwnerAccountRow) => {
+            // Snapshot report: balances are as-of the report's end date.
+            const endDate = filters.endDate ?? reportData?.asOf ?? getDefaultFilters().endDate!;
+            // No meaningful start for a snapshot — show full history up to endDate.
+            const startDate = filters.startDate || '1970-01-01';
+            setDrilldown({
+                accountGuid: row.guid,
+                accountName: row.fullname,
+                periodLabel: `As of ${endDate}`,
+                startDate,
+                endDate,
+            });
+        },
+        [filters.endDate, filters.startDate, reportData?.asOf],
+    );
 
     return (
         <ReportViewer
@@ -213,13 +265,19 @@ export default function NetWorthByOwnerPage() {
                             {/* Per-owner account detail */}
                             <div className="space-y-8">
                                 {reportData.buckets.map(bucket => (
-                                    <OwnerSection key={bucket.owner} bucket={bucket} currency={currency} />
+                                    <OwnerSection
+                                        key={bucket.owner}
+                                        bucket={bucket}
+                                        currency={currency}
+                                        onAccountClick={handleAccountClick}
+                                    />
                                 ))}
                             </div>
                         </>
                     )}
                 </div>
             )}
+            <TransactionDrilldownModal target={drilldown} onClose={() => setDrilldown(null)} />
         </ReportViewer>
     );
 }

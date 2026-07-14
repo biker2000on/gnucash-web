@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ReportViewer } from '@/components/reports/ReportViewer';
+import {
+    ReportDrilldownTable,
+    DrilldownColumn,
+    DrilldownGroup,
+} from '@/components/reports/ReportDrilldownTable';
 import { ReportFilters } from '@/lib/reports/types';
 import type {
     NetWorthAttributionData,
@@ -297,101 +302,66 @@ function MonthlyChart({ data }: { data: NetWorthAttributionData }) {
 /* Drill-down tables                                                   */
 /* ------------------------------------------------------------------ */
 
-function DrillTable({
-    title,
-    headers,
-    rows,
-    emptyText,
-}: {
-    title: string;
-    headers: string[];
-    rows: Array<Array<string | number>>;
-    emptyText: string;
-}) {
-    return (
-        <div className="border-t border-border">
-            <h3 className="px-4 pt-4 pb-2 text-sm font-semibold text-foreground">{title}</h3>
-            {rows.length === 0 ? (
-                <p className="px-4 pb-4 text-sm text-foreground-muted">{emptyText}</p>
-            ) : (
-                <div className="overflow-x-auto pb-2">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b border-border bg-background-tertiary/50">
-                                {headers.map((h, i) => (
-                                    <th
-                                        key={h}
-                                        className={`px-4 py-2 text-xs uppercase tracking-wider text-foreground-muted font-medium ${
-                                            i === 0 ? 'text-left' : 'text-right'
-                                        }`}
-                                    >
-                                        {h}
-                                    </th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows.map((row, ri) => (
-                                <tr key={ri} className="border-b border-border/50">
-                                    {row.map((cell, ci) =>
-                                        ci === 0 ? (
-                                            <td key={ci} className="px-4 py-1.5 text-foreground">
-                                                {cell}
-                                            </td>
-                                        ) : (
-                                            <td
-                                                key={ci}
-                                                className={`px-4 py-1.5 text-right font-mono tabular-nums ${
-                                                    typeof cell === 'number'
-                                                        ? amountClass(cell)
-                                                        : 'text-foreground-secondary'
-                                                }`}
-                                            >
-                                                {typeof cell === 'number' ? formatSignedCurrency(cell) : cell}
-                                            </td>
-                                        )
-                                    )}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-        </div>
-    );
+/** Signed-amount cell with positive/negative coloring. */
+function AmountCell({ value }: { value: number }) {
+    return <span className={amountClass(value)}>{formatSignedCurrency(value)}</span>;
 }
 
-function savingsRows(rows: SavingsDrillRow[]): Array<Array<string | number>> {
-    const kindLabel: Record<SavingsDrillRow['kind'], string> = {
-        income: 'Income',
-        expense: 'Spending',
-        debt_service: 'Debt service',
-    };
-    return rows.map(r => [r.name, kindLabel[r.kind], r.amount]);
+/** Sort rows by descending magnitude of the given amount. */
+function byMagnitude<T>(rows: T[], amount: (r: T) => number): T[] {
+    return [...rows].sort((a, b) => Math.abs(amount(b)) - Math.abs(amount(a)));
 }
 
-function marketRows(rows: MarketDrillRow[]): Array<Array<string | number>> {
-    return rows.map(r => [
-        r.name,
-        formatFullCurrency(r.startValue),
-        formatFullCurrency(r.endValue),
-        formatSignedCurrency(r.netInvested),
-        r.gain,
-    ]);
+/* ---- Savings: grouped by kind (Income / Spending / Debt service) ---- */
+function savingsGroups(rows: SavingsDrillRow[]): DrilldownGroup<SavingsDrillRow>[] {
+    const of = (kind: SavingsDrillRow['kind']) => byMagnitude(rows.filter(r => r.kind === kind), r => r.amount);
+    return [
+        { key: 'income', label: 'Income', rows: of('income') },
+        { key: 'expense', label: 'Spending', rows: of('expense') },
+        { key: 'debt_service', label: 'Debt service', rows: of('debt_service') },
+    ];
 }
+const savingsColumns: DrilldownColumn<SavingsDrillRow>[] = [
+    { header: 'Amount', align: 'right', sortValue: r => r.amount, render: r => <AmountCell value={r.amount} /> },
+];
 
-function debtRows(rows: DebtDrillRow[]): Array<Array<string | number>> {
-    return rows.map(r => [
-        r.name,
-        formatFullCurrency(r.startBalance),
-        formatFullCurrency(r.endBalance),
-        r.change,
-    ]);
+/* ---- Market: grouped by sign of gain (Gains / Losses) ---- */
+function marketGroups(rows: MarketDrillRow[]): DrilldownGroup<MarketDrillRow>[] {
+    return [
+        { key: 'gains', label: 'Gains', rows: byMagnitude(rows.filter(r => r.gain >= 0), r => r.gain) },
+        { key: 'losses', label: 'Losses', rows: byMagnitude(rows.filter(r => r.gain < 0), r => r.gain) },
+    ];
 }
+const marketColumns: DrilldownColumn<MarketDrillRow>[] = [
+    { header: 'Start value', align: 'right', sortValue: r => r.startValue, render: r => formatFullCurrency(r.startValue) },
+    { header: 'End value', align: 'right', sortValue: r => r.endValue, render: r => formatFullCurrency(r.endValue) },
+    { header: 'Net invested', align: 'right', sortValue: r => r.netInvested, render: r => <AmountCell value={r.netInvested} /> },
+    { header: 'Gain', align: 'right', sortValue: r => r.gain, render: r => <AmountCell value={r.gain} /> },
+];
 
-function otherRows(rows: OtherDrillRow[]): Array<Array<string | number>> {
-    return rows.map(r => [r.name, r.amount]);
+/* ---- Debt: grouped by sign of change (Paydown / Borrowing) ---- */
+function debtGroups(rows: DebtDrillRow[]): DrilldownGroup<DebtDrillRow>[] {
+    return [
+        { key: 'paydown', label: 'Paydown', rows: byMagnitude(rows.filter(r => r.change >= 0), r => r.change) },
+        { key: 'borrowing', label: 'Borrowing', rows: byMagnitude(rows.filter(r => r.change < 0), r => r.change) },
+    ];
 }
+const debtColumns: DrilldownColumn<DebtDrillRow>[] = [
+    { header: 'Start balance', align: 'right', sortValue: r => r.startBalance, render: r => formatFullCurrency(r.startBalance) },
+    { header: 'End balance', align: 'right', sortValue: r => r.endBalance, render: r => formatFullCurrency(r.endBalance) },
+    { header: 'Change', align: 'right', sortValue: r => r.change, render: r => <AmountCell value={r.change} /> },
+];
+
+/* ---- Other: grouped by sign (Inflows / Outflows) ---- */
+function otherGroups(rows: OtherDrillRow[]): DrilldownGroup<OtherDrillRow>[] {
+    return [
+        { key: 'inflows', label: 'Inflows', rows: byMagnitude(rows.filter(r => r.amount >= 0), r => r.amount) },
+        { key: 'outflows', label: 'Outflows', rows: byMagnitude(rows.filter(r => r.amount < 0), r => r.amount) },
+    ];
+}
+const otherColumns: DrilldownColumn<OtherDrillRow>[] = [
+    { header: 'Amount', align: 'right', sortValue: r => r.amount, render: r => <AmountCell value={r.amount} /> },
+];
 
 /* ------------------------------------------------------------------ */
 /* Page                                                                */
@@ -484,28 +454,40 @@ export default function NetWorthAttributionPage() {
                         <WaterfallSummary data={reportData} />
                         <MonthlyChart data={reportData} />
 
-                        <DrillTable
+                        <ReportDrilldownTable
                             title="Savings — income, spending, and debt service"
-                            headers={['Account', 'Kind', 'Amount']}
-                            rows={savingsRows(reportData.drilldown.savings)}
+                            nameHeader="Account"
+                            columns={savingsColumns}
+                            groups={savingsGroups(reportData.drilldown.savings)}
+                            getAccount={r => ({ guid: r.guid, name: r.name })}
+                            dateRange={{ startDate: reportData.startDate, endDate: reportData.endDate }}
                             emptyText="No income or expense flows in this period."
                         />
-                        <DrillTable
+                        <ReportDrilldownTable
                             title="Market gains/losses — per holding"
-                            headers={['Holding', 'Start value', 'End value', 'Net invested', 'Gain']}
-                            rows={marketRows(reportData.drilldown.market)}
+                            nameHeader="Holding"
+                            columns={marketColumns}
+                            groups={marketGroups(reportData.drilldown.market)}
+                            getAccount={r => ({ guid: r.accountGuid, name: r.name })}
+                            dateRange={{ startDate: reportData.startDate, endDate: reportData.endDate }}
                             emptyText="No priced holdings in this period."
                         />
-                        <DrillTable
+                        <ReportDrilldownTable
                             title="Debt paydown — per liability"
-                            headers={['Liability', 'Start balance', 'End balance', 'Change']}
-                            rows={debtRows(reportData.drilldown.debt)}
+                            nameHeader="Liability"
+                            columns={debtColumns}
+                            groups={debtGroups(reportData.drilldown.debt)}
+                            getAccount={r => ({ guid: r.accountGuid, name: r.name })}
+                            dateRange={{ startDate: reportData.startDate, endDate: reportData.endDate }}
                             emptyText="No liability activity in this period."
                         />
-                        <DrillTable
+                        <ReportDrilldownTable
                             title="Transfers / equity / other"
-                            headers={['Source', 'Amount']}
-                            rows={otherRows(reportData.drilldown.other)}
+                            nameHeader="Source"
+                            columns={otherColumns}
+                            groups={otherGroups(reportData.drilldown.other)}
+                            getAccount={r => ({ guid: r.guid, name: r.name })}
+                            dateRange={{ startDate: reportData.startDate, endDate: reportData.endDate }}
                             emptyText="Nothing here — every dollar is explained by the components above."
                         />
 

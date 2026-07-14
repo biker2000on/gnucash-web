@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters, InvestmentPortfolioData } from '@/lib/reports/types';
 import { PortfolioTable } from '@/components/reports/PortfolioTable';
+import { TransactionDrilldownModal, DrilldownTarget } from '@/components/reports/TransactionDrilldownModal';
 import { generatePortfolioCSV } from '@/lib/reports/csv-export';
 import { downloadCSV } from '@/lib/reports/csv-export';
 
@@ -22,6 +23,7 @@ function InvestmentPortfolioContent() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showZeroShares, setShowZeroShares] = useState(false);
+    const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
 
     const fetchReport = useCallback(async () => {
         setIsLoading(true);
@@ -87,7 +89,20 @@ function InvestmentPortfolioContent() {
             >
                 {reportData && (
                     <>
-                        <PortfolioTable data={reportData} />
+                        <PortfolioTable
+                            data={reportData}
+                            onAccountClick={(h) => {
+                                const endDate = filters.endDate || new Date().toISOString().split('T')[0];
+                                const startDate = filters.startDate || '1970-01-01';
+                                setDrilldown({
+                                    accountGuid: h.guid,
+                                    accountName: h.accountName || h.symbol,
+                                    periodLabel: `As of ${endDate}`,
+                                    startDate,
+                                    endDate,
+                                });
+                            }}
+                        />
 
                         {/* Custom CSV export button */}
                         <div className="border-t border-border p-4 flex justify-end no-print">
@@ -104,6 +119,8 @@ function InvestmentPortfolioContent() {
                     </>
                 )}
             </ReportViewer>
+
+            <TransactionDrilldownModal target={drilldown} onClose={() => setDrilldown(null)} />
         </div>
     );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { InvestmentPortfolioData } from '@/lib/reports/types';
+import { InvestmentPortfolioData, PortfolioHolding } from '@/lib/reports/types';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
 
@@ -33,9 +33,10 @@ function gainColor(value: number): string {
 
 interface PortfolioTableProps {
     data: InvestmentPortfolioData;
+    onAccountClick?: (holding: PortfolioHolding) => void;
 }
 
-export function PortfolioTable({ data }: PortfolioTableProps) {
+export function PortfolioTable({ data, onAccountClick }: PortfolioTableProps) {
     const { holdings, totals } = data;
     const isMobile = useIsMobile();
 
@@ -52,7 +53,20 @@ export function PortfolioTable({ data }: PortfolioTableProps) {
                             <MobileCard
                                 key={h.guid}
                                 fields={[
-                                    { label: 'Account', value: h.accountName },
+                                    {
+                                        label: 'Account',
+                                        value: onAccountClick && h.guid ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => onAccountClick(h)}
+                                                className="text-primary hover:underline text-left focus:outline-none focus:underline"
+                                            >
+                                                {h.accountName}
+                                            </button>
+                                        ) : (
+                                            h.accountName
+                                        ),
+                                    },
                                     { label: 'Symbol', value: <span className="font-mono">{h.symbol}</span> },
                                     { label: 'Shares', value: <span className="font-mono">{fmtShares(h.shares)}</span> },
                                     { label: 'Price', value: <span className="font-mono">{fmtCurrency(h.latestPrice)}</span> },
@@ -116,7 +130,19 @@ export function PortfolioTable({ data }: PortfolioTableProps) {
                     )}
                     {holdings.map((h) => (
                         <tr key={h.guid} className="border-b border-border/50 hover:bg-surface-hover/30 transition-colors">
-                            <td className="py-2 px-3 text-sm text-foreground">{h.accountName}</td>
+                            <td className="py-2 px-3 text-sm text-foreground">
+                                {onAccountClick && h.guid ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onAccountClick(h)}
+                                        className="text-primary hover:underline text-left focus:outline-none focus:underline"
+                                    >
+                                        {h.accountName}
+                                    </button>
+                                ) : (
+                                    h.accountName
+                                )}
+                            </td>
                             <td className="py-2 px-3 text-sm text-foreground-secondary font-mono">{h.symbol}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtShares(h.shares)}</td>
                             <td className="py-2 px-3 text-sm text-right font-mono text-foreground">{fmtCurrency(h.latestPrice)}</td>

@@ -38,9 +38,15 @@ type SortState = {
 interface Props {
     target: DrilldownTarget | null;
     onClose: () => void;
+    /**
+     * Endpoint that returns { transactions, total } for an account + date range.
+     * Defaults to the generic report drill-down; the income statement passes its
+     * own type-scoped endpoint to preserve exact behavior.
+     */
+    endpoint?: string;
 }
 
-export function TransactionDrilldownModal({ target, onClose }: Props) {
+export function TransactionDrilldownModal({ target, onClose, endpoint = '/api/reports/transactions' }: Props) {
     const [data, setData] = useState<DrilldownResponse | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -67,7 +73,7 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
                 endDate: target.endDate,
             });
 
-            fetch(`/api/reports/income-statement-by-period/transactions?${params}`)
+            fetch(`${endpoint}?${params}`)
                 .then(async res => {
                     if (!res.ok) throw new Error(`Failed (${res.status})`);
                     return (await res.json()) as DrilldownResponse;
@@ -86,7 +92,7 @@ export function TransactionDrilldownModal({ target, onClose }: Props) {
         return () => {
             cancelled = true;
         };
-    }, [target]);
+    }, [target, endpoint]);
 
     // Esc to close + focus close button on open
     useEffect(() => {

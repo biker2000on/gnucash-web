@@ -277,6 +277,7 @@ export default function IncomeStatementByPeriodPage() {
             <TransactionDrilldownModal
                 target={drilldown}
                 onClose={() => setDrilldown(null)}
+                endpoint="/api/reports/income-statement-by-period/transactions"
             />
         </ReportViewer>
     );

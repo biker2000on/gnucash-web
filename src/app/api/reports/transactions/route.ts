@@ -3,6 +3,13 @@ import { fetchPeriodTransactions } from '@/lib/reports/income-statement-by-perio
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
+/**
+ * Generic report drill-down: transactions for any account (and its
+ * descendants) over a date range, book-scoped. Powers the account links in
+ * report drill-down tables (net-worth attribution, breakdowns, etc.).
+ *
+ * GET /api/reports/transactions?accountGuid=...&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+ */
 export async function GET(request: NextRequest) {
     try {
         const roleResult = await requireRole('readonly');
@@ -22,17 +29,18 @@ export async function GET(request: NextRequest) {
 
         const bookAccountGuids = await getBookAccountGuids();
 
+        // No account-type restriction: any account (asset, liability, holding,
+        // income, expense, equity) can be drilled into.
         const result = await fetchPeriodTransactions({
             accountGuid,
             startDate,
             endDate,
             bookAccountGuids,
-            accountTypes: ['INCOME', 'EXPENSE'],
         });
 
         return NextResponse.json(result);
     } catch (error) {
-        console.error('Error fetching income-statement period transactions:', error);
+        console.error('Error fetching report drill-down transactions:', error);
         return NextResponse.json(
             { error: 'Failed to fetch transactions' },
             { status: 500 },
