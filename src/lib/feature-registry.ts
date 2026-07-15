@@ -75,6 +75,7 @@ export const FEATURES: Feature[] = [
     { id: 'nav-statements', title: 'Statements', description: 'Upload bank statements (PDF/CSV/OFX), auto-match, and reconcile to the closing balance.', href: '/statements', domain: 'money', task: 'Documents & import', kind: 'page', keywords: 'uploads reconcile bank', nav: true },
     { id: 'nav-import-export', title: 'Import / Export', description: 'GnuCash XML round-trip, Amazon order import, and desktop-compatible exports.', href: '/import-export', domain: 'money', task: 'Documents & import', kind: 'page', keywords: 'xml amazon backup', nav: true },
     { id: 'nav-qif-import', title: 'QIF Import', description: 'Quicken files with transfer matching, category mapping, and duplicate detection.', href: '/import-export/qif', domain: 'money', task: 'Documents & import', kind: 'page', keywords: 'quicken import bank transfer' },
+    { id: 'nav-qbo-import', title: 'QuickBooks Import', description: 'Rebuild a QuickBooks Online company as a new book from its Journal and Chart of Accounts exports.', href: '/import-export/quickbooks', domain: 'money', task: 'Documents & import', kind: 'page', keywords: 'quickbooks qbo intuit migrate journal import company' },
 
     // ── Budgets & Goals ──────────────────────────────────────────────────
     { id: 'nav-budgets', title: 'Budgets', description: 'Envelope budgeting with rollover, pace markers, overspend alerts, and scenarios.', href: '/budgets', domain: 'budgets', task: 'Budgeting', kind: 'page', shortcut: 'g u', nav: true },
