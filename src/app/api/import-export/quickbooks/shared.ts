@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 
 /** Shared multipart parsing for the QuickBooks preview + commit routes. */
 
-export const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB per file
+export const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB per CSV file
+export const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024; // 50 MB for ZIP/XLSX archives
 export const MAX_JOURNAL_LINES = 100_000;
 
+const ARCHIVE_EXT = /\.(zip|xlsx|xlsm|xls)$/i;
+
 export interface QboUpload {
-    journalContent: string;
+    journalContent: string | null;
     coaContent: string | null;
+    /** ZIP from QBO "Export data" or a single XLSX workbook */
+    archive: { filename: string; data: Uint8Array } | null;
+    /** Chart of Accounts uploaded as an XLSX workbook */
+    coaArchive: { filename: string; data: Uint8Array } | null;
     bookName: string | null;
     typeOverrides: Record<string, string>;
     entityType: string | null;
@@ -38,11 +45,21 @@ function parseOverrides(raw: FormDataEntryValue | null): Record<string, string> 
     }
 }
 
+async function readArchiveFile(
+    file: File,
+    label: string
+): Promise<{ filename: string; data: Uint8Array } | NextResponse> {
+    if (file.size > MAX_ARCHIVE_BYTES) {
+        return NextResponse.json({ error: `${label} too large (50 MB max)` }, { status: 413 });
+    }
+    return { filename: file.name, data: new Uint8Array(await file.arrayBuffer()) };
+}
+
 export async function readQboUpload(request: NextRequest): Promise<QboUpload | NextResponse> {
     const contentType = request.headers.get('content-type') ?? '';
     if (!contentType.includes('multipart/form-data')) {
         return NextResponse.json(
-            { error: 'Expected multipart/form-data with a "journal" file' },
+            { error: 'Expected multipart/form-data with an "archive" or "journal" file' },
             { status: 400 }
         );
     }
@@ -54,44 +71,71 @@ export async function readQboUpload(request: NextRequest): Promise<QboUpload | N
         return NextResponse.json({ error: 'Could not read the upload' }, { status: 400 });
     }
 
+    let archive: QboUpload['archive'] = null;
+    let journalContent: string | null = null;
+    let journalName: string | null = null;
+
+    // New path: a single "archive" field (Export-data ZIP or XLSX workbook).
+    const archiveFile = formData.get('archive');
+    if (archiveFile instanceof File && archiveFile.size > 0) {
+        if (!ARCHIVE_EXT.test(archiveFile.name)) {
+            return NextResponse.json(
+                { error: 'The archive must be a .zip (QuickBooks Export data) or .xlsx file.' },
+                { status: 400 }
+            );
+        }
+        const read = await readArchiveFile(archiveFile, 'Archive');
+        if (read instanceof NextResponse) return read;
+        archive = read;
+    }
+
+    // Legacy path: "journal" field. A .zip/.xlsx dropped here is promoted to
+    // the archive path (same machinery); otherwise it is Journal CSV text.
     const journalFile = formData.get('journal');
-    if (!(journalFile instanceof File)) {
-        return NextResponse.json({ error: 'A Journal report CSV file is required' }, { status: 400 });
+    if (!archive && journalFile instanceof File && journalFile.size > 0) {
+        if (ARCHIVE_EXT.test(journalFile.name)) {
+            const read = await readArchiveFile(journalFile, 'Journal file');
+            if (read instanceof NextResponse) return read;
+            archive = read;
+        } else {
+            if (journalFile.size > MAX_FILE_BYTES) {
+                return NextResponse.json({ error: 'Journal file too large (20 MB max)' }, { status: 413 });
+            }
+            journalContent = await journalFile.text();
+            journalName = journalFile.name || null;
+            if (!journalContent.trim()) {
+                return NextResponse.json({ error: 'The Journal file is empty' }, { status: 400 });
+            }
+            if (countLines(journalContent) > MAX_JOURNAL_LINES) {
+                return NextResponse.json(
+                    { error: `Journal file has too many rows (${MAX_JOURNAL_LINES.toLocaleString()} max). Split the export into smaller date ranges.` },
+                    { status: 413 }
+                );
+            }
+        }
     }
-    if (journalFile.size > MAX_FILE_BYTES) {
-        return NextResponse.json({ error: 'Journal file too large (20 MB max)' }, { status: 413 });
-    }
-    if (/\.xlsx?$/i.test(journalFile.name)) {
+
+    if (!archive && !journalContent) {
         return NextResponse.json(
-            { error: 'XLSX is not supported — export the Journal report as CSV instead.' },
+            { error: 'A QuickBooks Export data ZIP or a Journal report CSV file is required' },
             { status: 400 }
         );
     }
 
-    const journalContent = await journalFile.text();
-    if (!journalContent.trim()) {
-        return NextResponse.json({ error: 'The Journal file is empty' }, { status: 400 });
-    }
-    if (countLines(journalContent) > MAX_JOURNAL_LINES) {
-        return NextResponse.json(
-            { error: `Journal file has too many rows (${MAX_JOURNAL_LINES.toLocaleString()} max). Split the export into smaller date ranges.` },
-            { status: 413 }
-        );
-    }
-
     let coaContent: string | null = null;
+    let coaArchive: QboUpload['coaArchive'] = null;
     const coaFile = formData.get('coa');
     if (coaFile instanceof File && coaFile.size > 0) {
-        if (coaFile.size > MAX_FILE_BYTES) {
-            return NextResponse.json({ error: 'Chart of Accounts file too large (20 MB max)' }, { status: 413 });
+        if (ARCHIVE_EXT.test(coaFile.name)) {
+            const read = await readArchiveFile(coaFile, 'Chart of Accounts file');
+            if (read instanceof NextResponse) return read;
+            coaArchive = read;
+        } else {
+            if (coaFile.size > MAX_FILE_BYTES) {
+                return NextResponse.json({ error: 'Chart of Accounts file too large (20 MB max)' }, { status: 413 });
+            }
+            coaContent = await coaFile.text();
         }
-        if (/\.xlsx?$/i.test(coaFile.name)) {
-            return NextResponse.json(
-                { error: 'XLSX is not supported — export the Chart of Accounts as CSV instead.' },
-                { status: 400 }
-            );
-        }
-        coaContent = await coaFile.text();
     }
 
     const str = (key: string): string | null => {
@@ -102,10 +146,12 @@ export async function readQboUpload(request: NextRequest): Promise<QboUpload | N
     return {
         journalContent,
         coaContent,
+        archive,
+        coaArchive,
         bookName: str('bookName'),
         typeOverrides: parseOverrides(formData.get('typeOverrides')),
         entityType: str('entityType'),
         currency: str('currency'),
-        filename: journalFile.name || null,
+        filename: archive?.filename ?? journalName,
     };
 }

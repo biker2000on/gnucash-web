@@ -1,8 +1,11 @@
 /**
  * QuickBooks Online import service.
  *
- * previewQboImport() parses the uploaded Journal (+ optional Chart of
- * Accounts) and returns a summary with resolved account types — no writes.
+ * previewQboImport() parses the upload — either the legacy Journal CSV
+ * (+ optional Chart of Accounts CSV) or a QBO "Export data" ZIP / XLSX
+ * workbook (auto-classified sheets; Journal preferred over General Ledger;
+ * CoA merged automatically) — and returns a summary with resolved account
+ * types. No writes.
  *
  * commitQboImport() rebuilds the QBO company as a brand-new book: book row +
  * ROOT + Template Root (mirroring src/lib/default-book.ts), the account tree
@@ -19,22 +22,52 @@ import { invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { grantRole } from '@/lib/services/permission.service';
 import { saveEntityProfile, type EntityType } from '@/lib/services/entity.service';
 import {
-    parseQboJournalCsv,
-    parseQboCoaCsv,
+    splitCsvRows,
+    parseQboJournalRows,
+    parseQboCoaRows,
     resolveAccountTypes,
     type QboCoaParseResult,
     type QboJournalParseResult,
     type QboParseError,
     type ResolvedAccount,
 } from './qbo-journal';
+import { parseQboGeneralLedgerRows, type QboGlStats } from './qbo-gl';
+import {
+    sheetsFromUpload,
+    classifySheet,
+    MAX_SHEET_ROWS,
+    type SheetKind,
+    type UploadSheet,
+} from './qbo-workbook';
 
 /* ------------------------------------------------------------------ */
 /* Preview                                                              */
 /* ------------------------------------------------------------------ */
 
+export type QboSourceFormat = 'journal' | 'general_ledger';
+
+/** A raw uploaded .zip/.xlsx (the QBO "Export data" archive or a workbook). */
+export interface QboArchiveUpload {
+    filename: string;
+    data: Uint8Array;
+}
+
+export interface QboSheetInfo {
+    name: string;
+    kind: SheetKind;
+    /** Whether this sheet feeds the import (journal/GL source or CoA) */
+    used: boolean;
+}
+
 export interface QboPreviewInput {
-    journalContent: string;
+    /** Legacy path: Journal report CSV content */
+    journalContent?: string | null;
+    /** Legacy path: Chart of Accounts CSV content */
     coaContent?: string | null;
+    /** New path: QBO Export-data ZIP or a single XLSX workbook */
+    archive?: QboArchiveUpload | null;
+    /** Chart of Accounts uploaded as an XLSX workbook */
+    coaArchive?: QboArchiveUpload | null;
     /** Proposed book name (for the duplicate-import warning) */
     bookName?: string | null;
     /** Account path -> GnuCash type overrides from the UI */
@@ -59,6 +92,12 @@ export interface QboPreview {
     coaLoaded: boolean;
     coaAccountCount: number;
     duplicateWarning: string | null;
+    /** Where the transactions came from */
+    sourceFormat: QboSourceFormat;
+    /** GL reconstruction stats (null for the journal path) */
+    glStats: QboGlStats | null;
+    /** Sheets found in the archive and which were used (null for CSV path) */
+    sheets: QboSheetInfo[] | null;
     sampleTransactions: Array<{
         date: string;
         description: string;
@@ -67,15 +106,168 @@ export interface QboPreview {
     }>;
 }
 
+/** Journal-shaped result carrying only a fatal error. */
+function fatalJournalResult(message: string): QboJournalParseResult {
+    return {
+        transactions: [],
+        accountsSeen: [],
+        errors: [{ row: 1, message }],
+        warnings: [],
+        dateRange: null,
+        companyName: null,
+        rowsRead: 0,
+    };
+}
+
+interface ParsedSource {
+    journal: QboJournalParseResult;
+    sourceFormat: QboSourceFormat;
+    glStats: QboGlStats | null;
+    sheets: QboSheetInfo[] | null;
+    /** CoA parsed from a sheet inside the archive, if any */
+    coaFromArchive: QboCoaParseResult | null;
+}
+
+/**
+ * Turn the upload (Export-data ZIP / XLSX archive, or legacy Journal CSV)
+ * into a Journal-shaped parse result. A GL sheet is only used when no
+ * Journal sheet exists; the CoA sheet is merged automatically.
+ */
+function parseSource(input: QboPreviewInput): ParsedSource {
+    if (input.archive) {
+        let uploadSheets: UploadSheet[];
+        try {
+            uploadSheets = sheetsFromUpload(input.archive.filename, input.archive.data);
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Could not read the uploaded archive.';
+            return {
+                journal: fatalJournalResult(message),
+                sourceFormat: 'journal',
+                glStats: null,
+                sheets: null,
+                coaFromArchive: null,
+            };
+        }
+
+        const classified = uploadSheets.map((s) => ({ ...s, kind: classifySheet(s.rows) }));
+        const journalSheet = classified.find((s) => s.kind === 'journal');
+        const glSheet = classified.find((s) => s.kind === 'general_ledger');
+        const coaSheet = classified.find((s) => s.kind === 'chart_of_accounts');
+        const sourceSheet = journalSheet ?? glSheet ?? null;
+        const sheets: QboSheetInfo[] = classified.map((s) => ({
+            name: s.name,
+            kind: s.kind,
+            used: s === sourceSheet || s === coaSheet,
+        }));
+        const coaFromArchive = coaSheet ? parseQboCoaRows(coaSheet.rows) : null;
+
+        if (!sourceSheet) {
+            const found = classified.length
+                ? ` Sheets found: ${classified.map((s) => `"${s.name}"`).join(', ')}.`
+                : ' The archive contained no readable sheets.';
+            return {
+                journal: fatalJournalResult(
+                    `No Journal or General Ledger sheet found in "${input.archive.filename}".${found} ` +
+                        'Use the QuickBooks "Export data" ZIP, or export the Journal report as CSV.'
+                ),
+                sourceFormat: 'journal',
+                glStats: null,
+                sheets,
+                coaFromArchive,
+            };
+        }
+        if (sourceSheet.rows.length > MAX_SHEET_ROWS) {
+            return {
+                journal: fatalJournalResult(
+                    `The sheet "${sourceSheet.name}" has too many rows (${MAX_SHEET_ROWS.toLocaleString()} max). ` +
+                        'Split the export into smaller date ranges.'
+                ),
+                sourceFormat: journalSheet ? 'journal' : 'general_ledger',
+                glStats: null,
+                sheets,
+                coaFromArchive,
+            };
+        }
+
+        if (journalSheet) {
+            return {
+                journal: parseQboJournalRows(journalSheet.rows),
+                sourceFormat: 'journal',
+                glStats: null,
+                sheets,
+                coaFromArchive,
+            };
+        }
+        const gl = parseQboGeneralLedgerRows(glSheet!.rows);
+        return {
+            journal: gl,
+            sourceFormat: 'general_ledger',
+            glStats: gl.glStats,
+            sheets,
+            coaFromArchive,
+        };
+    }
+
+    // Legacy CSV path. Classify the content so a General Ledger CSV pasted
+    // into the Journal slot still works.
+    if (!input.journalContent?.trim()) {
+        return {
+            journal: fatalJournalResult(
+                'A Journal report CSV or a QuickBooks "Export data" ZIP is required.'
+            ),
+            sourceFormat: 'journal',
+            glStats: null,
+            sheets: null,
+            coaFromArchive: null,
+        };
+    }
+    const rows = splitCsvRows(input.journalContent);
+    if (classifySheet(rows) === 'general_ledger') {
+        const gl = parseQboGeneralLedgerRows(rows);
+        return { journal: gl, sourceFormat: 'general_ledger', glStats: gl.glStats, sheets: null, coaFromArchive: null };
+    }
+    return {
+        journal: parseQboJournalRows(rows),
+        sourceFormat: 'journal',
+        glStats: null,
+        sheets: null,
+        coaFromArchive: null,
+    };
+}
+
+function parseCoa(input: QboPreviewInput, coaFromArchive: QboCoaParseResult | null): QboCoaParseResult | null {
+    // Explicit CSV upload wins, then an uploaded CoA workbook, then a CoA
+    // sheet discovered inside the main archive.
+    if (input.coaContent?.trim()) return parseQboCoaRows(splitCsvRows(input.coaContent));
+    if (input.coaArchive) {
+        try {
+            const sheets = sheetsFromUpload(input.coaArchive.filename, input.coaArchive.data);
+            const coaSheet =
+                sheets.find((s) => classifySheet(s.rows) === 'chart_of_accounts') ?? sheets[0] ?? null;
+            if (coaSheet) return parseQboCoaRows(coaSheet.rows);
+        } catch {
+            return {
+                accounts: [],
+                warnings: [],
+                errors: [{ row: 1, message: `Could not read the Chart of Accounts file "${input.coaArchive.filename}"; it was ignored.` }],
+            };
+        }
+    }
+    return coaFromArchive;
+}
+
 function parseInputs(input: QboPreviewInput): {
     journal: QboJournalParseResult;
     coa: QboCoaParseResult | null;
     resolved: QboPreviewAccount[];
     warnings: string[];
     errors: QboParseError[];
+    sourceFormat: QboSourceFormat;
+    glStats: QboGlStats | null;
+    sheets: QboSheetInfo[] | null;
 } {
-    const journal = parseQboJournalCsv(input.journalContent);
-    const coa = input.coaContent?.trim() ? parseQboCoaCsv(input.coaContent) : null;
+    const { journal, sourceFormat, glStats, sheets, coaFromArchive } = parseSource(input);
+    const coa = parseCoa(input, coaFromArchive);
 
     const warnings = [...journal.warnings];
     const errors = [...journal.errors];
@@ -83,13 +275,17 @@ function parseInputs(input: QboPreviewInput): {
         warnings.push(...coa.warnings);
         // CoA problems are non-fatal: surface them as warnings.
         warnings.push(...coa.errors.map((e) => e.message));
-    } else if (input.coaContent === undefined || input.coaContent === null || !input.coaContent.trim()) {
-        if (journal.accountsSeen.length > 0) {
-            warnings.push(
-                'No Chart of Accounts file provided — account types are inferred from names ' +
-                'and default to ASSET/EXPENSE buckets. Review the account list below.'
-            );
-        }
+    } else if (journal.accountsSeen.length > 0) {
+        warnings.push(
+            'No Chart of Accounts found — account types are inferred from names ' +
+            'and default to ASSET/EXPENSE buckets. Review the account list below.'
+        );
+    }
+    if (sourceFormat === 'general_ledger' && glStats && glStats.failed > 0) {
+        warnings.push(
+            `${glStats.failed} transaction group${glStats.failed === 1 ? '' : 's'} could not be reconstructed ` +
+            'from the General Ledger. The Journal report (Reports → Journal → Export to CSV) is more reliable.'
+        );
     }
 
     const lineCounts = new Map<string, number>();
@@ -105,11 +301,12 @@ function parseInputs(input: QboPreviewInput): {
         input.typeOverrides ?? {}
     ).map((r) => ({ ...r, lines: lineCounts.get(r.path) ?? 0 }));
 
-    return { journal, coa, resolved, warnings, errors };
+    return { journal, coa, resolved, warnings, errors, sourceFormat, glStats, sheets };
 }
 
 export async function previewQboImport(input: QboPreviewInput): Promise<QboPreview> {
-    const { journal, coa, resolved, warnings, errors } = parseInputs(input);
+    const { journal, coa, resolved, warnings, errors, sourceFormat, glStats, sheets } =
+        parseInputs(input);
 
     const accountsByType: Record<string, number> = {};
     for (const a of resolved) {
@@ -153,6 +350,9 @@ export async function previewQboImport(input: QboPreviewInput): Promise<QboPrevi
         coaLoaded: Boolean(coa && coa.accounts.length > 0),
         coaAccountCount: coa?.accounts.length ?? 0,
         duplicateWarning,
+        sourceFormat,
+        glStats,
+        sheets,
         sampleTransactions: journal.transactions.slice(0, 25).map((t) => ({
             date: t.date,
             description: t.name || t.memo || t.type || 'QuickBooks import',
@@ -259,10 +459,11 @@ export async function commitQboImport(
     const bookName = input.bookName.trim();
     if (!bookName) throw new Error('Book name is required');
 
-    const { journal, coa, resolved, warnings } = parseInputs(input);
+    const { journal, coa, resolved, warnings, sourceFormat, glStats } = parseInputs(input);
     if (journal.transactions.length === 0) {
+        const detail = journal.errors[0]?.message;
         throw new Error(
-            journal.errors[0]?.message ?? 'No importable transactions found in the Journal file.'
+            `No importable transactions found in the upload${detail ? `: ${detail}` : '.'}`
         );
     }
 
@@ -461,6 +662,8 @@ export async function commitQboImport(
                 entityType: input.entityType,
                 currency: mnemonic,
                 coaLoaded: Boolean(coa && coa.accounts.length > 0),
+                sourceFormat,
+                ...(glStats ? { glStats } : {}),
             },
         },
     });

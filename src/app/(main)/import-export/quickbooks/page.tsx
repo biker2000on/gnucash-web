@@ -24,6 +24,9 @@ interface PreviewData {
     coaLoaded: boolean;
     coaAccountCount: number;
     duplicateWarning: string | null;
+    sourceFormat: 'journal' | 'general_ledger';
+    glStats: { reconstructed: number; failed: number } | null;
+    sheets: Array<{ name: string; kind: string; used: boolean }> | null;
     sampleTransactions: Array<{ date: string; description: string; amount: number; lines: number }>;
 }
 
@@ -64,6 +67,13 @@ const SOURCE_LABEL: Record<PreviewAccount['source'], string> = {
     coa: 'chart of accounts',
     inferred: 'inferred from name',
     default: 'default (review)',
+};
+
+const SHEET_KIND_LABEL: Record<string, string> = {
+    journal: 'Journal',
+    general_ledger: 'General Ledger',
+    chart_of_accounts: 'Chart of Accounts',
+    unknown: 'not used',
 };
 
 const fmtAmount = (n: number) =>
@@ -135,8 +145,10 @@ function FileDrop({
 export default function QuickBooksImportPage() {
     const { refreshBooks } = useBooks();
 
+    const [archiveFile, setArchiveFile] = useState<File | null>(null);
     const [journalFile, setJournalFile] = useState<File | null>(null);
     const [coaFile, setCoaFile] = useState<File | null>(null);
+    const [csvMode, setCsvMode] = useState(false);
     const [bookName, setBookName] = useState('');
     const [bookNameTouched, setBookNameTouched] = useState(false);
     const [entityType, setEntityType] = useState('c_corp');
@@ -148,8 +160,19 @@ export default function QuickBooksImportPage() {
     const [result, setResult] = useState<CommitResult | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    const handleArchiveFile = useCallback((f: File) => {
+        setArchiveFile(f);
+        setJournalFile(null);
+        setCoaFile(null);
+        setPreview(null);
+        setResult(null);
+        setError(null);
+        setTypeOverrides({});
+    }, []);
+
     const handleJournalFile = useCallback((f: File) => {
         setJournalFile(f);
+        setArchiveFile(null);
         setPreview(null);
         setResult(null);
         setError(null);
@@ -158,6 +181,7 @@ export default function QuickBooksImportPage() {
 
     const handleCoaFile = useCallback((f: File) => {
         setCoaFile(f);
+        setArchiveFile(null);
         setPreview(null);
         setResult(null);
         setError(null);
@@ -166,6 +190,7 @@ export default function QuickBooksImportPage() {
     const buildFormData = useCallback(
         (extra: Record<string, string> = {}) => {
             const fd = new FormData();
+            if (archiveFile) fd.append('archive', archiveFile);
             if (journalFile) fd.append('journal', journalFile);
             if (coaFile) fd.append('coa', coaFile);
             if (bookName.trim()) fd.append('bookName', bookName.trim());
@@ -173,11 +198,13 @@ export default function QuickBooksImportPage() {
             for (const [k, v] of Object.entries(extra)) fd.append(k, v);
             return fd;
         },
-        [journalFile, coaFile, bookName, typeOverrides]
+        [archiveFile, journalFile, coaFile, bookName, typeOverrides]
     );
 
+    const hasSource = Boolean(archiveFile || journalFile);
+
     const runPreview = useCallback(async () => {
-        if (!journalFile) return;
+        if (!hasSource) return;
         setPreviewing(true);
         setError(null);
         try {
@@ -196,10 +223,10 @@ export default function QuickBooksImportPage() {
         } finally {
             setPreviewing(false);
         }
-    }, [journalFile, buildFormData, bookName, bookNameTouched]);
+    }, [hasSource, buildFormData, bookName, bookNameTouched]);
 
     const handleImport = useCallback(async () => {
-        if (!journalFile || !bookName.trim()) return;
+        if (!hasSource || !bookName.trim()) return;
         setImporting(true);
         setError(null);
         try {
@@ -217,15 +244,17 @@ export default function QuickBooksImportPage() {
         } finally {
             setImporting(false);
         }
-    }, [journalFile, bookName, entityType, buildFormData, refreshBooks]);
+    }, [hasSource, bookName, entityType, buildFormData, refreshBooks]);
 
     const handleOverride = useCallback((path: string, type: string) => {
         setTypeOverrides((prev) => ({ ...prev, [path]: type }));
     }, []);
 
     const handleReset = useCallback(() => {
+        setArchiveFile(null);
         setJournalFile(null);
         setCoaFile(null);
+        setCsvMode(false);
         setBookName('');
         setBookNameTouched(false);
         setEntityType('c_corp');
@@ -257,44 +286,71 @@ export default function QuickBooksImportPage() {
                         <h2 className="text-xl font-semibold text-foreground">Export files</h2>
                         <div className="text-sm text-foreground-secondary mt-2 space-y-2">
                             <p>
-                                <span className="text-foreground font-medium">1. Journal report (required):</span>{' '}
-                                In QuickBooks Online go to <span className="font-mono text-xs">Reports → Journal</span>,
-                                set the report period to the full date range you want to migrate (e.g. All Dates),
-                                run the report, then use the export icon → <span className="font-mono text-xs">Export to CSV</span>.
-                            </p>
-                            <p>
-                                <span className="text-foreground font-medium">2. Chart of Accounts (recommended):</span>{' '}
-                                Go to <span className="font-mono text-xs">Settings gear → Chart of accounts → Run report</span>,
-                                then export it to CSV. This gives every account its correct type; without it, types
-                                are inferred from account names.
-                            </p>
-                            <p className="text-foreground-muted">
-                                CSV only — if QuickBooks gave you an Excel (.xlsx) file, re-export choosing CSV.
+                                In QuickBooks Online go to{' '}
+                                <span className="font-mono text-xs">Settings gear → Tools → Export data</span>,
+                                select all reports and lists, download the ZIP, and drop it below.
+                                Transactions are rebuilt from the Journal sheet when present, otherwise
+                                from the General Ledger; the Chart of Accounts is picked up automatically.
                             </p>
                         </div>
                     </div>
 
-                    <div className="grid gap-4 sm:grid-cols-2">
-                        <FileDrop
-                            label="Journal report CSV (required)"
-                            hint="Drop the Journal export here or click to browse"
-                            file={journalFile}
-                            onFile={handleJournalFile}
-                            accept=".csv,.txt"
-                        />
-                        <FileDrop
-                            label="Chart of Accounts CSV (optional)"
-                            hint="Drop the Chart of Accounts export here or click to browse"
-                            file={coaFile}
-                            onFile={handleCoaFile}
-                            accept=".csv,.txt"
-                        />
+                    <FileDrop
+                        label="QuickBooks Export Data ZIP (Settings gear → Tools → Export data)"
+                        hint="Drop the Export data ZIP (or a single .xlsx report) here or click to browse"
+                        file={archiveFile}
+                        onFile={handleArchiveFile}
+                        accept=".zip,.xlsx"
+                    />
+
+                    <div>
+                        <button
+                            type="button"
+                            onClick={() => setCsvMode((v) => !v)}
+                            className="text-sm text-primary hover:text-primary-hover transition-colors"
+                        >
+                            {csvMode ? '▾' : '▸'} or upload Journal + Chart of Accounts CSVs
+                        </button>
+                        {csvMode && (
+                            <div className="mt-4 space-y-4">
+                                <div className="text-sm text-foreground-secondary space-y-2">
+                                    <p>
+                                        <span className="text-foreground font-medium">1. Journal report (required):</span>{' '}
+                                        Go to <span className="font-mono text-xs">Reports → Journal</span>,
+                                        set the report period to the full date range you want to migrate (e.g. All Dates),
+                                        run the report, then use the export icon → <span className="font-mono text-xs">Export to CSV</span>.
+                                    </p>
+                                    <p>
+                                        <span className="text-foreground font-medium">2. Chart of Accounts (recommended):</span>{' '}
+                                        Go to <span className="font-mono text-xs">Settings gear → Chart of accounts → Run report</span>,
+                                        then export it to CSV. This gives every account its correct type; without it, types
+                                        are inferred from account names.
+                                    </p>
+                                </div>
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                    <FileDrop
+                                        label="Journal report CSV"
+                                        hint="Drop the Journal export here or click to browse"
+                                        file={journalFile}
+                                        onFile={handleJournalFile}
+                                        accept=".csv,.txt,.xlsx"
+                                    />
+                                    <FileDrop
+                                        label="Chart of Accounts CSV (optional)"
+                                        hint="Drop the Chart of Accounts export here or click to browse"
+                                        file={coaFile}
+                                        onFile={handleCoaFile}
+                                        accept=".csv,.txt,.xlsx"
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex gap-3">
                         <button
                             onClick={() => void runPreview()}
-                            disabled={previewing || !journalFile}
+                            disabled={previewing || !hasSource}
                             className="flex items-center gap-2 px-5 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground rounded-xl transition-colors"
                         >
                             {previewing ? (
@@ -306,7 +362,7 @@ export default function QuickBooksImportPage() {
                                 'Preview Import'
                             )}
                         </button>
-                        {(journalFile || coaFile) && (
+                        {(archiveFile || journalFile || coaFile) && (
                             <button
                                 onClick={handleReset}
                                 className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
@@ -358,6 +414,53 @@ export default function QuickBooksImportPage() {
                                 {preview.errorCount}
                             </div>
                         </div>
+                    </div>
+
+                    {/* Source format + sheets */}
+                    <div className="text-sm text-foreground-secondary space-y-2">
+                        <p>
+                            <span className="text-foreground-muted text-xs uppercase tracking-wider mr-2">Source</span>
+                            {preview.sourceFormat === 'journal' ? (
+                                <span className="text-foreground">Journal report</span>
+                            ) : (
+                                <span className="text-foreground">
+                                    General Ledger (transactions reconstructed)
+                                    {preview.glStats && (
+                                        <span className="text-foreground-muted">
+                                            {' '}
+                                            — {preview.glStats.reconstructed} reconstructed
+                                            {preview.glStats.failed > 0 && (
+                                                <span className="text-warning">, {preview.glStats.failed} failed</span>
+                                            )}
+                                        </span>
+                                    )}
+                                </span>
+                            )}
+                        </p>
+                        {preview.sheets && preview.sheets.length > 0 && (
+                            <p className="text-xs text-foreground-muted">
+                                Sheets found:{' '}
+                                {preview.sheets.map((s, i) => (
+                                    <span key={`${s.name}-${i}`}>
+                                        {i > 0 && ', '}
+                                        <span className={s.used ? 'text-foreground-secondary' : ''}>
+                                            {s.name} ({SHEET_KIND_LABEL[s.kind] ?? s.kind}
+                                            {s.used ? ', used' : ''})
+                                        </span>
+                                    </span>
+                                ))}
+                            </p>
+                        )}
+                        {preview.sourceFormat === 'general_ledger' &&
+                            preview.glStats &&
+                            preview.glStats.failed > 0 && (
+                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-400">
+                                    Some transactions could not be reconstructed from the General Ledger.
+                                    For a lossless import, export the Journal report instead
+                                    (<span className="font-mono">Reports → Journal → Export to CSV</span>)
+                                    and upload it via the CSV option.
+                                </div>
+                            )}
                     </div>
 
                     {/* Book options */}

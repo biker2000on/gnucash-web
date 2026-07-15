@@ -199,7 +199,7 @@ function validIso(y: number, mo: number, d: number): string | null {
     return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 }
 
-function round2(n: number): number {
+export function round2(n: number): number {
     return Math.round(n * 100) / 100;
 }
 
@@ -216,7 +216,7 @@ export function canonicalAccountPath(raw: string): string {
         .join(':');
 }
 
-function normHeader(cell: string): string {
+export function normHeader(cell: string): string {
     return cell.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
@@ -238,7 +238,7 @@ interface JournalColumns {
 }
 
 /** Detect the Journal header row and map its columns. */
-function detectJournalHeader(cells: string[]): JournalColumns | null {
+export function detectJournalHeader(cells: string[]): JournalColumns | null {
     const norm = cells.map(normHeader);
     const find = (...matchers: Array<string | ((c: string) => boolean)>): number => {
         for (const m of matchers) {
@@ -276,12 +276,20 @@ function detectJournalHeader(cells: string[]): JournalColumns | null {
 }
 
 /** Company name = first meaningful preamble row that isn't the report title or date range. */
-function extractCompanyName(preambleRows: string[][]): string | null {
+export function extractCompanyName(preambleRows: string[][]): string | null {
+    const titles = new Set([
+        'journal',
+        'journal report',
+        'general ledger',
+        'general ledger report',
+        'chart of accounts',
+        'account list',
+    ]);
     for (const row of preambleRows) {
         const text = row.filter((c) => c !== '').join(' ').trim();
         if (!text) continue;
         const lower = text.toLowerCase();
-        if (lower === 'journal' || lower === 'journal report') continue;
+        if (titles.has(lower)) continue;
         // Date-range-ish rows: "January 1 - December 31, 2025", "All Dates"
         if (lower === 'all dates') continue;
         if (/\d{4}/.test(text) && /[-–—]|to /i.test(text)) continue;
@@ -291,10 +299,17 @@ function extractCompanyName(preambleRows: string[][]): string | null {
     return null;
 }
 
-const MAX_HEADER_SCAN_ROWS = 25;
+export const MAX_HEADER_SCAN_ROWS = 25;
 
 export function parseQboJournalCsv(content: string): QboJournalParseResult {
-    const rows = splitCsvRows(content);
+    return parseQboJournalRows(splitCsvRows(content));
+}
+
+/**
+ * Row-level Journal parser. Rows can come from a CSV (splitCsvRows) or from
+ * an XLSX worksheet (qbo-workbook.ts) — same grouping/validation either way.
+ */
+export function parseQboJournalRows(rows: string[][]): QboJournalParseResult {
     const warnings: string[] = [];
     const errors: QboParseError[] = [];
 
@@ -516,7 +531,7 @@ interface CoaColumns {
     detail: number;
 }
 
-function detectCoaHeader(cells: string[]): CoaColumns | null {
+export function detectCoaHeader(cells: string[]): CoaColumns | null {
     const norm = cells.map(normHeader);
     const find = (...names: string[]): number => {
         for (const n of names) {
@@ -536,7 +551,11 @@ function detectCoaHeader(cells: string[]): CoaColumns | null {
 }
 
 export function parseQboCoaCsv(content: string): QboCoaParseResult {
-    const rows = splitCsvRows(content);
+    return parseQboCoaRows(splitCsvRows(content));
+}
+
+/** Row-level Chart of Accounts parser (CSV rows or XLSX worksheet rows). */
+export function parseQboCoaRows(rows: string[][]): QboCoaParseResult {
     const warnings: string[] = [];
     const errors: QboParseError[] = [];
 

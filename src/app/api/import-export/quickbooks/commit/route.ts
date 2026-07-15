@@ -10,9 +10,10 @@ import { readQboUpload } from '../shared';
  * Stateless commit: the client re-sends the same files as preview plus the
  * chosen options, and the server re-parses and imports them into a NEW book.
  *
- * Multipart form data:
- *   journal        — required QBO Journal report CSV file
- *   coa            — optional QBO Chart of Accounts CSV file
+ * Multipart form data (one of archive/journal is required):
+ *   archive        — QBO "Export data" ZIP or a single XLSX workbook
+ *   journal        — QBO Journal report CSV file (legacy path)
+ *   coa            — optional QBO Chart of Accounts CSV or XLSX file
  *   bookName       — required name for the new book
  *   entityType     — one of ENTITY_TYPES (default c_corp)
  *   currency       — ISO 4217 (default USD)
@@ -45,6 +46,8 @@ export async function POST(request: NextRequest) {
         const result = await commitQboImport(user.id, {
             journalContent: upload.journalContent,
             coaContent: upload.coaContent,
+            archive: upload.archive,
+            coaArchive: upload.coaArchive,
             bookName: upload.bookName,
             currency: upload.currency ?? 'USD',
             entityType,
@@ -60,7 +63,8 @@ export async function POST(request: NextRequest) {
         const clientFacing =
             message.startsWith('No importable transactions') ||
             message.startsWith('Book name is required') ||
-            message.startsWith('Could not find the Journal header');
+            message.startsWith('Could not find the Journal header') ||
+            message.startsWith('Could not read');
         return NextResponse.json(
             { error: clientFacing ? message : 'QuickBooks import failed' },
             { status: clientFacing ? 400 : 500 }
