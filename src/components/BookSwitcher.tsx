@@ -54,6 +54,8 @@ interface Book {
     name: string;
     description?: string | null;
     accountCount?: number;
+    /** The current user's role on this book (readonly/edit/admin/timekeeper). */
+    role?: string;
 }
 
 function isDemoBook(book: Book | undefined): boolean {
@@ -104,6 +106,11 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
     };
 
     const activeBook = books.find(b => b.guid === activeBookGuid);
+
+    // Timekeepers get a switcher limited to the books they can reach (the
+    // list is already permission-scoped server-side) with no edit/new-book
+    // affordances.
+    const isTimekeeperActive = activeBook?.role === 'timekeeper';
 
     // Reset highlighted index to active book when opening
     useEffect(() => {
@@ -240,21 +247,24 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                         <IconCheck className="w-4 h-4 shrink-0 text-sidebar-text-active mt-0.5" />
                                     )}
                                 </button>
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setEditingBook(book);
-                                        setOpen(false);
-                                    }}
-                                    className="p-2 hover:bg-surface-hover/50 transition-colors"
-                                    title="Edit book"
-                                >
-                                    <IconPencil className="w-3.5 h-3.5" />
-                                </button>
+                                {book.role !== 'timekeeper' && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingBook(book);
+                                            setOpen(false);
+                                        }}
+                                        className="p-2 hover:bg-surface-hover/50 transition-colors"
+                                        title="Edit book"
+                                    >
+                                        <IconPencil className="w-3.5 h-3.5" />
+                                    </button>
+                                )}
                             </div>
                         ))}
                     </div>
 
+                    {!isTimekeeperActive && (
                     <div className="border-t border-border">
                         <button
                             onClick={() => { setWizardOpen(true); setOpen(false); }}
@@ -295,6 +305,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                             </div>
                         )}
                     </div>
+                    )}
                 </div>
             )}
 

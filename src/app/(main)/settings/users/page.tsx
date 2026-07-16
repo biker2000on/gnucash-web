@@ -13,7 +13,7 @@ interface BookUser {
     grantedAt: string;
 }
 
-const ROLE_OPTIONS = ['readonly', 'edit', 'admin'] as const;
+const ROLE_OPTIONS = ['readonly', 'edit', 'admin', 'timekeeper'] as const;
 
 function authMethodBadges(authMethod: string): string[] {
     if (authMethod === 'both') return ['password', 'OIDC'];
@@ -59,7 +59,7 @@ export default function UsersPage() {
     const [userRole, setUserRole] = useState<string | null>(null);
 
     // Create invitation form state
-    const [inviteRole, setInviteRole] = useState<'readonly' | 'edit'>('readonly');
+    const [inviteRole, setInviteRole] = useState<'readonly' | 'edit' | 'timekeeper'>('readonly');
     const [inviteExpiry, setInviteExpiry] = useState(168);
     const [inviteMaxUses, setInviteMaxUses] = useState(1);
 
@@ -263,12 +263,18 @@ export default function UsersPage() {
                             <label className="block text-sm text-foreground-secondary">Role</label>
                             <select
                                 value={inviteRole}
-                                onChange={(e) => setInviteRole(e.target.value as 'readonly' | 'edit')}
+                                onChange={(e) => setInviteRole(e.target.value as 'readonly' | 'edit' | 'timekeeper')}
                                 className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             >
                                 <option value="readonly">Read Only</option>
                                 <option value="edit">Edit</option>
+                                <option value="timekeeper">Timekeeper</option>
                             </select>
+                            {inviteRole === 'timekeeper' && (
+                                <p className="text-xs text-foreground-muted">
+                                    Time tracking only — can log time against projects but cannot see books or financials.
+                                </p>
+                            )}
                         </div>
 
                         <div className="space-y-1">

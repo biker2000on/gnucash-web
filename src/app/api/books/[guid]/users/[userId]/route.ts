@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { grantRole, revokeAccess, type Role } from '@/lib/services/permission.service';
 
-const VALID_ROLES: Role[] = ['readonly', 'edit', 'admin'];
+const VALID_ROLES: Role[] = ['readonly', 'edit', 'admin', 'timekeeper'];
 
 /** Number of admins on a book. */
 async function countAdmins(bookGuid: string): Promise<number> {

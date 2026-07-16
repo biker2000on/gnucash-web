@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { requireRole } from '@/lib/auth';
+import { requireTimesheetRole } from '@/lib/auth';
 import { parseInput, BusinessValidationError } from '@/lib/services/business.service';
 import { startTimer } from '@/lib/business/time-tracking.service';
 import { mapTimeTrackingError } from '@/lib/business/time-tracking-errors';
@@ -21,7 +21,8 @@ const startSchema = z.object({
 /** POST /api/business/time/timer/start — body: { customerGuid?, jobGuid?, description? }. */
 export async function POST(request: Request) {
   try {
-    const roleResult = await requireRole('edit');
+    // Timers are inherently per-user; timekeepers may run their own.
+    const roleResult = await requireTimesheetRole('write');
     if (roleResult instanceof NextResponse) return roleResult;
     const { user, bookGuid } = roleResult;
 

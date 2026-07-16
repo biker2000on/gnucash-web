@@ -1,12 +1,46 @@
 import prisma from '@/lib/prisma';
 
-export type Role = 'readonly' | 'edit' | 'admin';
+/**
+ * Book roles. readonly/edit/admin form a linear hierarchy; 'timekeeper' sits
+ * OUTSIDE it — a restricted role that can only log time against projects and
+ * never satisfies any minimum financial role (not even readonly).
+ */
+export type Role = 'readonly' | 'edit' | 'admin' | 'timekeeper';
 
-const ROLE_HIERARCHY: Record<Role, number> = {
+const ROLE_HIERARCHY: Record<string, number> = {
   readonly: 0,
   edit: 1,
   admin: 2,
+  // 'timekeeper' is deliberately absent: it must never satisfy a minimum
+  // financial role. roleAtLeast() fails closed for any name not listed here.
 };
+
+/**
+ * Fail-closed hierarchy comparison. Any role name that is not part of the
+ * linear hierarchy (unknown names, 'timekeeper', null) is treated as rank -1
+ * and an unknown minimum as rank +Infinity, so the check can only pass for
+ * known role pairs. Never use a raw `HIERARCHY[a] >= HIERARCHY[b]` compare:
+ * `undefined >= n` is false but `undefined < n` is ALSO false, which turns a
+ * `<`-style guard into an accidental allow.
+ */
+export function roleAtLeast(role: string | null | undefined, minimumRole: string): boolean {
+  const have = role != null ? (ROLE_HIERARCHY[role] ?? -1) : -1;
+  const need = ROLE_HIERARCHY[minimumRole] ?? Infinity;
+  return have >= need;
+}
+
+/** Roles allowed to WRITE timesheet entries (their own, for timekeepers). */
+const TIMESHEET_WRITE_ROLES: ReadonlySet<string> = new Set(['timekeeper', 'edit', 'admin']);
+
+/**
+ * Timesheet access check: timekeeper/edit/admin may write; readonly may
+ * additionally read. Fails closed for unknown role names.
+ */
+export function hasTimesheetAccess(role: string | null | undefined, access: 'read' | 'write'): boolean {
+  if (!role) return false;
+  if (TIMESHEET_WRITE_ROLES.has(role)) return true;
+  return access === 'read' && role === 'readonly';
+}
 
 /**
  * Get a user's role for a specific book.
@@ -32,7 +66,7 @@ export async function hasMinimumRole(
 ): Promise<boolean> {
   const userRole = await getUserRoleForBook(userId, bookGuid);
   if (!userRole) return false;
-  return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[minimumRole];
+  return roleAtLeast(userRole, minimumRole);
 }
 
 /**

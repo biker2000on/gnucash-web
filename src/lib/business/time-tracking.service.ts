@@ -43,6 +43,10 @@ export class TimeTrackingStateError extends Error {}
 
 export interface TimeEntryDTO {
   id: number;
+  /** Owning user (null on legacy rows created before attribution). */
+  userId: number | null;
+  /** Owning user's username, for attribution in multi-user books. */
+  username: string | null;
   customerGuid: string | null;
   customerName: string | null;
   jobGuid: string | null;
@@ -91,6 +95,21 @@ export interface ListTimeEntriesOptions {
   endDate?: string;
   customerGuid?: string;
   jobGuid?: string;
+  /**
+   * Restrict to a single user's entries. Set by the API layer either from a
+   * caller-supplied filter (edit/admin) or FORCED to the calling user for the
+   * restricted 'timekeeper' role.
+   */
+  userId?: number;
+}
+
+/**
+ * Ownership scope for single-entry operations. When set, an entry owned by a
+ * DIFFERENT user is treated as not found (404) — timekeepers must never learn
+ * whether someone else's entry id exists.
+ */
+export interface EntryScope {
+  userId: number;
 }
 
 /** Minimal shape the pure aggregation helpers need (DB-free for tests). */
@@ -289,30 +308,38 @@ type TimeEntryRow = NonNullable<Awaited<ReturnType<typeof prisma.gnucash_web_tim
 async function nameLookups(rows: ReadonlyArray<TimeEntryRow>): Promise<{
   customers: Map<string, string>;
   jobs: Map<string, string>;
+  users: Map<number, string>;
 }> {
   const customerGuids = Array.from(new Set(rows.map((r) => r.customer_guid).filter((g): g is string => Boolean(g))));
   const jobGuids = Array.from(new Set(rows.map((r) => r.job_guid).filter((g): g is string => Boolean(g))));
-  const [customers, jobs] = await Promise.all([
+  const userIds = Array.from(new Set(rows.map((r) => r.user_id).filter((id): id is number => id != null)));
+  const [customers, jobs, users] = await Promise.all([
     customerGuids.length
       ? prisma.customers.findMany({ where: { guid: { in: customerGuids } }, select: { guid: true, name: true } })
       : Promise.resolve([]),
     jobGuids.length
       ? prisma.jobs.findMany({ where: { guid: { in: jobGuids } }, select: { guid: true, name: true } })
       : Promise.resolve([]),
+    userIds.length
+      ? prisma.gnucash_web_users.findMany({ where: { id: { in: userIds } }, select: { id: true, username: true } })
+      : Promise.resolve([]),
   ]);
   return {
     customers: new Map(customers.map((c) => [c.guid, c.name])),
     jobs: new Map(jobs.map((j) => [j.guid, j.name])),
+    users: new Map(users.map((u) => [u.id, u.username])),
   };
 }
 
 function mapRow(
   row: TimeEntryRow,
-  lookups: { customers: Map<string, string>; jobs: Map<string, string> },
+  lookups: { customers: Map<string, string>; jobs: Map<string, string>; users: Map<number, string> },
 ): TimeEntryDTO {
   const rate = row.rate == null ? null : Number(row.rate);
   return {
     id: row.id,
+    userId: row.user_id,
+    username: row.user_id != null ? (lookups.users.get(row.user_id) ?? null) : null,
     customerGuid: row.customer_guid,
     customerName: row.customer_guid ? (lookups.customers.get(row.customer_guid) ?? null) : null,
     jobGuid: row.job_guid,
@@ -374,6 +401,7 @@ export async function listTimeEntries(
   const rows = await prisma.gnucash_web_time_entries.findMany({
     where: {
       book_guid: bookGuid,
+      ...(options.userId !== undefined ? { user_id: options.userId } : {}),
       ...(options.customerGuid ? { customer_guid: options.customerGuid } : {}),
       ...(options.jobGuid ? { job_guid: options.jobGuid } : {}),
       ...(options.startDate || options.endDate
@@ -390,9 +418,14 @@ export async function listTimeEntries(
   return mapRows(rows);
 }
 
-export async function getTimeEntry(bookGuid: string, id: number): Promise<TimeEntryDTO | null> {
+export async function getTimeEntry(
+  bookGuid: string,
+  id: number,
+  scope?: EntryScope,
+): Promise<TimeEntryDTO | null> {
   const row = await prisma.gnucash_web_time_entries.findUnique({ where: { id } });
   if (!row || row.book_guid !== bookGuid) return null;
+  if (scope && row.user_id !== scope.userId) return null;
   const lookups = await nameLookups([row]);
   return mapRow(row, lookups);
 }
@@ -435,9 +468,14 @@ export async function updateTimeEntry(
   bookGuid: string,
   id: number,
   patch: TimeEntryPatch,
+  scope?: EntryScope,
 ): Promise<TimeEntryDTO> {
   const existing = await prisma.gnucash_web_time_entries.findUnique({ where: { id } });
   if (!existing || existing.book_guid !== bookGuid) {
+    throw new TimeTrackingNotFoundError(`Time entry not found: ${id}`);
+  }
+  if (scope && existing.user_id !== scope.userId) {
+    // Scoped callers must not learn that the id exists at all.
     throw new TimeTrackingNotFoundError(`Time entry not found: ${id}`);
   }
   if (existing.invoiced_invoice_guid) {
@@ -471,9 +509,12 @@ export async function updateTimeEntry(
   return mapRow(row, lookups);
 }
 
-export async function deleteTimeEntry(bookGuid: string, id: number): Promise<void> {
+export async function deleteTimeEntry(bookGuid: string, id: number, scope?: EntryScope): Promise<void> {
   const existing = await prisma.gnucash_web_time_entries.findUnique({ where: { id } });
   if (!existing || existing.book_guid !== bookGuid) {
+    throw new TimeTrackingNotFoundError(`Time entry not found: ${id}`);
+  }
+  if (scope && existing.user_id !== scope.userId) {
     throw new TimeTrackingNotFoundError(`Time entry not found: ${id}`);
   }
   if (existing.invoiced_invoice_guid) {

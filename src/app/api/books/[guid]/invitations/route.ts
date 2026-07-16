@@ -28,10 +28,10 @@ export async function POST(
         const body = await request.json();
         const { role, expiresInHours, maxUses } = body;
 
-        // Validate role (max is 'edit', cannot grant admin via invitation)
-        if (!role || !['readonly', 'edit'].includes(role)) {
+        // Validate role (cannot grant admin via invitation)
+        if (!role || !['readonly', 'edit', 'timekeeper'].includes(role)) {
             return NextResponse.json(
-                { error: 'Role must be "readonly" or "edit"' },
+                { error: 'Role must be "readonly", "edit", or "timekeeper"' },
                 { status: 400 }
             );
         }

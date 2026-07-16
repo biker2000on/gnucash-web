@@ -3,10 +3,15 @@
 // Time tracking: list/create timesheet entries. GET also serves the
 // unbilled-per-customer summary via ?view=unbilled, and always includes the
 // caller's running timer so the page needs a single fetch.
+//
+// Access: requireTimesheetRole — readonly may read, timekeeper/edit/admin may
+// write. Timekeepers are FORCED to their own entries (list and create);
+// edit/admin see every user's entries and may filter with ?userId=. The
+// unbilled summary is financial data and is not served to timekeepers.
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { requireRole } from '@/lib/auth';
+import { requireTimesheetRole } from '@/lib/auth';
 import { parseInput, BusinessValidationError } from '@/lib/services/business.service';
 import {
   listTimeEntries,
@@ -30,18 +35,40 @@ const createSchema = z.object({
 
 /**
  * GET /api/business/time
- *   ?view=unbilled                       -> { unbilled: UnbilledCustomerGroup[] }
- *   ?startDate=&endDate=&customer=&job=  -> { entries, runningTimer }
+ *   ?view=unbilled                                -> { unbilled } (not timekeepers)
+ *   ?startDate=&endDate=&customer=&job=&userId=   -> { entries, runningTimer, isTimekeeper }
  */
 export async function GET(request: Request) {
   try {
-    const roleResult = await requireRole('readonly');
+    const roleResult = await requireTimesheetRole('read');
     if (roleResult instanceof NextResponse) return roleResult;
-    const { user, bookGuid } = roleResult;
+    const { user, bookGuid, isTimekeeper } = roleResult;
 
     const { searchParams } = new URL(request.url);
     if (searchParams.get('view') === 'unbilled') {
+      if (isTimekeeper) {
+        return NextResponse.json(
+          { error: 'Timekeepers cannot view unbilled amounts' },
+          { status: 403 }
+        );
+      }
       return NextResponse.json({ unbilled: await getUnbilledSummary(bookGuid) });
+    }
+
+    // Scoping: timekeepers ONLY ever see their own entries; other roles may
+    // optionally narrow to one user with ?userId=.
+    let userIdFilter: number | undefined;
+    if (isTimekeeper) {
+      userIdFilter = user.id;
+    } else {
+      const rawUserId = searchParams.get('userId');
+      if (rawUserId != null && rawUserId !== '') {
+        const parsed = Number(rawUserId);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return NextResponse.json({ error: 'Invalid userId filter' }, { status: 400 });
+        }
+        userIdFilter = parsed;
+      }
     }
 
     const [entries, runningTimer] = await Promise.all([
@@ -50,10 +77,11 @@ export async function GET(request: Request) {
         endDate: searchParams.get('endDate') ?? undefined,
         customerGuid: searchParams.get('customer') ?? undefined,
         jobGuid: searchParams.get('job') ?? undefined,
+        userId: userIdFilter,
       }),
       getRunningTimer(bookGuid, user.id),
     ]);
-    return NextResponse.json({ entries, runningTimer });
+    return NextResponse.json({ entries, runningTimer, isTimekeeper });
   } catch (error) {
     return mapTimeTrackingError(error, 'listing time entries');
   }
@@ -63,10 +91,11 @@ export async function GET(request: Request) {
  * POST /api/business/time
  * Body: { customerGuid?, jobGuid?, entryDate, minutes, rate?, description?, billable? }.
  * Omitting rate resolves the default (job rate, else the customer's last rate).
+ * Entries are always created as the calling user.
  */
 export async function POST(request: Request) {
   try {
-    const roleResult = await requireRole('edit');
+    const roleResult = await requireTimesheetRole('write');
     if (roleResult instanceof NextResponse) return roleResult;
     const { user, bookGuid } = roleResult;
 

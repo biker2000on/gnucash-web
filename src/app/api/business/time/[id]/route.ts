@@ -2,10 +2,14 @@
 //
 // Single time entry: read / partial update / delete. Invoiced entries are
 // immutable (409 from the service).
+//
+// Access: requireTimesheetRole. Timekeepers are scoped to their OWN entries —
+// another user's entry id returns 404 (never 403, to avoid confirming that
+// the id exists). readonly may read any entry; edit/admin may modify any.
 
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { requireRole } from '@/lib/auth';
+import { requireTimesheetRole } from '@/lib/auth';
 import { parseInput, BusinessValidationError } from '@/lib/services/business.service';
 import {
   getTimeEntry,
@@ -37,14 +41,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const roleResult = await requireRole('readonly');
+    const roleResult = await requireTimesheetRole('read');
     if (roleResult instanceof NextResponse) return roleResult;
-    const { bookGuid } = roleResult;
+    const { user, bookGuid, isTimekeeper } = roleResult;
 
     const id = parseId((await params).id);
     if (id === null) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
-    const entry = await getTimeEntry(bookGuid, id);
+    const entry = await getTimeEntry(bookGuid, id, isTimekeeper ? { userId: user.id } : undefined);
     if (!entry) return NextResponse.json({ error: 'Time entry not found' }, { status: 404 });
     return NextResponse.json(entry);
   } catch (error) {
@@ -58,16 +62,21 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const roleResult = await requireRole('edit');
+    const roleResult = await requireTimesheetRole('write');
     if (roleResult instanceof NextResponse) return roleResult;
-    const { bookGuid } = roleResult;
+    const { user, bookGuid, isTimekeeper } = roleResult;
 
     const id = parseId((await params).id);
     if (id === null) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
     const body = await request.json().catch(() => null);
     const patch = parseInput(patchSchema, body);
-    const entry = await updateTimeEntry(bookGuid, id, patch);
+    const entry = await updateTimeEntry(
+      bookGuid,
+      id,
+      patch,
+      isTimekeeper ? { userId: user.id } : undefined,
+    );
     return NextResponse.json(entry);
   } catch (error) {
     if (error instanceof BusinessValidationError) {
@@ -83,14 +92,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const roleResult = await requireRole('edit');
+    const roleResult = await requireTimesheetRole('write');
     if (roleResult instanceof NextResponse) return roleResult;
-    const { bookGuid } = roleResult;
+    const { user, bookGuid, isTimekeeper } = roleResult;
 
     const id = parseId((await params).id);
     if (id === null) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
-    await deleteTimeEntry(bookGuid, id);
+    await deleteTimeEntry(bookGuid, id, isTimekeeper ? { userId: user.id } : undefined);
     return NextResponse.json({ deleted: true });
   } catch (error) {
     return mapTimeTrackingError(error, 'deleting a time entry');

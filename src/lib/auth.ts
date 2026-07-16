@@ -11,7 +11,7 @@ import { cookies, headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import prisma from './prisma';
 import { SessionData, sessionOptions } from './session-config';
-import { getUserRoleForBook, type Role } from './services/permission.service';
+import { getUserRoleForBook, roleAtLeast, hasTimesheetAccess, type Role } from './services/permission.service';
 import { authenticateBearer, parseBearerToken } from './api-tokens';
 
 export type { SessionData };
@@ -204,8 +204,10 @@ export async function requireRole(minimumRole: Role): Promise<
         if (!tokenAuth) {
             return NextResponse.json({ error: 'Invalid or expired API token' }, { status: 401 });
         }
-        const TOKEN_ROLE_HIERARCHY: Record<string, number> = { readonly: 0, edit: 1, admin: 2 };
-        if (TOKEN_ROLE_HIERARCHY[tokenAuth.role] < TOKEN_ROLE_HIERARCHY[minimumRole]) {
+        // Fail closed: an unknown role name must never authorize (a raw
+        // `HIERARCHY[role] < HIERARCHY[min]` compare is false for undefined,
+        // which would skip this rejection and allow the request through).
+        if (!roleAtLeast(tokenAuth.role, minimumRole)) {
             return NextResponse.json(
                 { error: `Requires ${minimumRole} role, this token grants ${tokenAuth.role}` },
                 { status: 403 }
@@ -237,8 +239,9 @@ export async function requireRole(minimumRole: Role): Promise<
         return NextResponse.json({ error: 'No access to this book' }, { status: 403 });
     }
 
-    const ROLE_HIERARCHY: Record<string, number> = { readonly: 0, edit: 1, admin: 2 };
-    if (ROLE_HIERARCHY[userRole] < ROLE_HIERARCHY[minimumRole]) {
+    // Fail closed: unknown roles (and 'timekeeper', which sits outside the
+    // financial hierarchy) are rejected — see roleAtLeast().
+    if (!roleAtLeast(userRole, minimumRole)) {
         return NextResponse.json(
             { error: `Requires ${minimumRole} role, you have ${userRole}` },
             { status: 403 }
@@ -246,4 +249,71 @@ export async function requireRole(minimumRole: Role): Promise<
     }
 
     return { user, role: userRole, bookGuid };
+}
+
+/**
+ * Authorize access to time-tracking endpoints for the active book.
+ *
+ * Write access: timekeeper, edit, or admin. Read access additionally accepts
+ * readonly. `isTimekeeper` is true when the effective role is the restricted
+ * 'timekeeper' role — callers MUST then scope all reads and mutations to the
+ * calling user's own entries.
+ *
+ * Also accepts `Authorization: Bearer gcw_...` API tokens (token roles are
+ * readonly/edit/admin, never timekeeper).
+ */
+export async function requireTimesheetRole(access: 'read' | 'write' = 'write'): Promise<
+  { user: { id: number; username: string }; role: Role; bookGuid: string; isTimekeeper: boolean; viaToken?: boolean } |
+  NextResponse
+> {
+    // --- API token (Bearer gcw_...) path -------------------------------
+    const bearerToken = await getBearerApiToken();
+    if (bearerToken) {
+        const tokenAuth = await authenticateBearer(bearerToken);
+        if (!tokenAuth) {
+            return NextResponse.json({ error: 'Invalid or expired API token' }, { status: 401 });
+        }
+        if (!hasTimesheetAccess(tokenAuth.role, access)) {
+            return NextResponse.json(
+                { error: `Time tracking requires ${access} access, this token grants ${tokenAuth.role}` },
+                { status: 403 }
+            );
+        }
+        return {
+            user: tokenAuth.user,
+            role: tokenAuth.role,
+            bookGuid: tokenAuth.bookGuid,
+            isTimekeeper: tokenAuth.role === 'timekeeper',
+            viaToken: true,
+        };
+    }
+
+    // --- Session (cookie) path ------------------------------------------
+    const authResult = await requireAuth();
+    if (authResult instanceof NextResponse) return authResult;
+
+    const { user, session } = authResult;
+    let bookGuid = session.activeBookGuid;
+    if (!bookGuid) {
+        const firstBook = await prisma.books.findFirst({ select: { guid: true } });
+        if (!firstBook) {
+            return NextResponse.json({ error: 'No active book selected' }, { status: 400 });
+        }
+        bookGuid = firstBook.guid;
+        session.activeBookGuid = bookGuid;
+        await session.save();
+    }
+
+    const userRole = await getUserRoleForBook(user.id, bookGuid);
+    if (!userRole) {
+        return NextResponse.json({ error: 'No access to this book' }, { status: 403 });
+    }
+    if (!hasTimesheetAccess(userRole, access)) {
+        return NextResponse.json(
+            { error: `Time tracking requires ${access} access, you have ${userRole}` },
+            { status: 403 }
+        );
+    }
+
+    return { user, role: userRole, bookGuid, isTimekeeper: userRole === 'timekeeper' };
 }

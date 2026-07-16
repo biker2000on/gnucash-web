@@ -22,7 +22,9 @@ export type TokenRole = 'readonly' | 'edit';
 
 const TOKEN_FORMAT = /^gcw_[0-9a-f]{32}$/;
 
-const ROLE_HIERARCHY: Record<Role, number> = { readonly: 0, edit: 1, admin: 2 };
+// Only the linear financial hierarchy — 'timekeeper' (and any unknown role)
+// is deliberately absent so capRole() fails closed for it.
+const ROLE_HIERARCHY: Record<string, number> = { readonly: 0, edit: 1, admin: 2 };
 
 export interface ApiTokenRecord {
     id: number;
@@ -82,7 +84,11 @@ export function parseBearerToken(authorizationHeader: string | null | undefined)
  */
 export function capRole(tokenRole: TokenRole, userBookRole: Role | null): Role | null {
     if (!userBookRole) return null;
-    return ROLE_HIERARCHY[tokenRole] <= ROLE_HIERARCHY[userBookRole] ? tokenRole : userBookRole;
+    const userRank = ROLE_HIERARCHY[userBookRole];
+    // Fail closed: roles outside the financial hierarchy ('timekeeper',
+    // unknown names) grant a token nothing at all.
+    if (userRank === undefined) return null;
+    return ROLE_HIERARCHY[tokenRole] <= userRank ? tokenRole : userBookRole;
 }
 
 /** Constant-time comparison of two equal-purpose hex digest strings. */

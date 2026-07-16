@@ -1,8 +1,9 @@
 "use client";
 
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ReactNode, ReactElement, useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react';
+import { useBooks } from '@/contexts/BookContext';
 import { UserMenu } from './UserMenu';
 import { NotificationBell } from './NotificationBell';
 import BookSwitcher from './BookSwitcher';
@@ -378,7 +379,23 @@ const subscribe = () => () => undefined;
 
 export default function Layout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
+    const router = useRouter();
     const searchParams = useSearchParams();
+
+    // Restricted 'timekeeper' role: the sidebar collapses to just Time (+ the
+    // book switcher and user menu) and financial APIs are never called from
+    // here. The API layer is the security boundary — this is UX.
+    const { books, activeBookGuid, loading: booksLoading } = useBooks();
+    const activeBookRole = books.find((b) => b.guid === activeBookGuid)?.role;
+    const isTimekeeper = activeBookRole === 'timekeeper';
+
+    // Timekeepers land on the timesheet, not the financial dashboard.
+    useEffect(() => {
+        if (!isTimekeeper) return;
+        if (pathname === '/' || pathname === '/dashboard' || pathname?.startsWith('/dashboard/')) {
+            router.replace('/business/time');
+        }
+    }, [isTimekeeper, pathname, router]);
 
     // Business nav group is gated on the active book's entity type — household
     // books never see AR/AP features. Re-checked when the book changes (the
@@ -391,6 +408,10 @@ export default function Layout({ children }: { children: ReactNode }) {
     // tool config); business books always have it inside the Business group.
     const [householdInventory, setHouseholdInventory] = useState(false);
     useEffect(() => {
+        // Timekeepers get a minimal nav and must not trigger the financial
+        // entity/feature/inventory endpoints (they would 403 anyway). Wait
+        // for the books list so the role is known before fetching.
+        if (booksLoading || isTimekeeper) return;
         let cancelled = false;
         const fetchBookFeatures = () => {
             fetch('/api/book-features')
@@ -440,7 +461,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             window.removeEventListener('book-features-updated', fetchBookFeatures);
             window.removeEventListener('inventory-settings-updated', refresh);
         };
-    }, []);
+    }, [booksLoading, isTimekeeper]);
 
     // Pinned favorites (feature ids) — synced via user preferences; the
     // catalog page edits them and fires 'pinned-features-changed'.
@@ -461,6 +482,11 @@ export default function Layout({ children }: { children: ReactNode }) {
     }, []);
 
     const effectiveNavItems = (() => {
+        // Timekeepers: minimal sidebar — just Time.
+        if (isTimekeeper) {
+            return [{ name: 'Time', href: '/business/time', icon: 'Briefcase' } as NavItem];
+        }
+
         // Business books hide personal-finance children (FIRE, withholding, …)
         const stripPersonalOnly = (items: NavItem[]): NavItem[] =>
             !isBusinessBook
@@ -794,7 +820,8 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <BookSwitcher collapsed={collapsed && hydrated} />
                 </div>
 
-                {/* Global search (opens the command palette) */}
+                {/* Global search (opens the command palette; hidden for timekeepers) */}
+                {!isTimekeeper && (
                 <div className={`transition-all duration-300 ${collapsed && hydrated ? 'px-2 pt-3' : 'px-4 pt-3'}`}>
                     <button
                         type="button"
@@ -815,6 +842,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         )}
                     </button>
                 </div>
+                )}
 
                 {/* Nav links (mobile-only items like Quick Add are excluded on desktop) */}
                 <nav className={`flex-1 space-y-1 overflow-y-auto overflow-x-hidden transition-all duration-300
@@ -868,7 +896,8 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <BookSwitcher />
                 </div>
 
-                {/* Global search (opens the command palette) */}
+                {/* Global search (opens the command palette; hidden for timekeepers) */}
+                {!isTimekeeper && (
                 <div className="px-4 pt-3">
                     <button
                         type="button"
@@ -884,6 +913,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         <span className="flex-1 text-left text-sm">Search everything…</span>
                     </button>
                 </div>
+                )}
 
                 {/* Mobile nav links (always expanded) */}
                 <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">

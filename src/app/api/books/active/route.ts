@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { getUserRoleForBook } from '@/lib/services/permission.service';
+import { getUserRoleForBook, getUserBooks } from '@/lib/services/permission.service';
 
 /**
  * GET /api/books/active
@@ -15,24 +15,27 @@ export async function GET() {
         const { session } = authResult;
         let activeBookGuid = session.activeBookGuid || null;
 
-        // Validate the active book still exists
+        // Validate the active book still exists AND the user has a role on it
+        // (a scoped user, e.g. a timekeeper on one book, must never be pointed
+        // at a book they can't use).
         if (activeBookGuid) {
             const exists = await prisma.books.findUnique({
                 where: { guid: activeBookGuid },
                 select: { guid: true },
             });
-            if (!exists) {
+            const role = exists
+                ? await getUserRoleForBook(authResult.user.id, activeBookGuid)
+                : null;
+            if (!exists || !role) {
                 activeBookGuid = null;
             }
         }
 
-        // Fall back to the first book
+        // Fall back to the first book the user has permission on
         if (!activeBookGuid) {
-            const firstBook = await prisma.books.findFirst({
-                select: { guid: true },
-            });
-            if (firstBook) {
-                activeBookGuid = firstBook.guid;
+            const userBooks = await getUserBooks(authResult.user.id);
+            if (userBooks.length > 0) {
+                activeBookGuid = userBooks[0].guid;
                 session.activeBookGuid = activeBookGuid;
                 await session.save();
             }

@@ -330,7 +330,8 @@ async function createExtensionTables() {
         VALUES
             ('readonly', 'View-only access to book data and reports'),
             ('edit', 'Can create, edit, and delete transactions, budgets, and accounts'),
-            ('admin', 'Full access including user management and book administration')
+            ('admin', 'Full access including user management and book administration'),
+            ('timekeeper', 'Time tracking only — can log time against projects but cannot see books or financials')
         ON CONFLICT (name) DO NOTHING;
     `;
 
