@@ -5,6 +5,7 @@ import {
   finalizeReconcile,
   StatementReconcileError,
 } from '@/lib/statement-reconcile-data';
+import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 import { serializeBigInts } from '@/lib/gnucash';
 
 /**
@@ -72,6 +73,7 @@ export async function POST(
 
     return NextResponse.json(serializeBigInts({ success: true, summary }));
   } catch (error) {
+    if (error instanceof PeriodLockedError) return periodLockedResponse(error);
     if (error instanceof StatementReconcileError) {
       const status = error.code === 'not_ties_out' ? 409 : error.code === 'not_found' ? 404 : 400;
       return NextResponse.json(

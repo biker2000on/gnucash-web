@@ -6,8 +6,14 @@ import { SessionData, sessionOptions } from '@/lib/session-config';
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Public auth API routes + tokenized calendar feeds -- no session required
-  if (pathname.startsWith('/api/auth/') || pathname.startsWith('/api/calendar/')) {
+  // Public auth API routes, tokenized calendar feeds, and tokenized public
+  // document endpoints (/api/public/invoice/[token] does its own token-based
+  // authorization) -- no session required
+  if (
+    pathname.startsWith('/api/auth/') ||
+    pathname.startsWith('/api/calendar/') ||
+    pathname.startsWith('/api/public/')
+  ) {
     return NextResponse.next();
   }
 

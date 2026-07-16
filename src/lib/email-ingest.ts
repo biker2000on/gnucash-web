@@ -71,10 +71,10 @@ export function isEmailIngestConfigured(): boolean {
 // Pure helpers (unit-tested)
 // ---------------------------------------------------------------------------
 
-export type IngestKind = 'receipt' | 'statement' | 'payslip';
+export type IngestKind = 'receipt' | 'statement' | 'payslip' | 'bill';
 export type IngestDefaultKind = IngestKind | 'auto';
 
-export const INGEST_KINDS: IngestDefaultKind[] = ['auto', 'receipt', 'statement', 'payslip'];
+export const INGEST_KINDS: IngestDefaultKind[] = ['auto', 'receipt', 'statement', 'payslip', 'bill'];
 
 /**
  * Normalize an email address for allowlist comparison: lowercase, unwrap
@@ -128,9 +128,19 @@ const STATEMENT_KEYWORDS = [
 ];
 
 /**
+ * Subject prefix that routes a message to the bill-capture pipeline
+ * ("bill", "Bill: Electric June", "bill - Acme"). Prefix only — a receipt
+ * subject merely mentioning "billing" elsewhere doesn't count.
+ */
+export function subjectRequestsBill(subject: string | null | undefined): boolean {
+  return /^\s*bill\b/i.test(subject ?? '');
+}
+
+/**
  * Classify an attachment into a pipeline kind. A non-'auto' sender default
- * wins; otherwise filename + subject keywords decide (payslip keywords first,
- * then statement keywords), falling back to receipt.
+ * wins; then a "bill" subject prefix; otherwise filename + subject keywords
+ * decide (payslip keywords first, then statement keywords), falling back to
+ * receipt.
  */
 export function classifyKind(input: {
   filename: string;
@@ -139,6 +149,8 @@ export function classifyKind(input: {
 }): IngestKind {
   const defaultKind = input.defaultKind ?? 'auto';
   if (defaultKind !== 'auto') return defaultKind;
+
+  if (subjectRequestsBill(input.subject)) return 'bill';
 
   const haystack = `${input.filename} ${input.subject ?? ''}`.toLowerCase();
   if (PAYSLIP_KEYWORDS.some(k => haystack.includes(k))) return 'payslip';
@@ -592,7 +604,7 @@ export interface PollEmailIngestResult {
 
 async function ingestOneAttachment(
   kind: IngestKind,
-  input: { bookGuid: string; userId: number; filename: string; buffer: Buffer },
+  input: { bookGuid: string; userId: number; filename: string; buffer: Buffer; subject?: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (kind === 'receipt') {
     const result = await intakeReceipt({ ...input, transactionGuid: null });
@@ -600,6 +612,14 @@ async function ingestOneAttachment(
   }
   if (kind === 'payslip') {
     const result = await intakePayslip(input);
+    return result.ok ? { ok: true } : { ok: false, error: result.error };
+  }
+  if (kind === 'bill') {
+    // Bill capture: receipt intake + a tracked draft-bill row on business
+    // books (drafted after the OCR/extraction job completes). Loaded lazily
+    // so the invoice engine is only pulled in when a bill actually arrives.
+    const { captureBillFromEmail } = await import('@/lib/business/bill-capture');
+    const result = await captureBillFromEmail(input);
     return result.ok ? { ok: true } : { ok: false, error: result.error };
   }
   const result = await intakeStatement({ ...input, accountGuid: null });
@@ -719,6 +739,7 @@ export async function pollEmailIngest(
             userId: sender.userId,
             filename,
             buffer: att.content,
+            subject: envelope.subject,
           });
           if (outcome.ok) {
             ingestedItems.push(`${filename} → ${kind}`);

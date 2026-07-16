@@ -1145,6 +1145,274 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Market wave A: shareable invoice links (public tokens, revocable).
+    const invoiceSharesDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_a'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_invoice_shares (
+            token VARCHAR(64) PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            invoice_guid VARCHAR(32) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP,
+            revoked BOOLEAN NOT NULL DEFAULT false
+        );
+        CREATE INDEX IF NOT EXISTS idx_invoice_shares_invoice
+            ON gnucash_web_invoice_shares(invoice_guid);
+        CREATE INDEX IF NOT EXISTS idx_invoice_shares_book
+            ON gnucash_web_invoice_shares(book_guid);
+        END $$;
+    `;
+
+    // Market wave B: estimates/quotes with line items, convertible to invoices.
+    const estimatesTablesDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_b'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_estimates (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            estimate_no VARCHAR(50),
+            customer_guid VARCHAR(32),
+            date_created DATE NOT NULL,
+            expires DATE,
+            status VARCHAR(20) NOT NULL DEFAULT 'draft',
+            converted_invoice_guid VARCHAR(32),
+            notes TEXT,
+            terms TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_estimates_book ON gnucash_web_estimates(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_estimate_lines (
+            id SERIAL PRIMARY KEY,
+            estimate_id INTEGER NOT NULL REFERENCES gnucash_web_estimates(id) ON DELETE CASCADE,
+            description TEXT,
+            quantity NUMERIC(12, 4) NOT NULL DEFAULT 1,
+            unit_price NUMERIC(12, 4) NOT NULL DEFAULT 0,
+            income_account_guid VARCHAR(32),
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_estimate_lines_estimate
+            ON gnucash_web_estimate_lines(estimate_id);
+        END $$;
+    `;
+
+    // Market wave C: dunning (payment reminders) — per-book settings,
+    // send log, and per-invoice opt-out.
+    const dunningTablesDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_c'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_dunning_settings (
+            book_guid VARCHAR(32) PRIMARY KEY,
+            enabled BOOLEAN NOT NULL DEFAULT false,
+            schedule JSONB NOT NULL DEFAULT '[7,14,30]',
+            email_subject VARCHAR(255),
+            email_body TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_dunning_log (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            invoice_guid VARCHAR(32) NOT NULL,
+            level INTEGER NOT NULL,
+            recipient VARCHAR(255),
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_dunning_log_book_invoice
+            ON gnucash_web_dunning_log(book_guid, invoice_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_dunning_optout (
+            invoice_guid VARCHAR(32) PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL
+        );
+        END $$;
+    `;
+
+    // Market wave D: time tracking — timesheet entries with an optional
+    // running timer, billed onto invoices via invoiced_invoice_guid.
+    const timeEntriesTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_d'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_time_entries (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            user_id INTEGER,
+            customer_guid VARCHAR(32),
+            job_guid VARCHAR(32),
+            entry_date DATE NOT NULL,
+            minutes INTEGER NOT NULL DEFAULT 0,
+            rate NUMERIC(12, 2),
+            description TEXT,
+            billable BOOLEAN NOT NULL DEFAULT true,
+            invoiced_invoice_guid VARCHAR(32),
+            timer_started_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_time_entries_book_date
+            ON gnucash_web_time_entries(book_guid, entry_date);
+        CREATE INDEX IF NOT EXISTS idx_time_entries_invoice
+            ON gnucash_web_time_entries(invoiced_invoice_guid);
+        END $$;
+    `;
+
+    // Market wave E: generic per-book settings row (lock date for
+    // month-end close, future book-level knobs).
+    const bookSettingsTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_e'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_book_settings (
+            book_guid VARCHAR(32) PRIMARY KEY,
+            lock_date DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        END $$;
+    `;
+
+    // Market wave F: HSA shoebox — receipts flagged as HSA-eligible and
+    // linked to their eventual reimbursement transaction.
+    const receiptsHsaColumnsDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_f'));
+        ALTER TABLE gnucash_web_receipts
+            ADD COLUMN IF NOT EXISTS hsa_eligible BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE gnucash_web_receipts
+            ADD COLUMN IF NOT EXISTS hsa_reimbursed_txn_guid VARCHAR(32);
+        END $$;
+    `;
+
+    // Market wave G: budget auto-funding rules — when a matching deposit
+    // lands, allocate amounts across envelope accounts.
+    const budgetFundingRulesTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_g'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_budget_funding_rules (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            trigger_account_guid VARCHAR(32),
+            trigger_description_match VARCHAR(255),
+            min_amount NUMERIC(12, 2),
+            allocations JSONB NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT true,
+            last_applied_txn_guid VARCHAR(32),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_budget_funding_rules_book
+            ON gnucash_web_budget_funding_rules(book_guid);
+        END $$;
+    `;
+
+    // Market wave H: renewals & contracts — upcoming renewal dates with
+    // reminder lead time and dismissal.
+    const renewalsTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_h'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_renewals (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            renewal_date DATE NOT NULL,
+            amount NUMERIC(12, 2),
+            cadence_months INTEGER NOT NULL DEFAULT 12,
+            remind_days INTEGER NOT NULL DEFAULT 30,
+            source VARCHAR(20) NOT NULL DEFAULT 'manual',
+            notes TEXT,
+            dismissed_until DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_renewals_book_date
+            ON gnucash_web_renewals(book_guid, renewal_date);
+        END $$;
+    `;
+
+    // Market wave I: home module — rooms, inventory items, maintenance
+    // tasks, and the service log.
+    const homeTablesDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_market_wave_i'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_home_rooms (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_home_rooms_book ON gnucash_web_home_rooms(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_home_items (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            room_id INTEGER NOT NULL REFERENCES gnucash_web_home_rooms(id) ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            category VARCHAR(50),
+            est_value NUMERIC(12, 2),
+            purchase_date DATE,
+            receipt_id INTEGER,
+            photo_key VARCHAR(500),
+            warranty_expires DATE,
+            serial VARCHAR(100),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_home_items_room ON gnucash_web_home_items(room_id);
+        CREATE INDEX IF NOT EXISTS idx_home_items_book ON gnucash_web_home_items(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_home_tasks (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            cadence_months INTEGER,
+            season VARCHAR(20),
+            item_id INTEGER REFERENCES gnucash_web_home_items(id) ON DELETE SET NULL,
+            last_done DATE,
+            active BOOLEAN NOT NULL DEFAULT true,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_home_tasks_book ON gnucash_web_home_tasks(book_guid);
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_home_service_log (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            task_id INTEGER REFERENCES gnucash_web_home_tasks(id) ON DELETE SET NULL,
+            item_id INTEGER REFERENCES gnucash_web_home_items(id) ON DELETE SET NULL,
+            service_date DATE NOT NULL,
+            cost NUMERIC(12, 2),
+            vendor VARCHAR(255),
+            txn_guid VARCHAR(32),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_home_service_log_book
+            ON gnucash_web_home_service_log(book_guid);
+        END $$;
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -1240,6 +1508,15 @@ async function createExtensionTables() {
         await query(auditBookScopeDDL);
         await query(tagsBookScopeDDL);
         await query(smbTablesDDL);
+        await query(invoiceSharesDDL);
+        await query(estimatesTablesDDL);
+        await query(dunningTablesDDL);
+        await query(timeEntriesTableDDL);
+        await query(bookSettingsTableDDL);
+        await query(receiptsHsaColumnsDDL);
+        await query(budgetFundingRulesTableDDL);
+        await query(renewalsTableDDL);
+        await query(homeTablesDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

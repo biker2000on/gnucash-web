@@ -32,6 +32,7 @@ import {
     type ResolvedAccount,
 } from './qbo-journal';
 import { parseQboGeneralLedgerRows, type QboGlStats } from './qbo-gl';
+import { resolveImportLocale, type ImportLocale, type ImportLocaleId } from './parse-locale';
 import {
     sheetsFromUpload,
     classifySheet,
@@ -72,6 +73,8 @@ export interface QboPreviewInput {
     bookName?: string | null;
     /** Account path -> GnuCash type overrides from the UI */
     typeOverrides?: Record<string, string>;
+    /** Number/date locale of the export ('us' default, 'eu' day-first) */
+    locale?: ImportLocaleId | null;
 }
 
 export interface QboPreviewAccount extends ResolvedAccount {
@@ -133,7 +136,7 @@ interface ParsedSource {
  * into a Journal-shaped parse result. A GL sheet is only used when no
  * Journal sheet exists; the CoA sheet is merged automatically.
  */
-function parseSource(input: QboPreviewInput): ParsedSource {
+function parseSource(input: QboPreviewInput, locale: ImportLocale): ParsedSource {
     if (input.archive) {
         let uploadSheets: UploadSheet[];
         try {
@@ -191,14 +194,14 @@ function parseSource(input: QboPreviewInput): ParsedSource {
 
         if (journalSheet) {
             return {
-                journal: parseQboJournalRows(journalSheet.rows),
+                journal: parseQboJournalRows(journalSheet.rows, locale),
                 sourceFormat: 'journal',
                 glStats: null,
                 sheets,
                 coaFromArchive,
             };
         }
-        const gl = parseQboGeneralLedgerRows(glSheet!.rows);
+        const gl = parseQboGeneralLedgerRows(glSheet!.rows, locale);
         return {
             journal: gl,
             sourceFormat: 'general_ledger',
@@ -223,11 +226,11 @@ function parseSource(input: QboPreviewInput): ParsedSource {
     }
     const rows = splitCsvRows(input.journalContent);
     if (classifySheet(rows) === 'general_ledger') {
-        const gl = parseQboGeneralLedgerRows(rows);
+        const gl = parseQboGeneralLedgerRows(rows, locale);
         return { journal: gl, sourceFormat: 'general_ledger', glStats: gl.glStats, sheets: null, coaFromArchive: null };
     }
     return {
-        journal: parseQboJournalRows(rows),
+        journal: parseQboJournalRows(rows, locale),
         sourceFormat: 'journal',
         glStats: null,
         sheets: null,
@@ -266,7 +269,8 @@ function parseInputs(input: QboPreviewInput): {
     glStats: QboGlStats | null;
     sheets: QboSheetInfo[] | null;
 } {
-    const { journal, sourceFormat, glStats, sheets, coaFromArchive } = parseSource(input);
+    const locale = resolveImportLocale(input.locale);
+    const { journal, sourceFormat, glStats, sheets, coaFromArchive } = parseSource(input, locale);
     const coa = parseCoa(input, coaFromArchive);
 
     const warnings = [...journal.warnings];
@@ -384,7 +388,7 @@ export interface QboCommitResult {
 
 const CHUNK = 2000;
 
-interface AccountNode {
+export interface AccountNode {
     guid: string;
     name: string;
     path: string;
@@ -399,7 +403,7 @@ interface AccountNode {
  * transacted on directly. Types: resolved type for journal accounts, CoA
  * type for known intermediates, else the first child's type.
  */
-function buildAccountNodes(
+export function buildAccountNodes(
     resolved: ResolvedAccount[],
     coa: QboCoaParseResult | null
 ): AccountNode[] {
@@ -663,6 +667,7 @@ export async function commitQboImport(
                 currency: mnemonic,
                 coaLoaded: Boolean(coa && coa.accounts.length > 0),
                 sourceFormat,
+                locale: input.locale ?? 'us',
                 ...(glStats ? { glStats } : {}),
             },
         },

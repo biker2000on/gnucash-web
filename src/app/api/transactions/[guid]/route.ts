@@ -8,6 +8,7 @@ import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { requireRole } from '@/lib/auth';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 
 export async function GET(
     request: Request,
@@ -134,6 +135,14 @@ export async function PUT(
         if (!existingTx) {
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }
+
+        // Period lock: both the transaction's current date and its new date
+        // must be after the lock date
+        const lockError = await withPeriodLockCheck(roleResult.bookGuid, [
+            existingTx.post_date,
+            body.post_date,
+        ]);
+        if (lockError) return lockError;
 
         // Full before-image for the audit trail (undo-capable)
         const beforeSnapshot = await snapshotTransactionByGuid(guid);
@@ -321,6 +330,10 @@ export async function DELETE(
         if (!existingTx) {
             return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
         }
+
+        // Period lock: transactions dated in a closed period cannot be deleted
+        const lockError = await withPeriodLockCheck(roleResult.bookGuid, [existingTx.post_date]);
+        if (lockError) return lockError;
 
         // Full before-image for the audit trail (restore-capable)
         const deleteSnapshot = await snapshotTransactionByGuid(guid);

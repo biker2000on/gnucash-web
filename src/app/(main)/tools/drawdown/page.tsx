@@ -19,6 +19,12 @@ import {
     type BucketAmounts,
     type DrawdownInputs,
 } from '@/lib/drawdown/types';
+import {
+    buildSsIncomeStreams,
+    compareClaimingStrategies,
+    fullRetirementAgeLabel,
+    type CompareStrategiesInput,
+} from '@/lib/social-security';
 import { FILING_STATUSES, FILING_STATUS_LABELS, type FilingStatus } from '@/lib/tax/types';
 import { STATE_OPTIONS } from '@/lib/tax/state';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
@@ -54,6 +60,32 @@ const SEQUENCING_PRESETS: Record<SequencingKey, { label: string; order: Bucket[]
 
 const CONVERSION_BRACKETS = [10, 12, 22, 24, 32] as const;
 
+const CLAIM_AGES = [62, 63, 64, 65, 66, 67, 68, 69, 70] as const;
+
+/** "67", or "66y 10m" for fractional FRA claim ages. */
+function formatClaimAge(age: number): string {
+    const totalMonths = Math.round(age * 12);
+    const years = Math.floor(totalMonths / 12);
+    const months = totalMonths % 12;
+    return months === 0 ? `${years}` : `${years}y ${months}m`;
+}
+
+interface SsOptimizerParams {
+    /** Monthly PIA at Full Retirement Age, today's dollars. */
+    piaSelf: number;
+    piaSpouse: number;
+    /** null = derive from Current Age / Spouse Age. */
+    birthYearSelf: number | null;
+    birthYearSpouse: number | null;
+    /** Claiming ages, whole years 62-70. */
+    claimAgeSelf: number;
+    claimAgeSpouse: number;
+    /** Lifetime totals are summed through this age (both spouses). */
+    longevityAge: number;
+    /** Feed the chosen claiming ages into the drawdown projection. */
+    useInProjection: boolean;
+}
+
 interface DrawdownParams {
     currentAge: number;
     hasSpouse: boolean;
@@ -74,6 +106,7 @@ interface DrawdownParams {
     conversionsEnabled: boolean;
     conversionBracketPct: number;
     balanceOverrides: Record<Bucket, number | null>;
+    ssOpt: SsOptimizerParams;
 }
 
 const DEFAULT_PARAMS: DrawdownParams = {
@@ -96,6 +129,16 @@ const DEFAULT_PARAMS: DrawdownParams = {
     conversionsEnabled: true,
     conversionBracketPct: 22,
     balanceOverrides: { taxable: null, traditional: null, roth: null, hsa: null },
+    ssOpt: {
+        piaSelf: 2000,
+        piaSpouse: 1000,
+        birthYearSelf: null,
+        birthYearSpouse: null,
+        claimAgeSelf: 67,
+        claimAgeSpouse: 67,
+        longevityAge: 90,
+        useInProjection: false,
+    },
 };
 
 const STORAGE_KEY = 'drawdown.params.v1';
@@ -112,6 +155,7 @@ function loadParams(): { params: DrawdownParams; fromStorage: boolean } {
                 ...parsed,
                 returnsPct: { ...DEFAULT_PARAMS.returnsPct, ...(parsed.returnsPct ?? {}) },
                 balanceOverrides: { ...DEFAULT_PARAMS.balanceOverrides, ...(parsed.balanceOverrides ?? {}) },
+                ssOpt: { ...DEFAULT_PARAMS.ssOpt, ...(parsed.ssOpt ?? {}) },
             },
             fromStorage: true,
         };
@@ -264,6 +308,37 @@ export default function DrawdownPlannerPage() {
             : null;
     const ssAnnual = params.ssAnnualOverride ?? ssComputed ?? 0;
 
+    /* --- Social Security claiming optimizer --- */
+    const currentYear = new Date().getFullYear();
+    const birthYearSelf = params.ssOpt.birthYearSelf ?? currentYear - params.currentAge;
+    const birthYearSpouse = params.ssOpt.birthYearSpouse ?? currentYear - params.spouseAge;
+    const patchSs = (p: Partial<SsOptimizerParams>) =>
+        setParams(prev => ({ ...prev, ssOpt: { ...prev.ssOpt, ...p } }));
+
+    const ssCompareInput = useMemo<CompareStrategiesInput>(() => ({
+        self: { piaMonthly: Math.max(0, params.ssOpt.piaSelf), birthYear: birthYearSelf },
+        spouse: params.hasSpouse
+            ? { piaMonthly: Math.max(0, params.ssOpt.piaSpouse), birthYear: birthYearSpouse }
+            : null,
+        customClaimAgeSelf: params.ssOpt.claimAgeSelf,
+        customClaimAgeSpouse: params.ssOpt.claimAgeSpouse,
+        longevityAge: params.ssOpt.longevityAge,
+    }), [
+        params.ssOpt.piaSelf, params.ssOpt.piaSpouse, params.ssOpt.claimAgeSelf,
+        params.ssOpt.claimAgeSpouse, params.ssOpt.longevityAge, params.hasSpouse,
+        birthYearSelf, birthYearSpouse,
+    ]);
+    const ssStrategies = useMemo(() => compareClaimingStrategies(ssCompareInput), [ssCompareInput]);
+    const ssBestLifetime = Math.max(...ssStrategies.map(s => s.householdLifetime));
+
+    const ssOptActive = params.ssOpt.useInProjection && params.ssOpt.piaSelf > 0;
+    const ssStreams = useMemo(
+        () => ssOptActive
+            ? buildSsIncomeStreams(ssCompareInput, params.ssOpt.claimAgeSelf, params.ssOpt.claimAgeSpouse)
+            : null,
+        [ssOptActive, ssCompareInput, params.ssOpt.claimAgeSelf, params.ssOpt.claimAgeSpouse],
+    );
+
     /* --- Run the engine --- */
     const inputs = useMemo<DrawdownInputs>(() => {
         const retirementAge = Math.max(params.currentAge, params.retirementAge);
@@ -286,16 +361,17 @@ export default function DrawdownPlannerPage() {
             annualSpending: Math.max(0, params.spending),
             inflationRate: params.inflationPct / 100,
             taxableGainsFraction: Math.min(100, Math.max(0, params.gainsPct)) / 100,
-            socialSecurity: params.ssEnabled && ssAnnual > 0
+            socialSecurity: !ssStreams && params.ssEnabled && ssAnnual > 0
                 ? { startAge: params.ssStartAge, annualBenefit: ssAnnual }
                 : null,
+            socialSecurityStreams: ssStreams,
             sequencing: SEQUENCING_PRESETS[params.sequencingKey].order,
             conversions: {
                 enabled: params.conversionsEnabled,
                 targetBracketRate: params.conversionBracketPct / 100,
             },
         };
-    }, [params, effectiveBalances, ssAnnual]);
+    }, [params, effectiveBalances, ssAnnual, ssStreams]);
 
     const comparison = useMemo(() => compareConversions(inputs), [inputs]);
     const active = params.conversionsEnabled ? comparison.withConversions : comparison.withoutConversions;
@@ -395,7 +471,9 @@ export default function DrawdownPlannerPage() {
                 <DrawdownChart
                     rows={active.rows}
                     retirementAge={params.retirementAge}
-                    ssStartAge={params.ssEnabled && ssAnnual > 0 ? params.ssStartAge : null}
+                    ssStartAge={ssStreams && ssStreams.length > 0
+                        ? Math.round(Math.min(...ssStreams.map(s => s.startAge)))
+                        : params.ssEnabled && ssAnnual > 0 ? params.ssStartAge : null}
                     rmdStartAge={summary.rmdStartAge}
                     depletionAge={summary.depletionAge}
                 />
@@ -477,6 +555,174 @@ export default function DrawdownPlannerPage() {
                         </tbody>
                     </table>
                 </div>
+            </section>
+
+            {/* Social Security claiming optimizer */}
+            <section className="bg-surface/30 border border-border rounded-xl p-4 sm:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 className="text-lg font-semibold text-foreground">Social Security Claiming Optimizer</h2>
+                        <p className="text-xs text-foreground-muted mt-0.5">
+                            Nominal lifetime benefits (no COLA) to age {params.ssOpt.longevityAge} for three
+                            canonical strategies plus your pick. Enter each PIA from your SSA statement (ssa.gov/myaccount).
+                        </p>
+                    </div>
+                    <Toggle
+                        checked={params.ssOpt.useInProjection}
+                        onChange={v => patchSs({ useInProjection: v })}
+                        label={ssOptActive ? 'Used in projection' : 'Use in projection'}
+                    />
+                </div>
+
+                {/* Inputs */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mb-4">
+                    <NumField
+                        label="Your PIA at FRA ($/mo)"
+                        value={params.ssOpt.piaSelf}
+                        onChange={v => patchSs({ piaSelf: Math.max(0, v) })}
+                        step={100}
+                        hint={`FRA ${fullRetirementAgeLabel(birthYearSelf)} (born ${birthYearSelf})`}
+                    />
+                    <NumField
+                        label="Your Birth Year"
+                        value={birthYearSelf}
+                        onChange={v => patchSs({ birthYearSelf: Math.min(currentYear - 18, Math.max(1900, Math.round(v))) })}
+                        hint={params.ssOpt.birthYearSelf === null ? 'From Current Age' : (
+                            <button
+                                type="button"
+                                className="text-primary hover:text-primary-hover"
+                                onClick={() => patchSs({ birthYearSelf: null })}
+                            >
+                                Reset to Current Age ({currentYear - params.currentAge})
+                            </button>
+                        )}
+                    />
+                    <Field label="Your Claim Age">
+                        <select
+                            className={INPUT_CLASS}
+                            value={params.ssOpt.claimAgeSelf}
+                            onChange={e => patchSs({ claimAgeSelf: parseInt(e.target.value, 10) })}
+                        >
+                            {CLAIM_AGES.map(age => <option key={age} value={age}>{age}</option>)}
+                        </select>
+                    </Field>
+                    <NumField
+                        label="Longevity (plan to age)"
+                        value={params.ssOpt.longevityAge}
+                        onChange={v => patchSs({ longevityAge: Math.min(110, Math.max(71, Math.round(v))) })}
+                    />
+                    {params.hasSpouse && (
+                        <>
+                            <NumField
+                                label="Spouse PIA at FRA ($/mo)"
+                                value={params.ssOpt.piaSpouse}
+                                onChange={v => patchSs({ piaSpouse: Math.max(0, v) })}
+                                step={100}
+                                hint={`FRA ${fullRetirementAgeLabel(birthYearSpouse)} (born ${birthYearSpouse})`}
+                            />
+                            <NumField
+                                label="Spouse Birth Year"
+                                value={birthYearSpouse}
+                                onChange={v => patchSs({ birthYearSpouse: Math.min(currentYear - 18, Math.max(1900, Math.round(v))) })}
+                                hint={params.ssOpt.birthYearSpouse === null ? 'From Spouse Age' : (
+                                    <button
+                                        type="button"
+                                        className="text-primary hover:text-primary-hover"
+                                        onClick={() => patchSs({ birthYearSpouse: null })}
+                                    >
+                                        Reset to Spouse Age ({currentYear - params.spouseAge})
+                                    </button>
+                                )}
+                            />
+                            <Field label="Spouse Claim Age">
+                                <select
+                                    className={INPUT_CLASS}
+                                    value={params.ssOpt.claimAgeSpouse}
+                                    onChange={e => patchSs({ claimAgeSpouse: parseInt(e.target.value, 10) })}
+                                >
+                                    {CLAIM_AGES.map(age => <option key={age} value={age}>{age}</option>)}
+                                </select>
+                            </Field>
+                        </>
+                    )}
+                </div>
+
+                {/* Strategy comparison */}
+                <div className="overflow-x-auto">
+                    <table className="w-full text-sm" style={{ fontFeatureSettings: "'tnum'" }}>
+                        <thead>
+                            <tr className="border-b border-border text-[10px] uppercase tracking-wider text-foreground-muted">
+                                <th className="text-left px-2 py-1.5 font-semibold">Strategy</th>
+                                <th className="text-right px-2 py-1.5 font-semibold">Your claim</th>
+                                {params.hasSpouse && <th className="text-right px-2 py-1.5 font-semibold">Spouse claim</th>}
+                                <th className="text-right px-2 py-1.5 font-semibold">Monthly at claim</th>
+                                <th className="text-right px-2 py-1.5 font-semibold">Lifetime to {params.ssOpt.longevityAge}</th>
+                                <th className="text-right px-2 py-1.5 font-semibold">Vs best</th>
+                            </tr>
+                        </thead>
+                        <tbody className="font-mono text-xs">
+                            {ssStrategies.map(strategy => {
+                                const monthlyHousehold =
+                                    strategy.self.monthlyOwn + strategy.self.monthlySpousal
+                                    + (strategy.spouse ? strategy.spouse.monthlyOwn + strategy.spouse.monthlySpousal : 0);
+                                const gap = strategy.householdLifetime - ssBestLifetime;
+                                const isBest = gap === 0;
+                                return (
+                                    <tr
+                                        key={strategy.key}
+                                        className={`border-b border-border/50 ${strategy.key === 'custom' ? 'bg-primary-light/40' : ''}`}
+                                    >
+                                        <td className="px-2 py-1.5 text-foreground-secondary font-sans">
+                                            {strategy.label}
+                                            {isBest && (
+                                                <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-primary-light text-primary font-sans">
+                                                    Best
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-2 py-1.5 text-right text-foreground-secondary">
+                                            {formatClaimAge(strategy.self.claimAge)}
+                                        </td>
+                                        {params.hasSpouse && (
+                                            <td className="px-2 py-1.5 text-right text-foreground-secondary">
+                                                {strategy.spouse ? formatClaimAge(strategy.spouse.claimAge) : '—'}
+                                            </td>
+                                        )}
+                                        <td className="px-2 py-1.5 text-right text-foreground">
+                                            {fmt.format(monthlyHousehold)}/mo
+                                        </td>
+                                        <td className="px-2 py-1.5 text-right text-foreground">
+                                            {fmt.format(strategy.householdLifetime)}
+                                        </td>
+                                        <td className={`px-2 py-1.5 text-right ${
+                                            isBest ? 'text-positive' : 'text-negative'
+                                        }`}>
+                                            {isBest ? '—' : fmt.format(gap)}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+
+                <p className="mt-3 text-[11px] text-foreground-muted">
+                    Spousal benefit: up to 50% of the higher earner&apos;s PIA at FRA, reduced when
+                    started before the claimer&apos;s FRA and payable only once the higher earner has
+                    filed (no delayed credits on spousal benefits). Survivor note: at the first death
+                    the survivor keeps the LARGER of the two benefits — delaying the higher earner&apos;s
+                    claim to 70 raises that survivor benefit for whoever lives longer, which these
+                    joint-longevity totals understate. Early reduction is 5/9 of 1%/month for the first
+                    36 months and 5/12 of 1%/month beyond; delayed credits accrue at 8%/yr to 70.
+                    Estimates only — not benefits advice.
+                </p>
+                {ssOptActive && (
+                    <p className="mt-2 text-[11px] text-primary">
+                        Your pick ({formatClaimAge(params.ssOpt.claimAgeSelf)}
+                        {params.hasSpouse ? ` / spouse ${formatClaimAge(params.ssOpt.claimAgeSpouse)}` : ''}) is
+                        feeding the projection above, replacing the single Social Security input in Assumptions.
+                    </p>
+                )}
             </section>
 
             {/* Assumptions */}

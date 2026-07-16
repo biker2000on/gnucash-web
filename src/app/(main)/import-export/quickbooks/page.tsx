@@ -149,6 +149,7 @@ export default function QuickBooksImportPage() {
     const [journalFile, setJournalFile] = useState<File | null>(null);
     const [coaFile, setCoaFile] = useState<File | null>(null);
     const [csvMode, setCsvMode] = useState(false);
+    const [locale, setLocale] = useState<'us' | 'eu'>('us');
     const [bookName, setBookName] = useState('');
     const [bookNameTouched, setBookNameTouched] = useState(false);
     const [entityType, setEntityType] = useState('c_corp');
@@ -195,10 +196,11 @@ export default function QuickBooksImportPage() {
             if (coaFile) fd.append('coa', coaFile);
             if (bookName.trim()) fd.append('bookName', bookName.trim());
             fd.append('typeOverrides', JSON.stringify(typeOverrides));
+            fd.append('locale', locale);
             for (const [k, v] of Object.entries(extra)) fd.append(k, v);
             return fd;
         },
-        [archiveFile, journalFile, coaFile, bookName, typeOverrides]
+        [archiveFile, journalFile, coaFile, bookName, typeOverrides, locale]
     );
 
     const hasSource = Boolean(archiveFile || journalFile);
@@ -255,6 +257,7 @@ export default function QuickBooksImportPage() {
         setJournalFile(null);
         setCoaFile(null);
         setCsvMode(false);
+        setLocale('us');
         setBookName('');
         setBookNameTouched(false);
         setEntityType('c_corp');
@@ -345,6 +348,21 @@ export default function QuickBooksImportPage() {
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    <div>
+                        <label className="block text-sm text-foreground-secondary mb-1" htmlFor="qbo-locale">
+                            Number &amp; date format
+                        </label>
+                        <select
+                            id="qbo-locale"
+                            value={locale}
+                            onChange={(e) => setLocale(e.target.value === 'eu' ? 'eu' : 'us')}
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                        >
+                            <option value="us">US — 1,234.56 · MM/DD/YYYY</option>
+                            <option value="eu">European — 1.234,56 · DD/MM/YYYY</option>
+                        </select>
                     </div>
 
                     <div className="flex gap-3">

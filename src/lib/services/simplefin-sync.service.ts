@@ -16,6 +16,7 @@ import { scanForAnomalies } from '@/lib/anomaly-detection';
 import { scanBudgetAlerts } from '@/lib/budget-envelope';
 import { scanInventoryReorder } from '@/lib/services/inventory.service';
 import { runDueRecurringInvoices } from '@/lib/business/recurring-invoices';
+import { getCachedLockDate, findLockedDate } from '@/lib/services/period-lock.service';
 
 const DEFAULT_SIMPLEFIN_MATCH_WINDOW_DAYS = 3;
 
@@ -236,6 +237,10 @@ export async function syncSimpleFin(
   // dashboard metrics can be invalidated from that date forward.
   let earliestImportedPostDate: Date | null = null;
 
+  // Period lock: bank transactions dated on or before the book's lock date
+  // are skipped (a closed period must not change under a sync).
+  const lockDate = await getCachedLockDate(bookGuid);
+
   // Process each mapped account
   for (const mappedAccount of mappedAccounts) {
     const sfAccount = sfAccountMap.get(mappedAccount.simplefin_account_id);
@@ -325,6 +330,12 @@ export async function syncSimpleFin(
       for (const sfTxn of sfAccount.transactions) {
         // Dedup by SimpleFin transaction ID
         if (existingIds.has(sfTxn.id)) {
+          result.transactionsSkipped++;
+          continue;
+        }
+
+        // Period lock: never write into a closed period
+        if (findLockedDate(lockDate, [normalizePostDate(sfTxn.posted)]) !== null) {
           result.transactionsSkipped++;
           continue;
         }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getPayslip, getMappingsForEmployer } from '@/lib/payslips';
 import { postPayslipTransaction } from '@/lib/services/payslip-post.service';
+import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import type { PayslipLineItem } from '@/lib/types';
 
@@ -86,6 +87,7 @@ export async function POST(request: Request, { params }: RouteParams) {
 
     return NextResponse.json({ transaction_guid: transactionGuid });
   } catch (error) {
+    if (error instanceof PeriodLockedError) return periodLockedResponse(error);
     console.error('Payslip post error:', error);
     return NextResponse.json({ error: 'Failed to post payslip' }, { status: 500 });
   }

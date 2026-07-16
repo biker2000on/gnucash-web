@@ -8,6 +8,7 @@ import {
     applyHistoricalMatches,
     HISTORY_APPLY_CAP,
 } from '@/lib/services/categorization.service';
+import { getCachedLockDate, findLockedDate } from '@/lib/services/period-lock.service';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -92,13 +93,22 @@ export async function POST(request: Request) {
             });
         }
 
-        const applied = await applyHistoricalMatches(plan.matches);
+        // Period lock: recategorizing rewrites historical splits, so matches
+        // dated on or before the lock date are excluded (reported as
+        // lockedSkipped) rather than failing the whole run.
+        const lockDate = await getCachedLockDate(roleResult.bookGuid);
+        const applicableMatches = lockDate
+            ? plan.matches.filter(m => findLockedDate(lockDate, [m.date]) === null)
+            : plan.matches;
+        const lockedSkipped = plan.matches.length - applicableMatches.length;
+
+        const applied = await applyHistoricalMatches(applicableMatches);
 
         // Recategorizing changes account-scoped metrics; invalidate caches
         // from the earliest affected date (best-effort).
         if (applied > 0) {
             try {
-                const dates = plan.matches
+                const dates = applicableMatches
                     .map(m => m.date)
                     .filter(Boolean)
                     .sort();
@@ -116,6 +126,7 @@ export async function POST(request: Request) {
             matchCount: plan.matches.length,
             skippedCount: plan.skipped.length,
             skipped: plan.skipped,
+            lockedSkipped,
             moreRemain: plan.moreRemain,
         });
     } catch (error) {

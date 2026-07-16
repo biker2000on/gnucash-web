@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { executeOccurrence } from '@/lib/services/scheduled-tx-execute';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 
 export async function POST(
   request: NextRequest,
@@ -22,6 +23,10 @@ export async function POST(
     if (!/^\d{4}-\d{2}-\d{2}$/.test(occurrenceDate)) {
       return NextResponse.json({ error: 'occurrenceDate must be YYYY-MM-DD format' }, { status: 400 });
     }
+
+    // Period lock: executing creates a real transaction dated occurrenceDate
+    const lockError = await withPeriodLockCheck(roleResult.bookGuid, [occurrenceDate]);
+    if (lockError) return lockError;
 
     const result = await executeOccurrence(guid, occurrenceDate);
 

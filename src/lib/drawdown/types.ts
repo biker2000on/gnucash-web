@@ -77,6 +77,15 @@ export interface DrawdownInputs {
   /** Social Security: claim age + annual benefit in today's dollars. */
   socialSecurity?: { startAge: number; annualBenefit: number } | null;
 
+  /**
+   * Multiple Social Security income streams (e.g. per-spouse claims from the
+   * claiming optimizer). `startAge` is the PRIMARY filer's age when the
+   * stream begins; benefits are today's dollars, inflated each year like
+   * `socialSecurity`. When non-empty this takes precedence over
+   * `socialSecurity`.
+   */
+  socialSecurityStreams?: Array<{ startAge: number; annualBenefit: number }> | null;
+
   /** Withdrawal order. Defaults to DEFAULT_SEQUENCING. */
   sequencing?: readonly Bucket[];
 

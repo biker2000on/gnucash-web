@@ -10,11 +10,32 @@ interface CreateBookWizardProps {
 }
 
 export function CreateBookWizard({ onBookCreated, isOnboarding = false }: CreateBookWizardProps) {
-  const [step, setStep] = useState<'choose' | 'create' | 'import'>('choose');
+  const [step, setStep] = useState<'choose' | 'create' | 'import' | 'demo'>('choose');
   const [bookName, setBookName] = useState('');
   const [currency, setCurrency] = useState('USD');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [demoCreating, setDemoCreating] = useState<'household' | 'business' | null>(null);
+
+  const handleCreateDemo = async (kind: 'household' | 'business') => {
+    if (demoCreating) return;
+    setDemoCreating(kind);
+    setError(null);
+    try {
+      const res = await fetch('/api/books/demo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to create demo book');
+      onBookCreated(data.bookGuid);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setDemoCreating(null);
+    }
+  };
 
   const handleCreateForImport = async () => {
     if (!bookName.trim()) {
@@ -97,6 +118,73 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
             </h3>
             <p className="text-sm text-foreground-muted">
               Upload an existing GnuCash XML file to import your accounts and transactions.
+            </p>
+          </button>
+        </div>
+
+        <div className="mt-6 text-center">
+          <button
+            onClick={() => setStep('demo')}
+            className="text-sm text-foreground-muted hover:text-primary transition-colors underline underline-offset-2"
+          >
+            Or try a demo book with sample data
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'demo') {
+    return (
+      <div>
+        <button
+          onClick={() => setStep('choose')}
+          className="text-sm text-foreground-muted hover:text-foreground mb-6 flex items-center gap-1"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+
+        <h2 className="text-2xl font-bold text-foreground mb-2">Try a Demo Book</h2>
+        <p className="text-foreground-muted mb-6">
+          Creates a book pre-filled with about a year of realistic sample data so you can
+          explore accounts, reports, and tools. You can delete it at any time.
+        </p>
+
+        {error && (
+          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <button
+            onClick={() => void handleCreateDemo('household')}
+            disabled={demoCreating !== null}
+            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group disabled:opacity-60"
+          >
+            <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
+              {demoCreating === 'household' ? 'Creating…' : 'Demo Household'}
+            </h3>
+            <p className="text-sm text-foreground-muted">
+              Paychecks with tax withholding and 401(k), rent, groceries, utilities,
+              subscriptions, monthly investing, and a savings habit.
+            </p>
+          </button>
+
+          <button
+            onClick={() => void handleCreateDemo('business')}
+            disabled={demoCreating !== null}
+            className="text-left p-6 bg-surface/50 border border-border rounded-xl hover:border-primary/50 transition-colors group disabled:opacity-60"
+          >
+            <h3 className="text-lg font-semibold text-foreground mb-1 group-hover:text-primary transition-colors">
+              {demoCreating === 'business' ? 'Creating…' : 'Demo Business'}
+            </h3>
+            <p className="text-sm text-foreground-muted">
+              A single-member consulting LLC: monthly client invoices and payments,
+              recurring expenses, owner draws, and tax-mapped categories.
             </p>
           </button>
         </div>

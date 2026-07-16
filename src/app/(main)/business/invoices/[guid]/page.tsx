@@ -16,6 +16,7 @@ import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { formatCurrency } from '@/lib/format';
 import type { InvoiceDetailView, PaymentView } from '@/lib/business/invoice-engine';
+import type { ShareLinkView } from '@/lib/business/invoice-shares.service';
 import type { BilltermDTO, TaxtableDTO, JobDTO } from '@/lib/business-types';
 import {
     STATUS_META,
@@ -109,6 +110,17 @@ function InvoiceDetailContent() {
     const [recurringStart, setRecurringStart] = useState(todayIso());
     const [recurringAutoPost, setRecurringAutoPost] = useState(false);
     const [creatingRecurring, setCreatingRecurring] = useState(false);
+
+    // Share links (customer invoices only)
+    const [shareOpen, setShareOpen] = useState(false);
+    const [shares, setShares] = useState<ShareLinkView[]>([]);
+    const [sharesLoading, setSharesLoading] = useState(false);
+    const [creatingShare, setCreatingShare] = useState(false);
+    const [shareExpiry, setShareExpiry] = useState('never');
+
+    // Dunning opt-out (posted customer invoices only)
+    const [dunningOptedOut, setDunningOptedOut] = useState<boolean | null>(null);
+    const [togglingOptOut, setTogglingOptOut] = useState(false);
 
     // Posted-side data
     const [payments, setPayments] = useState<PaymentView[]>([]);
@@ -226,6 +238,111 @@ function InvoiceDetailContent() {
         resolve();
         return () => { cancelled = true; };
     }, [invoice]);
+
+    // Dunning opt-out state (posted customer invoices only)
+    useEffect(() => {
+        if (isNew || !invoice?.posted || invoice.type !== 'invoice') return;
+        let cancelled = false;
+        fetch(`/api/business/invoices/${invoice.guid}/dunning-optout`)
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data: { optedOut: boolean } | null) => {
+                if (!cancelled && data) setDunningOptedOut(data.optedOut);
+            })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [isNew, invoice]);
+
+    const toggleDunningOptOut = async () => {
+        if (!invoice || dunningOptedOut === null) return;
+        setTogglingOptOut(true);
+        try {
+            const next = !dunningOptedOut;
+            const res = await fetch(`/api/business/invoices/${invoice.guid}/dunning-optout`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ optedOut: next }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to update payment reminders');
+            setDunningOptedOut(next);
+            success(next ? 'Payment reminders disabled for this invoice' : 'Payment reminders enabled for this invoice');
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to update payment reminders');
+        } finally {
+            setTogglingOptOut(false);
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // Share links
+    // ------------------------------------------------------------------
+
+    const fetchShares = useCallback(async () => {
+        if (isNew || !invoice) return;
+        setSharesLoading(true);
+        try {
+            const res = await fetch(`/api/business/invoices/${invoice.guid}/shares`);
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to load share links');
+            setShares(data.shares ?? []);
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to load share links');
+        } finally {
+            setSharesLoading(false);
+        }
+    }, [isNew, invoice, error]);
+
+    const openShareModal = () => {
+        setShareOpen(true);
+        fetchShares();
+    };
+
+    const handleCreateShare = async () => {
+        if (!invoice) return;
+        setCreatingShare(true);
+        try {
+            const expiresInDays = shareExpiry === 'never' ? null : parseInt(shareExpiry, 10);
+            const res = await fetch(`/api/business/invoices/${invoice.guid}/shares`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expiresInDays }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to create share link');
+            await navigator.clipboard.writeText(`${window.location.origin}${data.share.path}`).catch(() => {});
+            success('Share link created and copied to clipboard');
+            await fetchShares();
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to create share link');
+        } finally {
+            setCreatingShare(false);
+        }
+    };
+
+    const handleCopyShare = async (share: ShareLinkView) => {
+        try {
+            await navigator.clipboard.writeText(`${window.location.origin}${share.path}`);
+            success('Link copied to clipboard');
+        } catch {
+            error('Failed to copy the link');
+        }
+    };
+
+    const handleRevokeShare = async (share: ShareLinkView) => {
+        if (!invoice) return;
+        try {
+            const res = await fetch(
+                `/api/business/invoices/${invoice.guid}/shares?token=${encodeURIComponent(share.token)}`,
+                { method: 'DELETE' },
+            );
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to revoke the link');
+            success('Share link revoked');
+            await fetchShares();
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to revoke the link');
+        }
+    };
 
     const fetchPayments = useCallback(async () => {
         if (!invoice?.posted || !endOwner) return;
@@ -714,6 +831,16 @@ function InvoiceDetailContent() {
             >
                 Print
             </button>
+            {kind === 'invoice' && (
+                <button
+                    type="button"
+                    onClick={openShareModal}
+                    title="Customer-facing share links"
+                    className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors"
+                >
+                    Share...
+                </button>
+            )}
             <button
                 type="button"
                 onClick={() => setConfirmUnpost(true)}
@@ -759,6 +886,21 @@ function InvoiceDetailContent() {
                 <span className={`inline-block px-2 py-0.5 text-xs rounded-md ${statusMeta.className}`}>
                     {statusMeta.label}
                 </span>
+                {!isNew && !isDraft && invoice?.type === 'invoice' && dunningOptedOut !== null && (
+                    <label
+                        className="ml-auto flex items-center gap-1.5 text-xs text-foreground-secondary cursor-pointer"
+                        title="Automatic overdue payment reminder emails for this invoice (configured in Business Settings)"
+                    >
+                        <input
+                            type="checkbox"
+                            checked={!dunningOptedOut}
+                            onChange={toggleDunningOptOut}
+                            disabled={isReadonly || togglingOptOut}
+                            className="accent-primary"
+                        />
+                        Payment reminders
+                    </label>
+                )}
                 {!isNew && isDraft && (
                     <>
                         <button
@@ -768,6 +910,15 @@ function InvoiceDetailContent() {
                         >
                             Print draft
                         </button>
+                        {kind === 'invoice' && (
+                            <button
+                                type="button"
+                                onClick={openShareModal}
+                                className="text-foreground-muted hover:text-foreground transition-colors text-xs"
+                            >
+                                Share...
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={openRecurringModal}
@@ -1347,6 +1498,130 @@ function InvoiceDetailContent() {
                         </button>
                     </div>
                 </form>
+            </Modal>
+
+            {/* Share links modal (customer invoices) */}
+            <Modal
+                isOpen={shareOpen}
+                onClose={() => setShareOpen(false)}
+                title="Share Invoice"
+                size="lg"
+            >
+                <div className="px-6 py-4 space-y-4">
+                    <p className="text-sm text-foreground-secondary">
+                        Share links give your customer a read-only, print-friendly view of this invoice —
+                        no login required. Revoke a link at any time to cut off access.
+                    </p>
+
+                    <div className="flex items-end gap-3">
+                        <div>
+                            <label className={labelClass}>Expires</label>
+                            <select
+                                value={shareExpiry}
+                                onChange={(e) => setShareExpiry(e.target.value)}
+                                className={inputClass}
+                            >
+                                <option value="never">Never</option>
+                                <option value="7">In 7 days</option>
+                                <option value="30">In 30 days</option>
+                                <option value="90">In 90 days</option>
+                            </select>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleCreateShare}
+                            disabled={creatingShare || isReadonly}
+                            title={isReadonly ? READONLY_TOOLTIP : undefined}
+                            className="px-4 py-2 text-sm bg-primary hover:bg-primary-hover disabled:bg-primary/50 disabled:cursor-not-allowed text-primary-foreground rounded-lg transition-colors whitespace-nowrap"
+                        >
+                            {creatingShare ? 'Creating...' : '+ New Link'}
+                        </button>
+                    </div>
+
+                    <div className="border border-border rounded-lg overflow-hidden">
+                        {sharesLoading ? (
+                            <p className="px-4 py-4 text-sm text-foreground-muted">Loading share links...</p>
+                        ) : shares.length === 0 ? (
+                            <p className="px-4 py-4 text-sm text-foreground-muted">No share links yet.</p>
+                        ) : (
+                            <table className="w-full text-left text-[13px]">
+                                <thead>
+                                    <tr className="bg-background-secondary/50 text-foreground-secondary text-xs uppercase tracking-widest">
+                                        <th className="px-3 py-2 font-semibold">Link</th>
+                                        <th className="px-3 py-2 font-semibold">Created</th>
+                                        <th className="px-3 py-2 font-semibold">Expires</th>
+                                        <th className="px-3 py-2 font-semibold">Status</th>
+                                        <th className="px-3 py-2 font-semibold text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border">
+                                    {shares.map((s) => (
+                                        <tr key={s.token} className="hover:bg-surface-hover/50 transition-colors">
+                                            <td className="px-3 py-2 font-mono text-xs text-foreground-secondary" style={TNUM}>
+                                                ...{s.token.slice(0, 12)}...
+                                            </td>
+                                            <td className="px-3 py-2 font-mono tabular-nums text-foreground-secondary" style={TNUM}>
+                                                {s.createdAt.slice(0, 10)}
+                                            </td>
+                                            <td className="px-3 py-2 font-mono tabular-nums text-foreground-secondary" style={TNUM}>
+                                                {s.expiresAt ? s.expiresAt.slice(0, 10) : 'Never'}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <span className={`inline-block px-2 py-0.5 text-xs rounded-md ${
+                                                    s.active
+                                                        ? 'bg-positive/10 text-positive'
+                                                        : 'bg-surface-hover text-foreground-muted'
+                                                }`}>
+                                                    {s.active ? 'Active' : s.revoked ? 'Revoked' : 'Expired'}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                                                {s.active && (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleCopyShare(s)}
+                                                            className="px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors"
+                                                        >
+                                                            Copy
+                                                        </button>
+                                                        <a
+                                                            href={s.path}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="ml-1 px-2 py-1 text-xs rounded-md text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors"
+                                                        >
+                                                            Open
+                                                        </a>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRevokeShare(s)}
+                                                            disabled={isReadonly}
+                                                            title={isReadonly ? READONLY_TOOLTIP : undefined}
+                                                            className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
+                                                        >
+                                                            Revoke
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+
+                    <div className="flex justify-end pt-2 border-t border-border">
+                        <button
+                            type="button"
+                            onClick={() => setShareOpen(false)}
+                            className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors"
+                        >
+                            Close
+                        </button>
+                    </div>
+                </div>
             </Modal>
 
             {/* Payment modal */}

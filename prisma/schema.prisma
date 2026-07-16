@@ -598,6 +598,8 @@ model gnucash_web_receipts {
   ocr_text         String?   @db.Text
   ocr_status       String    @default("pending") @db.VarChar(20)
   extracted_data   Json?     @db.JsonB
+  hsa_eligible     Boolean   @default(false)
+  hsa_reimbursed_txn_guid String? @db.VarChar(32)
   created_at       DateTime  @default(now())
   updated_at       DateTime  @default(now())
   created_by       Int?
@@ -1164,4 +1166,239 @@ model gnucash_web_meeting_attendance {
 
   @@id([meeting_id, member_id])
   @@map("gnucash_web_meeting_attendance")
+}
+
+// Shareable invoice links: public tokens with expiry and revocation.
+model gnucash_web_invoice_shares {
+  token        String    @id @db.VarChar(64)
+  book_guid    String    @db.VarChar(32)
+  invoice_guid String    @db.VarChar(32)
+  created_at   DateTime  @default(now())
+  expires_at   DateTime?
+  revoked      Boolean   @default(false)
+
+  @@index([invoice_guid], map: "idx_invoice_shares_invoice")
+  @@index([book_guid], map: "idx_invoice_shares_book")
+  @@map("gnucash_web_invoice_shares")
+}
+
+// Estimates/quotes with line items, convertible to invoices.
+model gnucash_web_estimates {
+  id                     Int       @id @default(autoincrement())
+  book_guid              String    @db.VarChar(32)
+  estimate_no            String?   @db.VarChar(50)
+  customer_guid          String?   @db.VarChar(32)
+  date_created           DateTime  @db.Date
+  expires                DateTime? @db.Date
+  /// draft | sent | accepted | declined | converted
+  status                 String    @default("draft") @db.VarChar(20)
+  converted_invoice_guid String?   @db.VarChar(32)
+  notes                  String?   @db.Text
+  terms                  String?   @db.Text
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @default(now())
+
+  lines gnucash_web_estimate_lines[]
+
+  @@index([book_guid], map: "idx_estimates_book")
+  @@map("gnucash_web_estimates")
+}
+
+model gnucash_web_estimate_lines {
+  id                  Int      @id @default(autoincrement())
+  estimate_id         Int
+  description         String?  @db.Text
+  quantity            Decimal  @default(1) @db.Decimal(12, 4)
+  unit_price          Decimal  @default(0) @db.Decimal(12, 4)
+  income_account_guid String?  @db.VarChar(32)
+  sort_order          Int      @default(0)
+
+  estimate gnucash_web_estimates @relation(fields: [estimate_id], references: [id], onDelete: Cascade)
+
+  @@index([estimate_id], map: "idx_estimate_lines_estimate")
+  @@map("gnucash_web_estimate_lines")
+}
+
+// Dunning (payment reminders): per-book settings, send log, per-invoice opt-out.
+model gnucash_web_dunning_settings {
+  book_guid     String   @id @db.VarChar(32)
+  enabled       Boolean  @default(false)
+  /// days-overdue schedule, e.g. [7,14,30]
+  schedule      Json     @default("[7,14,30]") @db.JsonB
+  email_subject String?  @db.VarChar(255)
+  email_body    String?  @db.Text
+  updated_at    DateTime @default(now())
+
+  @@map("gnucash_web_dunning_settings")
+}
+
+model gnucash_web_dunning_log {
+  id           Int      @id @default(autoincrement())
+  book_guid    String   @db.VarChar(32)
+  invoice_guid String   @db.VarChar(32)
+  level        Int
+  recipient    String?  @db.VarChar(255)
+  sent_at      DateTime @default(now())
+
+  @@index([book_guid, invoice_guid], map: "idx_dunning_log_book_invoice")
+  @@map("gnucash_web_dunning_log")
+}
+
+model gnucash_web_dunning_optout {
+  invoice_guid String @id @db.VarChar(32)
+  book_guid    String @db.VarChar(32)
+
+  @@map("gnucash_web_dunning_optout")
+}
+
+// Time tracking: timesheet entries with an optional running timer,
+// billed onto invoices via invoiced_invoice_guid.
+model gnucash_web_time_entries {
+  id                    Int       @id @default(autoincrement())
+  book_guid             String    @db.VarChar(32)
+  user_id               Int?
+  customer_guid         String?   @db.VarChar(32)
+  job_guid              String?   @db.VarChar(32)
+  entry_date            DateTime  @db.Date
+  minutes               Int       @default(0)
+  rate                  Decimal?  @db.Decimal(12, 2)
+  description           String?   @db.Text
+  billable              Boolean   @default(true)
+  invoiced_invoice_guid String?   @db.VarChar(32)
+  timer_started_at      DateTime?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @default(now())
+
+  @@index([book_guid, entry_date], map: "idx_time_entries_book_date")
+  @@index([invoiced_invoice_guid], map: "idx_time_entries_invoice")
+  @@map("gnucash_web_time_entries")
+}
+
+// Generic per-book settings row (lock date for month-end close, future knobs).
+model gnucash_web_book_settings {
+  book_guid  String    @id @db.VarChar(32)
+  lock_date  DateTime? @db.Date
+  created_at DateTime  @default(now())
+  updated_at DateTime  @default(now())
+
+  @@map("gnucash_web_book_settings")
+}
+
+// Budget auto-funding rules: when a matching deposit lands, allocate
+// amounts across envelope accounts.
+model gnucash_web_budget_funding_rules {
+  id                        Int      @id @default(autoincrement())
+  book_guid                 String   @db.VarChar(32)
+  name                      String   @db.VarChar(255)
+  trigger_account_guid      String?  @db.VarChar(32)
+  trigger_description_match String?  @db.VarChar(255)
+  min_amount                Decimal? @db.Decimal(12, 2)
+  /// [{accountGuid, amount}]
+  allocations               Json     @db.JsonB
+  active                    Boolean  @default(true)
+  last_applied_txn_guid     String?  @db.VarChar(32)
+  created_at                DateTime @default(now())
+  updated_at                DateTime @default(now())
+
+  @@index([book_guid], map: "idx_budget_funding_rules_book")
+  @@map("gnucash_web_budget_funding_rules")
+}
+
+// Renewals & contracts: upcoming renewal dates with reminder lead time.
+model gnucash_web_renewals {
+  id              Int       @id @default(autoincrement())
+  book_guid       String    @db.VarChar(32)
+  name            String    @db.VarChar(255)
+  renewal_date    DateTime  @db.Date
+  amount          Decimal?  @db.Decimal(12, 2)
+  cadence_months  Int       @default(12)
+  remind_days     Int       @default(30)
+  /// manual | subscription | insurance
+  source          String    @default("manual") @db.VarChar(20)
+  notes           String?   @db.Text
+  dismissed_until DateTime? @db.Date
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @default(now())
+
+  @@index([book_guid, renewal_date], map: "idx_renewals_book_date")
+  @@map("gnucash_web_renewals")
+}
+
+// Home module: rooms, inventory items, maintenance tasks, and the service log.
+model gnucash_web_home_rooms {
+  id         Int      @id @default(autoincrement())
+  book_guid  String   @db.VarChar(32)
+  name       String   @db.VarChar(255)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+
+  items gnucash_web_home_items[]
+
+  @@index([book_guid], map: "idx_home_rooms_book")
+  @@map("gnucash_web_home_rooms")
+}
+
+model gnucash_web_home_items {
+  id               Int       @id @default(autoincrement())
+  book_guid        String    @db.VarChar(32)
+  room_id          Int
+  name             String    @db.VarChar(255)
+  category         String?   @db.VarChar(50)
+  est_value        Decimal?  @db.Decimal(12, 2)
+  purchase_date    DateTime? @db.Date
+  receipt_id       Int?
+  photo_key        String?   @db.VarChar(500)
+  warranty_expires DateTime? @db.Date
+  serial           String?   @db.VarChar(100)
+  notes            String?   @db.Text
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @default(now())
+
+  room        gnucash_web_home_rooms       @relation(fields: [room_id], references: [id], onDelete: Cascade)
+  tasks       gnucash_web_home_tasks[]
+  service_log gnucash_web_home_service_log[]
+
+  @@index([room_id], map: "idx_home_items_room")
+  @@index([book_guid], map: "idx_home_items_book")
+  @@map("gnucash_web_home_items")
+}
+
+model gnucash_web_home_tasks {
+  id             Int       @id @default(autoincrement())
+  book_guid      String    @db.VarChar(32)
+  name           String    @db.VarChar(255)
+  cadence_months Int?
+  /// spring | summer | fall | winter
+  season         String?   @db.VarChar(20)
+  item_id        Int?
+  last_done      DateTime? @db.Date
+  active         Boolean   @default(true)
+  notes          String?   @db.Text
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @default(now())
+
+  item        gnucash_web_home_items?        @relation(fields: [item_id], references: [id], onDelete: SetNull)
+  service_log gnucash_web_home_service_log[]
+
+  @@index([book_guid], map: "idx_home_tasks_book")
+  @@map("gnucash_web_home_tasks")
+}
+
+model gnucash_web_home_service_log {
+  id           Int       @id @default(autoincrement())
+  book_guid    String    @db.VarChar(32)
+  task_id      Int?
+  item_id      Int?
+  service_date DateTime  @db.Date
+  cost         Decimal?  @db.Decimal(12, 2)
+  vendor       String?   @db.VarChar(255)
+  txn_guid     String?   @db.VarChar(32)
+  notes        String?   @db.Text
+  created_at   DateTime  @default(now())
+
+  task gnucash_web_home_tasks? @relation(fields: [task_id], references: [id], onDelete: SetNull)
+  item gnucash_web_home_items? @relation(fields: [item_id], references: [id], onDelete: SetNull)
+
+  @@index([book_guid], map: "idx_home_service_log_book")
+  @@map("gnucash_web_home_service_log")
 }

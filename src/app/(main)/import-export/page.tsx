@@ -477,6 +477,119 @@ export default function ImportExportPage() {
         </Link>
       </section>
 
+      {/* Business importers */}
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Import Business Accounting Apps</h2>
+          <p className="text-sm text-foreground-secondary mt-1">
+            Rebuild a Wave or Xero business as a new book, or post processor payouts into the
+            current book with correct gross / fee / net accounting.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+            <div>
+              <h3 className="text-foreground font-medium">Wave</h3>
+              <p className="text-xs text-foreground-secondary mt-1">
+                Accounting Transactions CSV + Chart of Accounts — balanced transactions and typed
+                accounts into a new book.
+              </p>
+            </div>
+            <Link
+              href="/import-export/wave"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+            >
+              Open Wave Import
+            </Link>
+          </div>
+          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+            <div>
+              <h3 className="text-foreground font-medium">Xero</h3>
+              <p className="text-xs text-foreground-secondary mt-1">
+                Journal report CSV + Chart of Accounts — Xero account types map to GnuCash types
+                automatically.
+              </p>
+            </div>
+            <Link
+              href="/import-export/xero"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+            >
+              Open Xero Import
+            </Link>
+          </div>
+          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+            <div>
+              <h3 className="text-foreground font-medium">Payment Settlements</h3>
+              <p className="text-xs text-foreground-secondary mt-1">
+                Stripe, Square, PayPal, and Shopify payout CSVs — gross sales, fees, refunds, and
+                payouts through a clearing account.
+              </p>
+            </div>
+            <Link
+              href="/import-export/settlements"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+            >
+              Open Settlement Import
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Personal finance importers */}
+      <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Import Personal Finance Apps</h2>
+          <p className="text-sm text-foreground-secondary mt-1">
+            Bring transaction history from Mint, YNAB, or Monarch Money into the current book —
+            account and category mapping, duplicate detection, and US/European format support.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+            <div>
+              <h3 className="text-foreground font-medium">Mint</h3>
+              <p className="text-xs text-foreground-secondary mt-1">
+                Transactions CSV export — debit/credit type column, categories, and account names.
+              </p>
+            </div>
+            <Link
+              href="/import-export/mint"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+            >
+              Open Mint Import
+            </Link>
+          </div>
+          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+            <div>
+              <h3 className="text-foreground font-medium">YNAB</h3>
+              <p className="text-xs text-foreground-secondary mt-1">
+                Register CSV from &quot;Export budget data&quot; — payees, category groups, outflow/inflow.
+              </p>
+            </div>
+            <Link
+              href="/import-export/ynab"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+            >
+              Open YNAB Import
+            </Link>
+          </div>
+          <div className="bg-surface/50 border border-border rounded-xl p-4 space-y-3">
+            <div>
+              <h3 className="text-foreground font-medium">Monarch Money</h3>
+              <p className="text-xs text-foreground-secondary mt-1">
+                Transactions download — signed amounts, merchants, categories, notes, and tags.
+              </p>
+            </div>
+            <Link
+              href="/import-export/monarch"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl transition-colors"
+            >
+              Open Monarch Import
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* Export Section */}
       <section className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
         <div>

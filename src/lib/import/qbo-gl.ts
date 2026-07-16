@@ -45,6 +45,7 @@ import {
     type QboJournalTransaction,
     type QboParseError,
 } from './qbo-journal';
+import { DEFAULT_LOCALE, type ImportLocale } from './parse-locale';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -129,7 +130,10 @@ export function detectGlHeader(cells: string[]): GlColumns | null {
 /* Parser                                                               */
 /* ------------------------------------------------------------------ */
 
-export function parseQboGeneralLedgerRows(rows: string[][]): QboGlParseResult {
+export function parseQboGeneralLedgerRows(
+    rows: string[][],
+    locale: ImportLocale = DEFAULT_LOCALE
+): QboGlParseResult {
     const warnings: string[] = [];
     const errors: QboParseError[] = [];
 
@@ -171,7 +175,7 @@ export function parseQboGeneralLedgerRows(rows: string[][]): QboGlParseResult {
         rowsRead++;
 
         const dateRaw = cell(row, cols.date);
-        const iso = dateRaw !== '' ? parseQboDate(dateRaw) : null;
+        const iso = dateRaw !== '' ? parseQboDate(dateRaw, locale) : null;
 
         if (iso) {
             // Transaction entry row
@@ -186,7 +190,7 @@ export function parseQboGeneralLedgerRows(rows: string[][]): QboGlParseResult {
                 continue;
             }
             const amountRaw = cell(row, cols.amount);
-            const amount = parseQboAmount(amountRaw);
+            const amount = parseQboAmount(amountRaw, locale);
             if (amount === null) {
                 errors.push({
                     row: rowNum,

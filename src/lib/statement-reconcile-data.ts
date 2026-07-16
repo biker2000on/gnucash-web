@@ -17,6 +17,7 @@
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { applyRules } from '@/lib/services/categorization.service';
+import { assertNotLocked } from '@/lib/services/period-lock.service';
 // Canonical statement table creation lives in statement.service.ts (the
 // ingestion owner). Re-exported so this module and its API routes share one
 // schema definition instead of a divergent duplicate.
@@ -565,6 +566,10 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
       { lineIds: missingCounterpart.map((l) => l.id) },
     );
   }
+
+  // Period lock: 'added' lines create transactions dated at the line date,
+  // so none of them may fall in a closed period.
+  await assertNotLocked(batch.book_guid, addedLines.map((l) => l.line_date));
 
   // Effective matches = explicitly-confirmed matches PLUS the engine's
   // auto-matches. The reconcile view shows auto-matches and its tie-out counts

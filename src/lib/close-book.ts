@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal } from '@/lib/gnucash';
+import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 
 /**
  * Close Book — GnuCash desktop's Tools → Close Book.
@@ -157,6 +158,10 @@ export async function executeCloseBook(
     if (!equity) throw new Error('Equity account not found');
     if (equity.account_type !== 'EQUITY') throw new Error('Closing target must be an EQUITY account');
     if (!bookAccountGuids.includes(equity.guid)) throw new Error('Equity account is not in the active book');
+
+    // Period lock: closing entries are dated closeDate, which must be after
+    // the book's lock date (lock AFTER closing the books, not before).
+    await assertAccountNotLocked(equity.guid, [closeDate]);
 
     // Only currencies matching the equity account can close into it.
     const closable = preview.accounts.filter(a => a.commodity_guid === equity.commodity_guid);

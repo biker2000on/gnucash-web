@@ -344,6 +344,21 @@ async function main() {
           await handleComplianceReminders(job);
           break;
         }
+        case 'dunning': {
+          const { handleDunning } = await import('./src/lib/queue/jobs/dunning');
+          await handleDunning(job);
+          break;
+        }
+        case 'funding-rules': {
+          const { handleFundingRules } = await import('./src/lib/queue/jobs/funding-rules');
+          await handleFundingRules(job);
+          break;
+        }
+        case 'renewal-reminders': {
+          const { handleRenewalReminders } = await import('./src/lib/queue/jobs/renewal-reminders');
+          await handleRenewalReminders(job);
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -458,6 +473,48 @@ async function main() {
       await handleComplianceReminders(fakeJob);
     } catch (err) {
       console.error('Compliance reminders run failed:', err);
+    }
+  });
+
+  // Daily dunning run at 07:30 UTC (payment reminders for books with dunning
+  // enabled; deduped per invoice/level via gnucash_web_dunning_log).
+  setScheduleGeneric('dunning', '07:30', async () => {
+    console.log(`[${new Date().toISOString()}] Running daily dunning (payment reminders)`);
+    try {
+      const { handleDunning } = await import('./src/lib/queue/jobs/dunning');
+      const fakeJob = { id: `daily-dunning-${Date.now()}`, name: 'dunning', data: {} } as Job;
+      await handleDunning(fakeJob);
+    } catch (err) {
+      console.error('Dunning run failed:', err);
+    }
+  });
+
+  // Budget auto-funding sweep every 30 minutes: match recent deposits
+  // against active funding rules and create envelope sweep transfers.
+  // Idempotent — each sweep txn carries num='autofund:<ruleId>:<txGuid>',
+  // so re-scanning the rolling window never double-applies.
+  const runFundingSweep = async () => {
+    try {
+      const { handleFundingRules } = await import('./src/lib/queue/jobs/funding-rules');
+      const fakeJob = { id: `sweep-funding-${Date.now()}`, name: 'funding-rules', data: {} } as Job;
+      await handleFundingRules(fakeJob);
+    } catch (err) {
+      console.error('Funding-rules sweep failed:', err);
+    }
+  };
+  setInterval(() => { void runFundingSweep(); }, 30 * 60 * 1000);
+  void runFundingSweep();
+
+  // Daily renewal reminders at 06:45 UTC (deduped per user/renewal/cycle via
+  // notification source ids, so re-runs are safe).
+  setScheduleGeneric('renewal-reminders', '06:45', async () => {
+    console.log(`[${new Date().toISOString()}] Running renewal reminders`);
+    try {
+      const { handleRenewalReminders } = await import('./src/lib/queue/jobs/renewal-reminders');
+      const fakeJob = { id: `daily-renewals-${Date.now()}`, name: 'renewal-reminders', data: {} } as Job;
+      await handleRenewalReminders(fakeJob);
+    } catch (err) {
+      console.error('Renewal reminders run failed:', err);
     }
   });
 

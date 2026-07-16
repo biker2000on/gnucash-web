@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
             entityType,
             typeOverrides: upload.typeOverrides,
             filename: upload.filename,
+            locale: upload.locale,
         });
 
         return NextResponse.json({ success: true, ...result });

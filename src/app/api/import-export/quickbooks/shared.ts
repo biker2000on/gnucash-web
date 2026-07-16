@@ -20,6 +20,8 @@ export interface QboUpload {
     entityType: string | null;
     currency: string | null;
     filename: string | null;
+    /** Number/date locale of the export: 'us' (default) or 'eu' (day-first) */
+    locale: 'us' | 'eu';
 }
 
 function countLines(content: string): number {
@@ -153,5 +155,6 @@ export async function readQboUpload(request: NextRequest): Promise<QboUpload | N
         entityType: str('entityType'),
         currency: str('currency'),
         filename: archive?.filename ?? journalName,
+        locale: str('locale') === 'eu' ? 'eu' : 'us',
     };
 }

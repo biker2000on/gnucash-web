@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -130,8 +131,10 @@ export function ApiTokensSection() {
                 <p className="text-sm text-foreground-muted">
                     Personal access tokens let scripts and integrations call the API with
                     <code className="mx-1 px-1 py-0.5 bg-surface-hover rounded text-xs">Authorization: Bearer gcw_...</code>
-                    Tokens are limited to read-only or edit access and can never exceed your own role.
-                    See <code className="px-1 py-0.5 bg-surface-hover rounded text-xs">docs/api-tokens.md</code> for usage.
+                    Tokens are limited to read-only or edit access and can never exceed your own role.{' '}
+                    <Link href="/settings/api-docs" className="text-primary hover:underline">
+                        View API documentation
+                    </Link>
                 </p>
 
                 {loaded && tokens.length > 0 && (

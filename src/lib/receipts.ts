@@ -11,6 +11,9 @@ export interface Receipt {
   file_size: number;
   ocr_text: string | null;
   ocr_status: string;
+  extracted_data: Record<string, unknown> | null;
+  hsa_eligible: boolean;
+  hsa_reimbursed_txn_guid: string | null;
   created_at: string;
   updated_at: string;
   created_by: number;
@@ -88,6 +91,8 @@ export async function listReceipts(params: {
   linked?: 'linked' | 'unlinked';
   startDate?: string;
   endDate?: string;
+  /** When true, only receipts marked HSA-eligible. */
+  hsaEligible?: boolean;
 }): Promise<{ receipts: ReceiptWithTransaction[]; total: number }> {
   const conditions: string[] = ['r.book_guid = $1'];
   const values: unknown[] = [params.bookGuid];
@@ -105,6 +110,10 @@ export async function listReceipts(params: {
     conditions.push('r.transaction_guid IS NOT NULL');
   } else if (params.linked === 'unlinked') {
     conditions.push('r.transaction_guid IS NULL');
+  }
+
+  if (params.hsaEligible) {
+    conditions.push('r.hsa_eligible = TRUE');
   }
 
   if (params.startDate) {
@@ -144,6 +153,27 @@ export async function listReceipts(params: {
     receipts: result.rows,
     total: parseInt(countResult.rows[0].total, 10),
   };
+}
+
+/**
+ * Mark or unmark a receipt as HSA-eligible. Unmarking is refused for
+ * receipts that were already reimbursed (the transaction exists — unmark
+ * would orphan it); callers should surface that as a 409/400.
+ */
+export async function setHsaEligible(
+  id: number,
+  bookGuid: string,
+  eligible: boolean,
+): Promise<Receipt | null> {
+  const result = await query(
+    `UPDATE gnucash_web_receipts
+     SET hsa_eligible = $1, updated_at = NOW()
+     WHERE id = $2 AND book_guid = $3
+       AND ($1 = TRUE OR hsa_reimbursed_txn_guid IS NULL)
+     RETURNING *`,
+    [eligible, id, bookGuid]
+  );
+  return result.rows[0] || null;
 }
 
 export async function updateExtractedData(id: number, data: Record<string, unknown>): Promise<void> {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 
 /**
  * @openapi
@@ -95,6 +96,14 @@ export async function POST(request: Request) {
                 { status: 400 }
             );
         }
+
+        // Period lock: moving a split re-books it to another account, so
+        // every affected transaction must be after the lock date.
+        const lockError = await withPeriodLockCheck(
+            roleResult.bookGuid,
+            splits.map(s => s.transaction?.post_date),
+        );
+        if (lockError) return lockError;
 
         // Perform the bulk update
         const result = await prisma.splits.updateMany({

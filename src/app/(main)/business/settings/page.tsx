@@ -638,18 +638,179 @@ function TaxtablesSection() {
     );
 }
 
+interface DunningSettingsDTO {
+    enabled: boolean;
+    schedule: number[];
+    emailSubject: string;
+    emailBody: string;
+}
+
+const DUNNING_PLACEHOLDERS = '{{customer}}, {{invoice_no}}, {{amount_due}}, {{days_overdue}}, {{link}}';
+
+function DunningSection() {
+    const { success, error } = useToast();
+    const { isReadonly } = useCurrentUser();
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [enabled, setEnabled] = useState(false);
+    const [scheduleText, setScheduleText] = useState('7, 14, 30');
+    const [subject, setSubject] = useState('');
+    const [body, setBody] = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/business/dunning-settings')
+            .then((res) => (res.ok ? res.json() : null))
+            .then((data: { settings: DunningSettingsDTO } | null) => {
+                if (cancelled || !data?.settings) return;
+                setEnabled(data.settings.enabled);
+                setScheduleText(data.settings.schedule.join(', '));
+                setSubject(data.settings.emailSubject);
+                setBody(data.settings.emailBody);
+            })
+            .catch(() => {})
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, []);
+
+    const parsedSchedule = scheduleText
+        .split(/[,\s]+/)
+        .map((s) => parseInt(s, 10))
+        .filter((n) => Number.isInteger(n) && n > 0);
+
+    const handleSave = async () => {
+        if (parsedSchedule.length === 0) {
+            error('Schedule needs at least one positive day number (e.g. 7, 14, 30)');
+            return;
+        }
+        setSaving(true);
+        try {
+            const res = await fetch('/api/business/dunning-settings', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    enabled,
+                    schedule: parsedSchedule,
+                    emailSubject: subject,
+                    emailBody: body,
+                }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(data?.error || 'Failed to save reminder settings');
+            if (data?.settings) {
+                setScheduleText(data.settings.schedule.join(', '));
+                setSubject(data.settings.emailSubject);
+                setBody(data.settings.emailBody);
+            }
+            success('Payment reminder settings saved');
+        } catch (err) {
+            error(err instanceof Error ? err.message : 'Failed to save reminder settings');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <section className="space-y-3">
+            <div>
+                <h2 className="text-xl font-semibold text-foreground">Payment Reminders</h2>
+                <p className="text-sm text-foreground-muted">
+                    Automatic dunning emails for overdue customer invoices, sent daily by the background
+                    worker at each days-overdue threshold. Individual invoices can opt out on their detail page.
+                </p>
+            </div>
+
+            <div className="bg-surface border border-border rounded-lg p-4 space-y-4">
+                {loading ? (
+                    <div className="p-4 text-center text-foreground-muted text-sm">Loading reminder settings...</div>
+                ) : (
+                    <>
+                        <label className="flex items-center gap-2 text-sm text-foreground">
+                            <input
+                                type="checkbox"
+                                checked={enabled}
+                                onChange={(e) => setEnabled(e.target.checked)}
+                                disabled={isReadonly}
+                                className="accent-primary"
+                            />
+                            Send payment reminders for overdue invoices
+                        </label>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className={labelClass}>Schedule (days overdue)</label>
+                                <input
+                                    type="text"
+                                    value={scheduleText}
+                                    onChange={(e) => setScheduleText(e.target.value)}
+                                    placeholder="7, 14, 30"
+                                    className={`${inputClass} font-mono`}
+                                    disabled={isReadonly}
+                                />
+                                <p className="mt-1 text-xs text-foreground-muted">
+                                    One reminder per threshold — e.g. 7, 14, 30 sends at 7, 14, and 30 days overdue.
+                                </p>
+                            </div>
+                            <div>
+                                <label className={labelClass}>Email subject</label>
+                                <input
+                                    type="text"
+                                    value={subject}
+                                    onChange={(e) => setSubject(e.target.value)}
+                                    className={inputClass}
+                                    maxLength={255}
+                                    disabled={isReadonly}
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>Email body</label>
+                            <textarea
+                                value={body}
+                                onChange={(e) => setBody(e.target.value)}
+                                rows={7}
+                                className={inputClass}
+                                disabled={isReadonly}
+                            />
+                            <p className="mt-1 text-xs text-foreground-muted">
+                                Placeholders: <span className="font-mono">{DUNNING_PLACEHOLDERS}</span>.
+                                A link to the customer-facing invoice page is appended automatically when{' '}
+                                <span className="font-mono">{'{{link}}'}</span> is not used.
+                            </p>
+                        </div>
+
+                        <div className="flex justify-end pt-2 border-t border-border">
+                            <button
+                                type="button"
+                                onClick={handleSave}
+                                disabled={saving || isReadonly}
+                                title={isReadonly ? READONLY_TOOLTIP : undefined}
+                                className={primaryButtonClass}
+                            >
+                                {saving ? 'Saving...' : 'Save Reminder Settings'}
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </section>
+    );
+}
+
 export default function BusinessSettingsPage() {
     return (
         <div className="space-y-8">
             <PageHeader
                 title="Business Settings"
-                subtitle="Bill terms and tax tables used by customers, vendors, and invoices."
+                subtitle="Bill terms, tax tables, and payment reminders used by customers, vendors, and invoices."
             />
 
             <HouseholdBookBanner />
 
             <BilltermsSection />
             <TaxtablesSection />
+            <DunningSection />
         </div>
     );
 }

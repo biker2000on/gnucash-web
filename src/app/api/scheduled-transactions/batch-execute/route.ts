@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { batchExecuteSkip, BatchItem } from '@/lib/services/scheduled-tx-execute';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,6 +23,14 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
     }
+
+    // Period lock: 'execute' items create real transactions dated at their
+    // occurrence date (skips only advance metadata and stay allowed).
+    const lockError = await withPeriodLockCheck(
+      roleResult.bookGuid,
+      (items as BatchItem[]).filter(i => i.action === 'execute').map(i => i.occurrenceDate),
+    );
+    if (lockError) return lockError;
 
     const result = await batchExecuteSkip(items as BatchItem[]);
 

@@ -11,6 +11,7 @@ import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, toDecimal } from '@/lib/gnucash';
 import { recordImpliedPrices } from '@/lib/services/implied-price.service';
+import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import { Prisma } from '@prisma/client';
 
 // Validation schemas - using num/denom format for API compatibility
@@ -68,6 +69,9 @@ export class TransactionService {
 
     // Validate double-entry
     validateSplitsBalance(data.splits);
+
+    // Period lock (book resolved from the first split's account)
+    await assertAccountNotLocked(data.splits[0].account_guid, [data.post_date]);
 
     // Generate GUIDs
     const transactionGuid = generateGuid();
@@ -156,6 +160,10 @@ export class TransactionService {
       throw new Error('Cannot modify transaction with reconciled splits. Unreconcile first.');
     }
 
+    // Period lock: both the current and the new post date must be open
+    const anchorAccountGuid = existing.splits[0]?.account_guid ?? data.splits[0].account_guid;
+    await assertAccountNotLocked(anchorAccountGuid, [existing.post_date, data.post_date]);
+
     // Update transaction and replace splits atomically
     const transaction = await prisma.$transaction(async (tx) => {
       // Delete existing splits
@@ -237,6 +245,11 @@ export class TransactionService {
     const hasReconciled = existing.splits.some(s => s.reconcile_state === 'y');
     if (hasReconciled) {
       throw new Error('Cannot delete transaction with reconciled splits. Unreconcile first.');
+    }
+
+    // Period lock: transactions dated in a closed period cannot be deleted
+    if (existing.splits[0]) {
+      await assertAccountNotLocked(existing.splits[0].account_guid, [existing.post_date]);
     }
 
     // Delete transaction and splits atomically

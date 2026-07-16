@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     const linked = searchParams.get('linked') as 'linked' | 'unlinked' | undefined;
     const startDate = searchParams.get('startDate') || undefined;
     const endDate = searchParams.get('endDate') || undefined;
+    const hsaEligible = searchParams.get('hsaEligible') === 'true';
 
     const result = await listReceipts({
       bookGuid,
@@ -24,6 +25,7 @@ export async function GET(request: Request) {
       linked: linked === 'linked' || linked === 'unlinked' ? linked : undefined,
       startDate,
       endDate,
+      hsaEligible: hsaEligible || undefined,
     });
 
     return NextResponse.json(result);

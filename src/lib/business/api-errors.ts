@@ -22,6 +22,7 @@ import {
   FundNotFoundError,
   FundStateError,
 } from '@/lib/services/funds.service';
+import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 
 /** Maps recurring-invoice service errors (falls through to invoice errors). */
 export function mapRecurringError(error: unknown): NextResponse {
@@ -35,6 +36,9 @@ export function mapRecurringError(error: unknown): NextResponse {
 }
 
 export function mapInvoiceError(error: unknown): NextResponse {
+  if (error instanceof PeriodLockedError) {
+    return periodLockedResponse(error);
+  }
   if (error instanceof InvoiceValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
@@ -50,6 +54,9 @@ export function mapInvoiceError(error: unknown): NextResponse {
 
 /** Maps prepaid-package service errors to HTTP responses. */
 export function mapPackageError(error: unknown): NextResponse {
+  if (error instanceof PeriodLockedError) {
+    return periodLockedResponse(error);
+  }
   if (error instanceof PackageValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }

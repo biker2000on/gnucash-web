@@ -205,6 +205,20 @@ describe('email-ingest', () => {
       expect(classifyKind({ filename: 'invoice-restaurant.pdf', subject: 'Dinner' })).toBe('receipt');
       expect(classifyKind({ filename: 'scan.pdf', defaultKind: 'auto' })).toBe('receipt');
     });
+
+    it('routes a "bill" subject prefix to the bill pipeline', () => {
+      expect(classifyKind({ filename: 'doc.pdf', subject: 'bill' })).toBe('bill');
+      expect(classifyKind({ filename: 'doc.pdf', subject: 'Bill: Electric June' })).toBe('bill');
+      // Prefix beats the statement/payslip keyword heuristics...
+      expect(classifyKind({ filename: 'statement-june.pdf', subject: 'bill for water' })).toBe('bill');
+      // ...but a non-prefix mention does not trigger it.
+      expect(classifyKind({ filename: 'doc.pdf', subject: 'Your bill is ready' })).toBe('receipt');
+      expect(classifyKind({ filename: 'doc.pdf', subject: 'Billing update' })).toBe('receipt');
+      // A non-auto sender default still wins over the subject prefix.
+      expect(classifyKind({ filename: 'doc.pdf', subject: 'bill', defaultKind: 'receipt' })).toBe('receipt');
+      // And 'bill' works as an explicit sender default.
+      expect(classifyKind({ filename: 'random.pdf', defaultKind: 'bill' })).toBe('bill');
+    });
   });
 
   // -------------------------------------------------------------------------

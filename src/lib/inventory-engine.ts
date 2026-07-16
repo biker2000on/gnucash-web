@@ -64,6 +64,7 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber, findOrCreateAccount } from '@/lib/gnucash';
+import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import {
   ensureInventoryTables,
   mapItemRow,
@@ -730,6 +731,9 @@ async function writeLedgerTxn(
   tx: PrismaTx,
   input: { date: string; description: string; splits: SplitSpec[] },
 ): Promise<string | null> {
+  // Period lock: every inventory ledger posting funnels through here
+  await assertAccountNotLocked(input.splits[0].accountGuid, [input.date]);
+
   const currency = await resolvePostingCurrency(tx, input.splits[0].accountGuid);
   const rounded = input.splits.map((s) => ({
     ...s,

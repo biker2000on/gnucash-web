@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
             coaArchive: upload.coaArchive,
             bookName: upload.bookName,
             typeOverrides: upload.typeOverrides,
+            locale: upload.locale,
         });
 
         return NextResponse.json(preview);

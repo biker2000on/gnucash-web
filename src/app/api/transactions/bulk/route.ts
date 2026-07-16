@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import {
     selectRecategorizeSplit,
     replaceDescription,
@@ -200,6 +201,17 @@ export async function PATCH(request: Request) {
             },
         });
         const txByGuid = new Map(txRows.map(t => [t.guid, t]));
+
+        // Period lock: description edits and recategorizes alter ledger
+        // content, so every targeted transaction must be after the lock date.
+        // Tag-only operations are metadata and stay allowed.
+        if (description !== undefined || replaceOp || recatOp) {
+            const lockError = await withPeriodLockCheck(
+                roleResult.bookGuid,
+                txRows.map(t => t.post_date),
+            );
+            if (lockError) return lockError;
+        }
 
         const results: BulkResult[] = [];
         let updated = 0;

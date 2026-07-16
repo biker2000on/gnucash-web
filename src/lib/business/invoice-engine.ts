@@ -45,6 +45,11 @@
 import prisma from '@/lib/prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from '@/lib/gnucash';
 import {
+  assertNotLocked,
+  getBookGuidForAccount,
+  getBookGuidForRoot,
+} from '@/lib/services/period-lock.service';
+import {
   computeInvoiceTotals,
   buildPostingSplits,
   buildPaymentSplits,
@@ -837,6 +842,10 @@ export async function deleteInvoice(guid: string): Promise<void> {
 export async function postInvoice(guid: string, input: PostInvoiceInput): Promise<PostResult> {
   let result: PostResult | null = null;
 
+  // Period lock: posting creates the A/R–A/P transaction at postDate
+  const lockBookGuid = await getBookGuidForRoot(input.bookRootGuid);
+  if (lockBookGuid) await assertNotLocked(lockBookGuid, [input.postDate]);
+
   await prisma.$transaction(async (tx) => {
     const invoice = await tx.invoices.findUnique({ where: { guid } });
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
@@ -971,6 +980,18 @@ export async function unpostInvoice(guid: string): Promise<void> {
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     if (!invoice.post_txn) throw new InvoiceStateError('Invoice is not posted');
 
+    // Period lock: unposting deletes the posting transaction
+    if (invoice.post_acc) {
+      const lockBookGuid = await getBookGuidForAccount(invoice.post_acc);
+      if (lockBookGuid) {
+        const postingTxn = await tx.transactions.findUnique({
+          where: { guid: invoice.post_txn },
+          select: { post_date: true },
+        });
+        await assertNotLocked(lockBookGuid, [postingTxn?.post_date]);
+      }
+    }
+
     // Refuse when payments are attached to the lot
     if (invoice.post_lot) {
       const lotSplits = await tx.splits.findMany({
@@ -1086,6 +1107,10 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
     throw new InvoiceValidationError('Payment amount must be positive');
   }
   const postDate = parseIsoDateNoon(input.date, 'date');
+
+  // Period lock: payments create a transaction dated input.date
+  const lockBookGuid = await getBookGuidForAccount(input.transferAccountGuid);
+  if (lockBookGuid) await assertNotLocked(lockBookGuid, [postDate]);
 
   let result: PaymentResult | null = null;
 

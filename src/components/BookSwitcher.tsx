@@ -56,14 +56,52 @@ interface Book {
     accountCount?: number;
 }
 
+function isDemoBook(book: Book | undefined): boolean {
+    return !!book?.description?.startsWith('DEMO');
+}
+
+function DemoBadge() {
+    return (
+        <span className="inline-block px-1 py-px rounded bg-warning/15 text-warning text-[10px] font-semibold tracking-wide shrink-0 leading-4 align-middle">
+            DEMO
+        </span>
+    );
+}
+
 export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
     const { activeBookGuid, books, switchBook, refreshBooks, loading } = useBooks();
     const [open, setOpen] = useState(false);
     const [highlightedIndex, setHighlightedIndex] = useState(0);
     const [wizardOpen, setWizardOpen] = useState(false);
     const [editingBook, setEditingBook] = useState<Book | null>(null);
+    const [demoPickerOpen, setDemoPickerOpen] = useState(false);
+    const [demoCreating, setDemoCreating] = useState<'household' | 'business' | null>(null);
+    const [demoError, setDemoError] = useState<string | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
+
+    const createDemoBook = async (kind: 'household' | 'business') => {
+        if (demoCreating) return;
+        setDemoCreating(kind);
+        setDemoError(null);
+        try {
+            const res = await fetch('/api/books/demo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kind }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Failed to create demo book');
+            setOpen(false);
+            setDemoPickerOpen(false);
+            await refreshBooks();
+            await switchBook(data.bookGuid);
+        } catch (err) {
+            setDemoError(err instanceof Error ? err.message : 'Failed to create demo book');
+        } finally {
+            setDemoCreating(null);
+        }
+    };
 
     const activeBook = books.find(b => b.guid === activeBookGuid);
 
@@ -148,6 +186,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                         <span className="flex-1 text-left text-sm font-medium truncate">
                             {activeBook?.name || 'Select Book'}
                         </span>
+                        {isDemoBook(activeBook) && <DemoBadge />}
                         <IconChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
                     </>
                 )}
@@ -185,7 +224,10 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                     className="flex-1 flex items-start gap-2 px-3 py-2 text-sm text-left"
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <div className="whitespace-nowrap">{book.name}</div>
+                                        <div className="whitespace-nowrap flex items-center gap-1.5">
+                                            <span>{book.name}</span>
+                                            {isDemoBook(book) && <DemoBadge />}
+                                        </div>
                                         {book.description && (
                                             <div className="text-xs text-foreground-tertiary whitespace-nowrap mt-0.5">
                                                 {book.description.length > 50
@@ -221,6 +263,37 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                             <IconPlus className="w-4 h-4" />
                             <span>New Book</span>
                         </button>
+                        {!demoPickerOpen ? (
+                            <button
+                                onClick={() => setDemoPickerOpen(true)}
+                                className="flex items-center w-full px-3 pb-2 pt-0.5 text-xs text-foreground-muted hover:text-foreground transition-colors"
+                            >
+                                Try a demo book
+                            </button>
+                        ) : (
+                            <div className="px-3 pb-2 pt-0.5 space-y-1.5">
+                                <div className="text-xs text-foreground-muted">Create a demo book with sample data:</div>
+                                <div className="flex gap-1.5">
+                                    <button
+                                        onClick={() => void createDemoBook('household')}
+                                        disabled={demoCreating !== null}
+                                        className="flex-1 px-2 py-1 text-xs rounded-md border border-border text-foreground-secondary hover:bg-surface-hover transition-colors disabled:opacity-50"
+                                    >
+                                        {demoCreating === 'household' ? 'Creating…' : 'Household'}
+                                    </button>
+                                    <button
+                                        onClick={() => void createDemoBook('business')}
+                                        disabled={demoCreating !== null}
+                                        className="flex-1 px-2 py-1 text-xs rounded-md border border-border text-foreground-secondary hover:bg-surface-hover transition-colors disabled:opacity-50"
+                                    >
+                                        {demoCreating === 'business' ? 'Creating…' : 'Business'}
+                                    </button>
+                                </div>
+                                {demoError && (
+                                    <div className="text-xs text-error">{demoError}</div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

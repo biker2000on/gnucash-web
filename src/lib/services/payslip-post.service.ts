@@ -12,6 +12,7 @@ import prisma from '@/lib/prisma';
 import type { PayslipLineItem } from '@/lib/types';
 import { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 import { upsertTemplate } from '@/lib/payslips';
+import { assertNotLocked, assertTxnMutable } from '@/lib/services/period-lock.service';
 export type { PayslipSplit } from '@/lib/payslip-splits';
 export { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 
@@ -154,6 +155,9 @@ export async function postPayslipTransaction(
     throw new Error(`Transaction splits do not sum to zero: ${splitsSum}`);
   }
 
+  // Period lock: posting writes a transaction dated payDate
+  await assertNotLocked(bookGuid, [payDate]);
+
   // Check for SimpleFin lump-sum deposit to replace
   const simpleFinMatch = await findSimpleFinDeposit(depositAccountGuid, netPay, payDate);
 
@@ -209,6 +213,8 @@ export async function postPayslipTransaction(
 
   // Replace SimpleFin lump-sum deposit with detailed payslip splits
   if (simpleFinMatch) {
+    // Period lock: the matched deposit's own date may differ from payDate
+    await assertTxnMutable(bookGuid, simpleFinMatch);
     return await prisma.$transaction(async (tx) => {
       // Delete the old lump-sum splits
       await tx.$executeRaw`DELETE FROM splits WHERE tx_guid = ${simpleFinMatch}`;

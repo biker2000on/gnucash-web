@@ -19,6 +19,7 @@
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { assertNotLocked } from '@/lib/services/period-lock.service';
 
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -369,6 +370,9 @@ export async function sellPackage(bookGuid: string, input: SellPackageInput): Pr
     if (!input.bankAccountGuid) throw new PackageValidationError('bankAccountGuid is required');
     const soldDate = parseIsoDateNoon(input.soldDate, 'soldDate');
 
+    // Period lock: the sale transaction is dated soldDate
+    await assertNotLocked(bookGuid, [soldDate]);
+
     const bookAccountGuids = new Set(await getAccountGuidsForBook(bookGuid));
     if (bookAccountGuids.size === 0) throw new PackageNotFoundError(`Book not found: ${bookGuid}`);
 
@@ -483,6 +487,9 @@ export async function redeemSession(
         ? parseIsoDateNoon(input.date, 'date')
         : parseIsoDateNoon(new Date().toISOString().slice(0, 10), 'date');
 
+    // Period lock: the redemption transaction is dated `date`
+    await assertNotLocked(bookGuid, [date]);
+
     await prisma.$transaction(async (tx) => {
         const pkg = await tx.gnucash_web_packages.findUnique({ where: { id: packageId } });
         if (!pkg || pkg.book_guid !== bookGuid) {
@@ -584,6 +591,12 @@ export async function deleteRedemption(bookGuid: string, redemptionId: number): 
             throw new PackageNotFoundError(`Redemption not found: ${redemptionId}`);
         }
         if (redemption.txn_guid) {
+            // Period lock: deleting the redemption removes its transaction
+            const txn = await tx.transactions.findUnique({
+                where: { guid: redemption.txn_guid },
+                select: { post_date: true },
+            });
+            await assertNotLocked(bookGuid, [txn?.post_date]);
             await deleteTxn(tx, redemption.txn_guid);
         }
         await tx.gnucash_web_package_redemptions.delete({ where: { id: redemptionId } });
@@ -636,6 +649,18 @@ export async function deletePackage(bookGuid: string, packageId: number): Promis
         });
         if (!pkg || pkg.book_guid !== bookGuid) {
             throw new PackageNotFoundError(`Package not found: ${packageId}`);
+        }
+        // Period lock: voiding deletes the sale + redemption transactions
+        const txnGuids = [
+            ...pkg.redemptions.map((r) => r.txn_guid),
+            pkg.sale_txn_guid,
+        ].filter((g): g is string => Boolean(g));
+        if (txnGuids.length > 0) {
+            const txns = await tx.transactions.findMany({
+                where: { guid: { in: txnGuids } },
+                select: { post_date: true },
+            });
+            await assertNotLocked(bookGuid, txns.map((t) => t.post_date));
         }
         for (const r of pkg.redemptions) {
             if (r.txn_guid) await deleteTxn(tx, r.txn_guid);

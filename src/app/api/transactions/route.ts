@@ -13,6 +13,7 @@ import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 
 /**
  * @openapi
@@ -309,6 +310,10 @@ export async function POST(request: Request) {
             console.error('[POST /api/transactions] Validation failed:', JSON.stringify(validation.errors), 'body:', JSON.stringify({ currency_guid: body.currency_guid, post_date: body.post_date, description: body.description, splits_count: body.splits?.length, splits_sample: body.splits?.slice(0, 2).map(s => ({ account_guid: s.account_guid, value_num: s.value_num, value_denom: s.value_denom })) }));
             return NextResponse.json({ errors: validation.errors }, { status: 400 });
         }
+
+        // Period lock: the new transaction's date must be after the lock date
+        const lockError = await withPeriodLockCheck(roleResult.bookGuid, [body.post_date]);
+        if (lockError) return lockError;
 
         // Verify all account GUIDs exist (deduplicate since multiple splits can reference the same account)
         const uniqueAccountGuids = [...new Set(body.splits.map(s => s.account_guid))];

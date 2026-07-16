@@ -121,6 +121,16 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
     } catch (extractErr) {
       console.error(`[Job ${job.id}] Extraction failed (OCR succeeded):`, extractErr);
     }
+
+    // Bill capture via email: if this receipt arrived through the "bill"
+    // ingest route, match the extracted vendor and draft the vendor bill (or
+    // park it for review). No-op for ordinary receipts; never throws.
+    try {
+      const { processPendingEmailBill } = await import('@/lib/business/bill-capture');
+      await processPendingEmailBill(receiptId);
+    } catch (billErr) {
+      console.error(`[Job ${job.id}] Email-bill processing failed for receipt ${receiptId}:`, billErr);
+    }
   } catch (err) {
     console.error(`[Job ${job.id}] OCR failed for receipt ${receiptId}:`, err);
     await updateOcrResults(receiptId, null, 'failed');

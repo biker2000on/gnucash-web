@@ -110,6 +110,12 @@ vi.mock('@/lib/prisma', () => ({
         if (prop === '$transaction') {
           return async (fn: (tx: unknown) => Promise<unknown>) => fn(holder.db);
         }
+        if (prop === '$queryRaw') {
+          // Raw queries here are the period-lock guard's lookups
+          // (gnucash_web_book_settings / account→book resolution) — return no
+          // rows so engine tests run against an unlocked book.
+          return async () => [];
+        }
         return holder.db?.[prop];
       },
     }

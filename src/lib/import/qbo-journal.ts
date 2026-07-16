@@ -13,7 +13,18 @@
  *
  * Sign convention: Debit → positive split value, Credit → negative
  * (GnuCash convention; a balanced transaction sums to zero).
+ *
+ * Number/date cells go through src/lib/import/parse-locale.ts; every parser
+ * takes an optional ImportLocale (default US: 1,234.56 + MM/DD/YYYY) so
+ * European exports (1.234,56 + DD/MM/YYYY) import correctly too.
  */
+
+import {
+    parseLocaleNumber,
+    parseLocaleDate,
+    DEFAULT_LOCALE,
+    type ImportLocale,
+} from './parse-locale';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -144,59 +155,20 @@ export function splitCsvRows(content: string): string[][] {
 }
 
 /**
- * Parse a QBO-exported amount cell. Handles thousands commas, currency
+ * Parse a QBO-exported amount cell. Handles thousands separators, currency
  * symbols, leading minus, and accounting parentheses for negatives.
  * Returns 0 for blank, null for unparseable text.
  */
-export function parseQboAmount(raw: string): number | null {
-    let s = raw.trim();
-    if (s === '' || s === '-' || s === '--') return 0;
-
-    let sign = 1;
-    if (/^\(.*\)$/.test(s)) {
-        sign = -1;
-        s = s.slice(1, -1);
-    }
-    if (s.startsWith('-')) sign *= -1;
-
-    // Strip everything except digits and decimal point (commas, $, €, spaces, NBSP)
-    s = s.replace(/[^0-9.]/g, '');
-    if (s === '' || s === '.') return null;
-
-    const n = Number(s);
-    if (!Number.isFinite(n)) return null;
-    return round2(sign * n);
+export function parseQboAmount(raw: string, locale: ImportLocale = DEFAULT_LOCALE): number | null {
+    return parseLocaleNumber(raw, { decimal: locale.decimal });
 }
 
-/** Parse MM/DD/YYYY (primary), M/D/YYYY, MM-DD-YYYY, or YYYY-MM-DD → ISO date. */
-export function parseQboDate(raw: string): string | null {
-    const s = raw.trim();
-    if (!s) return null;
-
-    // ISO: YYYY-MM-DD (also YYYY/MM/DD)
-    let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-    if (m) {
-        const [, y, mo, d] = m;
-        return validIso(Number(y), Number(mo), Number(d));
-    }
-
-    // US: MM/DD/YYYY or MM-DD-YYYY (2-digit years tolerated)
-    m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
-    if (m) {
-        const [, mo, d, yRaw] = m;
-        let y = Number(yRaw);
-        if (yRaw.length === 2) y += y >= 70 ? 1900 : 2000;
-        return validIso(y, Number(mo), Number(d));
-    }
-
-    return null;
-}
-
-function validIso(y: number, mo: number, d: number): string | null {
-    if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900 || y > 2200) return null;
-    const date = new Date(Date.UTC(y, mo - 1, d));
-    if (date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return null;
-    return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+/**
+ * Parse MM/DD/YYYY (or DD/MM/YYYY when the locale is day-first), M/D/YYYY,
+ * MM-DD-YYYY, or YYYY-MM-DD → ISO date.
+ */
+export function parseQboDate(raw: string, locale: ImportLocale = DEFAULT_LOCALE): string | null {
+    return parseLocaleDate(raw, { dayFirst: locale.dayFirst });
 }
 
 export function round2(n: number): number {
@@ -301,15 +273,21 @@ export function extractCompanyName(preambleRows: string[][]): string | null {
 
 export const MAX_HEADER_SCAN_ROWS = 25;
 
-export function parseQboJournalCsv(content: string): QboJournalParseResult {
-    return parseQboJournalRows(splitCsvRows(content));
+export function parseQboJournalCsv(
+    content: string,
+    locale: ImportLocale = DEFAULT_LOCALE
+): QboJournalParseResult {
+    return parseQboJournalRows(splitCsvRows(content), locale);
 }
 
 /**
  * Row-level Journal parser. Rows can come from a CSV (splitCsvRows) or from
  * an XLSX worksheet (qbo-workbook.ts) — same grouping/validation either way.
  */
-export function parseQboJournalRows(rows: string[][]): QboJournalParseResult {
+export function parseQboJournalRows(
+    rows: string[][],
+    locale: ImportLocale = DEFAULT_LOCALE
+): QboJournalParseResult {
     const warnings: string[] = [];
     const errors: QboParseError[] = [];
 
@@ -395,7 +373,7 @@ export function parseQboJournalRows(rows: string[][]): QboJournalParseResult {
         if (dateRaw !== '') {
             // New transaction starts
             finishCurrent();
-            const iso = parseQboDate(dateRaw);
+            const iso = parseQboDate(dateRaw, locale);
             if (!iso) {
                 errors.push({ row: rowNum, message: `Unrecognized date "${dateRaw}".` });
                 current = null;
@@ -423,8 +401,8 @@ export function parseQboJournalRows(rows: string[][]): QboJournalParseResult {
 
         const debitRaw = cell(row, cols.debit);
         const creditRaw = cell(row, cols.credit);
-        const debit = parseQboAmount(debitRaw);
-        const credit = parseQboAmount(creditRaw);
+        const debit = parseQboAmount(debitRaw, locale);
+        const credit = parseQboAmount(creditRaw, locale);
         if (debit === null || credit === null) {
             if (!currentBad) {
                 errors.push({

@@ -7,6 +7,7 @@ import {
     getBookAccountGuids,
     invalidateBookAccountGuidsCache,
 } from '@/lib/book-scope';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import { parseQif, type QifDateFormat } from '@/lib/qif/parser';
 import {
     planQifImport,
@@ -361,6 +362,13 @@ export async function POST(request: NextRequest) {
                 warnings,
             });
         }
+
+        // Period lock: every transaction to be created must be after the lock date
+        const lockError = await withPeriodLockCheck(
+            roleResult.bookGuid,
+            plan.transactions.map((t) => t.date),
+        );
+        if (lockError) return lockError;
 
         const result = await executeQifImport(plan);
         invalidateBookAccountGuidsCache();

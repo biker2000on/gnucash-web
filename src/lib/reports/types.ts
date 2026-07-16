@@ -37,6 +37,8 @@ export enum ReportType {
   YEAR_IN_REVIEW = 'year_in_review',
   FX_REVALUATION = 'fx_revaluation',
   BLS_COMPARISON = 'bls_comparison',
+  PNL_BY_TAG = 'pnl_by_tag',
+  MEMBER_SPENDING = 'member_spending',
 }
 
 export interface ReportConfig {
@@ -394,6 +396,13 @@ export const REPORTS: ReportConfig[] = [
     category: 'financial',
   },
   {
+    type: ReportType.MEMBER_SPENDING,
+    name: 'Spending by Member',
+    description: 'Expenses attributed to the household member whose account funded them (self, spouse, joint)',
+    icon: 'cash',
+    category: 'financial',
+  },
+  {
     type: ReportType.RECONCILIATION,
     name: 'Reconciliation Report',
     description: 'Reconciled, cleared, and uncleared transactions by account',
@@ -469,6 +478,13 @@ export const REPORTS: ReportConfig[] = [
     description: 'Your categories vs BLS Consumer Expenditure Survey averages for your household size',
     icon: 'cash',
     category: 'chart',
+  },
+  {
+    type: ReportType.PNL_BY_TAG,
+    name: 'P&L by Tag',
+    description: 'Income and expenses per transaction tag — classes, locations, or projects side by side',
+    icon: 'trending',
+    category: 'financial',
   },
 ];
 

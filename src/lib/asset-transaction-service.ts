@@ -10,6 +10,7 @@
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { logAudit } from '@/lib/services/audit.service';
+import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
 import { generateSchedule, type DepreciationConfig } from '@/lib/depreciation';
 
 export interface CreateValuationTransactionParams {
@@ -83,6 +84,10 @@ export async function createValuationTransaction(
   if (amount <= 0) {
     throw new Error('Amount must be positive');
   }
+
+  // Period lock: valuation entries are dated `date`. Covers direct creates,
+  // adjust-to-target, and depreciation schedule processing (all funnel here).
+  await assertAccountNotLocked(assetAccountGuid, [date]);
 
   const currencyGuid = await getAccountCurrencyGuid(assetAccountGuid);
   const denom = 100;

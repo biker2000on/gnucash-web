@@ -16,8 +16,12 @@ import {
   InventoryStockError,
   InventoryStateError,
 } from '@/lib/services/inventory.service';
+import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 
 export function mapInventoryError(error: unknown): NextResponse {
+  if (error instanceof PeriodLockedError) {
+    return periodLockedResponse(error);
+  }
   if (error instanceof InventoryValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }

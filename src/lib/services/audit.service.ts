@@ -11,6 +11,7 @@
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
+import { assertNotLocked } from '@/lib/services/period-lock.service';
 
 export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE';
 export type EntityType =
@@ -247,6 +248,8 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
 
     switch (plan.kind) {
         case 'restore_deleted': {
+            // Period lock: restoring re-creates a transaction at its old date
+            await assertNotLocked(activeBookGuid, [plan.snapshot.post_date]);
             await writeSnapshot(plan.snapshot, false);
             await logAudit('CREATE', 'TRANSACTION', plan.snapshot.guid, null, {
                 ...plan.snapshot,
@@ -257,6 +260,8 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
         case 'revert_update': {
             const current = await snapshotTransactionByGuid(plan.snapshot.guid);
             if (!current) return { ok: false, message: 'Transaction no longer exists — restore it from its DELETE entry instead' };
+            // Period lock: both the current date and the reverted-to date must be open
+            await assertNotLocked(activeBookGuid, [current.post_date, plan.snapshot.post_date]);
             await writeSnapshot(plan.snapshot, true);
             await logAudit('UPDATE', 'TRANSACTION', plan.snapshot.guid, current, {
                 ...plan.snapshot,
@@ -267,6 +272,8 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
         case 'delete_created': {
             const current = await snapshotTransactionByGuid(plan.guid);
             if (!current) return { ok: false, message: 'Transaction no longer exists' };
+            // Period lock: transactions dated in a closed period cannot be deleted
+            await assertNotLocked(activeBookGuid, [current.post_date]);
             await prisma.$transaction(async (tx) => {
                 await tx.splits.deleteMany({ where: { tx_guid: plan.guid } });
                 await tx.transactions.delete({ where: { guid: plan.guid } });

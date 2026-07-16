@@ -190,6 +190,15 @@ export function runDrawdown(inputs: DrawdownInputs): DrawdownResult {
   const rmdAge = rmdStartAge(birthYear);
   const joint = inputs.filingStatus === 'mfj' || inputs.filingStatus === 'qss';
 
+  // Social Security income streams: explicit multi-stream input (per-spouse
+  // claiming plans) wins; else the legacy single claim; else none.
+  const ssStreams: Array<{ startAge: number; annualBenefit: number }> =
+    inputs.socialSecurityStreams && inputs.socialSecurityStreams.length > 0
+      ? inputs.socialSecurityStreams
+      : inputs.socialSecurity && inputs.socialSecurity.annualBenefit > 0
+        ? [inputs.socialSecurity]
+        : [];
+
   let balances: BucketAmounts = { ...inputs.startingBalances };
   const rows: DrawdownYearRow[] = [];
 
@@ -210,9 +219,13 @@ export function runDrawdown(inputs: DrawdownInputs): DrawdownResult {
 
     const retired = age >= inputs.retirementAge;
     const spendingNeed = retired ? inputs.annualSpending * inflationFactor : 0;
-    const ss = inputs.socialSecurity;
-    const ssBenefit =
-      ss && ss.annualBenefit > 0 && age >= ss.startAge ? ss.annualBenefit * inflationFactor : 0;
+    const ssBenefit = ssStreams.reduce(
+      (sum, stream) =>
+        stream.annualBenefit > 0 && age >= stream.startAge
+          ? sum + stream.annualBenefit * inflationFactor
+          : sum,
+      0,
+    );
 
     const rmdAmount = computeRmd(age, birthYear, balances.traditional);
 

@@ -9,6 +9,7 @@ import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { formatCurrency } from '@/lib/format';
 import { STATUS_META, type InvoiceKind, type InvoiceStatus } from '@/components/business/invoice-ui';
 import type { InvoiceView } from '@/lib/business/invoice-engine';
+import type { EmailBill } from '@/lib/business/bill-capture';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -24,10 +25,138 @@ function StatusBadge({ status }: { status: InvoiceStatus }) {
     );
 }
 
+function FromEmailBadge() {
+    return (
+        <span
+            className="inline-block ml-2 px-1.5 py-0.5 text-[10px] rounded bg-secondary-light text-secondary whitespace-nowrap align-middle"
+            title="Created from an emailed bill"
+        >
+            from email
+        </span>
+    );
+}
+
+/** Review queue for email-captured bills that couldn't be drafted automatically. */
+function EmailBillReviewPanel({
+    bills,
+    vendors,
+    isReadonly,
+    onResolve,
+    onDismiss,
+}: {
+    bills: EmailBill[];
+    vendors: Array<{ guid: string; name: string }>;
+    isReadonly: boolean;
+    onResolve: (bill: EmailBill, vendorGuid: string, amount: number | null) => Promise<void>;
+    onDismiss: (bill: EmailBill) => Promise<void>;
+}) {
+    const [selections, setSelections] = useState<Record<number, string>>({});
+    const [amounts, setAmounts] = useState<Record<number, string>>({});
+    const [busyId, setBusyId] = useState<number | null>(null);
+
+    if (bills.length === 0) return null;
+
+    return (
+        <div className="bg-surface border border-warning/40 rounded-lg overflow-hidden">
+            <div className="px-4 py-3 border-b border-border">
+                <h2 className="text-sm font-semibold text-foreground">
+                    Emailed bills needing review
+                    <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-warning/15 text-warning">
+                        {bills.length}
+                    </span>
+                </h2>
+                <p className="text-xs text-foreground-muted mt-0.5">
+                    These arrived by email but no vendor matched (vendors are never created
+                    automatically). Pick the vendor to create the draft bill, or dismiss.
+                </p>
+            </div>
+            <div className="divide-y divide-border">
+                {bills.map((bill) => {
+                    const vendorGuid = selections[bill.id] ?? '';
+                    const amountStr = amounts[bill.id] ?? (bill.amount !== null ? String(bill.amount) : '');
+                    const amountNum = parseFloat(amountStr);
+                    const canResolve = !isReadonly && vendorGuid !== '' && Number.isFinite(amountNum) && amountNum > 0;
+                    const busy = busyId === bill.id;
+                    return (
+                        <div key={bill.id} className="px-4 py-3 flex flex-wrap items-center gap-3">
+                            <div className="min-w-0 flex-1">
+                                <div className="text-sm text-foreground truncate">
+                                    {bill.subject || bill.filename || `Capture #${bill.id}`}
+                                </div>
+                                <div className="text-xs text-foreground-muted mt-0.5">
+                                    {bill.vendorName ? `Extracted vendor: ${bill.vendorName}` : 'No vendor extracted'}
+                                    {bill.docDate ? ` · ${bill.docDate}` : ''}
+                                    {bill.status === 'pending_extraction'
+                                        ? ' · still extracting…'
+                                        : bill.detail ? ` · ${bill.detail}` : ''}
+                                </div>
+                            </div>
+                            <select
+                                className={`${inputClass} w-52`}
+                                value={vendorGuid}
+                                disabled={isReadonly || busy}
+                                onChange={(e) => setSelections((prev) => ({ ...prev, [bill.id]: e.target.value }))}
+                            >
+                                <option value="">Select vendor…</option>
+                                {vendors.map((v) => (
+                                    <option key={v.guid} value={v.guid}>{v.name}</option>
+                                ))}
+                            </select>
+                            <input
+                                type="number"
+                                className={`${inputClass} w-28 font-mono`}
+                                style={TNUM}
+                                placeholder="Amount"
+                                min={0}
+                                step={0.01}
+                                value={amountStr}
+                                disabled={isReadonly || busy}
+                                onChange={(e) => setAmounts((prev) => ({ ...prev, [bill.id]: e.target.value }))}
+                            />
+                            <button
+                                type="button"
+                                disabled={!canResolve || busy}
+                                title={isReadonly ? READONLY_TOOLTIP : undefined}
+                                onClick={async () => {
+                                    setBusyId(bill.id);
+                                    try {
+                                        await onResolve(bill, vendorGuid, Number.isFinite(amountNum) ? amountNum : null);
+                                    } finally {
+                                        setBusyId(null);
+                                    }
+                                }}
+                                className="px-3 py-1.5 text-xs bg-primary hover:bg-primary-hover disabled:bg-primary/40 disabled:cursor-not-allowed text-primary-foreground rounded-md transition-colors"
+                            >
+                                {busy ? 'Creating…' : 'Create draft'}
+                            </button>
+                            <button
+                                type="button"
+                                disabled={isReadonly || busy}
+                                title={isReadonly ? READONLY_TOOLTIP : undefined}
+                                onClick={async () => {
+                                    setBusyId(bill.id);
+                                    try {
+                                        await onDismiss(bill);
+                                    } finally {
+                                        setBusyId(null);
+                                    }
+                                }}
+                                className="px-3 py-1.5 text-xs text-foreground-secondary hover:text-foreground hover:bg-surface-hover rounded-md transition-colors"
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 function InvoicesContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { error } = useToast();
+    const { success, error } = useToast();
     const { isReadonly } = useCurrentUser();
 
     const type: InvoiceKind = searchParams.get('type') === 'bill' ? 'bill' : 'invoice';
@@ -38,6 +167,8 @@ function InvoicesContent() {
     const [status, setStatus] = useState<'all' | InvoiceStatus>('all');
     const [search, setSearch] = useState('');
     const [currencyByGuid, setCurrencyByGuid] = useState<Record<string, string>>({});
+    const [emailBills, setEmailBills] = useState<EmailBill[]>([]);
+    const [vendors, setVendors] = useState<Array<{ guid: string; name: string }>>([]);
     const searchInputRef = useRef<HTMLInputElement>(null);
 
     const setType = (next: InvoiceKind) => {
@@ -64,6 +195,75 @@ function InvoicesContent() {
     }, [type, status, singular, error]);
 
     useEffect(() => { fetchInvoices(); }, [fetchInvoices]);
+
+    // Email-captured bill drafts (badge + review queue) — bills view only.
+    const fetchEmailBills = useCallback(async () => {
+        if (type !== 'bill') {
+            setEmailBills([]);
+            return;
+        }
+        try {
+            const res = await fetch('/api/business/bill-drafts');
+            const data = await res.json().catch(() => null);
+            if (res.ok) setEmailBills(data?.bills ?? []);
+        } catch {
+            // Non-fatal: the bills list works without the email metadata.
+        }
+    }, [type]);
+
+    useEffect(() => { fetchEmailBills(); }, [fetchEmailBills]);
+
+    useEffect(() => {
+        if (type !== 'bill') return;
+        fetch('/api/business/vendors')
+            .then((res) => (res.ok ? res.json() : []))
+            .then((rows: Array<{ guid: string; name: string }>) => {
+                setVendors(Array.isArray(rows) ? rows.map((r) => ({ guid: r.guid, name: r.name })) : []);
+            })
+            .catch(() => {});
+    }, [type]);
+
+    const emailDraftInvoiceGuids = useMemo(
+        () => new Set(emailBills.filter((b) => b.invoiceGuid).map((b) => b.invoiceGuid as string)),
+        [emailBills],
+    );
+    const reviewQueue = useMemo(
+        () => emailBills.filter((b) => b.status === 'needs_review' || b.status === 'error' || b.status === 'pending_extraction'),
+        [emailBills],
+    );
+
+    const handleResolveEmailBill = useCallback(
+        async (bill: EmailBill, vendorGuid: string, amount: number | null) => {
+            try {
+                const res = await fetch(`/api/business/bill-drafts/${bill.id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ vendorGuid, amount }),
+                });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) throw new Error(data?.error || 'Failed to create the draft bill');
+                success('Draft bill created');
+                await Promise.all([fetchInvoices(), fetchEmailBills()]);
+            } catch (err) {
+                error(err instanceof Error ? err.message : 'Failed to create the draft bill');
+            }
+        },
+        [success, error, fetchInvoices, fetchEmailBills],
+    );
+
+    const handleDismissEmailBill = useCallback(
+        async (bill: EmailBill) => {
+            try {
+                const res = await fetch(`/api/business/bill-drafts/${bill.id}`, { method: 'DELETE' });
+                const data = await res.json().catch(() => null);
+                if (!res.ok) throw new Error(data?.error || 'Failed to dismiss');
+                await fetchEmailBills();
+            } catch (err) {
+                error(err instanceof Error ? err.message : 'Failed to dismiss');
+            }
+        },
+        [error, fetchEmailBills],
+    );
 
     // Currency guid -> mnemonic for amount formatting.
     useEffect(() => {
@@ -196,6 +396,16 @@ function InvoicesContent() {
                 }
             />
 
+            {type === 'bill' && (
+                <EmailBillReviewPanel
+                    bills={reviewQueue}
+                    vendors={vendors}
+                    isReadonly={isReadonly}
+                    onResolve={handleResolveEmailBill}
+                    onDismiss={handleDismissEmailBill}
+                />
+            )}
+
             <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 {loading ? (
                     <div className="p-12 flex items-center justify-center gap-3">
@@ -228,7 +438,10 @@ function InvoicesContent() {
                                         onClick={() => router.push(`/business/invoices/${inv.guid}`)}
                                         className="hover:bg-surface-hover/50 transition-colors cursor-pointer"
                                     >
-                                        <td className="px-4 py-2 font-mono tabular-nums text-foreground" style={TNUM}>{inv.id}</td>
+                                        <td className="px-4 py-2 font-mono tabular-nums text-foreground whitespace-nowrap" style={TNUM}>
+                                            {inv.id}
+                                            {emailDraftInvoiceGuids.has(inv.guid) && <FromEmailBadge />}
+                                        </td>
                                         <td className="px-4 py-2 text-foreground max-w-xs truncate">{inv.ownerName}</td>
                                         <td className="px-4 py-2 font-mono tabular-nums text-foreground-secondary" style={TNUM}>{inv.dateOpened ?? '—'}</td>
                                         <td className="px-4 py-2 font-mono tabular-nums text-foreground-secondary" style={TNUM}>{inv.datePosted ?? '—'}</td>

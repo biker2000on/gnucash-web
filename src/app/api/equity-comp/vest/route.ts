@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { isValidGuid } from '@/lib/guid';
 import { logAudit } from '@/lib/services/audit.service';
@@ -78,6 +79,10 @@ export async function POST(request: Request) {
                 { status: 400 },
             );
         }
+
+        // Period lock: the vest transaction is dated vestDate
+        const lockError = await withPeriodLockCheck(roleResult.bookGuid, [body.vestDate as string]);
+        if (lockError) return lockError;
 
         const result = await prisma.$transaction(async (tx) =>
             postVestEvent(body as PostVestInput, tx)

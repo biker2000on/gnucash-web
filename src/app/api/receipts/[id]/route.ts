@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getReceiptById, deleteReceipt, linkReceipt } from '@/lib/receipts';
+import { getReceiptById, deleteReceipt, linkReceipt, setHsaEligible } from '@/lib/receipts';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -95,22 +95,48 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
 
     const body = await request.json();
-    const { transaction_guid } = body;
+    const { transaction_guid, hsa_eligible } = body;
 
-    if (transaction_guid !== null && transaction_guid !== undefined) {
-      const { query: dbQuery } = await import('@/lib/db');
-      const txResult = await dbQuery(
-        'SELECT guid FROM transactions WHERE guid = $1',
-        [transaction_guid]
-      );
-      if (txResult.rows.length === 0) {
-        return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+    const hasLinkChange = 'transaction_guid' in body;
+    const hasHsaChange = typeof hsa_eligible === 'boolean';
+    if (!hasLinkChange && !hasHsaChange) {
+      return NextResponse.json({ error: 'No supported fields to update' }, { status: 400 });
+    }
+
+    let updated = null;
+
+    if (hasLinkChange) {
+      if (transaction_guid !== null && transaction_guid !== undefined) {
+        const { query: dbQuery } = await import('@/lib/db');
+        const txResult = await dbQuery(
+          'SELECT guid FROM transactions WHERE guid = $1',
+          [transaction_guid]
+        );
+        if (txResult.rows.length === 0) {
+          return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+        }
+      }
+
+      updated = await linkReceipt(receiptId, bookGuid, transaction_guid ?? null);
+      if (!updated) {
+        return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
       }
     }
 
-    const updated = await linkReceipt(receiptId, bookGuid, transaction_guid ?? null);
-    if (!updated) {
-      return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
+    if (hasHsaChange) {
+      updated = await setHsaEligible(receiptId, bookGuid, hsa_eligible);
+      if (!updated) {
+        // Either the receipt doesn't exist, or unmarking was refused because
+        // the receipt is already reimbursed.
+        const existing = await getReceiptById(receiptId, bookGuid);
+        if (!existing) {
+          return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
+        }
+        return NextResponse.json(
+          { error: 'Receipt was already reimbursed — cannot unmark HSA eligibility' },
+          { status: 409 }
+        );
+      }
     }
 
     return NextResponse.json(updated);
