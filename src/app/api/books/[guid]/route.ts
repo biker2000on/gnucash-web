@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/auth';
 import { getUserRoleForBook } from '@/lib/services/permission.service';
+import { deleteBookExtensionData } from '@/lib/services/book-cleanup.service';
 
 /**
  * GET /api/books/[guid]
@@ -206,6 +207,11 @@ export async function DELETE(
         `;
         const templateGuids = templateTree.map(a => a.guid);
         const allAccountGuids = [...accountGuids, ...templateGuids];
+
+        // Remove all extension-table rows (gnucash_web_*) and stored files
+        // for this book BEFORE the core deletion: several cleanups derive
+        // their row sets from the book's splits/transactions.
+        await deleteBookExtensionData(guid, allAccountGuids);
 
         const remainingBooks = await prisma.$transaction(async (tx) => {
             // Delete budget_amounts referencing these accounts
