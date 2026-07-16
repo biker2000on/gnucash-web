@@ -3,6 +3,10 @@
  *
  * Wraps Prisma calls for saved report CRUD operations.
  * All functions take userId as a parameter (auth is handled by API layer).
+ *
+ * Reports are scoped per-user AND per-book: list/create take the active
+ * book's guid, and single-row operations verify the row belongs to the
+ * expected book (mismatch behaves as "not found" so nothing leaks).
  */
 
 import prisma from '@/lib/prisma';
@@ -29,6 +33,53 @@ const VALID_REPORT_TYPES = new Set<string>([
   'income_expense_chart',
 ]);
 
+const GUID_RE = /[0-9a-f]{32}/gi;
+
+/**
+ * Extract candidate account guids from a saved report's config.
+ *
+ * Mirrors (in TypeScript) what the db-init backfill does in SQL: the explicit
+ * `accountGuids` array is preferred, then any 32-hex substring anywhere in
+ * the serialized config is included as a fallback. Returns lowercase guids,
+ * deduplicated, with the explicit accountGuids entries first.
+ */
+export function extractAccountGuidsFromConfig(config: unknown): string[] {
+  if (config === null || typeof config !== 'object') return [];
+
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const push = (guid: string) => {
+    const lower = guid.toLowerCase();
+    if (!seen.has(lower)) {
+      seen.add(lower);
+      ordered.push(lower);
+    }
+  };
+
+  // Pass 1: explicit accountGuids array
+  const accountGuids = (config as Record<string, unknown>).accountGuids;
+  if (Array.isArray(accountGuids)) {
+    for (const entry of accountGuids) {
+      if (typeof entry === 'string' && /^[0-9a-f]{32}$/i.test(entry)) {
+        push(entry);
+      }
+    }
+  }
+
+  // Pass 2 (fallback): any 32-hex substring anywhere in the config
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(config) ?? '';
+  } catch {
+    return ordered; // circular config — explicit guids only
+  }
+  for (const match of serialized.match(GUID_RE) ?? []) {
+    push(match);
+  }
+
+  return ordered;
+}
+
 /**
  * Helper to convert DB row to SavedReport interface (snake_case -> camelCase)
  */
@@ -42,6 +93,7 @@ function toSavedReport(row: SavedReportRow): SavedReport {
   return {
     id: row.id,
     userId: row.user_id,
+    bookGuid: row.book_guid,
     baseReportType: row.base_report_type as ReportType,
     name: row.name,
     description: row.description,
@@ -69,11 +121,27 @@ function validateConfig(config: unknown): void {
 }
 
 /**
- * List all saved reports for a user, starred first, then by updated_at desc
+ * Ownership + book gate for single-row operations. A row from another user
+ * or another book is treated exactly like a missing row. Passing `undefined`
+ * for bookGuid skips the book check (server-side jobs that resolve their
+ * book scope elsewhere, e.g. the report scheduler).
  */
-export async function listSavedReports(userId: number): Promise<SavedReport[]> {
+function isAccessible(
+  row: SavedReportRow | null,
+  userId: number,
+  bookGuid: string | undefined
+): row is SavedReportRow {
+  if (!row || row.user_id !== userId) return false;
+  if (bookGuid !== undefined && row.book_guid !== bookGuid) return false;
+  return true;
+}
+
+/**
+ * List all saved reports for a user in a book, starred first, then by updated_at desc
+ */
+export async function listSavedReports(userId: number, bookGuid: string): Promise<SavedReport[]> {
   const rows = await prisma.gnucash_web_saved_reports.findMany({
-    where: { user_id: userId },
+    where: { user_id: userId, book_guid: bookGuid },
     orderBy: [
       { is_starred: 'desc' },
       { updated_at: 'desc' },
@@ -84,23 +152,28 @@ export async function listSavedReports(userId: number): Promise<SavedReport[]> {
 }
 
 /**
- * Get a single saved report by ID (validates ownership)
+ * Get a single saved report by ID (validates ownership, and book when given)
  */
-export async function getSavedReport(id: number, userId: number): Promise<SavedReport | null> {
+export async function getSavedReport(
+  id: number,
+  userId: number,
+  bookGuid?: string
+): Promise<SavedReport | null> {
   const row = await prisma.gnucash_web_saved_reports.findUnique({
-    where: {
-      id,
-      user_id: userId, // Ownership check
-    },
+    where: { id },
   });
 
-  return row ? toSavedReport(row) : null;
+  return isAccessible(row, userId, bookGuid) ? toSavedReport(row) : null;
 }
 
 /**
- * Create a new saved report
+ * Create a new saved report in the given book
  */
-export async function createSavedReport(userId: number, input: SavedReportInput): Promise<SavedReport> {
+export async function createSavedReport(
+  userId: number,
+  bookGuid: string,
+  input: SavedReportInput
+): Promise<SavedReport> {
   // Validate report type
   if (!VALID_REPORT_TYPES.has(input.baseReportType)) {
     throw new Error(`Invalid base_report_type: ${input.baseReportType}`);
@@ -112,6 +185,7 @@ export async function createSavedReport(userId: number, input: SavedReportInput)
   const row = await prisma.gnucash_web_saved_reports.create({
     data: {
       user_id: userId,
+      book_guid: bookGuid,
       base_report_type: input.baseReportType,
       name: input.name,
       description: input.description || null,
@@ -125,11 +199,12 @@ export async function createSavedReport(userId: number, input: SavedReportInput)
 }
 
 /**
- * Update an existing saved report (validates ownership)
+ * Update an existing saved report (validates ownership + book)
  */
 export async function updateSavedReport(
   id: number,
   userId: number,
+  bookGuid: string,
   input: Partial<SavedReportInput>
 ): Promise<SavedReport | null> {
   // Validate report type if provided
@@ -142,13 +217,13 @@ export async function updateSavedReport(
     validateConfig(input.config);
   }
 
-  // Check ownership first
+  // Check ownership + book first
   const existing = await prisma.gnucash_web_saved_reports.findUnique({
     where: { id },
   });
 
-  if (!existing || existing.user_id !== userId) {
-    return null; // Not found or not owned by this user
+  if (!isAccessible(existing, userId, bookGuid)) {
+    return null; // Not found, not owned by this user, or in another book
   }
 
   // Build update data
@@ -184,16 +259,16 @@ export async function updateSavedReport(
 }
 
 /**
- * Delete a saved report (validates ownership)
+ * Delete a saved report (validates ownership + book)
  */
-export async function deleteSavedReport(id: number, userId: number): Promise<boolean> {
-  // Check ownership first
+export async function deleteSavedReport(id: number, userId: number, bookGuid: string): Promise<boolean> {
+  // Check ownership + book first
   const existing = await prisma.gnucash_web_saved_reports.findUnique({
     where: { id },
   });
 
-  if (!existing || existing.user_id !== userId) {
-    return false; // Not found or not owned by this user
+  if (!isAccessible(existing, userId, bookGuid)) {
+    return false; // Not found, not owned by this user, or in another book
   }
 
   await prisma.gnucash_web_saved_reports.delete({
@@ -204,19 +279,20 @@ export async function deleteSavedReport(id: number, userId: number): Promise<boo
 }
 
 /**
- * Toggle star status
+ * Toggle star status (validates ownership + book)
  */
 export async function toggleStar(
   id: number,
-  userId: number
+  userId: number,
+  bookGuid: string
 ): Promise<{ isStarred: boolean } | null> {
-  // Check ownership and get current state
+  // Check ownership + book, and get current state
   const existing = await prisma.gnucash_web_saved_reports.findUnique({
     where: { id },
   });
 
-  if (!existing || existing.user_id !== userId) {
-    return null; // Not found or not owned by this user
+  if (!isAccessible(existing, userId, bookGuid)) {
+    return null; // Not found, not owned by this user, or in another book
   }
 
   const newStarredState = !existing.is_starred;
@@ -233,12 +309,13 @@ export async function toggleStar(
 }
 
 /**
- * Get starred reports for a user (for the reports index page)
+ * Get starred reports for a user in a book (for the reports index page)
  */
-export async function getStarredReports(userId: number): Promise<SavedReport[]> {
+export async function getStarredReports(userId: number, bookGuid: string): Promise<SavedReport[]> {
   const rows = await prisma.gnucash_web_saved_reports.findMany({
     where: {
       user_id: userId,
+      book_guid: bookGuid,
       is_starred: true,
     },
     orderBy: { updated_at: 'desc' },

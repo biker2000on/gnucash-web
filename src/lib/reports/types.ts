@@ -534,6 +534,8 @@ export interface TreasurerReportData {
 export interface SavedReport {
   id: number;
   userId: number;
+  /** Book the report belongs to; null only for pre-backfill legacy rows. */
+  bookGuid: string | null;
   baseReportType: ReportType;
   name: string;
   description: string | null;

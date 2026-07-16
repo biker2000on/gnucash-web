@@ -5,14 +5,14 @@ import { ReportType } from '@/lib/reports/types';
 
 /**
  * GET /api/reports/saved
- * List all saved reports for the current user
+ * List all saved reports for the current user in the active book
  */
 export async function GET() {
     try {
         const roleResult = await requireRole('readonly');
         if (roleResult instanceof NextResponse) return roleResult;
 
-        const reports = await listSavedReports(roleResult.user.id);
+        const reports = await listSavedReports(roleResult.user.id, roleResult.bookGuid);
         return NextResponse.json(reports);
     } catch (error) {
         console.error('Error listing saved reports:', error);
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'baseReportType is required' }, { status: 400 });
         }
 
-        const report = await createSavedReport(roleResult.user.id, {
+        const report = await createSavedReport(roleResult.user.id, roleResult.bookGuid, {
             name: name.trim(),
             baseReportType: baseReportType as ReportType,
             description,

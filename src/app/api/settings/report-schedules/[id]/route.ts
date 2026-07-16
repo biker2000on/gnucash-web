@@ -57,7 +57,7 @@ export async function PATCH(
                 if (!Number.isInteger(savedReportId)) {
                     return NextResponse.json({ error: 'savedReportId must be an integer' }, { status: 400 });
                 }
-                const saved = await getSavedReport(savedReportId, roleResult.user.id);
+                const saved = await getSavedReport(savedReportId, roleResult.user.id, roleResult.bookGuid);
                 if (!saved) return NextResponse.json({ error: 'Saved report not found' }, { status: 404 });
                 if (!isSchedulableReportType(saved.baseReportType)) {
                     return NextResponse.json(

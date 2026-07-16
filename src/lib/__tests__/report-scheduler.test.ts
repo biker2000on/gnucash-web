@@ -358,6 +358,7 @@ describe('runReportSchedule', () => {
         mockGetSavedReport.mockResolvedValue({
             id: 42,
             userId: 1,
+            bookGuid: 'b'.repeat(32),
             baseReportType: ReportType.BALANCE_SHEET,
             name: 'My Monthly Balance',
             description: null,

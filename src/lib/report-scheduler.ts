@@ -921,6 +921,11 @@ export async function runReportSchedule(
     let reportName = baseReportType ? schedulableReportLabel(baseReportType) : 'Report';
     let showZeroBalances = false;
     if (schedule.savedReportId != null) {
+        // No book check here (third arg omitted): account scope always comes
+        // from schedule.bookGuid below, so a legacy schedule whose saved
+        // report was backfilled into a different book still renders safely
+        // within the schedule's own book. New schedules are validated
+        // same-book at create/update time in the settings API.
         const saved = await getSavedReport(schedule.savedReportId, schedule.userId);
         if (!saved) {
             return { scheduleId: schedule.id, status: 'failed', detail: 'saved report not found', occurrence };

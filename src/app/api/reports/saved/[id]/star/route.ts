@@ -16,7 +16,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Invalid ID' }, { status: 400 });
     }
 
-    const result = await toggleStar(reportId, roleResult.user.id);
+    const result = await toggleStar(reportId, roleResult.user.id, roleResult.bookGuid);
     if (!result) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }

@@ -20,7 +20,7 @@ export async function GET(
             return NextResponse.json({ error: 'Invalid report ID' }, { status: 400 });
         }
 
-        const report = await getSavedReport(reportId, roleResult.user.id);
+        const report = await getSavedReport(reportId, roleResult.user.id, roleResult.bookGuid);
         if (!report) {
             return NextResponse.json({ error: 'Report not found' }, { status: 404 });
         }
@@ -61,7 +61,7 @@ export async function PUT(
         if (filters !== undefined) input.filters = filters;
         if (isStarred !== undefined) input.isStarred = isStarred;
 
-        const report = await updateSavedReport(reportId, roleResult.user.id, input);
+        const report = await updateSavedReport(reportId, roleResult.user.id, roleResult.bookGuid, input);
         if (!report) {
             return NextResponse.json({ error: 'Report not found' }, { status: 404 });
         }
@@ -92,7 +92,7 @@ export async function DELETE(
             return NextResponse.json({ error: 'Invalid report ID' }, { status: 400 });
         }
 
-        const deleted = await deleteSavedReport(reportId, roleResult.user.id);
+        const deleted = await deleteSavedReport(reportId, roleResult.user.id, roleResult.bookGuid);
         if (!deleted) {
             return NextResponse.json({ error: 'Report not found' }, { status: 404 });
         }

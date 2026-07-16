@@ -63,6 +63,7 @@ export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_home_items',
     'gnucash_web_home_tasks',
     'gnucash_web_home_service_log',
+    'gnucash_web_saved_reports',
 ] as const;
 
 /**
@@ -106,6 +107,9 @@ export const SPLIT_OR_TXN_KEYED_TABLES = [
 export const LAZY_BOOK_GUID_TABLES = [
     'gnucash_web_email_bills',
     'gnucash_web_notifications',
+    // Deleted before saved_reports below; the FK on saved_report_id also
+    // cascades, but base-type-only schedules have no other cleanup path.
+    'gnucash_web_report_schedules',
 ] as const;
 
 /** Collect non-null storage keys from rows. */
@@ -328,6 +332,7 @@ export async function deleteBookExtensionData(
         prisma.gnucash_web_book_settings.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_budget_funding_rules.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_renewals.deleteMany({ where: { book_guid: bookGuid } }),
+        prisma.gnucash_web_saved_reports.deleteMany({ where: { book_guid: bookGuid } }),
     ];
 
     if (hasAccounts) {

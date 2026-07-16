@@ -949,6 +949,77 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Book-scope saved reports: they were user-scoped only, so every book
+    // showed every saved report. Adds book_guid and backfills legacy rows by
+    // matching account guids referenced in the report's config against each
+    // book's account tree (explicit accountGuids array first, then any 32-hex
+    // guid anywhere in the config JSON as a fallback). Reports that reference
+    // no resolvable account land in the first book so nothing disappears.
+    const savedReportsBookScopeDDL = `
+        DO $$
+        DECLARE
+            v_first_book VARCHAR(32);
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_saved_reports_book_scope'));
+            ALTER TABLE gnucash_web_saved_reports ADD COLUMN IF NOT EXISTS book_guid VARCHAR(32);
+            CREATE INDEX IF NOT EXISTS idx_saved_reports_book
+                ON gnucash_web_saved_reports(book_guid);
+
+            IF EXISTS (SELECT 1 FROM gnucash_web_saved_reports WHERE book_guid IS NULL LIMIT 1) THEN
+                -- account -> book map, built once and reused below
+                CREATE TEMP TABLE _sr_acct_books ON COMMIT DROP AS
+                WITH RECURSIVE tree AS (
+                    SELECT b.guid AS book_guid, b.root_account_guid AS account_guid FROM books b
+                    UNION ALL
+                    SELECT t.book_guid, a.guid FROM accounts a
+                    JOIN tree t ON a.parent_guid = t.account_guid
+                )
+                SELECT account_guid, book_guid FROM tree;
+                CREATE INDEX ON _sr_acct_books(account_guid);
+
+                -- Pass 1: explicit config->'accountGuids' entries
+                UPDATE gnucash_web_saved_reports sr SET book_guid = m.book_guid
+                FROM (
+                    SELECT DISTINCT ON (src.id) src.id, ab.book_guid
+                    FROM (
+                        SELECT sr2.id, lower(g.guid) AS guid
+                        FROM gnucash_web_saved_reports sr2,
+                             jsonb_array_elements_text(sr2.config->'accountGuids') AS g(guid)
+                        WHERE sr2.book_guid IS NULL
+                          AND jsonb_typeof(sr2.config->'accountGuids') = 'array'
+                    ) src
+                    JOIN _sr_acct_books ab ON ab.account_guid = src.guid
+                    ORDER BY src.id, ab.book_guid
+                ) m
+                WHERE sr.book_guid IS NULL AND sr.id = m.id;
+
+                -- Pass 2 (fallback): any 32-hex substring anywhere in the
+                -- config that matches an account guid
+                UPDATE gnucash_web_saved_reports sr SET book_guid = m.book_guid
+                FROM (
+                    SELECT DISTINCT ON (src.id) src.id, ab.book_guid
+                    FROM (
+                        SELECT sr2.id, lower(g.match[1]) AS guid
+                        FROM gnucash_web_saved_reports sr2,
+                             regexp_matches(sr2.config::text, '([0-9a-fA-F]{32})', 'g') AS g(match)
+                        WHERE sr2.book_guid IS NULL
+                    ) src
+                    JOIN _sr_acct_books ab ON ab.account_guid = src.guid
+                    ORDER BY src.id, ab.book_guid
+                ) m
+                WHERE sr.book_guid IS NULL AND sr.id = m.id;
+
+                -- Remaining reports land in the first book so they stay visible
+                SELECT guid INTO v_first_book FROM books ORDER BY guid LIMIT 1;
+                IF v_first_book IS NOT NULL THEN
+                    UPDATE gnucash_web_saved_reports
+                    SET book_guid = v_first_book
+                    WHERE book_guid IS NULL;
+                END IF;
+            END IF;
+        END $$;
+    `;
+
     // SMB suite: compliance-deadline status, 1099 vendor tax info, prepaid
     // packages, restricted funds, and the entity document vault.
     const smbTablesDDL = `
@@ -1508,6 +1579,7 @@ async function createExtensionTables() {
         await query(membershipTablesDDL);
         await query(auditBookScopeDDL);
         await query(tagsBookScopeDDL);
+        await query(savedReportsBookScopeDDL);
         await query(smbTablesDDL);
         await query(invoiceSharesDDL);
         await query(estimatesTablesDDL);

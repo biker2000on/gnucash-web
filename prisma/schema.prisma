@@ -457,6 +457,8 @@ model gnucash_web_audit {
 model gnucash_web_saved_reports {
   id               Int       @id @default(autoincrement())
   user_id          Int?
+  /// Book the report belongs to; NULL only before the book-scope backfill runs
+  book_guid        String?   @db.VarChar(32)
   base_report_type String    @db.VarChar(50)
   name             String    @db.VarChar(255)
   description      String?   @db.Text
@@ -468,6 +470,8 @@ model gnucash_web_saved_reports {
 
   // Relations
   user             gnucash_web_users? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([book_guid], map: "idx_saved_reports_book")
 }
 
 model gnucash_web_commodity_metadata {
