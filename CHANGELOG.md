@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1.0] - 2026-07-17
+
+### Added — Home Inventory
+- **Multiple photos per item**: home inventory items now hold a photo gallery instead of a single image — capture the item plus its serial-number label in one pass. New `gnucash_web_home_item_photos` table (one row per photo, FK-cascade to the item) with a one-time backfill of the legacy single photo; new `POST /api/home/items/[id]/photos` and `GET`/`DELETE /api/home/items/[id]/photos/[photoId]` endpoints. The walk-through and room detail forms accept multiple files; the room detail view shows a per-item gallery with per-photo removal and a count badge on the list thumbnail.
+- **Walk-through back navigation**: the room-by-room capture stepper gains a "← Previous room" button next to "Next room", so you can move in both directions (flushing any pending item entry before stepping).
+
+### Changed
+- Book deletion now cleans up per-photo storage files and rows via the new photos table.
+
 ## [0.13.0.0] - 2026-07-12
 
 ### Changed — Unification

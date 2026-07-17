@@ -6,7 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { roomsModel, itemsModel, tasksModel, serviceLogModel, storageMock } = vi.hoisted(() => ({
+const { roomsModel, itemsModel, itemPhotosModel, tasksModel, serviceLogModel, storageMock } =
+    vi.hoisted(() => ({
     roomsModel: {
         findUnique: vi.fn(),
         findMany: vi.fn(),
@@ -22,6 +23,14 @@ const { roomsModel, itemsModel, tasksModel, serviceLogModel, storageMock } = vi.
         findUnique: vi.fn(),
         findMany: vi.fn(),
         count: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+    },
+    itemPhotosModel: {
+        findUnique: vi.fn(),
+        findMany: vi.fn(),
+        aggregate: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
         delete: vi.fn(),
@@ -54,6 +63,7 @@ vi.mock('@/lib/prisma', () => ({
     default: {
         gnucash_web_home_rooms: roomsModel,
         gnucash_web_home_items: itemsModel,
+        gnucash_web_home_item_photos: itemPhotosModel,
         gnucash_web_home_tasks: tasksModel,
         gnucash_web_home_service_log: serviceLogModel,
         gnucash_web_receipts: { findUnique: vi.fn() },
@@ -86,7 +96,7 @@ import {
     bucketWarranties,
     seedDefaultRooms,
     createServiceEntry,
-    setItemPhoto,
+    addItemPhoto,
     DEFAULT_ROOMS,
     MAINTENANCE_TEMPLATE,
     HomeValidationError,
@@ -406,8 +416,8 @@ describe('createServiceEntry', () => {
     });
 });
 
-describe('setItemPhoto', () => {
-    const itemRow = {
+describe('addItemPhoto', () => {
+    const itemRow = (photos: Array<{ id: number }> = []) => ({
         id: 5,
         book_guid: BOOK,
         room_id: 1,
@@ -420,31 +430,42 @@ describe('setItemPhoto', () => {
         warranty_expires: null,
         serial: null,
         notes: null,
-    };
+        photos,
+    });
 
     it('rejects non-image files (PDF magic bytes)', async () => {
-        itemsModel.findUnique.mockResolvedValue(itemRow);
+        itemsModel.findUnique.mockResolvedValue(itemRow());
         await expect(
-            setItemPhoto(BOOK, 5, { buffer: Buffer.from('%PDF-1.4'), filename: 'doc.pdf' }),
+            addItemPhoto(BOOK, 5, { buffer: Buffer.from('%PDF-1.4'), filename: 'doc.pdf' }),
         ).rejects.toThrow('Unsupported photo type');
         expect(storageMock.put).not.toHaveBeenCalled();
     });
 
-    it('stores JPEGs under the home-items/ prefix', async () => {
-        itemsModel.findUnique.mockResolvedValue(itemRow);
-        itemsModel.update.mockResolvedValue({
-            ...itemRow,
-            photo_key: 'home-items/2026/07/uuid.jpg',
-        });
+    it('appends a JPEG under the home-items/ prefix and returns the photo list', async () => {
+        // getOwnedItem: first call (validation) has no photos, second (reload) has one.
+        itemsModel.findUnique
+            .mockResolvedValueOnce(itemRow())
+            .mockResolvedValueOnce(itemRow([{ id: 42 }]));
+        itemPhotosModel.aggregate.mockResolvedValue({ _max: { sort_order: null } });
+        itemPhotosModel.create.mockResolvedValue({ id: 42 });
+        itemsModel.update.mockResolvedValue(itemRow([{ id: 42 }]));
 
         const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]);
-        const item = await setItemPhoto(BOOK, 5, { buffer: jpeg, filename: 'tv.jpg' });
+        const item = await addItemPhoto(BOOK, 5, { buffer: jpeg, filename: 'tv.jpg' });
 
         expect(storageMock.put).toHaveBeenCalledWith(
             'home-items/2026/07/uuid.jpg',
             jpeg,
             'image/jpeg',
         );
-        expect(item.hasPhoto).toBe(true);
+        expect(itemPhotosModel.create).toHaveBeenCalledWith({
+            data: {
+                book_guid: BOOK,
+                item_id: 5,
+                photo_key: 'home-items/2026/07/uuid.jpg',
+                sort_order: 0,
+            },
+        });
+        expect(item.photos).toEqual([{ id: 42 }]);
     });
 });

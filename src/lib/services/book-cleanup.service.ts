@@ -61,6 +61,7 @@ export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_renewals',
     'gnucash_web_home_rooms',
     'gnucash_web_home_items',
+    'gnucash_web_home_item_photos',
     'gnucash_web_home_tasks',
     'gnucash_web_home_service_log',
     'gnucash_web_saved_reports',
@@ -131,7 +132,7 @@ function collectKeys(rows: Array<Record<string, string | null>>): string[] {
 async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
     let keys: string[] = [];
     try {
-        const [receipts, payslips, documents, homeItems] = await Promise.all([
+        const [receipts, payslips, documents, homePhotos] = await Promise.all([
             prisma.gnucash_web_receipts.findMany({
                 where: { book_guid: bookGuid },
                 select: { storage_key: true, thumbnail_key: true },
@@ -144,7 +145,7 @@ async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
                 where: { book_guid: bookGuid },
                 select: { file_key: true },
             }),
-            prisma.gnucash_web_home_items.findMany({
+            prisma.gnucash_web_home_item_photos.findMany({
                 where: { book_guid: bookGuid },
                 select: { photo_key: true },
             }),
@@ -153,7 +154,7 @@ async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
             ...collectKeys(receipts),
             ...collectKeys(payslips),
             ...collectKeys(documents),
-            ...collectKeys(homeItems),
+            ...collectKeys(homePhotos),
         ];
     } catch (err) {
         console.warn('[book-cleanup] failed to enumerate stored files, skipping file deletion:', err);
@@ -264,9 +265,10 @@ export async function deleteBookExtensionData(
         }),
         prisma.gnucash_web_funds.deleteMany({ where: { book_guid: bookGuid } }),
 
-        // Home module (service log → tasks → items → rooms)
+        // Home module (service log → tasks → photos → items → rooms)
         prisma.gnucash_web_home_service_log.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_home_tasks.deleteMany({ where: { book_guid: bookGuid } }),
+        prisma.gnucash_web_home_item_photos.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_home_items.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_home_rooms.deleteMany({ where: { book_guid: bookGuid } }),
 

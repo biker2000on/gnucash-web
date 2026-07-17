@@ -8,6 +8,7 @@
  * against the caller's active book_guid.
  */
 
+import type { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import {
     getStorageBackend,
@@ -234,6 +235,10 @@ export interface HomeRoom {
     sortOrder: number;
 }
 
+export interface HomeItemPhoto {
+    id: number;
+}
+
 export interface HomeItem {
     id: number;
     roomId: number;
@@ -243,7 +248,8 @@ export interface HomeItem {
     /** ISO date (YYYY-MM-DD) or null. */
     purchaseDate: string | null;
     receiptId: number | null;
-    hasPhoto: boolean;
+    /** Ordered photo list; each id is fetched via /photos/[id]. */
+    photos: HomeItemPhoto[];
     warrantyExpires: string | null;
     /** Negative = expired, null = no warranty date. */
     warrantyDays: number | null;
@@ -373,11 +379,20 @@ interface ItemDbRow {
     est_value: unknown; // Prisma.Decimal | null
     purchase_date: Date | null;
     receipt_id: number | null;
-    photo_key: string | null;
+    photo_key: string | null; // legacy, always null post-backfill
     warranty_expires: Date | null;
     serial: string | null;
     notes: string | null;
+    photos?: Array<{ id: number }>;
 }
+
+/** Load an item together with its photos, ordered for display. */
+const ITEM_PHOTO_INCLUDE = {
+    photos: {
+        select: { id: true },
+        orderBy: [{ sort_order: 'asc' }, { id: 'asc' }],
+    },
+} satisfies Prisma.gnucash_web_home_itemsInclude;
 
 function decimalToNumber(value: unknown): number | null {
     if (value === null || value === undefined) return null;
@@ -394,7 +409,7 @@ function mapItem(row: ItemDbRow, today: Date = new Date()): HomeItem {
         estValue: decimalToNumber(row.est_value),
         purchaseDate: toIsoDate(row.purchase_date),
         receiptId: row.receipt_id,
-        hasPhoto: row.photo_key !== null,
+        photos: (row.photos ?? []).map((p) => ({ id: p.id })),
         warrantyExpires: toIsoDate(row.warranty_expires),
         warrantyDays: daysUntil(row.warranty_expires, today),
         serial: row.serial,
@@ -575,22 +590,33 @@ export async function updateRoom(
     return { id: row.id, name: row.name, sortOrder: row.sort_order };
 }
 
-/** Delete a room; item rows cascade, so clean up their photo files first. */
-export async function deleteRoom(bookGuid: string, id: number): Promise<void> {
-    await getOwnedRoom(bookGuid, id);
-    const items = await prisma.gnucash_web_home_items.findMany({
-        where: { room_id: id, photo_key: { not: null } },
-        select: { photo_key: true },
-    });
-    for (const item of items) {
-        if (!item.photo_key) continue;
+/** Best-effort delete of a set of stored photo files (never throws). */
+async function deletePhotoFiles(keys: string[]): Promise<void> {
+    if (keys.length === 0) return;
+    let storage;
+    try {
+        storage = await getStorageBackend();
+    } catch (err) {
+        console.warn('Storage backend unavailable, skipping home photo deletion:', err);
+        return;
+    }
+    for (const key of keys) {
         try {
-            const storage = await getStorageBackend();
-            await storage.delete(item.photo_key);
+            await storage.delete(key);
         } catch (err) {
             console.warn('Failed to delete home item photo:', err);
         }
     }
+}
+
+/** Delete a room; item + photo rows cascade, so clean up their photo files first. */
+export async function deleteRoom(bookGuid: string, id: number): Promise<void> {
+    await getOwnedRoom(bookGuid, id);
+    const photos = await prisma.gnucash_web_home_item_photos.findMany({
+        where: { item: { room_id: id } },
+        select: { photo_key: true },
+    });
+    await deletePhotoFiles(photos.map((p) => p.photo_key));
     await prisma.gnucash_web_home_rooms.delete({ where: { id } });
 }
 
@@ -601,6 +627,7 @@ export async function deleteRoom(bookGuid: string, id: number): Promise<void> {
 export async function listItems(bookGuid: string, roomId?: number): Promise<HomeItem[]> {
     const rows = await prisma.gnucash_web_home_items.findMany({
         where: { book_guid: bookGuid, ...(roomId !== undefined ? { room_id: roomId } : {}) },
+        include: ITEM_PHOTO_INCLUDE,
         orderBy: [{ id: 'asc' }],
     });
     const today = new Date();
@@ -669,12 +696,16 @@ export async function createItem(bookGuid: string, input: ItemInput): Promise<Ho
             serial: validateSerial(input.serial),
             notes: input.notes?.trim() || null,
         },
+        include: ITEM_PHOTO_INCLUDE,
     });
     return mapItem(row);
 }
 
 async function getOwnedItem(bookGuid: string, id: number) {
-    const row = await prisma.gnucash_web_home_items.findUnique({ where: { id } });
+    const row = await prisma.gnucash_web_home_items.findUnique({
+        where: { id },
+        include: ITEM_PHOTO_INCLUDE,
+    });
     if (!row || row.book_guid !== bookGuid) throw new HomeNotFoundError('Item not found');
     return row;
 }
@@ -720,20 +751,21 @@ export async function updateItem(
     if (input.serial !== undefined) data.serial = validateSerial(input.serial);
     if (input.notes !== undefined) data.notes = input.notes?.trim() || null;
 
-    const row = await prisma.gnucash_web_home_items.update({ where: { id }, data });
+    const row = await prisma.gnucash_web_home_items.update({
+        where: { id },
+        data,
+        include: ITEM_PHOTO_INCLUDE,
+    });
     return mapItem(row);
 }
 
 export async function deleteItem(bookGuid: string, id: number): Promise<void> {
-    const row = await getOwnedItem(bookGuid, id);
-    if (row.photo_key) {
-        try {
-            const storage = await getStorageBackend();
-            await storage.delete(row.photo_key);
-        } catch (err) {
-            console.warn('Failed to delete home item photo:', err);
-        }
-    }
+    await getOwnedItem(bookGuid, id);
+    const photos = await prisma.gnucash_web_home_item_photos.findMany({
+        where: { item_id: id },
+        select: { photo_key: true },
+    });
+    await deletePhotoFiles(photos.map((p) => p.photo_key));
     await prisma.gnucash_web_home_items.delete({ where: { id } });
 }
 
@@ -741,13 +773,16 @@ export async function deleteItem(bookGuid: string, id: number): Promise<void> {
 /* Item photos (receipts storage backend, home-items/ prefix)           */
 /* ------------------------------------------------------------------ */
 
-/** Upload or replace an item photo. Images only (JPEG/PNG from magic bytes). */
-export async function setItemPhoto(
+/**
+ * Append a photo to an item's gallery. Images only (JPEG/PNG from magic bytes).
+ * Returns the item with its full, reordered photo list.
+ */
+export async function addItemPhoto(
     bookGuid: string,
     itemId: number,
     file: { buffer: Buffer; filename: string },
 ): Promise<HomeItem> {
-    const item = await getOwnedItem(bookGuid, itemId);
+    await getOwnedItem(bookGuid, itemId);
 
     const { buffer, filename } = file;
     if (buffer.byteLength === 0) throw new HomeValidationError('Empty file');
@@ -761,25 +796,32 @@ export async function setItemPhoto(
         throw new HomeValidationError('Unsupported photo type (must be JPEG or PNG)');
     }
 
+    // New photo sorts after existing ones.
+    const maxOrder = await prisma.gnucash_web_home_item_photos.aggregate({
+        where: { item_id: itemId },
+        _max: { sort_order: true },
+    });
+    const sortOrder = (maxOrder._max.sort_order ?? -1) + 1;
+
     const photoKey = HOME_PHOTO_KEY_PREFIX + generateStorageKey(sanitizeFilename(filename));
     const storage = await getStorageBackend();
     await storage.put(photoKey, buffer, mimeType);
 
     try {
-        const row = await prisma.gnucash_web_home_items.update({
-            where: { id: itemId },
-            data: { photo_key: photoKey, updated_at: new Date() },
+        await prisma.gnucash_web_home_item_photos.create({
+            data: {
+                book_guid: bookGuid,
+                item_id: itemId,
+                photo_key: photoKey,
+                sort_order: sortOrder,
+            },
         });
-        // Old photo is replaced — remove the orphan file (non-fatal).
-        if (item.photo_key && item.photo_key !== photoKey) {
-            try {
-                await storage.delete(item.photo_key);
-            } catch (err) {
-                console.warn('Failed to delete replaced home item photo:', err);
-            }
-        }
-        return mapItem(row);
+        await prisma.gnucash_web_home_items.update({
+            where: { id: itemId },
+            data: { updated_at: new Date() },
+        });
     } catch (error) {
+        // Roll back the orphaned file if the row insert failed (non-fatal).
         try {
             await storage.delete(photoKey);
         } catch (cleanupErr) {
@@ -787,6 +829,8 @@ export async function setItemPhoto(
         }
         throw error;
     }
+
+    return mapItem(await getOwnedItem(bookGuid, itemId));
 }
 
 export interface ItemPhotoFile {
@@ -794,30 +838,40 @@ export interface ItemPhotoFile {
     mimeType: string;
 }
 
-export async function getItemPhoto(bookGuid: string, itemId: number): Promise<ItemPhotoFile> {
-    const item = await getOwnedItem(bookGuid, itemId);
-    if (!item.photo_key) throw new HomeNotFoundError('Item has no photo');
+/** Fetch a photo row that belongs to the given item within the book. */
+async function getOwnedPhoto(bookGuid: string, itemId: number, photoId: number) {
+    const photo = await prisma.gnucash_web_home_item_photos.findUnique({ where: { id: photoId } });
+    if (!photo || photo.book_guid !== bookGuid || photo.item_id !== itemId) {
+        throw new HomeNotFoundError('Photo not found');
+    }
+    return photo;
+}
+
+export async function getItemPhoto(
+    bookGuid: string,
+    itemId: number,
+    photoId: number,
+): Promise<ItemPhotoFile> {
+    const photo = await getOwnedPhoto(bookGuid, itemId, photoId);
     const storage = await getStorageBackend();
-    const buffer = await storage.get(item.photo_key);
+    const buffer = await storage.get(photo.photo_key);
     const mimeType = detectReceiptMimeType(buffer) ?? 'application/octet-stream';
     return { buffer, mimeType };
 }
 
-export async function deleteItemPhoto(bookGuid: string, itemId: number): Promise<HomeItem> {
-    const item = await getOwnedItem(bookGuid, itemId);
-    if (item.photo_key) {
-        try {
-            const storage = await getStorageBackend();
-            await storage.delete(item.photo_key);
-        } catch (err) {
-            console.warn('Failed to delete home item photo:', err);
-        }
-    }
-    const row = await prisma.gnucash_web_home_items.update({
+export async function deleteItemPhoto(
+    bookGuid: string,
+    itemId: number,
+    photoId: number,
+): Promise<HomeItem> {
+    const photo = await getOwnedPhoto(bookGuid, itemId, photoId);
+    await deletePhotoFiles([photo.photo_key]);
+    await prisma.gnucash_web_home_item_photos.delete({ where: { id: photoId } });
+    await prisma.gnucash_web_home_items.update({
         where: { id: itemId },
-        data: { photo_key: null, updated_at: new Date() },
+        data: { updated_at: new Date() },
     });
-    return mapItem(row);
+    return mapItem(await getOwnedItem(bookGuid, itemId));
 }
 
 /* ------------------------------------------------------------------ */

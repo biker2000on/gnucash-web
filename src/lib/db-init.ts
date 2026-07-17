@@ -1485,6 +1485,40 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Per-item photo gallery — its own block so the CREATE is committed before
+    // the backfill below runs the DML against it (mixing DDL + DML that targets
+    // the same new table inside one DO block fails to plan).
+    const homeItemPhotosTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_home_item_photos_schema'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_home_item_photos (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            item_id INTEGER NOT NULL REFERENCES gnucash_web_home_items(id) ON DELETE CASCADE,
+            photo_key VARCHAR(500) NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_home_item_photos_item
+            ON gnucash_web_home_item_photos(item_id);
+        CREATE INDEX IF NOT EXISTS idx_home_item_photos_book
+            ON gnucash_web_home_item_photos(book_guid);
+        END $$;
+    `;
+
+    // One-time backfill of the legacy single photo into the gallery table.
+    // Guarded by photo_key IS NOT NULL, which the UPDATE clears — so once it has
+    // run, both statements match zero rows and re-running is a cheap no-op.
+    const homeItemPhotosBackfillDDL = `
+        INSERT INTO gnucash_web_home_item_photos (book_guid, item_id, photo_key, sort_order)
+        SELECT book_guid, id, photo_key, 0
+        FROM gnucash_web_home_items
+        WHERE photo_key IS NOT NULL;
+        UPDATE gnucash_web_home_items SET photo_key = NULL WHERE photo_key IS NOT NULL;
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -1590,6 +1624,8 @@ async function createExtensionTables() {
         await query(budgetFundingRulesTableDDL);
         await query(renewalsTableDDL);
         await query(homeTablesDDL);
+        await query(homeItemPhotosTableDDL);
+        await query(homeItemPhotosBackfillDDL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

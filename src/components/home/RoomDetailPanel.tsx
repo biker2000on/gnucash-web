@@ -102,11 +102,11 @@ export function RoomDetailPanel({
 
     const [addOpen, setAddOpen] = useState(false);
     const [addForm, setAddForm] = useState<ItemFormState>(emptyForm(room.id));
-    const [addPhoto, setAddPhoto] = useState<File | null>(null);
+    const [addPhotos, setAddPhotos] = useState<File[]>([]);
 
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<ItemFormState | null>(null);
-    const [editPhoto, setEditPhoto] = useState<File | null>(null);
+    const [editPhotos, setEditPhotos] = useState<File[]>([]);
     const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
     const [saving, setSaving] = useState(false);
 
@@ -148,16 +148,19 @@ export function RoomDetailPanel({
         };
     }, [needReceipts, receipts]);
 
-    const uploadPhoto = async (itemId: number, file: File) => {
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch(`/api/home/items/${itemId}/photo`, {
-            method: 'POST',
-            body: formData,
-        });
-        if (!res.ok) {
-            const json = await res.json().catch(() => null);
-            toast.error(json?.error ?? 'Photo upload failed');
+    /** Upload photos one at a time so a single bad file doesn't drop the rest. */
+    const uploadPhotos = async (itemId: number, files: File[]) => {
+        for (const file of files) {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch(`/api/home/items/${itemId}/photos`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!res.ok) {
+                const json = await res.json().catch(() => null);
+                toast.error(json?.error ?? `"${file.name}" failed to upload`);
+            }
         }
     };
 
@@ -213,10 +216,10 @@ export function RoomDetailPanel({
                 throw new Error(json?.error ?? 'Failed to add item');
             }
             const { item } = (await res.json()) as { item: HomeItem };
-            if (addPhoto) await uploadPhoto(item.id, addPhoto);
+            if (addPhotos.length > 0) await uploadPhotos(item.id, addPhotos);
             toast.success('Item added');
             setAddForm(emptyForm(room.id));
-            setAddPhoto(null);
+            setAddPhotos([]);
             await load();
             onChanged();
         } catch (err) {
@@ -243,12 +246,12 @@ export function RoomDetailPanel({
                 const json = await res.json().catch(() => null);
                 throw new Error(json?.error ?? 'Save failed');
             }
-            if (editPhoto) await uploadPhoto(item.id, editPhoto);
+            if (editPhotos.length > 0) await uploadPhotos(item.id, editPhotos);
             const moved = editForm.roomId !== room.id;
             toast.success(moved ? 'Item moved' : 'Item updated');
             setEditingId(null);
             setEditForm(null);
-            setEditPhoto(null);
+            setEditPhotos([]);
             await load();
             onChanged();
         } catch (err) {
@@ -258,9 +261,11 @@ export function RoomDetailPanel({
         }
     };
 
-    const handleRemovePhoto = async (item: HomeItem) => {
+    const handleRemovePhoto = async (itemId: number, photoId: number) => {
         try {
-            const res = await fetch(`/api/home/items/${item.id}/photo`, { method: 'DELETE' });
+            const res = await fetch(`/api/home/items/${itemId}/photos/${photoId}`, {
+                method: 'DELETE',
+            });
             if (!res.ok) throw new Error('Failed');
             toast.success('Photo removed');
             await load();
@@ -287,9 +292,13 @@ export function RoomDetailPanel({
     const renderFormFields = (
         form: ItemFormState,
         setForm: (f: ItemFormState) => void,
-        photo: File | null,
-        setPhoto: (f: File | null) => void,
-        options: { showMoveRoom: boolean },
+        newPhotos: File[],
+        setNewPhotos: (f: File[]) => void,
+        options: {
+            showMoveRoom: boolean;
+            /** Existing item, when editing — enables the saved-photo gallery. */
+            item?: HomeItem;
+        },
     ) => (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="sm:col-span-2">
@@ -396,16 +405,43 @@ export function RoomDetailPanel({
                     className={inputClass}
                 />
             </div>
-            <div>
-                <label className={labelClass}>Photo</label>
+            <div className="sm:col-span-2 lg:col-span-4">
+                <label className={labelClass}>Photos</label>
+                {options.item && options.item.photos.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                        {options.item.photos.map((p) => (
+                            <div key={p.id} className="relative">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={`/api/home/items/${options.item!.id}/photos/${p.id}`}
+                                    alt=""
+                                    className="h-16 w-16 rounded-md border border-border object-cover"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => handleRemovePhoto(options.item!.id, p.id)}
+                                    aria-label="Remove photo"
+                                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background text-foreground-muted hover:text-error hover:border-error transition-colors"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
                 <input
                     type="file"
                     accept="image/*"
                     capture="environment"
-                    onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+                    multiple
+                    onChange={(e) => setNewPhotos(Array.from(e.target.files ?? []))}
                     className="block w-full text-sm text-foreground-secondary file:mr-3 file:rounded-lg file:border file:border-border file:bg-background-tertiary file:px-3 file:py-1 file:text-xs file:text-foreground-secondary hover:file:border-border-hover file:transition-colors"
                 />
-                {photo && <p className="mt-1 text-xs text-foreground-muted">{photo.name}</p>}
+                {newPhotos.length > 0 && (
+                    <p className="mt-1 text-xs text-foreground-muted">
+                        {newPhotos.length} new photo{newPhotos.length === 1 ? '' : 's'} to upload
+                    </p>
+                )}
             </div>
         </div>
     );
@@ -505,7 +541,7 @@ export function RoomDetailPanel({
             <div className="bg-background-secondary/30 border border-border rounded-xl p-4 space-y-3">
                 {addOpen ? (
                     <>
-                        {renderFormFields(addForm, setAddForm, addPhoto, setAddPhoto, {
+                        {renderFormFields(addForm, setAddForm, addPhotos, setAddPhotos, {
                             showMoveRoom: false,
                         })}
                         <div className="flex items-center gap-3">
@@ -522,7 +558,7 @@ export function RoomDetailPanel({
                                 onClick={() => {
                                     setAddOpen(false);
                                     setAddForm(emptyForm(room.id));
-                                    setAddPhoto(null);
+                                    setAddPhotos([]);
                                 }}
                                 className="rounded-lg border border-border px-4 py-1.5 text-sm text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors"
                             >
@@ -555,13 +591,20 @@ export function RoomDetailPanel({
                             {items.map((item) => (
                                 <Fragment key={item.id}>
                                     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/30 px-4 py-2.5 last:border-b-0">
-                                        {item.hasPhoto && (
-                                            /* eslint-disable-next-line @next/next/no-img-element */
-                                            <img
-                                                src={`/api/home/items/${item.id}/photo`}
-                                                alt={item.name}
-                                                className="h-9 w-9 shrink-0 rounded-md border border-border object-cover"
-                                            />
+                                        {item.photos.length > 0 && (
+                                            <div className="relative shrink-0">
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img
+                                                    src={`/api/home/items/${item.id}/photos/${item.photos[0].id}`}
+                                                    alt={item.name}
+                                                    className="h-9 w-9 rounded-md border border-border object-cover"
+                                                />
+                                                {item.photos.length > 1 && (
+                                                    <span className="absolute -bottom-1 -right-1 rounded-full border border-border bg-background px-1 text-[10px] font-medium text-foreground-secondary">
+                                                        {item.photos.length}
+                                                    </span>
+                                                )}
+                                            </div>
                                         )}
                                         <div className="min-w-0 flex-1">
                                             <span className="text-sm text-foreground">{item.name}</span>
@@ -597,11 +640,11 @@ export function RoomDetailPanel({
                                                     if (editingId === item.id) {
                                                         setEditingId(null);
                                                         setEditForm(null);
-                                                        setEditPhoto(null);
+                                                        setEditPhotos([]);
                                                     } else {
                                                         setEditingId(item.id);
                                                         setEditForm(formFromItem(item));
-                                                        setEditPhoto(null);
+                                                        setEditPhotos([]);
                                                         setConfirmDeleteId(null);
                                                     }
                                                 }}
@@ -639,8 +682,9 @@ export function RoomDetailPanel({
                                     </li>
                                     {editingId === item.id && editForm && (
                                         <li className="border-b border-border/30 bg-background-tertiary/30 px-4 py-3 last:border-b-0">
-                                            {renderFormFields(editForm, setEditForm, editPhoto, setEditPhoto, {
+                                            {renderFormFields(editForm, setEditForm, editPhotos, setEditPhotos, {
                                                 showMoveRoom: true,
+                                                item,
                                             })}
                                             <div className="mt-3 flex flex-wrap items-center gap-3">
                                                 <button
@@ -656,21 +700,12 @@ export function RoomDetailPanel({
                                                     onClick={() => {
                                                         setEditingId(null);
                                                         setEditForm(null);
-                                                        setEditPhoto(null);
+                                                        setEditPhotos([]);
                                                     }}
                                                     className="rounded-lg border border-border px-4 py-1.5 text-sm text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors"
                                                 >
                                                     Cancel
                                                 </button>
-                                                {item.hasPhoto && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRemovePhoto(item)}
-                                                        className="text-sm text-foreground-muted hover:text-error transition-colors"
-                                                    >
-                                                        Remove photo
-                                                    </button>
-                                                )}
                                             </div>
                                         </li>
                                     )}

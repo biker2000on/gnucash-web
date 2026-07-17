@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     }
 }
 
-/** POST /api/home/items — create an item (photo uploads via [id]/photo). */
+/** POST /api/home/items — create an item (photo uploads via [id]/photos). */
 export async function POST(request: Request) {
     try {
         const roleResult = await requireRole('edit');

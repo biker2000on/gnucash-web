@@ -237,7 +237,7 @@ describe('deleteBookExtensionData', () => {
         expect(queriedModels.has('gnucash_web_receipts')).toBe(true);
         expect(queriedModels.has('gnucash_web_payslips')).toBe(true);
         expect(queriedModels.has('gnucash_web_entity_documents')).toBe(true);
-        expect(queriedModels.has('gnucash_web_home_items')).toBe(true);
+        expect(queriedModels.has('gnucash_web_home_item_photos')).toBe(true);
         // findMany returns [] in this mock, so nothing to delete
         expect(storageDelete).not.toHaveBeenCalled();
     });

@@ -1361,10 +1361,26 @@ model gnucash_web_home_items {
   room        gnucash_web_home_rooms       @relation(fields: [room_id], references: [id], onDelete: Cascade)
   tasks       gnucash_web_home_tasks[]
   service_log gnucash_web_home_service_log[]
+  photos      gnucash_web_home_item_photos[]
 
   @@index([room_id], map: "idx_home_items_room")
   @@index([book_guid], map: "idx_home_items_book")
   @@map("gnucash_web_home_items")
+}
+
+model gnucash_web_home_item_photos {
+  id         Int      @id @default(autoincrement())
+  book_guid  String   @db.VarChar(32)
+  item_id    Int
+  photo_key  String   @db.VarChar(500)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+
+  item gnucash_web_home_items @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@index([item_id], map: "idx_home_item_photos_item")
+  @@index([book_guid], map: "idx_home_item_photos_book")
+  @@map("gnucash_web_home_item_photos")
 }
 
 model gnucash_web_home_tasks {

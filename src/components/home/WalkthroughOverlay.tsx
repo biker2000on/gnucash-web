@@ -37,11 +37,12 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
     const [estValue, setEstValue] = useState('');
     const [warranty, setWarranty] = useState('');
     const [serial, setSerial] = useState('');
-    const [photo, setPhoto] = useState<File | null>(null);
+    const [photos, setPhotos] = useState<File[]>([]);
     const nameRef = useRef<HTMLInputElement>(null);
     const photoRef = useRef<HTMLInputElement>(null);
 
     const room = rooms[roomIndex];
+    const isFirstRoom = roomIndex === 0;
     const isLastRoom = roomIndex === rooms.length - 1;
     const roomAdded = added.filter((a) => a.roomId === room?.id);
     const totalValue = added.reduce((sum, a) => sum + (a.estValue ?? 0), 0);
@@ -56,7 +57,7 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
         setEstValue('');
         setWarranty('');
         setSerial('');
-        setPhoto(null);
+        setPhotos([]);
         if (photoRef.current) photoRef.current.value = '';
     };
 
@@ -88,16 +89,17 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
             }
             const { item } = (await res.json()) as { item: HomeItem };
 
-            if (photo) {
+            // Photos upload one at a time so a single bad file doesn't drop the rest.
+            for (const file of photos) {
                 const formData = new FormData();
-                formData.append('file', photo);
-                const photoRes = await fetch(`/api/home/items/${item.id}/photo`, {
+                formData.append('file', file);
+                const photoRes = await fetch(`/api/home/items/${item.id}/photos`, {
                     method: 'POST',
                     body: formData,
                 });
                 if (!photoRes.ok) {
                     const json = await photoRes.json().catch(() => null);
-                    toast.error(json?.error ?? 'Item saved, but the photo upload failed');
+                    toast.error(json?.error ?? `Item saved, but "${file.name}" failed to upload`);
                 }
             }
 
@@ -126,6 +128,12 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
         if (!(await flushPending())) return;
         if (isLastRoom) setFinished(true);
         else setRoomIndex((i) => i + 1);
+    };
+
+    const handlePrevRoom = async () => {
+        if (isFirstRoom) return;
+        if (!(await flushPending())) return;
+        setRoomIndex((i) => Math.max(0, i - 1));
     };
 
     const handleFinish = async () => {
@@ -237,15 +245,24 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
                                 </div>
                             </div>
                             <div>
-                                <label className={labelClass}>Photo (optional)</label>
+                                <label className={labelClass}>
+                                    Photos (optional) — add the item and its serial-number label
+                                </label>
                                 <input
                                     ref={photoRef}
                                     type="file"
                                     accept="image/*"
                                     capture="environment"
-                                    onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+                                    multiple
+                                    onChange={(e) => setPhotos(Array.from(e.target.files ?? []))}
                                     className="block w-full text-sm text-foreground-secondary file:mr-3 file:rounded-lg file:border file:border-border file:bg-background-tertiary file:px-3 file:py-1.5 file:text-sm file:text-foreground-secondary hover:file:border-border-hover file:transition-colors"
                                 />
+                                {photos.length > 0 && (
+                                    <p className="mt-1 text-xs text-foreground-muted">
+                                        {photos.length} photo{photos.length === 1 ? '' : 's'} ready to
+                                        attach
+                                    </p>
+                                )}
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
@@ -276,6 +293,16 @@ export function WalkthroughOverlay({ rooms, onClose }: WalkthroughOverlayProps) 
                                 >
                                     {saving ? 'Saving…' : 'Add & next item'}
                                 </button>
+                                {!isFirstRoom && (
+                                    <button
+                                        type="button"
+                                        onClick={handlePrevRoom}
+                                        disabled={saving}
+                                        className="rounded-lg border border-border px-4 py-2 text-sm text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
+                                    >
+                                        ← Previous room
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     onClick={handleNextRoom}
