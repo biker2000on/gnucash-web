@@ -32,6 +32,16 @@ export function categoryLabel(category: string | null): string | null {
     return CATEGORY_OPTIONS.find((o) => o.value === category)?.label ?? category;
 }
 
+/** A blank name marks a photos-first draft awaiting bulk detailing. */
+export function isDraftItem(name: string): boolean {
+    return name.trim().length === 0;
+}
+
+/** Name to show for an item, with a placeholder for un-named drafts. */
+export function itemDisplayName(name: string): string {
+    return name.trim() || 'Untitled item';
+}
+
 /**
  * Warranty pill: expired in error tone, expiring within 90 days in warning
  * tone, anything further out muted.

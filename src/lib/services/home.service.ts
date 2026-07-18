@@ -305,6 +305,8 @@ export interface HomeSummary {
     rooms: RoomSummary[];
     totalItems: number;
     totalValue: number;
+    /** Items captured photos-first with no name yet, awaiting bulk detailing. */
+    draftItems: number;
     warrantyExpired: WarrantyAlert[];
     warrantyExpiringSoon: WarrantyAlert[];
     warrantyWarningDays: number;
@@ -493,6 +495,22 @@ function requireName(value: string | undefined, field: string): string {
     return name;
 }
 
+/**
+ * Draft-tolerant item name. An empty name is allowed and marks the item as a
+ * "captured but not yet detailed" draft — the photos-first walk-through creates
+ * these, and the bulk-detail screen fills them in later. See {@link isDraftName}.
+ */
+function normalizeItemName(value: string | undefined): string {
+    const name = value?.trim() ?? '';
+    if (name.length > 255) throw new HomeValidationError('Item name too long (max 255)');
+    return name;
+}
+
+/** An item with a blank name is a draft awaiting bulk detailing. */
+export function isDraftName(name: string | null | undefined): boolean {
+    return (name ?? '').trim().length === 0;
+}
+
 function parseOptionalDate(value: string | null | undefined, field: string): Date | null {
     if (value === null || value === undefined || value === '') return null;
     const d = parseIsoDate(value);
@@ -634,6 +652,21 @@ export async function listItems(bookGuid: string, roomId?: number): Promise<Home
     return rows.map((r) => mapItem(r, today));
 }
 
+/**
+ * Draft items (blank name) across the whole book, in room-then-capture order —
+ * the work list for the desktop bulk-detail screen. Ordered by room sort so the
+ * UI can group by room without a second query.
+ */
+export async function listDraftItems(bookGuid: string): Promise<HomeItem[]> {
+    const rows = await prisma.gnucash_web_home_items.findMany({
+        where: { book_guid: bookGuid, name: '' },
+        include: ITEM_PHOTO_INCLUDE,
+        orderBy: [{ room: { sort_order: 'asc' } }, { room_id: 'asc' }, { id: 'asc' }],
+    });
+    const today = new Date();
+    return rows.map((r) => mapItem(r, today));
+}
+
 export interface ItemInput {
     roomId?: number;
     name?: string;
@@ -644,6 +677,8 @@ export interface ItemInput {
     warrantyExpires?: string | null;
     serial?: string | null;
     notes?: string | null;
+    /** When true, an empty name is accepted — the item is a photos-first draft. */
+    draft?: boolean;
 }
 
 function validateCategory(value: string | null | undefined): string | null {
@@ -675,10 +710,11 @@ async function assertReceiptOwned(bookGuid: string, receiptId: number): Promise<
 }
 
 export async function createItem(bookGuid: string, input: ItemInput): Promise<HomeItem> {
-    const name = requireName(input.name, 'Item name');
     if (input.roomId === undefined || !Number.isInteger(input.roomId)) {
         throw new HomeValidationError('roomId is required');
     }
+    // Drafts (photos-first capture) may have no name yet; normal creates require one.
+    const name = input.draft ? normalizeItemName(input.name) : requireName(input.name, 'Item name');
     await getOwnedRoom(bookGuid, input.roomId);
     if (input.receiptId !== null && input.receiptId !== undefined) {
         await assertReceiptOwned(bookGuid, input.receiptId);
@@ -735,7 +771,9 @@ export async function updateItem(
         await getOwnedRoom(bookGuid, input.roomId); // move-to-room stays inside the book
         data.room_id = input.roomId;
     }
-    if (input.name !== undefined) data.name = requireName(input.name, 'Item name');
+    // Empty name is allowed on update — it keeps (or returns) the item to draft
+    // state, so bulk detailing can save partial fields before a name is set.
+    if (input.name !== undefined) data.name = normalizeItemName(input.name);
     if (input.category !== undefined) data.category = validateCategory(input.category);
     if (input.estValue !== undefined) data.est_value = parseOptionalValue(input.estValue, 'estValue');
     if (input.purchaseDate !== undefined) {
@@ -1228,6 +1266,7 @@ export async function getHomeSummary(bookGuid: string): Promise<HomeSummary> {
         rooms: roomSummaries,
         totalItems: items.length,
         totalValue: round2(roomSummaries.reduce((sum, r) => sum + r.totalValue, 0)),
+        draftItems: items.filter((i) => isDraftName(i.name)).length,
         warrantyExpired: expired,
         warrantyExpiringSoon: expiringSoon,
         warrantyWarningDays: WARRANTY_WARNING_DAYS,

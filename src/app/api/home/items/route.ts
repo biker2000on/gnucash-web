@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { listItems, createItem } from '@/lib/services/home.service';
+import { listItems, listDraftItems, createItem } from '@/lib/services/home.service';
 import { handleHomeError, coerceItemInput } from '../_lib';
 
-/** GET /api/home/items?roomId= — items for the book, optionally one room. */
+/**
+ * GET /api/home/items — items for the book.
+ *   ?roomId=<n>  one room's items
+ *   ?draft=1     all draft (un-named) items book-wide, for bulk detailing
+ */
 export async function GET(request: Request) {
     try {
         const roleResult = await requireRole('readonly');
@@ -11,6 +15,12 @@ export async function GET(request: Request) {
         const { bookGuid } = roleResult;
 
         const { searchParams } = new URL(request.url);
+
+        if (searchParams.get('draft') === '1') {
+            const items = await listDraftItems(bookGuid);
+            return NextResponse.json({ items });
+        }
+
         const roomIdParam = searchParams.get('roomId');
         let roomId: number | undefined;
         if (roomIdParam !== null) {

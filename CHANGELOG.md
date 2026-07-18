@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.2.0] - 2026-07-17
+
+### Added — Home Inventory
+- **Photos-first walk-through mode**: a "Photos only" / "Detail each" toggle in the room-by-room stepper (choice persists per browser). In photos-only mode you snap photos for each item (item + serial label group into one) and save it as an un-named draft — no typing — then move room to room. The recap flags how many items still need details.
+- **Bulk detailing on the desktop**: the inventory page shows a "N items captured without details" banner that opens a room-grouped list of every draft, each with its photos beside inline fields (name, category, value, purchased, warranty, serial, room). "Save & file" names the item and drops it from the list; the count updates live.
+
+### Changed
+- A home inventory item can now be created without a name (a "draft"); the existing detail-as-you-go flow is unchanged. New `GET /api/home/items?draft=1` returns the un-detailed work list, and the home summary reports a `draftItems` count. No database migration required — a draft is simply an item with a blank name.
+
 ## [0.13.1.0] - 2026-07-17
 
 ### Added — Home Inventory

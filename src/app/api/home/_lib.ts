@@ -43,5 +43,6 @@ export function coerceItemInput(body: Record<string, unknown>): ItemInput {
         warrantyExpires: opt('warrantyExpires', String),
         serial: opt('serial', String),
         notes: opt('notes', String),
+        draft: body.draft === true ? true : undefined,
     };
 }

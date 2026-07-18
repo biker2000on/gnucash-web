@@ -8,6 +8,8 @@ import {
     CATEGORY_OPTIONS,
     categoryLabel,
     inputClass,
+    isDraftItem,
+    itemDisplayName,
     labelClass,
     TNUM,
     WarrantyBadge,
@@ -607,7 +609,17 @@ export function RoomDetailPanel({
                                             </div>
                                         )}
                                         <div className="min-w-0 flex-1">
-                                            <span className="text-sm text-foreground">{item.name}</span>
+                                            <span
+                                                className={`text-sm ${
+                                                    isDraftItem(item.name)
+                                                        ? 'italic text-foreground-muted'
+                                                        : 'text-foreground'
+                                                }`}
+                                            >
+                                                {isDraftItem(item.name)
+                                                    ? 'Untitled — needs details'
+                                                    : itemDisplayName(item.name)}
+                                            </span>
                                             <span className="ml-3 text-xs text-foreground-muted">
                                                 {[
                                                     categoryLabel(item.category),

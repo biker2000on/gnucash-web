@@ -9,6 +9,7 @@ import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { useToast } from '@/contexts/ToastContext';
 import { WalkthroughOverlay } from '@/components/home/WalkthroughOverlay';
 import { RoomDetailPanel } from '@/components/home/RoomDetailPanel';
+import { BulkDetailPanel } from '@/components/home/BulkDetailPanel';
 import { inputClass, TNUM } from '@/components/home/home-shared';
 
 export default function HomeInventoryPage() {
@@ -20,6 +21,7 @@ export default function HomeInventoryPage() {
     const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
     const [walking, setWalking] = useState(false);
     const [startingWalk, setStartingWalk] = useState(false);
+    const [bulkDetailing, setBulkDetailing] = useState(false);
 
     const [addingRoom, setAddingRoom] = useState(false);
     const [newRoomName, setNewRoomName] = useState('');
@@ -103,7 +105,7 @@ export default function HomeInventoryPage() {
                 title="Home Inventory"
                 subtitle="A room-by-room record of what you own — for insurance coverage, warranties, and serial numbers."
                 actions={
-                    !selectedRoom ? (
+                    !selectedRoom && !bulkDetailing ? (
                         <button
                             type="button"
                             onClick={startWalkthrough}
@@ -146,8 +148,36 @@ export default function HomeInventoryPage() {
                 />
             )}
 
-            {!loading && !error && summary && !selectedRoom && (
+            {!loading && !error && summary && !selectedRoom && bulkDetailing && (
+                <BulkDetailPanel
+                    rooms={rooms.map((r) => ({ id: r.id, name: r.name, sortOrder: r.sortOrder }))}
+                    onBack={() => setBulkDetailing(false)}
+                    onChanged={() => void load()}
+                />
+            )}
+
+            {!loading && !error && summary && !selectedRoom && !bulkDetailing && (
                 <>
+                    {/* Drafts awaiting details */}
+                    {summary.draftItems > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => setBulkDetailing(true)}
+                            className="flex w-full items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-left transition-colors hover:bg-primary/10"
+                        >
+                            <span className="text-sm text-foreground">
+                                <span className="font-mono font-medium" style={TNUM}>
+                                    {summary.draftItems}
+                                </span>{' '}
+                                item{summary.draftItems === 1 ? '' : 's'} captured without details —
+                                add names, categories, and values
+                            </span>
+                            <span className="shrink-0 text-sm font-medium text-primary">
+                                Add details →
+                            </span>
+                        </button>
+                    )}
+
                     {/* Coverage hero */}
                     <div className="bg-background-secondary/30 border border-border rounded-xl p-5">
                         <p className="text-[10px] font-medium uppercase tracking-wider text-foreground-muted">

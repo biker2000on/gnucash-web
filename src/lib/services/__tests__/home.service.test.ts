@@ -97,6 +97,11 @@ import {
     seedDefaultRooms,
     createServiceEntry,
     addItemPhoto,
+    createItem,
+    updateItem,
+    listDraftItems,
+    getHomeSummary,
+    isDraftName,
     DEFAULT_ROOMS,
     MAINTENANCE_TEMPLATE,
     HomeValidationError,
@@ -467,5 +472,81 @@ describe('addItemPhoto', () => {
             },
         });
         expect(item.photos).toEqual([{ id: 42 }]);
+    });
+});
+
+describe('draft items (photos-first capture)', () => {
+    const room = { id: 1, book_guid: BOOK, name: 'Living Room', sort_order: 0 };
+    const draftRow = (over: Record<string, unknown> = {}) => ({
+        id: 9,
+        book_guid: BOOK,
+        room_id: 1,
+        name: '',
+        category: null,
+        est_value: null,
+        purchase_date: null,
+        receipt_id: null,
+        warranty_expires: null,
+        serial: null,
+        notes: null,
+        photos: [],
+        ...over,
+    });
+
+    it('isDraftName treats blank/whitespace as a draft', () => {
+        expect(isDraftName('')).toBe(true);
+        expect(isDraftName('   ')).toBe(true);
+        expect(isDraftName(null)).toBe(true);
+        expect(isDraftName('TV')).toBe(false);
+    });
+
+    it('createItem with draft:true stores an empty name', async () => {
+        roomsModel.findUnique.mockResolvedValue(room);
+        itemsModel.create.mockResolvedValue(draftRow());
+
+        const item = await createItem(BOOK, { roomId: 1, draft: true });
+
+        expect(itemsModel.create.mock.calls[0][0].data.name).toBe('');
+        expect(item.name).toBe('');
+        expect(item.photos).toEqual([]);
+    });
+
+    it('createItem without draft still rejects an empty name', async () => {
+        roomsModel.findUnique.mockResolvedValue(room);
+        await expect(createItem(BOOK, { roomId: 1, name: '  ' })).rejects.toThrow(
+            'Item name is required',
+        );
+        expect(itemsModel.create).not.toHaveBeenCalled();
+    });
+
+    it('updateItem accepts an empty name (item stays a draft)', async () => {
+        itemsModel.findUnique.mockResolvedValue(draftRow());
+        itemsModel.update.mockResolvedValue(draftRow());
+
+        const item = await updateItem(BOOK, 9, { name: '' });
+
+        expect(itemsModel.update.mock.calls[0][0].data.name).toBe('');
+        expect(item.name).toBe('');
+    });
+
+    it('listDraftItems queries only blank-named items', async () => {
+        itemsModel.findMany.mockResolvedValue([]);
+        await listDraftItems(BOOK);
+        expect(itemsModel.findMany.mock.calls[0][0].where).toEqual({ book_guid: BOOK, name: '' });
+    });
+
+    it('getHomeSummary counts drafts separately from total items', async () => {
+        roomsModel.findMany.mockResolvedValue([{ id: 1, name: 'Living Room', sort_order: 0 }]);
+        itemsModel.findMany.mockResolvedValue([
+            { id: 1, room_id: 1, name: 'TV', est_value: 100, warranty_expires: null },
+            { id: 2, room_id: 1, name: '', est_value: null, warranty_expires: null },
+        ]);
+        tasksModel.findMany.mockResolvedValue([]);
+        serviceLogModel.findMany.mockResolvedValue([]);
+
+        const summary = await getHomeSummary(BOOK);
+
+        expect(summary.totalItems).toBe(2);
+        expect(summary.draftItems).toBe(1);
     });
 });
