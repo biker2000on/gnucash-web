@@ -240,7 +240,11 @@ export default function BudgetIncomeStatementPage() {
         } finally {
             setIsLoading(false);
         }
-    }, [selectedBudgetGuid, rangeParams]);
+        // Depend on the resolved primitive range values, not the rangeParams
+        // object identity. rangeParams is recomputed from reportData.allPeriods,
+        // which fetchReport itself replaces on every call — depending on the
+        // object reference creates an infinite fetch→setState→recompute loop.
+    }, [selectedBudgetGuid, rangeParams.periodStart, rangeParams.periodEnd]);
 
     useEffect(() => {
         fetchReport();
@@ -267,7 +271,7 @@ export default function BudgetIncomeStatementPage() {
         return () => {
             cancelled = true;
         };
-    }, [selectedBudgetGuid, chartScope, rangeParams]);
+    }, [selectedBudgetGuid, chartScope, rangeParams.periodStart, rangeParams.periodEnd]);
 
     const handleExportCSV = () => {
         if (reportData) {
