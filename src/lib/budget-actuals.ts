@@ -23,6 +23,7 @@
  * emitted for every budgeted account regardless of type.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { toDecimalNumber } from '@/lib/gnucash';
@@ -531,28 +532,68 @@ async function loadSplits(
     });
 }
 
-/** Bucket sign-corrected split amounts into per-account/per-period matrices. */
-function bucketSplits(
+/**
+ * Map each budgeted (root) account to every account guid in its subtree
+ * (itself + all descendants). A descendant that falls under more than one
+ * budgeted root (e.g. both a parent and a grandparent are budgeted) maps to
+ * each of them. Returns descendant → roots so split bucketing can attribute a
+ * child's spend to every budgeted ancestor.
+ */
+async function loadSubtreeMap(rootGuids: string[]): Promise<Map<string, string[]>> {
+    const rows = await prisma.$queryRaw<Array<{ root_guid: string; descendant_guid: string }>>`
+        WITH RECURSIVE subtree AS (
+            SELECT guid AS root_guid, guid AS descendant_guid
+            FROM accounts WHERE guid IN (${Prisma.join(rootGuids)})
+            UNION ALL
+            SELECT s.root_guid, a.guid
+            FROM accounts a JOIN subtree s ON a.parent_guid = s.descendant_guid
+        )
+        SELECT root_guid, descendant_guid FROM subtree
+    `;
+    const descendantToRoots = new Map<string, string[]>();
+    for (const { root_guid, descendant_guid } of rows) {
+        let roots = descendantToRoots.get(descendant_guid);
+        if (!roots) {
+            roots = [];
+            descendantToRoots.set(descendant_guid, roots);
+        }
+        roots.push(root_guid);
+    }
+    return descendantToRoots;
+}
+
+/**
+ * Bucket sign-corrected split amounts into per-budgeted-account/per-period
+ * matrices, rolling each descendant's split up to every budgeted ancestor
+ * (budget-the-parent model). Sign correction uses the budgeted root account's
+ * type, matching the estimate helper. A budgeted leaf simply maps to itself.
+ */
+function bucketSplitsRollup(
     splits: LoadedSplit[],
     ranges: Array<{ start: string; end: string }>,
-    accountTypes: Map<string, string>,
+    descendantToRoots: Map<string, string[]>,
+    rootTypes: Map<string, string>,
     numPeriods: number
 ): Map<string, number[]> {
     const matrices = new Map<string, number[]>();
     for (const split of splits) {
+        const roots = descendantToRoots.get(split.account_guid);
+        if (!roots) continue;
         const postDate = split.transaction.post_date;
         if (!postDate) continue;
         const dateKey = isoDateUTC(postDate);
         const periodIdx = ranges.findIndex(r => dateKey >= r.start && dateKey <= r.end);
         if (periodIdx < 0) continue;
 
-        let row = matrices.get(split.account_guid);
-        if (!row) {
-            row = new Array(numPeriods).fill(0);
-            matrices.set(split.account_guid, row);
-        }
         const raw = toDecimalNumber(split.quantity_num, split.quantity_denom);
-        row[periodIdx] += signCorrectAmount(accountTypes.get(split.account_guid) || '', raw);
+        for (const root of roots) {
+            let row = matrices.get(root);
+            if (!row) {
+                row = new Array(numPeriods).fill(0);
+                matrices.set(root, row);
+            }
+            row[periodIdx] += signCorrectAmount(rootTypes.get(root) || '', raw);
+        }
     }
     return matrices;
 }
@@ -628,12 +669,19 @@ export async function loadBudgetActuals(
     let actualMatrices = new Map<string, number[]>();
     let priorMatrices = new Map<string, number[]>();
     if (accountGuids.length > 0) {
+        // Budget-the-parent model: a budgeted account's actual rolls up every
+        // split in its subtree (itself + all descendants), mirroring the
+        // estimate helper. Budgeting a leaf just yields that leaf's own spend.
+        // (Budgeting both a parent and one of its own descendants double-counts
+        // that descendant — budget one level per branch.)
+        const descendantToRoots = await loadSubtreeMap(accountGuids);
+        const allGuids = [...descendantToRoots.keys()];
         const [currentSplits, priorSplits] = await Promise.all([
-            loadSplits(accountGuids, ranges[0].start, ranges[ranges.length - 1].end),
-            loadSplits(accountGuids, priorRanges[0].start, priorRanges[priorRanges.length - 1].end),
+            loadSplits(allGuids, ranges[0].start, ranges[ranges.length - 1].end),
+            loadSplits(allGuids, priorRanges[0].start, priorRanges[priorRanges.length - 1].end),
         ]);
-        actualMatrices = bucketSplits(currentSplits, ranges, accountTypes, budget.num_periods);
-        priorMatrices = bucketSplits(priorSplits, priorRanges, accountTypes, budget.num_periods);
+        actualMatrices = bucketSplitsRollup(currentSplits, ranges, descendantToRoots, accountTypes, budget.num_periods);
+        priorMatrices = bucketSplitsRollup(priorSplits, priorRanges, descendantToRoots, accountTypes, budget.num_periods);
     }
 
     const progressAccounts: ProgressAccountInput[] = accountGuids.map(guid => {

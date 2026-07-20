@@ -393,9 +393,32 @@ export class BudgetService {
     const startDate = new Date();
     startDate.setUTCMonth(startDate.getUTCMonth() - months);
 
+    // Get the root account's type (income is stored negative). The subtree of
+    // an income parent is all income and an expense parent all expense, so the
+    // root type is the correct sign for the whole roll-up.
+    const account = await prisma.accounts.findUnique({
+      where: { guid: accountGuid },
+      select: { account_type: true },
+    });
+
+    // Roll up the account AND all descendants: parent accounts rarely hold
+    // splits directly — the activity lives on their leaf children. Without the
+    // subtree walk, estimating on a parent (now budgetable in the all-accounts
+    // view) returns ~0. Walk the hierarchy to collect every account guid.
+    const subtree = await prisma.$queryRaw<Array<{ guid: string }>>`
+      WITH RECURSIVE subtree AS (
+        SELECT guid FROM accounts WHERE guid = ${accountGuid}
+        UNION ALL
+        SELECT a.guid FROM accounts a
+        JOIN subtree s ON a.parent_guid = s.guid
+      )
+      SELECT guid FROM subtree
+    `;
+    const accountGuids = subtree.map((row) => row.guid);
+
     const splits = await prisma.splits.findMany({
       where: {
-        account_guid: accountGuid,
+        account_guid: { in: accountGuids },
         transaction: {
           post_date: {
             gte: startDate,
@@ -415,12 +438,6 @@ export class BudgetService {
         : 0;
       return sum + value;
     }, 0);
-
-    // Get account type to determine if we need to negate (income is stored negative)
-    const account = await prisma.accounts.findUnique({
-      where: { guid: accountGuid },
-      select: { account_type: true },
-    });
 
     const adjustedTotal = account?.account_type === 'INCOME' ? -total : total;
     const average = adjustedTotal / months;

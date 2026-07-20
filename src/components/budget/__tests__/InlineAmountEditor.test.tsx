@@ -10,7 +10,7 @@ const baseProps = {
 };
 
 function mockFetchOk() {
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({}) }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }));
     global.fetch = fetchMock as unknown as typeof fetch;
     return fetchMock;
 }
