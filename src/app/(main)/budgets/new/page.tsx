@@ -3,7 +3,8 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { AccountPickerModal } from '@/components/budget/AccountPickerModal';
+import AccountPickerDialog from '@/components/AccountPickerDialog';
+import { BUDGETABLE_ACCOUNT_TYPES } from '@/lib/budget-constants';
 import { useToast } from '@/contexts/ToastContext';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { formatCurrency } from '@/lib/format';
@@ -471,11 +472,20 @@ export default function NewBudgetPage() {
                 </button>
             </div>
 
-            <AccountPickerModal
+            <AccountPickerDialog
                 isOpen={pickerOpen}
                 onClose={() => setPickerOpen(false)}
-                existingAccountGuids={rows.map(r => r.accountGuid)}
-                onSelect={addAccount}
+                title="Add account to budget"
+                accountTypes={BUDGETABLE_ACCOUNT_TYPES}
+                excludeAccountGuids={rows.map(r => r.accountGuid)}
+                onSelect={(guid, fullname, account) =>
+                    addAccount({
+                        guid,
+                        name: account?.name ?? fullname,
+                        account_type: account?.account_type ?? '',
+                        full_name: account?.fullname ?? fullname,
+                    })
+                }
             />
         </div>
     );

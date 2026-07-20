@@ -21,8 +21,13 @@ interface FlatAccount {
 interface AccountPickerDialogProps {
     isOpen: boolean;
     onClose: () => void;
-    onSelect: (accountGuid: string, accountName: string) => void;
+    /** Third arg carries the full selected account for callers that need type/commodity. */
+    onSelect: (accountGuid: string, accountName: string, account?: FlatAccount) => void;
     excludeAccountGuid?: string;
+    /** Hide these accounts from the list (e.g. accounts already in a budget). */
+    excludeAccountGuids?: string[];
+    /** Restrict the list to these GnuCash account types (e.g. budgetable types). */
+    accountTypes?: string[];
     commodityGuid?: string;
     title?: string;
 }
@@ -32,6 +37,8 @@ export default function AccountPickerDialog({
     onClose,
     onSelect,
     excludeAccountGuid,
+    excludeAccountGuids,
+    accountTypes,
     commodityGuid,
     title = 'Select Account',
 }: AccountPickerDialogProps) {
@@ -64,6 +71,14 @@ export default function AccountPickerDialog({
         if (excludeAccountGuid) {
             result = result.filter(a => a.guid !== excludeAccountGuid);
         }
+        if (excludeAccountGuids && excludeAccountGuids.length > 0) {
+            const excluded = new Set(excludeAccountGuids);
+            result = result.filter(a => !excluded.has(a.guid));
+        }
+        if (accountTypes && accountTypes.length > 0) {
+            const allowed = new Set(accountTypes);
+            result = result.filter(a => allowed.has(a.account_type));
+        }
         if (commodityGuid) {
             result = result.filter(a => a.commodity_guid === commodityGuid);
         }
@@ -77,7 +92,7 @@ export default function AccountPickerDialog({
             );
         }
         return result;
-    }, [accounts, excludeAccountGuid, commodityGuid, search]);
+    }, [accounts, excludeAccountGuid, excludeAccountGuids, accountTypes, commodityGuid, search]);
 
     // Reset selected index when filter changes
     useEffect(() => {
@@ -93,7 +108,7 @@ export default function AccountPickerDialog({
     }, [selectedIndex]);
 
     const handleSelect = useCallback((account: FlatAccount) => {
-        onSelect(account.guid, account.fullname || account.name);
+        onSelect(account.guid, account.fullname || account.name, account);
         onClose();
     }, [onSelect, onClose]);
 

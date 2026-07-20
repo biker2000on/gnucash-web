@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { InlineAmountEditor } from '@/components/budget/InlineAmountEditor';
-import { AccountPickerModal } from '@/components/budget/AccountPickerModal';
+import AccountPickerDialog from '@/components/AccountPickerDialog';
+import { BUDGETABLE_ACCOUNT_TYPES } from '@/lib/budget-constants';
 import { BatchEditModal } from '@/components/budget/BatchEditModal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -75,10 +76,13 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showAccountPicker, setShowAccountPicker] = useState(false);
-    const [batchEditAccount, setBatchEditAccount] = useState<{ guid: string; name: string } | null>(null);
+    const [batchEditAccount, setBatchEditAccount] = useState<{ guid: string; name: string; type: string } | null>(null);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
     const [expandLevel, setExpandLevel] = useState<number>(0);
+    // The single budget cell currently being edited, as `${accountGuid}:${period}`.
+    // Lifting this to the page lets Tab move the editor across cells.
+    const [activeCell, setActiveCell] = useState<string | null>(null);
 
     // Progress vs editor view. Defaults to Progress when the budget has
     // amounts (set once after the initial fetch), Editor otherwise.
@@ -214,11 +218,16 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         }
     };
 
-    const handleEstimate = async (accountGuid: string) => {
+    const handleEstimate = async (accountGuid: string, accountType: string) => {
         try {
             const res = await fetch(`/api/budgets/${guid}/estimate?account_guid=${accountGuid}&months=12`);
             if (!res.ok) throw new Error('Failed to get estimate');
             const data = await res.json();
+
+            // getHistoricalAverage returns a natural (positive) figure. Budget
+            // amounts are stored in raw GnuCash sign (income negative), so flip
+            // income before persisting to match the rest of the budget system.
+            const amount = accountType === 'INCOME' ? -data.average : data.average;
 
             // Apply estimate to all periods
             const applyRes = await fetch(`/api/budgets/${guid}/amounts/all-periods`, {
@@ -226,7 +235,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     account_guid: accountGuid,
-                    amount: data.average
+                    amount
                 })
             });
 
@@ -245,17 +254,27 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const handleAmountUpdate = (accountGuid: string, periodNum: number, newValue: number) => {
         if (!budget) return;
 
-        // Optimistic update
+        // Optimistic update (upsert): update the matching row, or synthesize one
+        // from a sibling period so newly-created cells reflect immediately.
         setBudget(prev => {
             if (!prev) return prev;
-            return {
-                ...prev,
-                amounts: prev.amounts.map(amt =>
-                    amt.account_guid === accountGuid && amt.period_num === periodNum
-                        ? { ...amt, amount_decimal: newValue.toString() }
-                        : amt
-                )
+            const idx = prev.amounts.findIndex(
+                amt => amt.account_guid === accountGuid && amt.period_num === periodNum
+            );
+            if (idx >= 0) {
+                const amounts = prev.amounts.slice();
+                amounts[idx] = { ...amounts[idx], amount_decimal: newValue.toString() };
+                return { ...prev, amounts };
+            }
+            const sibling = prev.amounts.find(amt => amt.account_guid === accountGuid);
+            if (!sibling) return prev; // no metadata to clone; refreshBudget will reconcile
+            const optimistic: BudgetAmount = {
+                ...sibling,
+                id: -Date.now(),
+                period_num: periodNum,
+                amount_decimal: newValue.toString(),
             };
+            return { ...prev, amounts: [...prev.amounts, optimistic] };
         });
     };
 
@@ -281,10 +300,6 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             console.error('Error adding account to budget:', err);
             toast.error('Failed to add account to budget');
         }
-    };
-
-    const handleAccountAdded = async () => {
-        await refreshBudget();
     };
 
     const toggleExpanded = useCallback((nodeGuid: string) => {
@@ -507,6 +522,29 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
         flattenedNodes.filter(a => a.hasOwnBudget).map(a => a.guid),
         [flattenedNodes]
     );
+
+    // Editable cells in visual (row-major) order, so Tab can walk them.
+    const editableCellIds = useMemo(() => {
+        const ids: string[] = [];
+        const periods = budget?.num_periods ?? 0;
+        for (const node of flattenedNodes) {
+            if (!node.hasOwnBudget) continue;
+            for (let i = 0; i < periods; i++) ids.push(`${node.guid}:${i}`);
+        }
+        return ids;
+    }, [flattenedNodes, budget?.num_periods]);
+
+    const editableIndex = useMemo(() => {
+        const m = new Map<string, number>();
+        editableCellIds.forEach((id, i) => m.set(id, i));
+        return m;
+    }, [editableCellIds]);
+
+    const navigateCell = useCallback((cellId: string, dir: 1 | -1) => {
+        const idx = editableIndex.get(cellId);
+        if (idx === undefined) return;
+        setActiveCell(editableCellIds[idx + dir] ?? null);
+    }, [editableIndex, editableCellIds]);
 
     const handleLevelChange = useCallback((level: number) => {
         setExpandLevel(level);
@@ -945,7 +983,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                 {Array.from({ length: budget.num_periods }, (_, i) => {
                                                     const value = displayPeriods.get(i) || 0;
                                                     const ownValue = account.periods.get(i) || 0;
-                                                    const invert = false;
+                                                    const cellId = `${account.guid}:${i}`;
 
                                                     // Show editor for accounts with their own budget
                                                     if (account.hasOwnBudget) {
@@ -959,13 +997,18 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                     currency={account.mnemonic}
                                                                     accountType={account.type}
                                                                     balanceReversal={balanceReversal}
-                                                                    invertDisplay={invert}
                                                                     onUpdate={(newValue) => handleAmountUpdate(account.guid, i, newValue)}
+                                                                    onError={(msg) => toast.error(msg)}
+                                                                    isActive={activeCell === cellId}
+                                                                    onActivate={() => setActiveCell(cellId)}
+                                                                    onNavigate={(dir) => navigateCell(cellId, dir)}
+                                                                    onDeactivate={() => setActiveCell(null)}
                                                                 />
                                                             </td>
                                                         );
-                                                    } else if (!hasChildren && showAllAccounts) {
-                                                        // Non-budgeted leaf account: clickable empty cell to create budget entry inline
+                                                    } else if (showAllAccounts && value === 0) {
+                                                        // Any BLANK cell in All Accounts view is clickable to add a
+                                                        // budget amount — works for leaf AND parent accounts.
                                                         return (
                                                             <td key={i} className="px-2 py-1 text-right text-foreground-muted cursor-pointer hover:bg-surface-hover/50 transition-colors"
                                                                 onClick={async () => {
@@ -980,8 +1023,11 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                             })
                                                                         });
                                                                         await refreshBudget();
+                                                                        // Open the freshly-created cell for editing.
+                                                                        setActiveCell(cellId);
                                                                     } catch (err) {
                                                                         console.error('Error creating budget entry:', err);
+                                                                        toast.error('Failed to add budget amount');
                                                                     }
                                                                 }}
                                                                 title="Click to add budget amount"
@@ -1025,7 +1071,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                     {account.hasOwnBudget ? (
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
-                                                                onClick={() => setBatchEditAccount({ guid: account.guid, name: account.name })}
+                                                                onClick={() => setBatchEditAccount({ guid: account.guid, name: account.name, type: account.type })}
                                                                 className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
                                                                 title="Set all periods"
                                                             >
@@ -1034,7 +1080,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                 </svg>
                                                             </button>
                                                             <button
-                                                                onClick={() => handleEstimate(account.guid)}
+                                                                onClick={() => handleEstimate(account.guid, account.type)}
                                                                 className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
                                                                 title="Estimate from history"
                                                             >
@@ -1053,7 +1099,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                 </svg>
                                                             </button>
                                                         </div>
-                                                    ) : !hasChildren && showAllAccounts ? (
+                                                    ) : showAllAccounts ? (
                                                         <button
                                                             onClick={() => handleAddToBudget(account.guid)}
                                                             className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
@@ -1138,13 +1184,30 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             </div>
             )}
 
-            {/* Account Picker Modal */}
-            <AccountPickerModal
+            {/* Account Picker (shared app-wide dialog) */}
+            <AccountPickerDialog
                 isOpen={showAccountPicker}
                 onClose={() => setShowAccountPicker(false)}
-                budgetGuid={budget.guid}
-                existingAccountGuids={existingAccountGuids}
-                onAccountAdded={handleAccountAdded}
+                title="Add account to budget"
+                accountTypes={BUDGETABLE_ACCOUNT_TYPES}
+                excludeAccountGuids={existingAccountGuids}
+                onSelect={async (accountGuid) => {
+                    try {
+                        const res = await fetch(`/api/budgets/${budget.guid}/accounts`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ account_guid: accountGuid }),
+                        });
+                        if (!res.ok) {
+                            const data = await res.json().catch(() => ({}));
+                            throw new Error(data.error || 'Failed to add account');
+                        }
+                        toast.success('Account added to budget');
+                        await refreshBudget();
+                    } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Failed to add account to budget');
+                    }
+                }}
             />
 
             {/* Batch Edit Modal */}
@@ -1155,6 +1218,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     budgetGuid={budget.guid}
                     accountGuid={batchEditAccount.guid}
                     accountName={batchEditAccount.name}
+                    accountType={batchEditAccount.type}
+                    balanceReversal={balanceReversal}
                     numPeriods={budget.num_periods}
                     onUpdate={refreshBudget}
                 />

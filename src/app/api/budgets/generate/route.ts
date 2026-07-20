@@ -146,7 +146,8 @@ export async function POST(request: NextRequest) {
         }
 
         // Final lines: explicit (wizard-edited) lines win over generated ones.
-        let finalLines: Array<{ accountGuid: string; name: string; amount: number }>;
+        // `type` is carried so income can be stored in raw GnuCash sign (negative).
+        let finalLines: Array<{ accountGuid: string; name: string; type: string; amount: number }>;
         if (input.lines) {
             const bookGuids = new Set(await getBookAccountGuids());
             const outside = input.lines.filter(l => !bookGuids.has(l.accountGuid));
@@ -158,16 +159,18 @@ export async function POST(request: NextRequest) {
             }
             const named = await prisma.accounts.findMany({
                 where: { guid: { in: input.lines.map(l => l.accountGuid) } },
-                select: { guid: true, name: true },
+                select: { guid: true, name: true, account_type: true },
             });
             const nameByGuid = new Map(named.map(a => [a.guid, a.name]));
+            const typeByGuid = new Map(named.map(a => [a.guid, a.account_type]));
             finalLines = input.lines.map(l => ({
                 accountGuid: l.accountGuid,
                 name: nameByGuid.get(l.accountGuid) ?? l.accountGuid,
+                type: typeByGuid.get(l.accountGuid) ?? '',
                 amount: l.amount,
             }));
         } else {
-            finalLines = lines.map(l => ({ accountGuid: l.accountGuid, name: l.name, amount: l.amount }));
+            finalLines = lines.map(l => ({ accountGuid: l.accountGuid, name: l.name, type: l.type, amount: l.amount }));
         }
 
         const startMonth = input.startMonth ?? `${new Date().getUTCFullYear()}-01`;
@@ -178,9 +181,11 @@ export async function POST(request: NextRequest) {
                 : input.source === 'pct-of-income' ? '% of income template' : 'zero-based template'}`,
             num_periods: input.numPeriods,
             period_start: `${startMonth}-01`,
+            // Budget amounts persist in raw GnuCash sign: INCOME is stored
+            // negative so it agrees with budget-actuals and the editor summary.
             lines: finalLines.map(l => ({
                 accountGuid: l.accountGuid,
-                amounts: new Array(input.numPeriods).fill(l.amount),
+                amounts: new Array(input.numPeriods).fill(l.type === 'INCOME' ? -l.amount : l.amount),
             })),
         }) as { guid: string };
 

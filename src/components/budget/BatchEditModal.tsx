@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
+import { applyBalanceReversal, BalanceReversal } from '@/lib/format';
 
 interface BatchEditModalProps {
     isOpen: boolean;
@@ -9,6 +10,8 @@ interface BatchEditModalProps {
     budgetGuid: string;
     accountGuid: string;
     accountName: string;
+    accountType?: string;
+    balanceReversal?: BalanceReversal;
     numPeriods: number;
     currentAverage?: number;
     onUpdate: () => void;
@@ -20,6 +23,8 @@ export function BatchEditModal({
     budgetGuid,
     accountGuid,
     accountName,
+    accountType = 'EXPENSE',
+    balanceReversal = 'none',
     numPeriods,
     currentAverage,
     onUpdate
@@ -39,12 +44,15 @@ export function BatchEditModal({
         setError(null);
 
         try {
+            // The user types in the displayed (balance-reversal) space; persist
+            // in raw GnuCash sign so income is stored negative like everywhere else.
+            const rawValue = applyBalanceReversal(value, accountType, balanceReversal);
             const response = await fetch(`/api/budgets/${budgetGuid}/amounts/all-periods`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     account_guid: accountGuid,
-                    amount: value
+                    amount: rawValue
                 })
             });
 
