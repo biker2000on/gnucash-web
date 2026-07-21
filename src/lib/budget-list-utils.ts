@@ -1,4 +1,5 @@
 import type { BudgetActualsSummary } from '@/lib/budget-actuals';
+import { inferStartFromName } from '@/lib/budget-select';
 
 /** Shape of one row on the /budgets overview (the /api/budgets list payload). */
 export interface BudgetListItem {
@@ -17,12 +18,18 @@ export interface BudgetListItem {
     };
 }
 
-/** Epoch ms of the budget's period 0 start, or null without a recurrence. */
+/**
+ * Epoch ms of the budget's period 0 start. Prefers the recurrence row;
+ * without one (old XML imports), falls back to a year in the budget's name
+ * ("2026 Annual Budget" → Jan 2026). Null when neither is available.
+ */
 export function budgetStartMs(budget: BudgetListItem): number | null {
     const raw = budget.recurrences?.[0]?.recurrence_period_start;
-    if (!raw) return null;
-    const t = new Date(raw).getTime();
-    return Number.isFinite(t) ? t : null;
+    if (raw) {
+        const t = new Date(raw).getTime();
+        if (Number.isFinite(t)) return t;
+    }
+    return inferStartFromName(budget.name)?.getTime() ?? null;
 }
 
 /** Short label for the budget's start, e.g. "Jan 2026"; em-dash when unknown. */

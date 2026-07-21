@@ -249,6 +249,12 @@ describe('start sort (recent budgets first)', () => {
         expect(budgetStartMs(withStart('b', 'B', null))).toBeNull();
     });
 
+    it('budgetStartMs falls back to a year in the name when no recurrence exists', () => {
+        expect(budgetStartMs(withStart('b', '2026 Annual Budget', null)))
+            .toBe(Date.UTC(2026, 0, 1));
+        expect(budgetStartLabel(withStart('b', '2026 Annual Budget', null))).toBe('Jan 2026');
+    });
+
     it('budgetStartLabel renders "Mon YYYY" and an em-dash without a recurrence', () => {
         expect(budgetStartLabel(withStart('a', 'A', '2026-01-01T00:00:00.000Z'))).toBe('Jan 2026');
         expect(budgetStartLabel(withStart('b', 'B', null))).toBe('—');

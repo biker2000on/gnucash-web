@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickCurrentBudget, budgetRange, budgetCovers } from '../budget-select';
+import { pickCurrentBudget, budgetRange, budgetCovers, inferStartFromName } from '../budget-select';
 import { parseBackupSettings, isBackupDue, defaultBackupSettings } from '../backup';
 
 const budget = (guid: string, startIso: string, numPeriods: number, periodType = 'month', mult = 1) => ({
@@ -71,6 +71,31 @@ describe('pickCurrentBudget', () => {
     it('returns first budget when none have recurrences, null for empty', () => {
         expect(pickCurrentBudget([{ guid: 'only', num_periods: 12 }], NOW)?.guid).toBe('only');
         expect(pickCurrentBudget([], NOW)).toBeNull();
+    });
+});
+
+describe('name-year fallback (budgets without recurrence rows)', () => {
+    it('inferStartFromName finds a 4-digit year, else null', () => {
+        expect(inferStartFromName('2026 Annual Budget')?.toISOString()).toContain('2026-01-01');
+        expect(inferStartFromName('Budget 2014')?.toISOString()).toContain('2014-01-01');
+        expect(inferStartFromName('Road to Retirement')).toBeNull();
+        expect(inferStartFromName(undefined)).toBeNull();
+    });
+
+    it('budgetRange falls back to the name year with monthly periods', () => {
+        const range = budgetRange({ guid: 'x', num_periods: 12, name: '2026 Annual Budget', recurrences: [] })!;
+        expect(range.start.toISOString()).toContain('2026-01-01');
+        expect(range.end.toISOString()).toContain('2027-01-01');
+    });
+
+    it('pickCurrentBudget prefers the covering budget by name year — the prod blank-start case', () => {
+        const noRec = (guid: string, name: string) => ({ guid, name, num_periods: 12, recurrences: [] });
+        const budgets = [
+            noRec('2014', '2014 Budget'),
+            noRec('2026', '2026 Annual Budget'),
+            noRec('2025', '2025 Budget'),
+        ];
+        expect(pickCurrentBudget(budgets, NOW)?.guid).toBe('2026');
     });
 });
 

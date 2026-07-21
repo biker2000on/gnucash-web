@@ -13,6 +13,10 @@ export const CreateBudgetSchema = z.object({
   name: z.string().min(1, 'Name is required').max(2048),
   description: z.string().max(2048).optional().default(''),
   num_periods: z.number().int().min(1).max(60).default(12),
+  /** YYYY-MM-DD start of period 0; defaults to Jan 1 of the current year. */
+  period_start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  period_type: z.enum(['month', 'year']).default('month'),
+  mult: z.number().int().min(1).max(12).default(1),
 });
 
 export const UpdateBudgetSchema = z.object({
@@ -92,20 +96,35 @@ export class BudgetService {
   }
 
   /**
-   * Create a new budget
+   * Create a new budget. Always writes a recurrence row (GnuCash parity) —
+   * the period calendar drives start dates, current-budget selection, and
+   * seasonal estimates.
    */
   static async create(input: CreateBudgetInput) {
     const data = CreateBudgetSchema.parse(input);
 
     const budgetGuid = generateGuid();
+    const periodStart = data.period_start ?? `${new Date().getUTCFullYear()}-01-01`;
 
-    const budget = await prisma.budgets.create({
-      data: {
-        guid: budgetGuid,
-        name: data.name,
-        description: data.description || null,
-        num_periods: data.num_periods,
-      },
+    const budget = await prisma.$transaction(async tx => {
+      const created = await tx.budgets.create({
+        data: {
+          guid: budgetGuid,
+          name: data.name,
+          description: data.description || null,
+          num_periods: data.num_periods,
+        },
+      });
+      await tx.recurrences.create({
+        data: {
+          obj_guid: budgetGuid,
+          recurrence_mult: data.mult,
+          recurrence_period_type: data.period_type,
+          recurrence_period_start: new Date(`${periodStart}T00:00:00.000Z`),
+          recurrence_weekend_adjust: 'none',
+        },
+      });
+      return created;
     });
 
     return serializeBigInts(budget);
@@ -158,10 +177,12 @@ export class BudgetService {
       throw new Error(`Budget not found: ${guid}`);
     }
 
-    // Delete budget (amounts cascade due to onDelete: Cascade)
-    await prisma.budgets.delete({
-      where: { guid },
-    });
+    // Delete budget (amounts cascade via FK). The recurrence must go FIRST:
+    // its obj_guid FK to budgets is ON DELETE RESTRICT.
+    await prisma.$transaction([
+      prisma.recurrences.deleteMany({ where: { obj_guid: guid } }),
+      prisma.budgets.delete({ where: { guid } }),
+    ]);
 
     return { success: true, guid };
   }

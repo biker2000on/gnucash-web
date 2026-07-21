@@ -43,4 +43,41 @@ describe('parser — budget slot keys', () => {
     expect(budget.amounts.map((a) => a.periodNum).sort()).toEqual([0, 1]);
     expect(budget.amounts.map((a) => a.amount)).toEqual(['500/1', '525/1']);
   });
+
+  it('has no recurrence when the XML omits bgt:recurrence', () => {
+    const data = parseGnuCashXml(Buffer.from(BOOK_WITH_TYPED_SLOT_KEYS));
+    expect(data.budgets[0].recurrence).toBeUndefined();
+  });
+});
+
+const BOOK_WITH_RECURRENCE = `<?xml version="1.0" encoding="utf-8"?>
+<gnc-v2>
+  <gnc:book version="2.0.0" xmlns:gnc="x" xmlns:bgt="x" xmlns:recurrence="x">
+    <book:id type="guid">00000000000000000000000000000000</book:id>
+    <gnc:budget version="2.0.0">
+      <bgt:id type="guid">budget-guid-000000000000000000000</bgt:id>
+      <bgt:name>2026 Budget</bgt:name>
+      <bgt:num-periods>12</bgt:num-periods>
+      <bgt:recurrence version="1.0.0">
+        <recurrence:mult>1</recurrence:mult>
+        <recurrence:period_type>month</recurrence:period_type>
+        <recurrence:start>
+          <gdate>2026-01-01</gdate>
+        </recurrence:start>
+      </bgt:recurrence>
+    </gnc:budget>
+  </gnc:book>
+</gnc-v2>`;
+
+describe('parser — budget recurrence', () => {
+  it('reads mult, period type, and gdate start', () => {
+    const data = parseGnuCashXml(Buffer.from(BOOK_WITH_RECURRENCE));
+
+    expect(data.budgets).toHaveLength(1);
+    expect(data.budgets[0].recurrence).toEqual({
+      mult: 1,
+      periodType: 'month',
+      periodStart: '2026-01-01',
+    });
+  });
 });

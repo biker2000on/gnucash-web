@@ -394,6 +394,26 @@ function parseBudgets(bookElement: Record<string, unknown>): GnuCashBudget[] {
     // Parse num periods
     const numPeriods = parseInt(String(obj['bgt:num-periods'] || '12'), 10);
 
+    // Parse recurrence: <bgt:recurrence><recurrence:mult>1</recurrence:mult>
+    //   <recurrence:period_type>month</recurrence:period_type>
+    //   <recurrence:start><gdate>2014-01-01</gdate></recurrence:start>
+    // Without it, budgets import with no period calendar (start dates,
+    // current-budget detection, and seasonal estimates all degrade).
+    let recurrence: GnuCashBudget['recurrence'];
+    const recElement = obj['bgt:recurrence'] as Record<string, unknown> | undefined;
+    if (recElement && typeof recElement === 'object') {
+      const startEl = recElement['recurrence:start'] as Record<string, unknown> | undefined;
+      const periodStart = startEl ? extractText(startEl['gdate']) : '';
+      const periodType = extractText(recElement['recurrence:period_type']);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(periodStart) && periodType) {
+        recurrence = {
+          mult: parseInt(extractText(recElement['recurrence:mult']) || '1', 10) || 1,
+          periodType,
+          periodStart,
+        };
+      }
+    }
+
     // Parse budget amounts from slots.
     // Budget slots nest as: <slot><slot:key>ACCOUNT_GUID</slot:key>
     //   <slot:value type="frame"><slot><slot:key>PERIOD</slot:key>
@@ -432,6 +452,7 @@ function parseBudgets(bookElement: Record<string, unknown>): GnuCashBudget[] {
       name: String(obj['bgt:name'] || ''),
       description: obj['bgt:description'] ? String(obj['bgt:description']) : undefined,
       numPeriods,
+      recurrence,
       amounts,
     };
   });

@@ -103,8 +103,11 @@ async function clearCollisionRows(tx: any, data: GnuCashXmlData) {
     await tx.prices.deleteMany({ where: { guid: { in: priceGuids } } });
   }
 
-  // Budgets — budget_amounts cascade via FK onDelete: Cascade.
+  // Budgets — budget_amounts cascade via FK onDelete: Cascade. Recurrences
+  // must go FIRST: their obj_guid FK to budgets is ON DELETE RESTRICT, so
+  // deleting a budget that still has its recurrence row would fail.
   if (budgetGuids.length) {
+    await tx.recurrences.deleteMany({ where: { obj_guid: { in: budgetGuids } } });
     await tx.budgets.deleteMany({ where: { guid: { in: budgetGuids } } });
   }
 
@@ -565,6 +568,21 @@ export async function importGnuCashData(
           num_periods: budget.numPeriods,
         },
       });
+      // Budget recurrence (period calendar) — after the budget row, since
+      // recurrences.obj_guid has an FK to budgets.guid. GnuCash always
+      // writes one; without it start dates, current-budget picks, and
+      // seasonal estimates degrade to fallbacks.
+      if (budget.recurrence) {
+        await tx.recurrences.create({
+          data: {
+            obj_guid: budget.id,
+            recurrence_mult: budget.recurrence.mult,
+            recurrence_period_type: budget.recurrence.periodType,
+            recurrence_period_start: new Date(`${budget.recurrence.periodStart}T00:00:00.000Z`),
+            recurrence_weekend_adjust: 'none',
+          },
+        });
+      }
       summary.budgets++;
 
       // GnuCash leaves orphaned budget slots behind when an account is

@@ -18,10 +18,23 @@ export interface BudgetRecurrenceLike {
 export interface BudgetLike {
     guid: string;
     num_periods: number;
+    /** Used to infer a start year when no recurrence row exists. */
+    name?: string;
     recurrences?: BudgetRecurrenceLike[] | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Infer a budget's start from a 4-digit year in its name ("2026 Annual
+ * Budget" → Jan 1 2026). Fallback for budgets without a recurrence row
+ * (old XML imports, hand-created rows) so sorting and current-budget
+ * selection still behave sensibly. Returns null when no year is present.
+ */
+export function inferStartFromName(name: string | undefined | null): Date | null {
+    const year = name?.match(/\b(19|20)\d{2}\b/)?.[0];
+    return year ? new Date(Date.UTC(parseInt(year, 10), 0, 1)) : null;
+}
 
 function addMonthsUtc(date: Date, months: number): Date {
     const d = new Date(date);
@@ -29,10 +42,18 @@ function addMonthsUtc(date: Date, months: number): Date {
     return d;
 }
 
-/** The [start, end) range a budget covers, or null without a recurrence. */
+/**
+ * The [start, end) range a budget covers. Without a recurrence row, falls
+ * back to a year in the budget's name (assumed monthly from Jan 1); null
+ * when neither is available.
+ */
 export function budgetRange(budget: BudgetLike): { start: Date; end: Date } | null {
     const rec = budget.recurrences?.[0];
-    if (!rec || !rec.recurrence_period_start) return null;
+    if (!rec || !rec.recurrence_period_start) {
+        const inferred = inferStartFromName(budget.name);
+        if (!inferred) return null;
+        return { start: inferred, end: addMonthsUtc(inferred, Math.max(1, budget.num_periods || 1)) };
+    }
     const start = new Date(rec.recurrence_period_start);
     const mult = Math.max(1, rec.recurrence_mult || 1);
     const periods = Math.max(1, budget.num_periods || 1);

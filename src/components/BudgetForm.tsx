@@ -7,6 +7,10 @@ interface BudgetFormData {
     description: string;
     num_periods: number;
     recurrence_period_type?: string;
+    /** YYYY-MM-DD start of period 0 (create mode). */
+    period_start?: string;
+    period_type?: 'month' | 'year';
+    mult?: number;
 }
 
 interface BudgetFormProps {
@@ -23,6 +27,13 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
         num_periods: initialData?.num_periods || 12,
         recurrence_period_type: initialData?.recurrence_period_type,
     });
+    // Period cadence, set by the preset buttons (create mode only):
+    // Monthly = 1-month periods, Quarterly = 3-month periods, Yearly = year periods.
+    const [cadence, setCadence] = useState<{ period_type: 'month' | 'year'; mult: number }>({
+        period_type: 'month',
+        mult: 1,
+    });
+    const [startMonth, setStartMonth] = useState(`${new Date().getFullYear()}-01`);
 
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -33,7 +44,11 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
         setSaving(true);
 
         try {
-            await onSave(formData);
+            await onSave(
+                mode === 'create'
+                    ? { ...formData, period_start: `${startMonth}-01`, ...cadence }
+                    : formData
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to save budget');
         } finally {
@@ -118,7 +133,10 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                         <div className="flex gap-2">
                             <button
                                 type="button"
-                                onClick={() => setFormData(prev => ({ ...prev, num_periods: 12 }))}
+                                onClick={() => {
+                                    setFormData(prev => ({ ...prev, num_periods: 12 }));
+                                    setCadence({ period_type: 'month', mult: 1 });
+                                }}
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 12
                                         ? 'bg-primary/20 text-primary border border-primary/30'
@@ -129,7 +147,10 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setFormData(prev => ({ ...prev, num_periods: 4 }))}
+                                onClick={() => {
+                                    setFormData(prev => ({ ...prev, num_periods: 4 }));
+                                    setCadence({ period_type: 'month', mult: 3 });
+                                }}
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 4
                                         ? 'bg-primary/20 text-primary border border-primary/30'
@@ -140,7 +161,10 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setFormData(prev => ({ ...prev, num_periods: 1 }))}
+                                onClick={() => {
+                                    setFormData(prev => ({ ...prev, num_periods: 1 }));
+                                    setCadence({ period_type: 'year', mult: 1 });
+                                }}
                                 className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
                                     formData.num_periods === 1
                                         ? 'bg-primary/20 text-primary border border-primary/30'
@@ -158,6 +182,24 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                         : `This budget has ${formData.num_periods} ${formData.recurrence_period_type || ''} period${formData.num_periods !== 1 ? 's' : ''}.`}
                 </p>
             </div>
+
+            {/* Start month (create only — the recurrence anchors period 0) */}
+            {mode === 'create' && (
+                <div>
+                    <label className="block text-sm font-medium text-foreground-secondary mb-2">
+                        Start Month
+                    </label>
+                    <input
+                        type="month"
+                        value={startMonth}
+                        onChange={e => setStartMonth(e.target.value)}
+                        className="bg-input-bg border border-border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all font-mono"
+                    />
+                    <p className="mt-2 text-xs text-foreground-muted">
+                        When period 1 begins. Drives period labels, current-budget detection, and seasonal estimates.
+                    </p>
+                </div>
+            )}
 
             {/* Actions */}
             <div className="flex justify-end gap-3 pt-4 border-t border-border">
