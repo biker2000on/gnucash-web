@@ -55,16 +55,21 @@ export function InlineAmountEditor({
     const actionRef = useRef<null | 'nav' | 'commit' | 'cancel'>(null);
 
     // When this cell becomes active, seed the input with the display value and
-    // focus/select it (supports both click-to-edit and Tab navigation).
+    // focus/select it (supports both click-to-edit and Tab navigation). The
+    // select() must run AFTER React commits the seeded value — selecting
+    // synchronously here gets collapsed when the controlled value re-renders —
+    // so it is deferred a frame. onFocus below re-selects as a fallback.
     useEffect(() => {
-        if (editing) {
-            setEditValue(String(displayValue));
+        if (!editing) return;
+        setEditValue(String(displayValue));
+        const frame = requestAnimationFrame(() => {
             const el = inputRef.current;
             if (el) {
                 el.focus();
                 el.select();
             }
-        }
+        });
+        return () => cancelAnimationFrame(frame);
         // Only re-run when the active state flips.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editing]);
@@ -137,6 +142,7 @@ export function InlineAmountEditor({
                 inputMode="decimal"
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
                 onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
                 className="w-full px-2 py-1 text-right text-sm border border-primary rounded bg-surface focus:outline-none focus:ring-2 focus:ring-primary"

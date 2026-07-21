@@ -10,6 +10,7 @@ import type {
 } from '@/lib/reports/budget-statements';
 import { escapeCSVField, downloadCSV } from '@/lib/reports/csv-export';
 import { formatCurrency } from '@/lib/format';
+import { pickCurrentBudget, type BudgetRecurrenceLike } from '@/lib/budget-select';
 import {
     BarChart,
     Bar,
@@ -27,6 +28,7 @@ interface BudgetListItem {
     guid: string;
     name: string;
     num_periods: number;
+    recurrences?: BudgetRecurrenceLike[] | null;
 }
 
 type RangeMode = 'all' | 'ytd' | 'single' | 'custom';
@@ -198,7 +200,10 @@ export default function BudgetIncomeStatementPage() {
             })
             .then((list: BudgetListItem[]) => {
                 setBudgets(list);
-                setSelectedBudgetGuid(prev => prev ?? list[0]?.guid ?? null);
+                // Default to the budget covering today (falls back to the most
+                // recently ended, then soonest upcoming) — never "2014" just
+                // because it sorts first alphabetically.
+                setSelectedBudgetGuid(prev => prev ?? pickCurrentBudget(list)?.guid ?? null);
                 if (list.length === 0) setIsLoading(false);
             })
             .catch(() => {

@@ -33,6 +33,7 @@ export class BudgetService {
   static async list() {
     const budgets = await prisma.budgets.findMany({
       include: {
+        recurrences: true,
         _count: {
           select: { amounts: true },
         },
@@ -287,12 +288,14 @@ export class BudgetService {
   }
 
   /**
-   * Set the same amount for all periods of an account
+   * Set every period of an account: a single flat amount, or one amount per
+   * period (index = period_num, missing entries fill with 0). Amounts are raw
+   * GnuCash-signed, same as setAmount.
    */
   static async setAllPeriods(
     budgetGuid: string,
     accountGuid: string,
-    amount: number
+    amount: number | number[]
   ) {
     const budget = await prisma.budgets.findUnique({
       where: { guid: budgetGuid },
@@ -300,9 +303,12 @@ export class BudgetService {
     });
     if (!budget) throw new Error('Budget not found');
 
+    const perPeriod = (period: number): number =>
+      Array.isArray(amount) ? (amount[period] ?? 0) : amount;
+
     const amounts = [];
     for (let period = 0; period < budget.num_periods; period++) {
-      const result = await this.setAmount(budgetGuid, accountGuid, period, amount);
+      const result = await this.setAmount(budgetGuid, accountGuid, period, perPeriod(period));
       amounts.push(result);
     }
     return amounts;
@@ -385,69 +391,6 @@ export class BudgetService {
     return serializeBigInts(budget);
   }
 
-  /**
-   * Calculate average monthly spending from last N months
-   */
-  static async getHistoricalAverage(accountGuid: string, months: number = 12) {
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setUTCMonth(startDate.getUTCMonth() - months);
-
-    // Get the root account's type (income is stored negative). The subtree of
-    // an income parent is all income and an expense parent all expense, so the
-    // root type is the correct sign for the whole roll-up.
-    const account = await prisma.accounts.findUnique({
-      where: { guid: accountGuid },
-      select: { account_type: true },
-    });
-
-    // Roll up the account AND all descendants: parent accounts rarely hold
-    // splits directly — the activity lives on their leaf children. Without the
-    // subtree walk, estimating on a parent (now budgetable in the all-accounts
-    // view) returns ~0. Walk the hierarchy to collect every account guid.
-    const subtree = await prisma.$queryRaw<Array<{ guid: string }>>`
-      WITH RECURSIVE subtree AS (
-        SELECT guid FROM accounts WHERE guid = ${accountGuid}
-        UNION ALL
-        SELECT a.guid FROM accounts a
-        JOIN subtree s ON a.parent_guid = s.guid
-      )
-      SELECT guid FROM subtree
-    `;
-    const accountGuids = subtree.map((row) => row.guid);
-
-    const splits = await prisma.splits.findMany({
-      where: {
-        account_guid: { in: accountGuids },
-        transaction: {
-          post_date: {
-            gte: startDate,
-            lte: endDate,
-          },
-        },
-      },
-      select: {
-        quantity_num: true,
-        quantity_denom: true,
-      },
-    });
-
-    const total = splits.reduce((sum, split) => {
-      const value = split.quantity_denom
-        ? Number(split.quantity_num) / Number(split.quantity_denom)
-        : 0;
-      return sum + value;
-    }, 0);
-
-    const adjustedTotal = account?.account_type === 'INCOME' ? -total : total;
-    const average = adjustedTotal / months;
-
-    return {
-      average: Math.round(average * 100) / 100,
-      total: Math.round(adjustedTotal * 100) / 100,
-      transactionCount: splits.length,
-    };
-  }
 }
 
 export default BudgetService;

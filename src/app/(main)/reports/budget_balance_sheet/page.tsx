@@ -9,6 +9,7 @@ import type {
 } from '@/lib/reports/budget-statements';
 import { escapeCSVField, downloadCSV } from '@/lib/reports/csv-export';
 import { formatCurrency } from '@/lib/format';
+import { pickCurrentBudget, type BudgetRecurrenceLike } from '@/lib/budget-select';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -16,6 +17,7 @@ interface BudgetListItem {
     guid: string;
     name: string;
     num_periods: number;
+    recurrences?: BudgetRecurrenceLike[] | null;
 }
 
 function generateBalanceSheetCSV(data: BudgetBalanceSheetData): string {
@@ -132,7 +134,7 @@ export default function BudgetBalanceSheetPage() {
             })
             .then((list: BudgetListItem[]) => {
                 setBudgets(list);
-                setSelectedBudgetGuid(prev => prev ?? list[0]?.guid ?? null);
+                setSelectedBudgetGuid(prev => prev ?? pickCurrentBudget(list)?.guid ?? null);
                 if (list.length === 0) setIsLoading(false);
             })
             .catch(() => {

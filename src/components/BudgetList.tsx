@@ -16,6 +16,7 @@ import {
     type SortDir,
     type SummaryState,
     DEFAULT_SORT_DIR,
+    budgetStartLabel,
     classifyBudget,
     filterBudgets,
     getPeriodLabel,
@@ -38,6 +39,7 @@ const STATUS_FILTERS: { value: BudgetStatusFilter; label: string }[] = [
 ];
 
 const SORT_OPTIONS: { value: BudgetSortKey; label: string }[] = [
+    { value: 'start', label: 'Start date' },
     { value: 'name', label: 'Name' },
     { value: 'period', label: 'Period type' },
     { value: 'numPeriods', label: 'Periods' },
@@ -148,8 +150,9 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
     const [summaries, setSummaries] = useState<Record<string, BudgetActualsSummary | null>>({});
     const [query, setQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<BudgetStatusFilter>('all');
-    const [sortKey, setSortKey] = useState<BudgetSortKey>('name');
-    const [sortDir, setSortDir] = useState<SortDir>('asc');
+    // Default: most recent budget on top (start date descending).
+    const [sortKey, setSortKey] = useState<BudgetSortKey>('start');
+    const [sortDir, setSortDir] = useState<SortDir>('desc');
 
     useEffect(() => {
         let cancelled = false;
@@ -347,7 +350,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
                                                     {getPeriodLabel(budget.num_periods)}
                                                 </span>
                                                 <span className="text-xs text-foreground-muted font-mono tabular-nums">
-                                                    {budget.num_periods}p &middot; {budget._count?.amounts ?? 0} alloc
+                                                    {budgetStartLabel(budget)} &middot; {budget.num_periods}p &middot; {budget._count?.amounts ?? 0} alloc
                                                 </span>
                                             </div>
                                         </div>
@@ -413,6 +416,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
                     <thead>
                         <tr className="text-foreground-secondary border-b border-border">
                             <SortHeader label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                            <SortHeader label="Start" column="start" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} title="Budget period start" />
                             <SortHeader label="Period" column="period" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
                             <SortHeader label="Periods" column="numPeriods" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="hidden xl:table-cell" />
                             <SortHeader label="Allocations" column="allocations" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="hidden lg:table-cell" />
@@ -438,6 +442,9 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
                                         {budget.description && (
                                             <div className="text-xs text-foreground-muted truncate max-w-xs">{budget.description}</div>
                                         )}
+                                    </td>
+                                    <td className="px-4 py-2.5 font-mono tabular-nums text-foreground-secondary">
+                                        {budgetStartLabel(budget)}
                                     </td>
                                     <td className="px-4 py-2.5">
                                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20">

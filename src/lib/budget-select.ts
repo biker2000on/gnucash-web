@@ -11,7 +11,8 @@
 export interface BudgetRecurrenceLike {
     recurrence_mult: number;
     recurrence_period_type: string;
-    recurrence_period_start: Date;
+    /** Date server-side; ISO string once it has crossed a JSON API boundary. */
+    recurrence_period_start: Date | string;
 }
 
 export interface BudgetLike {

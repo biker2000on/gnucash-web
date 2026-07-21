@@ -6,9 +6,32 @@ export interface BudgetListItem {
     name: string;
     description: string | null;
     num_periods: number;
+    /** Raw Prisma recurrence rows; period_start arrives as an ISO string over JSON. */
+    recurrences?: Array<{
+        recurrence_mult: number;
+        recurrence_period_type: string;
+        recurrence_period_start: string | Date;
+    }> | null;
     _count?: {
         amounts: number;
     };
+}
+
+/** Epoch ms of the budget's period 0 start, or null without a recurrence. */
+export function budgetStartMs(budget: BudgetListItem): number | null {
+    const raw = budget.recurrences?.[0]?.recurrence_period_start;
+    if (!raw) return null;
+    const t = new Date(raw).getTime();
+    return Number.isFinite(t) ? t : null;
+}
+
+/** Short label for the budget's start, e.g. "Jan 2026"; em-dash when unknown. */
+export function budgetStartLabel(budget: BudgetListItem): string {
+    const ms = budgetStartMs(budget);
+    if (ms === null) return '—';
+    const d = new Date(ms);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
 /**
@@ -23,6 +46,7 @@ export type BudgetStatusFilter = 'all' | 'active' | 'past' | 'no-amounts';
 
 export type BudgetSortKey =
     | 'name'
+    | 'start'
     | 'period'
     | 'numPeriods'
     | 'allocations'
@@ -35,6 +59,7 @@ export type SortDir = 'asc' | 'desc';
 /** Sensible first-click direction per column. */
 export const DEFAULT_SORT_DIR: Record<BudgetSortKey, SortDir> = {
     name: 'asc',
+    start: 'desc', // most recent budget first
     period: 'asc',
     numPeriods: 'desc',
     allocations: 'desc',
@@ -99,6 +124,8 @@ export function sortValue(
     summary: SummaryState
 ): number | null {
     switch (key) {
+        case 'start':
+            return budgetStartMs(budget);
         case 'period':
         case 'numPeriods':
             return budget.num_periods;

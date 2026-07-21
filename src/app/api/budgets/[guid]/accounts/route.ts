@@ -33,6 +33,7 @@ export async function GET(
                 name: true,
                 account_type: true,
                 parent_guid: true,
+                hidden: true,
                 commodity: {
                     select: { mnemonic: true }
                 }

@@ -8,6 +8,7 @@ import { InlineAmountEditor } from '@/components/budget/InlineAmountEditor';
 import AccountPickerDialog from '@/components/AccountPickerDialog';
 import { BUDGETABLE_ACCOUNT_TYPES } from '@/lib/budget-constants';
 import { BatchEditModal } from '@/components/budget/BatchEditModal';
+import { EstimateModal } from '@/components/budget/EstimateModal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
@@ -77,6 +78,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     const [error, setError] = useState<string | null>(null);
     const [showAccountPicker, setShowAccountPicker] = useState(false);
     const [batchEditAccount, setBatchEditAccount] = useState<{ guid: string; name: string; type: string } | null>(null);
+    const [estimateAccount, setEstimateAccount] = useState<{ guid: string; name: string; type: string; mnemonic: string } | null>(null);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set());
     const [expandLevel, setExpandLevel] = useState<number>(0);
@@ -93,11 +95,13 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
     // View toggle state
     const [showAllAccounts, setShowAllAccounts] = useState(false);
+    const [showHiddenAccounts, setShowHiddenAccounts] = useState(false);
     const [allAccounts, setAllAccounts] = useState<Array<{
         guid: string;
         name: string;
         account_type: string;
         parent_guid: string | null;
+        hidden?: number | null;
         commodity: { mnemonic: string } | null;
     }>>([]);
 
@@ -215,39 +219,6 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             setIsDeleting(null);
             setDeleteConfirmOpen(false);
             setDeletingAccountGuid(null);
-        }
-    };
-
-    const handleEstimate = async (accountGuid: string, accountType: string) => {
-        try {
-            const res = await fetch(`/api/budgets/${guid}/estimate?account_guid=${accountGuid}&months=12`);
-            if (!res.ok) throw new Error('Failed to get estimate');
-            const data = await res.json();
-
-            // getHistoricalAverage returns a natural (positive) figure. Budget
-            // amounts are stored in raw GnuCash sign (income negative), so flip
-            // income before persisting to match the rest of the budget system.
-            const amount = accountType === 'INCOME' ? -data.average : data.average;
-
-            // Apply estimate to all periods
-            const applyRes = await fetch(`/api/budgets/${guid}/amounts/all-periods`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    account_guid: accountGuid,
-                    amount
-                })
-            });
-
-            if (applyRes.ok) {
-                toast.success('Budget estimate applied successfully');
-                await refreshBudget();
-            } else {
-                throw new Error('Failed to apply estimate');
-            }
-        } catch (err) {
-            console.error('Error applying estimate:', err);
-            toast.error('Failed to apply estimate');
         }
     };
 
@@ -379,10 +350,29 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
         // When showing all accounts, merge in non-budgeted accounts
         if (showAllAccounts && allAccounts.length > 0) {
-            // Build a set of all account GUIDs returned by the API (excludes ROOT)
-            const allAccountGuids = new Set(allAccounts.map(a => a.guid));
+            // Respect the GnuCash hidden flag subtree-wide (an account under a
+            // hidden parent is hidden too) unless the user toggles them on.
+            // Explicitly budgeted accounts always show — they come from
+            // budget.amounts above, not from this merge.
+            let visibleAccounts = allAccounts;
+            if (!showHiddenAccounts) {
+                const byGuid = new Map(allAccounts.map(a => [a.guid, a]));
+                const hiddenMemo = new Map<string, boolean>();
+                const isHidden = (guid: string): boolean => {
+                    const memo = hiddenMemo.get(guid);
+                    if (memo !== undefined) return memo;
+                    const acc = byGuid.get(guid);
+                    const result = !!acc && (!!acc.hidden || (acc.parent_guid ? isHidden(acc.parent_guid) : false));
+                    hiddenMemo.set(guid, result);
+                    return result;
+                };
+                visibleAccounts = allAccounts.filter(a => !isHidden(a.guid));
+            }
 
-            for (const acc of allAccounts) {
+            // Build a set of all account GUIDs returned by the API (excludes ROOT)
+            const allAccountGuids = new Set(visibleAccounts.map(a => a.guid));
+
+            for (const acc of visibleAccounts) {
                 if (!accountMap.has(acc.guid)) {
                     // If parent_guid points to an account not in allAccounts, it's the ROOT account
                     // Treat those as top-level (parentGuid = null)
@@ -505,7 +495,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             periodTotals: totals,
             grandTotal: total,
         };
-    }, [budget, expandedNodes, showAllAccounts, allAccounts]);
+    }, [budget, expandedNodes, showAllAccounts, showHiddenAccounts, allAccounts]);
 
     const budgetCurrency = useMemo(() => {
         if (!budget?.amounts?.length) return 'USD';
@@ -872,16 +862,32 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                         <div className="px-4 py-2 bg-surface-hover/50 border-b border-border">
                             <FilterBar
                                 primary={
-                                    <button
-                                        onClick={() => setShowAllAccounts(!showAllAccounts)}
-                                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                                            showAllAccounts
-                                                ? 'bg-primary/20 text-primary border border-primary/30'
-                                                : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
-                                        }`}
-                                    >
-                                        {showAllAccounts ? 'All Accounts' : 'Budgeted Only'}
-                                    </button>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setShowAllAccounts(!showAllAccounts)}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                                showAllAccounts
+                                                    ? 'bg-primary/20 text-primary border border-primary/30'
+                                                    : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
+                                            }`}
+                                        >
+                                            {showAllAccounts ? 'All Accounts' : 'Budgeted Only'}
+                                        </button>
+                                        {showAllAccounts && (
+                                            <button
+                                                onClick={() => setShowHiddenAccounts(v => !v)}
+                                                aria-pressed={showHiddenAccounts}
+                                                title="Include accounts marked hidden in GnuCash"
+                                                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                                    showHiddenAccounts
+                                                        ? 'bg-primary/20 text-primary border border-primary/30'
+                                                        : 'bg-surface text-foreground-secondary border border-border hover:bg-surface-hover'
+                                                }`}
+                                            >
+                                                {showHiddenAccounts ? 'Hidden shown' : 'Show hidden'}
+                                            </button>
+                                        )}
+                                    </div>
                                 }
                             >
                                 <button
@@ -1080,7 +1086,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                 </svg>
                                                             </button>
                                                             <button
-                                                                onClick={() => handleEstimate(account.guid, account.type)}
+                                                                onClick={() => setEstimateAccount({ guid: account.guid, name: account.name, type: account.type, mnemonic: account.mnemonic })}
                                                                 className="p-1.5 text-foreground-secondary hover:text-primary hover:bg-primary/10 rounded transition-colors"
                                                                 title="Estimate from history"
                                                             >
@@ -1224,6 +1230,17 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     onUpdate={refreshBudget}
                 />
             )}
+
+            {/* Estimate-from-history Modal (average / median / seasonal) */}
+            <EstimateModal
+                isOpen={estimateAccount !== null}
+                onClose={() => setEstimateAccount(null)}
+                budgetGuid={budget.guid}
+                account={estimateAccount}
+                periodLabels={Array.from({ length: budget.num_periods }, (_, i) => getPeriodLabel(budget.num_periods, i))}
+                balanceReversal={balanceReversal}
+                onApplied={refreshBudget}
+            />
 
             {/* Delete Account Confirmation Dialog */}
             <ConfirmationDialog

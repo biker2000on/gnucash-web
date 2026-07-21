@@ -4,6 +4,8 @@ import {
     type BudgetListItem,
     type SummaryState,
     DEFAULT_SORT_DIR,
+    budgetStartLabel,
+    budgetStartMs,
     classifyBudget,
     filterBudgets,
     getPeriodLabel,
@@ -224,5 +226,40 @@ describe('DEFAULT_SORT_DIR', () => {
         expect(DEFAULT_SORT_DIR.pctUsed).toBe('desc');
         expect(DEFAULT_SORT_DIR.spent).toBe('desc');
         expect(DEFAULT_SORT_DIR.budgeted).toBe('desc');
+    });
+
+    it('defaults start descending (recent budgets first)', () => {
+        expect(DEFAULT_SORT_DIR.start).toBe('desc');
+    });
+});
+
+describe('start sort (recent budgets first)', () => {
+    const withStart = (guid: string, name: string, iso: string | null): BudgetListItem =>
+        budget({
+            guid,
+            name,
+            recurrences: iso
+                ? [{ recurrence_mult: 1, recurrence_period_type: 'month', recurrence_period_start: iso }]
+                : [],
+        });
+
+    it('budgetStartMs reads the recurrence and null-guards', () => {
+        expect(budgetStartMs(withStart('a', 'A', '2026-01-01T00:00:00.000Z')))
+            .toBe(Date.parse('2026-01-01T00:00:00.000Z'));
+        expect(budgetStartMs(withStart('b', 'B', null))).toBeNull();
+    });
+
+    it('budgetStartLabel renders "Mon YYYY" and an em-dash without a recurrence', () => {
+        expect(budgetStartLabel(withStart('a', 'A', '2026-01-01T00:00:00.000Z'))).toBe('Jan 2026');
+        expect(budgetStartLabel(withStart('b', 'B', null))).toBe('—');
+    });
+
+    it('sorts start desc with recurrence-less budgets last', () => {
+        const b2014 = withStart('2014', '2014 Budget', '2014-01-01T00:00:00.000Z');
+        const b2026 = withStart('2026', '2026 Annual', '2026-01-01T00:00:00.000Z');
+        const b2025 = withStart('2025', '2025 Budget', '2025-01-01T00:00:00.000Z');
+        const noRec = withStart('none', 'No recurrence', null);
+        expect(sortBudgets([b2014, noRec, b2026, b2025], 'start', 'desc', {}).map(b => b.guid))
+            .toEqual(['2026', '2025', '2014', 'none']);
     });
 });
