@@ -78,7 +78,7 @@ export function BatchEditModal({
 
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title="Set All Periods">
-            <div className="space-y-4">
+            <div className="p-6 space-y-4">
                 <p className="text-foreground-secondary">
                     Set the same amount for all {numPeriods} periods of <strong className="text-foreground">{accountName}</strong>
                 </p>
