@@ -603,7 +603,8 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
 export async function scrubAllAccounts(
   method: 'fifo' | 'lifo' | 'average',
   bookAccountGuids: string[],
-  clearFirst: boolean = false
+  clearFirst: boolean = false,
+  onProgress?: (p: { message: string; current: number; total: number; percent: number }) => void
 ): Promise<{ results: AutoAssignResult[]; order: string[]; cleared: number }> {
   // 1. Find all STOCK/MUTUAL accounts
   const investmentAccounts = await prisma.accounts.findMany({
@@ -687,8 +688,21 @@ export async function scrubAllAccounts(
   }
 
   // 5. Scrub each account in order
+  const accountNames = new Map(investmentAccounts.map((a) => [a.guid, a.name]));
   const results: AutoAssignResult[] = [];
+  let scrubIndex = 0;
   for (const accountGuid of order) {
+    scrubIndex++;
+    try {
+      onProgress?.({
+        message: `Scrubbing ${accountNames.get(accountGuid) ?? accountGuid} (${scrubIndex}/${order.length})…`,
+        current: scrubIndex,
+        total: order.length,
+        percent: Math.round((100 * (scrubIndex - 1)) / Math.max(1, order.length)),
+      });
+    } catch {
+      // Progress reporting must never break the scrub.
+    }
     try {
       const result = await autoAssignLots(accountGuid, method);
       results.push(result);

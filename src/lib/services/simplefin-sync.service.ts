@@ -68,9 +68,22 @@ export interface SyncResult {
 
 type SimpleFinSyncStatus = SyncResult['status'] | 'running' | 'queued';
 
+export interface SyncProgressUpdate {
+  message: string;
+  current?: number;
+  total?: number;
+  /** 0-100. */
+  percent?: number;
+}
+
 interface SyncSimpleFinOptions {
   notifyOnSuccess?: boolean;
   source?: 'manual' | 'scheduled' | 'refresh' | 'unknown';
+  /**
+   * Incremental progress callback (best-effort — errors are swallowed so
+   * progress reporting can never break the sync itself).
+   */
+  onProgress?: (p: SyncProgressUpdate) => void | Promise<void>;
 }
 
 export function isNonFatalSimpleFinWarning(message: string): boolean {
@@ -198,6 +211,16 @@ export async function syncSimpleFin(
 
   const endDate = new Date();
 
+  const emitProgress = (p: SyncProgressUpdate) => {
+    try {
+      void options.onProgress?.(p);
+    } catch {
+      // Progress reporting must never break the sync.
+    }
+  };
+
+  emitProgress({ message: 'Fetching transactions from SimpleFin…', percent: 5 });
+
   // Fetch all accounts with transactions using 60-day chunking
   let accountSet;
   try {
@@ -241,8 +264,21 @@ export async function syncSimpleFin(
   // are skipped (a closed period must not change under a sync).
   const lockDate = await getCachedLockDate(bookGuid);
 
+  emitProgress({
+    message: `Fetched ${accountSet.accounts.length} account(s) from SimpleFin`,
+    percent: 10,
+  });
+
   // Process each mapped account
+  let accountIndex = 0;
   for (const mappedAccount of mappedAccounts) {
+    accountIndex++;
+    emitProgress({
+      message: `Syncing ${mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id} (${accountIndex}/${mappedAccounts.length}) — ${result.transactionsImported} imported so far`,
+      current: accountIndex,
+      total: mappedAccounts.length,
+      percent: Math.round(10 + (80 * (accountIndex - 1)) / mappedAccounts.length),
+    });
     const sfAccount = sfAccountMap.get(mappedAccount.simplefin_account_id);
     if (!sfAccount) {
       continue;
@@ -447,6 +483,8 @@ export async function syncSimpleFin(
     } catch (err) {
       console.warn('SimpleFin sync cache invalidation failed:', err);
     }
+
+    emitProgress({ message: 'Running post-sync scans…', percent: 92 });
 
     // Scan freshly imported spending for anomalies / fraud and push alerts.
     // scanForAnomalies is internally guarded and never throws, but wrap the

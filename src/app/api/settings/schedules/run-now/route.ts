@@ -51,10 +51,35 @@ export async function POST() {
       });
     }
 
+    // The refresh-prices job no longer piggybacks SimpleFin sync (interval
+    // timers own the schedule) — "Run now" still means both, so enqueue the
+    // sync explicitly when the same gates pass.
+    let simplefinJobId: string | undefined;
+    try {
+      const connections = await prisma.$queryRaw<{ id: number; user_id: number }[]>`
+        SELECT id, user_id FROM gnucash_web_simplefin_connections
+        WHERE book_guid = ${bookGuid} AND sync_enabled = TRUE
+      `;
+      if (connections.length > 0) {
+        const syncPref = await getPreference<string>(connections[0].user_id, 'simplefin_sync_with_refresh', 'false');
+        if (syncPref === 'true') {
+          simplefinJobId = await enqueueJob('sync-simplefin', {
+            connectionId: connections[0].id,
+            bookGuid,
+            userId: user.id,
+            source: 'manual',
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to enqueue SimpleFin sync for run-now:', err);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Price refresh job queued',
       jobId,
+      simplefinJobId: simplefinJobId ?? null,
     });
   } catch (error) {
     console.error('Failed to trigger price refresh:', error);
