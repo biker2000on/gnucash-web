@@ -11,8 +11,10 @@ import {
   getEntityProfile,
   saveEntityProfile,
   EntityValidationError,
+  BUSINESS_ACTIVITIES,
   ENTITY_TYPES,
   ENTITY_MEMBER_ROLES,
+  type BusinessActivity,
   type EntityType,
   type EntityMemberRole,
   type SaveEntityProfileInput,
@@ -38,12 +40,29 @@ export async function PUT(request: Request) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const body = await request.json();
-    const { entityType, entityName, taxState, filingStatus, stateFlatRate, notes, members } =
-      body ?? {};
+    const {
+      entityType,
+      entityName,
+      taxState,
+      filingStatus,
+      stateFlatRate,
+      businessActivity,
+      notes,
+      members,
+    } = body ?? {};
 
     if (!ENTITY_TYPES.includes(entityType as EntityType)) {
       return NextResponse.json(
         { error: `Invalid entityType. Must be one of: ${ENTITY_TYPES.join(', ')}` },
+        { status: 400 }
+      );
+    }
+    if (
+      businessActivity !== undefined &&
+      !BUSINESS_ACTIVITIES.includes(businessActivity as BusinessActivity)
+    ) {
+      return NextResponse.json(
+        { error: `Invalid businessActivity. Must be one of: ${BUSINESS_ACTIVITIES.join(', ')}` },
         { status: 400 }
       );
     }
@@ -67,6 +86,9 @@ export async function PUT(request: Request) {
       filingStatus: typeof filingStatus === 'string' ? filingStatus : undefined,
       stateFlatRate:
         typeof stateFlatRate === 'number' && isFinite(stateFlatRate) ? stateFlatRate : undefined,
+      businessActivity: BUSINESS_ACTIVITIES.includes(businessActivity as BusinessActivity)
+        ? (businessActivity as BusinessActivity)
+        : undefined,
       notes: typeof notes === 'string' ? notes : null,
       members: members.map((m: Record<string, unknown>, i: number) => ({
         role: m.role as EntityMemberRole,

@@ -10,13 +10,14 @@ import prisma from './prisma';
 import { generateGuid } from './gnucash';
 import { getCurrencyName } from './currencies';
 import { getEntityAccountTemplate, type TemplateAccountDef } from './book-templates';
-import type { EntityType } from '@/lib/services/entity.service';
+import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
 
 export async function createDefaultBook(
   bookName: string = 'My Finances',
   bookDescription?: string,
   entityType: EntityType = 'household',
-  currency: string = 'USD'
+  currency: string = 'USD',
+  businessActivity: BusinessActivity = 'general'
 ): Promise<string> {
   const mnemonic = currency.toUpperCase();
 
@@ -42,7 +43,7 @@ export async function createDefaultBook(
   }
 
   const commodityScu = Number(currencyCommodity.fraction) || 100;
-  const hierarchy = getEntityAccountTemplate(entityType);
+  const hierarchy = getEntityAccountTemplate(entityType, businessActivity);
 
   const bookGuid = generateGuid();
   const rootGuid = generateGuid();
