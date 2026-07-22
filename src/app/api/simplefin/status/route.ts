@@ -77,6 +77,8 @@ export async function GET() {
 
     // Check if SimpleFin sync with refresh is enabled (user preference)
     const syncWithRefresh = await getPreference<string>(user.id, 'simplefin_sync_with_refresh', 'false');
+    const syncIntervalRaw = await getPreference<string>(user.id, 'simplefin_sync_interval_hours', '2');
+    const syncIntervalHours = Math.max(1, Math.min(24, parseInt(syncIntervalRaw, 10) || 2));
 
     return NextResponse.json({
       connected: true,
@@ -88,6 +90,7 @@ export async function GET() {
       lastSyncErrorAt: connection.last_sync_error_at,
       revoked: connection.last_sync_status === 'revoked',
       syncEnabled: syncWithRefresh === 'true',
+      syncIntervalHours,
       connectedAt: connection.created_at,
       accountsTotal: Number(mappedCounts[0]?.total || 0),
       accountsMapped: Number(mappedCounts[0]?.mapped || 0),

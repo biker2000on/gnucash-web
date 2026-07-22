@@ -46,6 +46,7 @@ export async function POST() {
       success: true,
       message: 'SimpleFin sync job queued',
       jobId,
+      kind: 'sync-simplefin',
     });
   } catch (error) {
     console.error('Error triggering SimpleFin sync:', error);

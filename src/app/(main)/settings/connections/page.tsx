@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { useJobProgress, type JobProgressEventPayload } from '@/contexts/JobProgressContext';
 import { AccountSelector } from '@/components/ui/AccountSelector';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
@@ -41,6 +42,8 @@ interface SyncResult {
 
 export default function ConnectionsPage() {
   const { success, error: showError } = useToast();
+  const { trackJob } = useJobProgress();
+  const [sfLiveProgress, setSfLiveProgress] = useState<string | null>(null);
   const isMobile = useIsMobile();
 
   const [simplefinConnected, setSimplefinConnected] = useState(false);
@@ -235,7 +238,10 @@ export default function ConnectionsPage() {
           success(`Imported ${data.transactionsImported} transactions, skipped ${data.transactionsSkipped} duplicates${matchedMsg}`);
         }
       } else {
-        success('Sync job queued');
+        // Queued: follow the job on the progress bus — the completion event
+        // populates the results panel (see the job-progress listener below).
+        if (data.jobId) trackJob(String(data.jobId), 'SimpleFin sync');
+        setSfLiveProgress('Sync queued…');
         setSfSyncStatus('queued');
       }
       await fetchSimplefinStatus();
@@ -245,6 +251,42 @@ export default function ConnectionsPage() {
       setSfSyncing(false);
     }
   };
+
+  // Live SimpleFin sync progress from the job bus (manual AND scheduled runs
+  // show here while the page is open; toasts for manual runs come from the
+  // global JobProgressToasts).
+  useEffect(() => {
+    const onProgress = (e: Event) => {
+      const event = (e as CustomEvent<JobProgressEventPayload>).detail;
+      if (!event || event.kind !== 'sync-simplefin') return;
+      if (event.status === 'running' || event.status === 'progress') {
+        setSfLiveProgress(event.message ?? 'Syncing…');
+      } else if (event.status === 'completed') {
+        setSfLiveProgress(null);
+        const s = event.summary ?? {};
+        const num = (k: string) => (typeof s[k] === 'number' ? (s[k] as number) : 0);
+        setSfSyncResult({
+          success: true,
+          accountsProcessed: num('accountsProcessed'),
+          transactionsImported: num('transactionsImported'),
+          transactionsSkipped: num('transactionsSkipped'),
+          transactionsMatched: {
+            manualReconciliation: num('manualReconciliation'),
+            transferDedup: num('transferDedup'),
+          },
+          errors: [],
+          warnings: [],
+        });
+        void fetchSimplefinStatus();
+      } else if (event.status === 'failed') {
+        setSfLiveProgress(null);
+        void fetchSimplefinStatus();
+      }
+    };
+    window.addEventListener('job-progress', onProgress);
+    return () => window.removeEventListener('job-progress', onProgress);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSfDisconnect = async () => {
     setSfDisconnecting(true);
@@ -392,6 +434,14 @@ export default function ConnectionsPage() {
                 </button>
               </div>
             </div>
+
+            {/* Live sync progress */}
+            {sfLiveProgress && (
+              <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 flex items-center gap-2">
+                <div className="w-3.5 h-3.5 border-2 border-primary/30 border-t-primary rounded-full animate-spin shrink-0" />
+                <p className="text-sm text-primary">{sfLiveProgress}</p>
+              </div>
+            )}
 
             {/* Sync Results */}
             {sfSyncResult && (

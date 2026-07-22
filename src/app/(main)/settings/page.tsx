@@ -183,6 +183,7 @@ export default function SettingsPage() {
   const [indexCoverage, setIndexCoverage] = useState<IndexCoverage | null>(null);
   const [taxRateInput, setTaxRateInput] = useState('');
   const [simplefinSyncEnabled, setSimplefinSyncEnabled] = useState(false);
+  const [simplefinSyncInterval, setSimplefinSyncInterval] = useState(2);
   const [simplefinConnected, setSimplefinConnected] = useState(false);
   const [savingBalance, setSavingBalance] = useState(false);
   const [entity, setEntity] = useState<EntityProfileForm | null>(null);
@@ -258,6 +259,7 @@ export default function SettingsPage() {
         const data = await res.json();
         setSimplefinConnected(data.connected);
         setSimplefinSyncEnabled(data.syncEnabled ?? false);
+        setSimplefinSyncInterval(data.syncIntervalHours ?? 2);
       }
     } catch {
       // Silently fail
@@ -357,9 +359,26 @@ export default function SettingsPage() {
         body: JSON.stringify({ preferences: { simplefin_sync_with_refresh: enabled ? 'true' : 'false' } }),
       });
       setSimplefinSyncEnabled(enabled);
-      success(`SimpleFin sync ${enabled ? 'enabled' : 'disabled'} with price refresh`);
+      // Rebuild the worker's SimpleFin interval timers right away.
+      void fetch('/api/simplefin/schedule', { method: 'POST' }).catch(() => {});
+      success(`Automatic SimpleFin sync ${enabled ? 'enabled' : 'disabled'}`);
     } catch {
       showError('Failed to update SimpleFin sync setting');
+    }
+  };
+
+  const updateSimplefinInterval = async (hours: number) => {
+    try {
+      await fetch('/api/user/preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferences: { simplefin_sync_interval_hours: String(hours) } }),
+      });
+      setSimplefinSyncInterval(hours);
+      void fetch('/api/simplefin/schedule', { method: 'POST' }).catch(() => {});
+      success(`SimpleFin sync interval set to every ${hours === 24 ? '24 hours' : `${hours} hour${hours === 1 ? '' : 's'}`}`);
+    } catch {
+      showError('Failed to update SimpleFin sync interval');
     }
   };
 
@@ -592,7 +611,7 @@ export default function SettingsPage() {
 
   // One-line summaries shown while each section is collapsed
   const scheduleSummary = schedule.enabled
-    ? `${INTERVAL_OPTIONS.find((o) => o.value === schedule.intervalHours)?.label ?? 'Daily'} at ${utcToLocal(schedule.refreshTime)}${simplefinConnected && simplefinSyncEnabled ? ' · SimpleFin sync' : ''}`
+    ? `${INTERVAL_OPTIONS.find((o) => o.value === schedule.intervalHours)?.label ?? 'Daily'} at ${utcToLocal(schedule.refreshTime)}${simplefinConnected && simplefinSyncEnabled ? ` · SimpleFin every ${simplefinSyncInterval}h` : ''}`
     : 'Disabled';
   const indexDataSummary = indexCoverage
     ? indexCoverage.isUpToDate
@@ -1227,15 +1246,38 @@ export default function SettingsPage() {
 
           {/* SimpleFin Sync Toggle - only show if connected */}
           {simplefinConnected && (
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={simplefinSyncEnabled}
-                onChange={(e) => updateSimplefinSync(e.target.checked)}
-                className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
-              />
-              <span className="text-sm text-foreground">Sync SimpleFin transactions with each refresh</span>
-            </label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={simplefinSyncEnabled}
+                  onChange={(e) => updateSimplefinSync(e.target.checked)}
+                  className="w-4 h-4 text-primary bg-background-tertiary border-border-hover rounded focus:ring-primary/50"
+                />
+                <span className="text-sm text-foreground">Sync SimpleFin transactions automatically</span>
+              </label>
+              {simplefinSyncEnabled && (
+                <div className="pl-7 space-y-1">
+                  <label className="block text-sm text-foreground-secondary">SimpleFin sync frequency</label>
+                  <select
+                    value={simplefinSyncInterval}
+                    onChange={(e) => updateSimplefinInterval(Number(e.target.value))}
+                    className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                  >
+                    {[1, 2, 4, 6, 12, 24].map((h) => (
+                      <option key={h} value={h}>
+                        {h === 24 ? 'Once a day' : `Every ${h} hour${h === 1 ? '' : 's'}`}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-foreground-muted">
+                    Bank transactions often post hours after they happen — a shorter interval
+                    catches them the same day. Syncs run in the background and only notify
+                    on failure.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Refresh Frequency */}

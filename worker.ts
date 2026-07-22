@@ -28,6 +28,152 @@ interface ScheduleEntry {
 const schedules = new Map<string, ScheduleEntry>(); // keyed by bookGuid
 let workerReady = false;
 
+// --- Job progress labels (for the job-progress bus) ---
+const JOB_LABELS: Record<string, string> = {
+  'refresh-prices': 'Price refresh',
+  'backfill-indices': 'Index backfill',
+  'audit-price-history': 'Price history audit',
+  'sync-simplefin': 'SimpleFin sync',
+  'ocr-receipt': 'Receipt OCR',
+  'regenerate-thumbnails': 'Thumbnail regeneration',
+  'extract-payslip': 'Payslip extraction',
+  'extract-statement': 'Statement extraction',
+  'run-backups': 'Backup run',
+  'check-price-alerts': 'Price alert check',
+  'poll-email-ingest': 'Email ingest poll',
+  'run-report-schedules': 'Report schedules',
+  'run-insights': 'Insights run',
+};
+
+// --- SimpleFin interval schedules (independent of the daily price refresh) ---
+interface SimpleFinTimerEntry {
+  initial: ReturnType<typeof setTimeout> | null;
+  interval: ReturnType<typeof setInterval> | null;
+}
+const simplefinTimers = new Map<number, SimpleFinTimerEntry>(); // keyed by connection id
+// Per-connection overlap guard shared by the interval ticks AND the queued
+// sync-simplefin handler — two concurrent syncs of one connection would
+// double-import (the dedup snapshot is per-run and the meta table has no
+// unique constraint on simplefin_transaction_id).
+const simplefinSyncInFlight = new Set<number>();
+
+async function runScheduledSimpleFinSync(connectionId: number, bookGuid: string, userId: number) {
+  if (simplefinSyncInFlight.has(connectionId)) {
+    console.log(`Scheduled SimpleFin sync skipped (connection ${connectionId} already syncing)`);
+    return;
+  }
+  simplefinSyncInFlight.add(connectionId);
+  console.log(`[${new Date().toISOString()}] Scheduled SimpleFin sync for connection ${connectionId}`);
+  try {
+    const { syncSimpleFin } = await import('./src/lib/services/simplefin-sync.service');
+    const { jobProgressEmitter } = await import('./src/lib/job-progress');
+    const emit = jobProgressEmitter({
+      jobId: `scheduled-sf-${connectionId}-${Date.now()}`,
+      kind: 'sync-simplefin',
+      bookGuid,
+      userId,
+      source: 'scheduled',
+      label: 'SimpleFin sync',
+    });
+    await emit.running();
+    const result = await syncSimpleFin(connectionId, bookGuid, {
+      source: 'scheduled',
+      onProgress: (p) => void emit.progress(p),
+    });
+    if (result.status === 'success') {
+      await emit.completed({
+        status: result.status,
+        transactionsImported: result.transactionsImported,
+        transactionsSkipped: result.transactionsSkipped,
+        investmentTransactionsImported: result.investmentTransactionsImported,
+        accountsProcessed: result.accountsProcessed,
+        manualReconciliation: result.transactionsMatched.manualReconciliation,
+        transferDedup: result.transactionsMatched.transferDedup,
+        warnings: result.warnings.length,
+      });
+    } else {
+      await emit.failed(result.errors[0]?.error ?? `Sync ${result.status}`);
+    }
+    console.log(
+      `[${new Date().toISOString()}] Scheduled SimpleFin sync (conn ${connectionId}): ${result.status}, ${result.transactionsImported} imported`,
+    );
+  } catch (err) {
+    console.error(`Scheduled SimpleFin sync failed for connection ${connectionId}:`, err);
+  } finally {
+    simplefinSyncInFlight.delete(connectionId);
+  }
+}
+
+function clearSimpleFinTimers() {
+  for (const entry of simplefinTimers.values()) {
+    if (entry.initial) clearTimeout(entry.initial);
+    if (entry.interval) clearInterval(entry.interval);
+  }
+  simplefinTimers.clear();
+}
+
+// Single-flight chain: concurrent rebuild requests (worker concurrency is 3,
+// and the settings page can fire two schedule-changed signals back to back)
+// must not interleave clear/build and leak orphaned intervals.
+let simplefinRebuildChain: Promise<void> = Promise.resolve();
+
+function recoverSimpleFinSchedules(): Promise<void> {
+  simplefinRebuildChain = simplefinRebuildChain.then(() => rebuildSimpleFinSchedules());
+  return simplefinRebuildChain;
+}
+
+/**
+ * (Re)build timers for every sync-enabled SimpleFin connection whose owner
+ * opted into scheduled sync. Cadence comes from the owner's
+ * `simplefin_sync_interval_hours` preference (default 2h). Replaces the old
+ * once-a-day piggyback on the price-refresh schedule. The first tick is
+ * phase-preserving: it fires at last_successful_sync + interval (min 1
+ * minute), so rebuilds and worker restarts don't perpetually defer the sync.
+ */
+async function rebuildSimpleFinSchedules() {
+  clearSimpleFinTimers();
+
+  try {
+    const prisma = createWorkerPrisma();
+    try {
+      const connections = await prisma.gnucash_web_simplefin_connections.findMany({
+        where: { sync_enabled: true },
+        select: { id: true, book_guid: true, user_id: true, last_successful_sync_at: true },
+      });
+      const { getPreference } = await import('./src/lib/user-preferences');
+      for (const conn of connections) {
+        const optedIn = await getPreference<string>(conn.user_id, 'simplefin_sync_with_refresh', 'false');
+        if (optedIn !== 'true') continue;
+        const intervalRaw = await getPreference<string>(conn.user_id, 'simplefin_sync_interval_hours', '2');
+        const intervalHours = Math.max(1, Math.min(24, parseInt(intervalRaw, 10) || 2));
+        const intervalMs = intervalHours * 60 * 60 * 1000;
+
+        const lastSync = conn.last_successful_sync_at?.getTime() ?? 0;
+        const initialDelay = Math.max(60_000, Math.min(intervalMs, lastSync + intervalMs - Date.now()));
+
+        const entry: SimpleFinTimerEntry = { initial: null, interval: null };
+        entry.initial = setTimeout(() => {
+          entry.initial = null;
+          void runScheduledSimpleFinSync(conn.id, conn.book_guid, conn.user_id);
+          entry.interval = setInterval(
+            () => void runScheduledSimpleFinSync(conn.id, conn.book_guid, conn.user_id),
+            intervalMs,
+          );
+        }, initialDelay);
+        simplefinTimers.set(conn.id, entry);
+        console.log(
+          `SimpleFin schedule set: connection ${conn.id} every ${intervalHours}h, first run in ${Math.round(initialDelay / 60000)}m (book ${conn.book_guid})`,
+        );
+      }
+      console.log(`Recovered ${simplefinTimers.size} SimpleFin schedule(s)`);
+    } finally {
+      await prisma.$disconnect();
+    }
+  } catch (err) {
+    console.error('Failed to recover SimpleFin schedules:', err);
+  }
+}
+
 // --- Health check server ---
 function startHealthServer(port: number) {
   const server = http.createServer((_req, res) => {
@@ -206,10 +352,30 @@ async function main() {
 
   // Recover schedules from DB before processing jobs
   await recoverSchedules();
+  await recoverSimpleFinSchedules();
 
   const worker = new Worker('gnucash-jobs', async (job: Job) => {
     console.log(`[${new Date().toISOString()}] Processing job: ${job.name} (${job.id})`);
     const startTime = Date.now();
+
+    // Job-progress bus: every job whose payload carries a bookGuid publishes
+    // running/completed/failed so the browser can follow along. Jobs without
+    // a bookGuid (internal crons) publish nothing.
+    const jobData = (job.data ?? {}) as Record<string, unknown>;
+    const { jobProgressEmitter } = await import('./src/lib/job-progress');
+    const emit =
+      typeof jobData.bookGuid === 'string'
+        ? jobProgressEmitter({
+            jobId: String(job.id),
+            kind: job.name,
+            bookGuid: jobData.bookGuid,
+            userId: typeof jobData.userId === 'number' ? jobData.userId : undefined,
+            source: jobData.source === 'manual' ? 'manual' : 'scheduled',
+            label: JOB_LABELS[job.name] ?? job.name,
+          })
+        : null;
+    let jobSummary: Record<string, unknown> | undefined;
+    await emit?.running();
 
     try {
       switch (job.name) {
@@ -236,11 +402,37 @@ async function main() {
             userId?: number;
             source?: 'manual' | 'scheduled' | 'refresh' | 'unknown';
           };
+          if (simplefinSyncInFlight.has(connectionId)) {
+            jobSummary = { status: 'skipped', reason: 'A sync for this connection is already running' };
+            console.log(`SimpleFin sync job skipped (connection ${connectionId} already syncing)`);
+            break;
+          }
+          simplefinSyncInFlight.add(connectionId);
           const { syncSimpleFin } = await import('./src/lib/services/simplefin-sync.service');
-          const syncResult = await syncSimpleFin(connectionId, bookGuid, {
-            notifyOnSuccess: source === 'manual',
-            source: source || 'unknown',
-          });
+          let syncResult;
+          try {
+            syncResult = await syncSimpleFin(connectionId, bookGuid, {
+              notifyOnSuccess: source === 'manual',
+              source: source || 'unknown',
+              onProgress: (p) => {
+                void emit?.progress(p);
+                if (p.percent !== undefined) void job.updateProgress(p.percent);
+              },
+            });
+          } finally {
+            simplefinSyncInFlight.delete(connectionId);
+          }
+          jobSummary = {
+            status: syncResult.status,
+            transactionsImported: syncResult.transactionsImported,
+            transactionsSkipped: syncResult.transactionsSkipped,
+            investmentTransactionsImported: syncResult.investmentTransactionsImported,
+            accountsProcessed: syncResult.accountsProcessed,
+            manualReconciliation: syncResult.transactionsMatched.manualReconciliation,
+            transferDedup: syncResult.transactionsMatched.transferDedup,
+            warnings: syncResult.warnings.length,
+            errors: syncResult.errors.length,
+          };
           console.log(`SimpleFin sync: ${syncResult.status}, ${syncResult.transactionsImported} imported, ${syncResult.transactionsSkipped} skipped, ${syncResult.investmentTransactionsImported} investment txns`);
           if (syncResult.warnings.length > 0) {
             console.warn(`SimpleFin sync warnings:`, syncResult.warnings);
@@ -248,6 +440,16 @@ async function main() {
           if (syncResult.errors.length > 0) {
             console.error(`SimpleFin sync errors:`, syncResult.errors);
           }
+          if (syncResult.status !== 'success') {
+            // Surface the failure on the progress bus, then let the normal
+            // return path stand (the service already persisted status +
+            // notification).
+            await emit?.failed(syncResult.errors[0]?.error ?? `Sync ${syncResult.status}`);
+          }
+          break;
+        }
+        case 'simplefin-schedule-changed': {
+          await recoverSimpleFinSchedules();
           break;
         }
         case 'schedule-changed': {
@@ -287,6 +489,7 @@ async function main() {
         case 'regenerate-thumbnails': {
           const { handleRegenerateThumbnails } = await import('./src/lib/queue/jobs/regenerate-thumbnails');
           const thumbResult = await handleRegenerateThumbnails(job);
+          jobSummary = { ...thumbResult };
           console.log(`Thumbnail regeneration: ${thumbResult.regenerated} regenerated, ${thumbResult.skipped} skipped, ${thumbResult.failed} failed`);
           break;
         }
@@ -365,8 +568,19 @@ async function main() {
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[${new Date().toISOString()}] Job ${job.name} (${job.id}) completed in ${elapsed}s`);
+      // Non-success sync results already emitted 'failed' above ('skipped'
+      // still completes with its reason).
+      const alreadyFailed =
+        typeof jobSummary?.status === 'string' &&
+        jobSummary.status !== 'success' &&
+        jobSummary.status !== 'skipped';
+      if (!alreadyFailed) await emit?.completed(jobSummary);
+      // Return the summary so BullMQ's returnvalue carries the outcome — the
+      // /api/jobs/[id] polling fallback reads status from it.
+      return jobSummary ?? null;
     } catch (error) {
       console.error(`Job ${job.name} (${job.id}) failed:`, error);
+      await emit?.failed(error instanceof Error ? error.message : String(error));
       throw error;
     }
   }, {
