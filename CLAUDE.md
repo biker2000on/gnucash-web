@@ -35,7 +35,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
   - `reports/` - Reports dashboard with 16+ report types (balance sheet, P&L, portfolio, lots, tax harvesting, etc.)
   - `tools/` - Mortgage calculator, FIRE calculator, asset analysis, Farm & Apiary Analyzer (`farm-analyzer/` — 4-scenario farm formalization tax comparison)
   - `business/reports/schedule-f/page.tsx` - Schedule F farm report with apiary-aware keyword mapping and per-account override panel
-  - `layout.tsx` - Main layout with sidebar navigation, calls `initializeDatabase()`
+  - `layout.tsx` - Main layout with sidebar navigation (note: `initializeDatabase()` runs via `docker-entrypoint.sh`/`db-init.js` in Docker or `scripts/dev-run-db-init.ts` in dev, not from the layout)
 - `api/` - API route handlers
   - `accounts/` - Account hierarchy, account-specific transactions, preferences (retirement flag, cost basis)
   - `transactions/` - Paginated transaction listing with search/filter
