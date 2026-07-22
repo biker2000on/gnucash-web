@@ -33,7 +33,8 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
   - `scheduled-transactions/page.tsx` - Scheduled transactions with execute/skip, enable/disable, batch mode, create new
   - `reports/contribution_summary/page.tsx` - Contribution report with IRS limit tracking
   - `reports/` - Reports dashboard with 16+ report types (balance sheet, P&L, portfolio, lots, tax harvesting, etc.)
-  - `tools/` - Mortgage calculator, FIRE calculator, asset analysis
+  - `tools/` - Mortgage calculator, FIRE calculator, asset analysis, Farm & Apiary Analyzer (`farm-analyzer/` — 4-scenario farm formalization tax comparison)
+  - `business/reports/schedule-f/page.tsx` - Schedule F farm report with apiary-aware keyword mapping and per-account override panel
   - `layout.tsx` - Main layout with sidebar navigation, calls `initializeDatabase()`
 - `api/` - API route handlers
   - `accounts/` - Account hierarchy, account-specific transactions, preferences (retirement flag, cost basis)
@@ -42,6 +43,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
   - `scheduled-transactions/` - Scheduled transaction listing, execute/skip/batch, create new, enable/disable
   - `contribution-limits/` - IRS contribution limit management
   - `contributions/` - Tax-year override per split
+  - `tools/farm-analysis/` - Farm analyzer scenarios; `business/reports/schedule-f/` + `business/schedule-f/mappings/` - Schedule F report and mapping overrides
 
 ### Key Libraries (src/lib/)
 
@@ -56,6 +58,11 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `format.ts` - Currency formatting utility
 - `scheduled-transactions.ts` - Shared utility: `resolveTemplateSplits()`, GnuCash date parsing
 - `recurrence.ts` - Recurrence computation engine (9 period types, weekend adjustment, month-end clamping)
+- `tax/farm-analysis.ts` - Farm formalization engine: 4-scenario comparison (unreported cash, hobby, Schedule F, Schedule F + NC LLC) with SE tax, QBI, and §179 modeling
+- `tax/nc-farm-rules.ts` - NC farm rules: qualifying-farmer sales-tax exemption ($10k threshold), present-use value hints, LLC formation/annual-report fees
+- `tax/farm-book-data.ts` - Pulls and annualizes farm income/expense actuals from user-selected account subtrees
+- `business/schedule-f.ts` / `schedule-f-mappings.ts` / `schedule-f-report.ts` - Schedule F line classification (apiary-aware keyword mapper + manual overrides in the lazily-created `gnucash_web_schedule_f_mappings` table) and report generation
+- `book-templates.ts` - Chart-of-accounts templates per entity type, including the Schedule F-aligned farm template for books with `business_activity = 'farm'`
 
 ### Reports (src/lib/reports/)
 
@@ -115,6 +122,7 @@ npx vitest --coverage   # Run with coverage report
 - `src/__tests__/` — smoke tests, setup files
 - `src/lib/__tests__/` — unit tests for library modules (e.g., `numeric.test.ts`, `lot-scrub.test.ts`)
 - `src/lib/services/__tests__/` — service layer tests
+- Module-local `__tests__/` folders (e.g., `src/lib/tax/__tests__/`, `src/lib/business/__tests__/`)
 
 **Conventions:**
 - Test files use `*.test.ts` or `*.spec.ts` suffix
