@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0.1] - 2026-07-22
+
+### Fixed
+- SimpleFin syncs now request only what they need: the fetch window starts 7 days before the oldest account's last sync (90 days only for never-synced accounts) instead of always requesting ≥90 days. Keeps the new 2-hourly syncs inside SimpleFin's recommended 45-day range and stops the per-sync "range exceeds recommended" warning seen in the prod worker logs.
+
 ## [0.15.0.0] - 2026-07-22
 
 ### Added — Live job progress
