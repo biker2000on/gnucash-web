@@ -90,6 +90,36 @@ export function isNonFatalSimpleFinWarning(message: string): boolean {
   return /requested date range exceeds recommended range/i.test(message);
 }
 
+/** Trailing overlap re-fetched on every sync so late-posting transactions land. */
+const SYNC_OVERLAP_DAYS = 7;
+/** Bootstrap window for accounts that have never synced. */
+const SYNC_BOOTSTRAP_DAYS = 90;
+
+/**
+ * Start of the SimpleFin fetch window. Pure — exported for tests.
+ *
+ * - Any account never synced → 90 days back (bootstrap).
+ * - Otherwise → the OLDEST per-account last-sync minus a 7-day overlap
+ *   (dedup by SimpleFin transaction id makes the overlap safe, and stale
+ *   accounts naturally widen the window).
+ *
+ * Previously every sync fetched ≥90 days, tripping SimpleFin's
+ * "exceeds recommended range of 45 days" warning on each run — untenable at
+ * the new 2-hourly cadence, and fragile if the bridge starts capping.
+ */
+export function computeSyncStart(
+  lastSyncs: Array<Date | null>,
+  now: Date,
+): Date {
+  const bootstrap = new Date(now.getTime() - SYNC_BOOTSTRAP_DAYS * 24 * 60 * 60 * 1000);
+  if (lastSyncs.length === 0 || lastSyncs.some(d => !d)) return bootstrap;
+  let earliest = lastSyncs[0] as Date;
+  for (const d of lastSyncs) {
+    if (d && d < earliest) earliest = d;
+  }
+  return new Date(earliest.getTime() - SYNC_OVERLAP_DAYS * 24 * 60 * 60 * 1000);
+}
+
 export async function updateSimpleFinConnectionSyncStatus(
   connectionId: number,
   status: SimpleFinSyncStatus,
@@ -197,17 +227,10 @@ export async function syncSimpleFin(
 
   const allMappedAccountGuids = mappedAccounts.map(a => a.gnucash_account_guid);
 
-  // Determine the date range for fetching
-  // Use earliest last_sync_at across all mapped accounts, or 90 days ago
-  const ninetyDaysAgo = new Date();
-  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
-  let earliestSync = ninetyDaysAgo;
-  for (const acct of mappedAccounts) {
-    if (acct.last_sync_at && acct.last_sync_at < earliestSync) {
-      earliestSync = acct.last_sync_at;
-    }
-  }
+  const earliestSync = computeSyncStart(
+    mappedAccounts.map(a => a.last_sync_at),
+    new Date(),
+  );
 
   const endDate = new Date();
 
