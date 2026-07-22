@@ -4,6 +4,7 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getAccountLots } from '@/lib/lots';
 import { detectWashSales, WashSaleResult } from '@/lib/lot-assignment';
+import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 
 interface HarvestCandidate {
   accountGuid: string;
@@ -47,22 +48,30 @@ export async function GET(request: NextRequest) {
 
     const bookAccountGuids = await getBookAccountGuids();
 
-    const investmentAccounts = await prisma.accounts.findMany({
-      where: {
-        guid: { in: bookAccountGuids },
-        account_type: { in: ['STOCK', 'MUTUAL'] },
-      },
-      select: {
-        guid: true,
-        name: true,
-        commodity_guid: true,
-        commodity: { select: { mnemonic: true } },
-      },
-    });
+    const [investmentAccounts, retirementGuids] = await Promise.all([
+      prisma.accounts.findMany({
+        where: {
+          guid: { in: bookAccountGuids },
+          account_type: { in: ['STOCK', 'MUTUAL'] },
+        },
+        select: {
+          guid: true,
+          name: true,
+          commodity_guid: true,
+          commodity: { select: { mnemonic: true } },
+        },
+      }),
+      getRetirementAccountGuids(bookAccountGuids),
+    ]);
 
     const candidates: HarvestCandidate[] = [];
 
     for (const account of investmentAccounts) {
+      // Losses inside tax-advantaged accounts are not deductible — never
+      // offer them as harvest candidates. (Wash-sale detection below still
+      // spans ALL accounts on purpose: an IRA repurchase can wash a taxable
+      // loss, Rev. Rul. 2008-5.)
+      if (retirementGuids.has(account.guid)) continue;
       const lots = await getAccountLots(account.guid);
 
       for (const lot of lots) {

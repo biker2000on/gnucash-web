@@ -56,21 +56,84 @@ export const ENTITY_RULESET_LABELS: Record<EntityType, string> = {
 /* Date helpers                                                        */
 /* ------------------------------------------------------------------ */
 
-const WEEKEND_NOTE =
-  'This date falls on a weekend, so the effective deadline is the next business day.';
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function toIso(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function nthWeekdayOfMonth(year: number, month0: number, weekday: number, n: number): string {
+  const first = new Date(Date.UTC(year, month0, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return toIso(new Date(Date.UTC(year, month0, 1 + offset + (n - 1) * 7)));
+}
+
+function lastWeekdayOfMonth(year: number, month0: number, weekday: number): string {
+  const last = new Date(Date.UTC(year, month0 + 1, 0));
+  const offset = (last.getUTCDay() - weekday + 7) % 7;
+  return toIso(new Date(last.getTime() - offset * DAY_MS));
+}
+
+/** Fixed-date federal holiday with Sat→Friday / Sun→Monday observance. */
+function observedFixed(year: number, month0: number, day: number): string {
+  const d = new Date(Date.UTC(year, month0, day));
+  const dow = d.getUTCDay();
+  if (dow === 6) return toIso(new Date(d.getTime() - DAY_MS));
+  if (dow === 0) return toIso(new Date(d.getTime() + DAY_MS));
+  return toIso(d);
+}
 
 /**
- * Append a weekend note when the ISO date is a Saturday or Sunday.
- * TODO: also shift for federal holidays (Emancipation Day famously moves
- * April 15) — for now the note only covers weekends and dates are not moved.
+ * Legal holidays for IRC §7503 purposes (federal holidays observed in DC,
+ * including DC Emancipation Day — the one that famously moves April 15).
+ * Cached per year.
  */
-function withWeekendNote(iso: string, description: string): string {
+const holidayCache = new Map<number, Set<string>>();
+
+function legalHolidays(year: number): Set<string> {
+  const cached = holidayCache.get(year);
+  if (cached) return cached;
+  const set = new Set<string>([
+    observedFixed(year, 0, 1), // New Year's Day
+    nthWeekdayOfMonth(year, 0, 1, 3), // MLK Day — 3rd Monday of January
+    nthWeekdayOfMonth(year, 1, 1, 3), // Washington's Birthday — 3rd Monday of February
+    observedFixed(year, 3, 16), // DC Emancipation Day
+    lastWeekdayOfMonth(year, 4, 1), // Memorial Day — last Monday of May
+    observedFixed(year, 5, 19), // Juneteenth
+    observedFixed(year, 6, 4), // Independence Day
+    nthWeekdayOfMonth(year, 8, 1, 1), // Labor Day — 1st Monday of September
+    nthWeekdayOfMonth(year, 9, 1, 2), // Columbus Day — 2nd Monday of October
+    observedFixed(year, 10, 11), // Veterans Day
+    nthWeekdayOfMonth(year, 10, 4, 4), // Thanksgiving — 4th Thursday of November
+    observedFixed(year, 11, 25), // Christmas
+  ]);
+  holidayCache.set(year, set);
+  return set;
+}
+
+/**
+ * IRC §7503: a deadline falling on a Saturday, Sunday, or legal holiday is
+ * timely if performed on the next business day. Returns the ADJUSTED date
+ * (the statutory date rolled forward past weekends/holidays) and a note
+ * explaining the shift when one occurred.
+ */
+export function adjustDueDate(iso: string): { dueDate: string; note: string | null } {
   const [y, m, d] = iso.split('-').map(Number);
-  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-  if (dow === 0 || dow === 6) {
-    return `${description} ${WEEKEND_NOTE}`;
+  let date = new Date(Date.UTC(y, m - 1, d));
+  let moved = false;
+  for (let i = 0; i < 10; i++) {
+    const dow = date.getUTCDay();
+    if (dow !== 0 && dow !== 6 && !legalHolidays(date.getUTCFullYear()).has(toIso(date))) {
+      break;
+    }
+    date = new Date(date.getTime() + DAY_MS);
+    moved = true;
   }
-  return description;
+  if (!moved) return { dueDate: iso, note: null };
+  return {
+    dueDate: toIso(date),
+    note: `The statutory date (${iso}) falls on a weekend or legal holiday, so the deadline moves to the next business day, ${toIso(date)}.`,
+  };
 }
 
 function item(
@@ -82,11 +145,12 @@ function item(
   severity: ComplianceSeverity,
   href?: string,
 ): ComplianceItem {
+  const adjusted = adjustDueDate(dueDate);
   return {
     key,
     title,
-    description: withWeekendNote(dueDate, description),
-    dueDate,
+    description: adjusted.note ? `${description} ${adjusted.note}` : description,
+    dueDate: adjusted.dueDate,
     period,
     severity,
     ...(href ? { href } : {}),

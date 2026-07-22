@@ -21,6 +21,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 import { expandMappingsToDescendants } from './book-income';
 import { isTaxCategory, type TaxCategory } from './types';
 import { getTxfCode, TXF_FORM_ORDER, type TxfCode } from './txf-codes';
@@ -208,21 +209,23 @@ export async function generateTaxSchedule(
     };
   }
 
-  const [mappingRows, accountRows, taxRelatedPrefs, overrides] = await Promise.all([
-    prisma.gnucash_web_tax_mappings.findMany({
-      where: { account_guid: { in: bookAccountGuids } },
-    }),
-    prisma.$queryRaw<AccountInfo[]>`
-      SELECT guid, name, fullname, account_type, parent_guid
-      FROM account_hierarchy
-      WHERE guid = ANY(${bookAccountGuids})
-    `,
-    prisma.gnucash_web_account_preferences.findMany({
-      where: { account_guid: { in: bookAccountGuids }, tax_related: true },
-      select: { account_guid: true },
-    }),
-    getTxfOverrides(bookAccountGuids),
-  ]);
+  const [mappingRows, accountRows, taxRelatedPrefs, overrides, retirementGuids] =
+    await Promise.all([
+      prisma.gnucash_web_tax_mappings.findMany({
+        where: { account_guid: { in: bookAccountGuids } },
+      }),
+      prisma.$queryRaw<AccountInfo[]>`
+        SELECT guid, name, fullname, account_type, parent_guid
+        FROM account_hierarchy
+        WHERE guid = ANY(${bookAccountGuids})
+      `,
+      prisma.gnucash_web_account_preferences.findMany({
+        where: { account_guid: { in: bookAccountGuids }, tax_related: true },
+        select: { account_guid: true },
+      }),
+      getTxfOverrides(bookAccountGuids),
+      getRetirementAccountGuids(bookAccountGuids),
+    ]);
 
   const directMappings = new Map<string, TaxCategory>();
   for (const row of mappingRows) {
@@ -246,6 +249,19 @@ export async function generateTaxSchedule(
   /* Sum split values per relevant account inside the tax year. */
   const totals = new Map<string, number>();
   const relevantGuids = relevant.map(a => a.guid);
+  // Tax-sheltered asset accounts: retirement subtrees plus non-income/expense
+  // accounts the user mapped 'exclude'. Income earned INSIDE them (an IRA
+  // dividend crediting a shared Income:Dividends account) is not taxable and
+  // must not land on the tax schedule — same guard as book-income.ts.
+  const excludedAssetGuids = accountRows
+    .filter(
+      a =>
+        mappings.get(a.guid) === 'exclude' &&
+        a.account_type !== 'INCOME' &&
+        a.account_type !== 'EXPENSE',
+    )
+    .map(a => a.guid);
+  const shelteredGuids = [...new Set([...retirementGuids, ...excludedAssetGuids])];
   if (relevantGuids.length > 0) {
     const rows = await prisma.$queryRaw<Array<{ account_guid: string; total: number | null }>>`
       SELECT s.account_guid,
@@ -258,6 +274,16 @@ export async function generateTaxSchedule(
         -- Exclude lot-scrub capital-gains offsets: zero-quantity, non-zero
         -- value splits carry no real money flow (see book-income.ts).
         AND NOT (s.quantity_num = 0 AND s.value_num <> 0)
+        -- Sheltered-income guard: skip splits whose exact-opposite counter
+        -- lands in a retirement/excluded asset account (see book-income.ts).
+        AND NOT EXISTS (
+          SELECT 1 FROM splits s2
+          WHERE s2.tx_guid = s.tx_guid
+            AND s2.guid != s.guid
+            AND s2.value_num = -s.value_num
+            AND s2.value_denom = s.value_denom
+            AND s2.account_guid = ANY(${shelteredGuids})
+        )
       GROUP BY s.account_guid
     `;
     for (const row of rows) {

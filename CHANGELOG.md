@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1.0] - 2026-07-22
+
+### Fixed — Tax-advantaged accounts
+- **Form 8949 / Capital Gains report no longer includes retirement accounts**: sales inside 401k/IRA/HSA (and accounts mapped 'exclude' in the tax estimator) are now filtered out of the report, the CSV export, the 1099-B reconciliation, and the Year-End Tax Package — matching the Schedule D numbers the tax estimator already computed correctly.
+- **Tax-Loss Harvesting no longer offers retirement lots as candidates** (losses inside tax-advantaged accounts aren't deductible). Wash-sale detection still deliberately spans all accounts, since an IRA repurchase can wash a taxable loss.
+- **Tax Schedule / TXF export** gains the same sheltered-income guard as the tax estimator: dividends or interest earned inside a retirement account that credit a shared income account no longer appear on the schedule.
+
+### Fixed — Compliance calendar
+- **Deadlines now roll to the next business day** the way the IRS actually schedules them (IRC §7503): weekend and federal-holiday due dates move forward, including observed holidays and the DC Emancipation Day quirk (e.g. Sat Apr 15, 2028 correctly becomes Tue Apr 18). Previously the calendar only added a note while keeping the weekend date.
+
 ## [0.14.0.0] - 2026-07-22
 
 ### Added — Farm & Apiary

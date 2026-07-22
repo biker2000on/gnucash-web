@@ -534,7 +534,12 @@ export function generateScheduleDCSV(report: CapitalGainsReport): string {
 
 /**
  * Load every realized sale (closed lots + closed portions of partial lots) in
- * the book's STOCK/MUTUAL accounts whose sale date falls in `year`.
+ * the book's TAXABLE STOCK/MUTUAL accounts whose sale date falls in `year`.
+ *
+ * Tax-advantaged accounts are excluded — sales inside a 401k/IRA/HSA never
+ * appear on Form 8949 — and so are accounts whose effective tax-estimator
+ * mapping is 'exclude' (user-marked non-taxable), matching the Schedule D
+ * numbers produced by aggregateBookTaxData in src/lib/tax/book-income.ts.
  */
 export async function loadRealizedSales(
   bookAccountGuids: string[],
@@ -544,20 +549,43 @@ export async function loadRealizedSales(
   // the imports here local to the loader boundary.
   const prisma = (await import('@/lib/prisma')).default;
   const { getAccountLots } = await import('@/lib/lots');
+  const { getRetirementAccountGuids } = await import('@/lib/reports/contribution-classifier');
+  const { expandMappingsToDescendants } = await import('@/lib/tax/book-income');
+  const { isTaxCategory } = await import('@/lib/tax/types');
 
-  const investmentAccounts = await prisma.accounts.findMany({
-    where: {
-      guid: { in: bookAccountGuids },
-      account_type: { in: ['STOCK', 'MUTUAL'] },
-    },
-    select: {
-      guid: true,
-      commodity: { select: { mnemonic: true } },
-    },
-  });
+  const [investmentAccounts, retirementGuids, mappingRows, accountRows] = await Promise.all([
+    prisma.accounts.findMany({
+      where: {
+        guid: { in: bookAccountGuids },
+        account_type: { in: ['STOCK', 'MUTUAL'] },
+      },
+      select: {
+        guid: true,
+        commodity: { select: { mnemonic: true } },
+      },
+    }),
+    getRetirementAccountGuids(bookAccountGuids),
+    prisma.gnucash_web_tax_mappings.findMany({
+      where: { account_guid: { in: bookAccountGuids } },
+    }),
+    prisma.accounts.findMany({
+      where: { guid: { in: bookAccountGuids } },
+      select: { guid: true, parent_guid: true },
+    }),
+  ]);
+
+  // Effective 'exclude' mappings cover descendants too (same semantics as
+  // the tax estimator).
+  const directMappings = new Map<string, import('@/lib/tax/types').TaxCategory>();
+  for (const row of mappingRows) {
+    if (isTaxCategory(row.tax_category)) directMappings.set(row.account_guid, row.tax_category);
+  }
+  const effectiveMappings = expandMappingsToDescendants(directMappings, accountRows);
 
   const sales: RealizedSaleInput[] = [];
   for (const account of investmentAccounts) {
+    if (retirementGuids.has(account.guid)) continue;
+    if (effectiveMappings.get(account.guid) === 'exclude') continue;
     const ticker = account.commodity?.mnemonic || 'Unknown';
     const lots = await getAccountLots(account.guid);
     for (const lot of lots) {
