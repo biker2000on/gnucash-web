@@ -17,7 +17,8 @@
  * API routes, the worker, and the iCal feed builder.
  */
 
-import type { EntityType } from '@/lib/services/entity.service';
+import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
+import { FARM_CAPABLE_ENTITY_TYPES } from '@/lib/book-templates';
 
 export type ComplianceSeverity = 'filing' | 'payment' | 'admin';
 
@@ -203,6 +204,57 @@ function ncD400(year: number): ComplianceItem {
   );
 }
 
+/**
+ * Farm (Schedule F) items for pass-through entities. Farmers with ≥2/3 of
+ * gross income from farming get special estimated-tax treatment: either a
+ * single Jan 15 estimated payment, or no estimates at all when the return is
+ * filed and paid by March 1.
+ */
+function farmItems(year: number, nc: boolean): ComplianceItem[] {
+  const items: ComplianceItem[] = [
+    item(
+      'fed-farmer-jan15',
+      'Farmer estimated tax — single Jan 15 payment option',
+      `Farmers with at least two-thirds of ${year} gross income from farming may make ONE estimated payment for the whole year by January 15, ${year + 1}, instead of four quarterly 1040-ES installments.`,
+      `${year + 1}-01-15`,
+      `${year}`,
+      'payment',
+      '/taxes/estimated',
+    ),
+    item(
+      'fed-farmer-mar1',
+      'Farmer file-and-pay by March 1 (skip estimates)',
+      `Farmers with at least two-thirds of ${year - 1} gross income from farming owe NO estimated payments at all if the ${year - 1} return (Form 1040 with Schedule F) is filed and the full tax paid by March 1, ${year}.`,
+      `${year}-03-01`,
+      `${year}`,
+      'filing',
+      '/business/reports/schedule-f',
+    ),
+  ];
+  if (nc) {
+    items.push(
+      item(
+        'nc-puv-listing',
+        'NC present-use value listing period',
+        `County listing period (typically all of January) — apply for or update present-use value classification on qualifying agricultural land (10+ acres in production, $1,000 average gross income; honey sales count since July 2023).`,
+        `${year}-01-31`,
+        `${year}`,
+        'admin',
+      ),
+      item(
+        'nc-e595qf',
+        'NC qualifying farmer exemption certificate (E-595QF)',
+        `Keep the qualifying-farmer sales-tax exemption current: the certificate requires $10,000+ gross farming income in the prior year (or 3-year average) evidenced on tax returns, and lapses after 3 consecutive years below the threshold. Conditional certificate holders (E-595CF) must submit copies of state and federal returns to NCDOR within 90 days of each filing.`,
+        `${year}-04-15`,
+        `${year}`,
+        'admin',
+        '/tools/farm-analyzer',
+      ),
+    );
+  }
+  return items;
+}
+
 /* ------------------------------------------------------------------ */
 /* Per-entity rule sets                                                */
 /* ------------------------------------------------------------------ */
@@ -217,11 +269,16 @@ function householdItems(year: number, nc: boolean): ComplianceItem[] {
  * All compliance deadlines an entity acts on for calendar year `year`.
  * Quarterly payment schedules (1040-ES, 941) belong to tax year `year`, so
  * their Q4 due dates fall in January of `year + 1`.
+ *
+ * `businessActivity` (optional, default 'general') adds farm/Schedule F
+ * items — farmer estimated-tax options plus NC PUV/E-595QF admin items —
+ * for pass-through entities labeled as farms.
  */
 export function complianceItemsForYear(
   entityType: EntityType,
   taxState: string | null | undefined,
   year: number,
+  businessActivity: BusinessActivity = 'general',
 ): ComplianceItem[] {
   const nc = isNorthCarolina(taxState);
   const items: ComplianceItem[] = [];
@@ -345,6 +402,10 @@ export function complianceItemsForYear(
         form1099Nec(year, true),
       );
       break;
+  }
+
+  if (businessActivity === 'farm' && FARM_CAPABLE_ENTITY_TYPES.has(entityType)) {
+    items.push(...farmItems(year, nc));
   }
 
   return items;

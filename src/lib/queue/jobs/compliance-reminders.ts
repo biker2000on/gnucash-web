@@ -60,10 +60,12 @@ export async function handleComplianceReminders(job: Job): Promise<void> {
           ? (profile.entity_type as EntityType)
           : 'household';
       const taxState = profile?.tax_state ?? null;
+      const businessActivity =
+        profile?.business_activity === 'farm' ? ('farm' as const) : ('general' as const);
 
       const dueSoon = [
-        ...complianceItemsForYear(entityType, taxState, year),
-        ...complianceItemsForYear(entityType, taxState, year + 1),
+        ...complianceItemsForYear(entityType, taxState, year, businessActivity),
+        ...complianceItemsForYear(entityType, taxState, year + 1, businessActivity),
       ].filter(i => i.dueDate >= today && i.dueDate <= horizon);
       if (dueSoon.length === 0) continue;
 

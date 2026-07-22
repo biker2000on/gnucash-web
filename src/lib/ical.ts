@@ -472,11 +472,13 @@ export async function buildCalendarFeed(
                     ? (profile.entity_type as (typeof ENTITY_TYPES)[number])
                     : 'household';
             const taxState = profile?.tax_state ?? null;
+            const businessActivity =
+                profile?.business_activity === 'farm' ? ('farm' as const) : ('general' as const);
 
             const year = now.getFullYear();
             const items = [
-                ...complianceItemsForYear(entityType, taxState, year),
-                ...complianceItemsForYear(entityType, taxState, year + 1),
+                ...complianceItemsForYear(entityType, taxState, year, businessActivity),
+                ...complianceItemsForYear(entityType, taxState, year + 1, businessActivity),
             ];
             const statusRows = await prisma.gnucash_web_compliance_status.findMany({
                 where: { book_guid: bookGuid },

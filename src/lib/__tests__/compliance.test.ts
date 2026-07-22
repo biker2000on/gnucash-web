@@ -20,6 +20,43 @@ function one(items: ComplianceItem[], key: string): ComplianceItem {
   return matches[0];
 }
 
+describe('complianceItemsForYear — farm business activity', () => {
+  it('adds farmer + NC farm items for a farm-labeled pass-through in NC', () => {
+    const items = complianceItemsForYear('sole_prop', 'NC', 2026, 'farm');
+    expect(one(items, 'fed-farmer-jan15').dueDate).toBe('2027-01-15');
+    expect(one(items, 'fed-farmer-mar1').dueDate).toBe('2026-03-01');
+    expect(one(items, 'fed-farmer-mar1').href).toBe('/business/reports/schedule-f');
+    expect(one(items, 'nc-puv-listing').severity).toBe('admin');
+    expect(one(items, 'nc-e595qf').description).toContain('$10,000');
+  });
+
+  it('llc_single farm keeps the NC annual report alongside the farm items', () => {
+    const items = complianceItemsForYear('llc_single', 'NC', 2026, 'farm');
+    expect(byKey(items, 'nc-annual-report')).toHaveLength(1);
+    expect(byKey(items, 'fed-farmer-mar1')).toHaveLength(1);
+  });
+
+  it('adds no farm items for general activity or when omitted', () => {
+    const general = complianceItemsForYear('sole_prop', 'NC', 2026, 'general');
+    expect(byKey(general, 'fed-farmer-mar1')).toHaveLength(0);
+    const omitted = complianceItemsForYear('sole_prop', 'NC', 2026);
+    expect(byKey(omitted, 'nc-puv-listing')).toHaveLength(0);
+  });
+
+  it('keeps federal farmer items but drops NC farm items outside NC', () => {
+    const items = complianceItemsForYear('sole_prop', 'VA', 2026, 'farm');
+    expect(byKey(items, 'fed-farmer-mar1')).toHaveLength(1);
+    expect(byKey(items, 'fed-farmer-jan15')).toHaveLength(1);
+    expect(byKey(items, 'nc-puv-listing')).toHaveLength(0);
+    expect(byKey(items, 'nc-e595qf')).toHaveLength(0);
+  });
+
+  it('does not add farm items to non-pass-through entities', () => {
+    const items = complianceItemsForYear('s_corp', 'NC', 2026, 'farm');
+    expect(byKey(items, 'fed-farmer-mar1')).toHaveLength(0);
+  });
+});
+
 describe('complianceItemsForYear — household', () => {
   const items = complianceItemsForYear('household', 'NC', 2026);
 
