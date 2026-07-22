@@ -107,6 +107,12 @@ function ToolIcon({ icon }: { icon: string }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12h4l2-5 3 10 2-5h7" />
                 </svg>
             );
+        case 'leaf':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 21c0-6 3-14 14-16-1 11-6 14-11 14M5 21c2-4 5-8 9-11" />
+                </svg>
+            );
         default:
             return null;
     }
@@ -259,6 +265,12 @@ export default function ToolsPage() {
             description: 'A printable map of every account — institutions, balances, beneficiaries, and instructions — for the people who would need it.',
             icon: 'shield',
             href: '/tools/emergency',
+        },
+        {
+            title: 'Farm & Apiary Analyzer',
+            description: 'Should your farm become a business? Hobby vs Schedule F vs NC LLC — self-employment tax, the qualifying-farmer sales-tax exemption, §179 write-offs, and LLC fees, from your actual numbers.',
+            icon: 'leaf',
+            href: '/tools/farm-analyzer',
         },
         {
             title: 'Asset Analysis',

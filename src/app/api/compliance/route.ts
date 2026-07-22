@@ -43,7 +43,12 @@ export async function GET(request: NextRequest) {
 
     const entity = await getEntityProfile(bookGuid, user.id);
 
-    const items = complianceItemsForYear(entity.entityType, entity.taxState, year);
+    const items = complianceItemsForYear(
+      entity.entityType,
+      entity.taxState,
+      year,
+      entity.businessActivity,
+    );
     if (explicitYear === null) {
       // Lookahead: next year's items due within ~3 months from today.
       const horizon = isoDate(new Date(now.getTime() + LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000));
@@ -51,6 +56,7 @@ export async function GET(request: NextRequest) {
         entity.entityType,
         entity.taxState,
         year + 1,
+        entity.businessActivity,
       ).filter(i => i.dueDate <= horizon);
       items.push(...nextYearItems);
     }

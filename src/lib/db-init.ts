@@ -781,6 +781,18 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Business activity of the entity (e.g. 'farm' for a Schedule F apiary or
+    // ranch vs the 'general' Schedule C default). Orthogonal to entity_type —
+    // a farm can be a sole prop or an LLC. Drives the farm chart-of-accounts
+    // template, Schedule F report, and farm compliance-calendar items.
+    const entityProfilesActivityColumnDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_entity_profiles_activity'));
+            ALTER TABLE gnucash_web_entity_profiles ADD COLUMN IF NOT EXISTS business_activity VARCHAR(20) NOT NULL DEFAULT 'general';
+        END $$;
+    `;
+
     // Per-book feature-module overrides. Absence of a row means "use the
     // default for the book's entity type" (see src/lib/book-features.ts).
     const bookFeaturesTableDDL = `
@@ -1608,6 +1620,7 @@ async function createExtensionTables() {
         await query(taxMappingsTableDDL);
         await query(entityProfilesTableDDL);
         await query(entityProfilesTaxColumnsDDL);
+        await query(entityProfilesActivityColumnDDL);
         await query(bookFeaturesTableDDL);
         await query(bookLinksTableDDL);
         await query(membershipTablesDDL);

@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { CurrencySelect } from '@/components/CurrencySelect';
 import {
+  BUSINESS_ACTIVITY_OPTIONS,
   ENTITY_TYPE_OPTIONS,
-  ENTITY_ACCOUNT_TEMPLATES,
+  FARM_CAPABLE_ENTITY_TYPES,
+  getEntityAccountTemplate,
   type TemplateAccountDef,
 } from '@/lib/book-templates';
-import type { EntityType } from '@/lib/services/entity.service';
+import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
 
 interface NewBookFormProps {
   onSuccess: (bookGuid: string) => void;
@@ -17,6 +19,10 @@ interface NewBookFormProps {
   /** Show the optional description field (default false). */
   showDescription?: boolean;
   submitLabel?: string;
+  /** Preselected entity type (e.g. deep link from the farm analyzer). */
+  defaultEntityType?: EntityType;
+  /** Preselected business activity (e.g. 'farm' from the farm analyzer). */
+  defaultBusinessActivity?: BusinessActivity;
 }
 
 function AccountPreviewNode({ account, depth }: { account: TemplateAccountDef; depth: number }) {
@@ -50,15 +56,22 @@ export default function NewBookForm({
   showCurrency = true,
   showDescription = false,
   submitLabel = 'Create Book',
+  defaultEntityType = 'household',
+  defaultBusinessActivity = 'general',
 }: NewBookFormProps) {
-  const [entityType, setEntityType] = useState<EntityType>('household');
+  const [entityType, setEntityType] = useState<EntityType>(defaultEntityType);
+  const [businessActivity, setBusinessActivity] = useState<BusinessActivity>(
+    defaultBusinessActivity
+  );
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [currency, setCurrency] = useState('USD');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  const template = ENTITY_ACCOUNT_TEMPLATES[entityType];
+  const showActivityPicker = FARM_CAPABLE_ENTITY_TYPES.has(entityType);
+  const effectiveActivity = showActivityPicker ? businessActivity : 'general';
+  const template = getEntityAccountTemplate(entityType, effectiveActivity);
 
   const handleCreate = async () => {
     if (!name.trim()) {
@@ -77,6 +90,7 @@ export default function NewBookForm({
           currency: showCurrency ? currency : undefined,
           entityType,
           entityName: entityType !== 'household' ? name.trim() : undefined,
+          businessActivity: effectiveActivity,
         }),
       });
       if (!res.ok) {
@@ -124,6 +138,38 @@ export default function NewBookForm({
           ))}
         </div>
       </div>
+
+      {showActivityPicker && (
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-2">
+            Business Activity
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {BUSINESS_ACTIVITY_OPTIONS.map((option) => (
+              <label
+                key={option.value}
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  businessActivity === option.value
+                    ? 'border-primary/50 bg-primary/5'
+                    : 'border-border hover:bg-surface-hover/50'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="business-activity"
+                  checked={businessActivity === option.value}
+                  onChange={() => setBusinessActivity(option.value)}
+                  className="mt-0.5 accent-primary"
+                />
+                <div>
+                  <div className="text-sm font-medium text-foreground">{option.label}</div>
+                  <div className="text-xs text-foreground-muted mt-0.5">{option.description}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <label htmlFor="new-book-name" className="block text-sm font-medium text-foreground mb-1.5">

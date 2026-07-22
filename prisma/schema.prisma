@@ -906,13 +906,14 @@ model gnucash_web_amazon_orders {
 // Entity/household profile per book: consumed by the tax estimator and
 // contribution tracking. Kept in sync with the raw DDL in src/lib/db-init.ts.
 model gnucash_web_entity_profiles {
-  book_guid       String   @id @db.VarChar(32)
-  entity_type     String   @default("household") @db.VarChar(20)
-  entity_name     String?  @db.VarChar(255)
-  tax_state       String?  @db.VarChar(10)
-  filing_status   String?  @db.VarChar(10)
-  state_flat_rate Float?
-  notes           String?  @db.Text
+  book_guid         String   @id @db.VarChar(32)
+  entity_type       String   @default("household") @db.VarChar(20)
+  entity_name       String?  @db.VarChar(255)
+  tax_state         String?  @db.VarChar(10)
+  filing_status     String?  @db.VarChar(10)
+  state_flat_rate   Float?
+  business_activity String   @default("general") @db.VarChar(20)
+  notes             String?  @db.Text
   created_at      DateTime @default(now())
   updated_at      DateTime @default(now())
 

@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids, getAccountGuidsForBook } from '@/lib/book-scope';
 import { getEntityProfile } from '@/lib/services/entity.service';
 import { getLinksForBusinessBook } from '@/lib/services/book-links.service';
+import { hasMinimumRole } from '@/lib/services/permission.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import {
@@ -107,7 +108,15 @@ export async function GET(request: NextRequest) {
 
     /* --- Household context via the first outgoing book link ----------- */
     const links = await getLinksForBusinessBook(bookGuid);
-    const link = links[0] ?? null;
+    const linkCandidate = links[0] ?? null;
+    // Only aggregate the linked household when the requesting user holds a
+    // role on that book — otherwise its income totals would leak to
+    // business-book-only collaborators.
+    const link =
+      linkCandidate &&
+      (await hasMinimumRole(user.id, linkCandidate.householdBookGuid, 'readonly'))
+        ? linkCandidate
+        : null;
 
     let ownershipPercent = 100;
     let otherHouseholdOrdinaryIncome = 0;

@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
+import type { BusinessActivity } from '@/lib/services/entity.service';
 
 // Group heading style for the settings page — matches the sidebar section labels.
 const SETTINGS_GROUP_HEADING = 'text-[11px] font-semibold uppercase tracking-wider text-foreground-muted px-1';
@@ -65,6 +66,22 @@ const ENTITY_TYPE_OPTIONS: { value: EntityType; label: string }[] = [
   { value: 'c_corp', label: 'C-Corp' },
   { value: 'nonprofit_501c3', label: '501(c)(3) Nonprofit' },
 ];
+
+const BUSINESS_ACTIVITY_SELECT_OPTIONS: { value: BusinessActivity; label: string }[] = [
+  { value: 'general', label: 'General business (Schedule C)' },
+  { value: 'farm', label: 'Farm or ranch (Schedule F)' },
+];
+
+/**
+ * Pass-through business types where activity changes tax reporting.
+ * Mirrors FARM_CAPABLE_ENTITY_TYPES in @/lib/book-templates (this page keeps
+ * a local EntityType union rather than importing the service module).
+ */
+const ACTIVITY_ENTITY_TYPES: ReadonlySet<EntityType> = new Set([
+  'sole_prop',
+  'llc_single',
+  'llc_partnership',
+]);
 
 const HOUSEHOLD_ROLE_OPTIONS = [
   { value: 'self', label: 'Self' },
@@ -130,6 +147,7 @@ interface EntityProfileForm {
   entityType: EntityType;
   entityName: string;
   taxState: string;
+  businessActivity: BusinessActivity;
   notes: string | null;
   members: EntityMemberForm[];
 }
@@ -261,6 +279,7 @@ export default function SettingsPage() {
             entityType: data.entityType ?? 'household',
             entityName: data.entityName ?? '',
             taxState: data.taxState ?? '',
+            businessActivity: data.businessActivity === 'farm' ? 'farm' : 'general',
             notes: data.notes ?? null,
             members: (data.members ?? []).map(
               (m: {
@@ -536,6 +555,9 @@ export default function SettingsPage() {
           entityType: entity.entityType,
           entityName: entity.entityName.trim() || null,
           taxState: entity.taxState.trim() || null,
+          businessActivity: ACTIVITY_ENTITY_TYPES.has(entity.entityType)
+            ? entity.businessActivity
+            : 'general',
           notes: entity.notes,
           members: entity.members.map((m, i) => {
             const pct = parseFloat(m.ownershipPercent);
@@ -651,6 +673,30 @@ export default function SettingsPage() {
                 ))}
               </select>
             </div>
+
+            {/* Business Activity (pass-through business types only) */}
+            {ACTIVITY_ENTITY_TYPES.has(entity.entityType) && (
+              <div className="space-y-2">
+                <label className="block text-sm text-foreground-secondary">Business Activity</label>
+                <select
+                  value={entity.businessActivity}
+                  onChange={(e) =>
+                    setEntity({ ...entity, businessActivity: e.target.value as BusinessActivity })
+                  }
+                  className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                >
+                  {BUSINESS_ACTIVITY_SELECT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-foreground-muted">
+                  Farms file Schedule F instead of Schedule C and unlock farm-specific
+                  compliance reminders.
+                </p>
+              </div>
+            )}
 
             {/* Entity Name + State */}
             <div className="flex flex-col sm:flex-row gap-3">

@@ -2,7 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.13.2.0] - 2026-07-17
+## [0.14.0.0] - 2026-07-22
+
+### Added — Farm & Apiary
+- **Farm & Apiary Analyzer** (/tools/farm-analyzer): decide whether to formalize a home farm — compares four ways of handling farm income side by side: unreported cash (shown for honesty, clearly flagged as not legal and never recommended), hobby reporting, Schedule F sole proprietorship, and Schedule F + NC LLC. Pulls your actual income and expenses from farm account subtrees you pick in your book, annualizes them, and models self-employment tax, QBI, §179 equipment expensing (with the wage-inclusive business-income limit), the NC qualifying-farmer sales-tax exemption ($10k threshold, conditional E-595CF path with clawback warnings), present-use value property-tax hints, and LLC formation/annual-report fees. The headline insight: a single-member LLC changes nothing about taxes — it buys liability protection for $125 + $200/yr.
+- **Farm business activity**: label a sole proprietorship or LLC book as a "Farm or ranch" (Settings → entity profile, or at book creation). Farm-labeled books get a Schedule F-aligned chart of accounts (Honey Sales, Pollination Services, Feed & Syrup, Mite Treatments, Jars & Packaging, hives and equipment assets) instead of the generic business template.
+- **Schedule F report** (/business/reports/schedule-f): farm income and expenses mapped onto IRS Schedule F lines with an apiary-aware keyword mapper (feed→16, treatments→31, jars→28, fuel→19…) and a per-account manual override panel. On a household book it scopes itself to the farm accounts selected in the analyzer.
+- **Farm compliance deadlines**: farm-labeled books add the farmer estimated-tax options (March 1 file-and-pay, single Jan 15 payment) plus NC present-use value listing period and E-595QF certificate upkeep to the compliance calendar, reminders, and iCal feed.
+
+### Fixed
+- Business decision tools (S-Corp Analyzer and the new Farm Analyzer) no longer aggregate a linked household book's income for users who only have access to the business book.
+- Schedule C/F mapping storage retries table creation after a transient database failure instead of failing until restart, and Schedule F mapping batches now save atomically.
+
+### Changed
+- The entity profile gains a business-activity field ('general' or 'farm') — additive column, no migration needed on existing books.
 
 ### Added — Home Inventory
 - **Photos-first walk-through mode**: a "Photos only" / "Detail each" toggle in the room-by-room stepper (choice persists per browser). In photos-only mode you snap photos for each item (item + serial label group into one) and save it as an un-named draft — no typing — then move room to room. The recap flags how many items still need details.

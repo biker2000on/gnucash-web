@@ -26,6 +26,16 @@ export type EntityType =
 
 export type EntityMemberRole = 'self' | 'spouse' | 'dependent' | 'owner' | 'officer';
 
+/**
+ * What the entity actually does — orthogonal to its legal structure. A farm
+ * (e.g. an apiary) can be a sole prop or an LLC; the activity picks the
+ * Schedule F chart-of-accounts template, the Schedule F report, and the farm
+ * compliance-calendar items.
+ */
+export type BusinessActivity = 'general' | 'farm';
+
+export const BUSINESS_ACTIVITIES: BusinessActivity[] = ['general', 'farm'];
+
 export const ENTITY_TYPES: EntityType[] = [
   'household',
   'sole_prop',
@@ -63,6 +73,8 @@ export interface EntityProfile {
   filingStatus: string | null;
   /** Flat state rate (0-1) used when taxState is 'OTHER' (null = unset). */
   stateFlatRate: number | null;
+  /** Business activity of the entity; 'general' unless labeled (e.g. 'farm'). */
+  businessActivity: BusinessActivity;
   notes: string | null;
   members: EntityMember[];
   /** True when no profile row exists and this was built from user preferences. */
@@ -165,6 +177,7 @@ async function synthesizeHouseholdProfile(userId: number): Promise<EntityProfile
     taxState: typeof taxState === 'string' ? taxState : null,
     filingStatus: typeof filingStatus === 'string' ? filingStatus : null,
     stateFlatRate: typeof flatRate === 'number' ? flatRate : null,
+    businessActivity: 'general',
     notes: null,
     members,
     synthesized: true,
@@ -199,6 +212,11 @@ export async function getEntityProfile(
     taxState: profile.tax_state,
     filingStatus: profile.filing_status,
     stateFlatRate: profile.state_flat_rate,
+    businessActivity: BUSINESS_ACTIVITIES.includes(
+      profile.business_activity as BusinessActivity
+    )
+      ? (profile.business_activity as BusinessActivity)
+      : 'general',
     notes: profile.notes,
     members: sortMembers(
       members.map((m) => ({
@@ -220,6 +238,8 @@ export interface SaveEntityProfileInput {
   taxState?: string | null;
   filingStatus?: string | null;
   stateFlatRate?: number | null;
+  /** undefined = keep the stored value (like filingStatus). */
+  businessActivity?: BusinessActivity;
   notes?: string | null;
   members: Array<{
     role: EntityMemberRole;
@@ -241,6 +261,14 @@ export async function saveEntityProfile(
 ): Promise<EntityProfile> {
   if (!ENTITY_TYPES.includes(input.entityType)) {
     throw new EntityValidationError(`Invalid entity type: ${input.entityType}`);
+  }
+  if (
+    input.businessActivity !== undefined &&
+    !BUSINESS_ACTIVITIES.includes(input.businessActivity)
+  ) {
+    throw new EntityValidationError(
+      `Invalid business activity: ${input.businessActivity}`
+    );
   }
   for (const member of input.members) {
     if (!ENTITY_MEMBER_ROLES.includes(member.role)) {
@@ -276,6 +304,7 @@ export async function saveEntityProfile(
         tax_state: input.taxState?.trim() || null,
         filing_status: input.filingStatus?.trim() || null,
         state_flat_rate: input.stateFlatRate ?? null,
+        business_activity: input.businessActivity ?? 'general',
         notes: input.notes?.trim() || null,
       },
       update: {
@@ -286,6 +315,7 @@ export async function saveEntityProfile(
         filing_status:
           input.filingStatus === undefined ? undefined : input.filingStatus?.trim() || null,
         state_flat_rate: input.stateFlatRate === undefined ? undefined : input.stateFlatRate,
+        business_activity: input.businessActivity,
         notes: input.notes?.trim() || null,
         updated_at: new Date(),
       },
@@ -309,6 +339,11 @@ export async function saveEntityProfile(
     taxState: input.taxState?.trim() || null,
     filingStatus: saved?.filing_status ?? null,
     stateFlatRate: saved?.state_flat_rate ?? null,
+    businessActivity: BUSINESS_ACTIVITIES.includes(
+      saved?.business_activity as BusinessActivity
+    )
+      ? (saved?.business_activity as BusinessActivity)
+      : 'general',
     notes: input.notes?.trim() || null,
     members: sortMembers(
       memberRows.map((m) => ({
@@ -351,6 +386,7 @@ export async function updateBookTaxProfile(
       fields.filingStatus === undefined ? current.filingStatus : fields.filingStatus,
     stateFlatRate:
       fields.stateFlatRate === undefined ? current.stateFlatRate : fields.stateFlatRate,
+    businessActivity: current.businessActivity,
     notes: current.notes,
     members: current.members,
   });

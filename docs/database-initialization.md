@@ -24,7 +24,7 @@ The view includes the following columns:
 
 ### Automatic Creation
 
-The view is automatically created or updated when the application starts via the `initializeDatabase()` function in `src/lib/db-init.ts`.
+The view is automatically created or updated by the `initializeDatabase()` function in `src/lib/db-init.ts`. In Docker deployments this runs from `docker-entrypoint.sh` (as the bundled `db-init.js`, built from `scripts/db-init-entrypoint.ts`) before the server starts. In local development, run it with `npx tsx --env-file=.env.local scripts/dev-run-db-init.ts`.
 
 This ensures that:
 1. New deployments work immediately without manual database setup

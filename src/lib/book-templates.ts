@@ -12,7 +12,7 @@
  * of EntityType; no server dependencies).
  */
 
-import type { EntityType } from '@/lib/services/entity.service';
+import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
 
 export interface TemplateAccountDef {
   name: string;
@@ -25,6 +25,30 @@ export interface EntityTypeOption {
   label: string;
   description: string;
 }
+
+export interface BusinessActivityOption {
+  value: BusinessActivity;
+  label: string;
+  description: string;
+}
+
+/**
+ * Display metadata for the business-activity picker. Shown for pass-through
+ * business entity types (sole prop, LLC) where the activity changes the
+ * chart of accounts and tax reporting (Schedule F vs Schedule C).
+ */
+export const BUSINESS_ACTIVITY_OPTIONS: BusinessActivityOption[] = [
+  {
+    value: 'general',
+    label: 'General business',
+    description: 'Standard Schedule C chart of accounts',
+  },
+  {
+    value: 'farm',
+    label: 'Farm or ranch',
+    description: 'Schedule F chart of accounts (apiary, livestock, crops)',
+  },
+];
 
 /** Display metadata for the entity type picker, in recommended display order. */
 export const ENTITY_TYPE_OPTIONS: EntityTypeOption[] = [
@@ -255,6 +279,103 @@ function partnershipTemplate(): TemplateAccountDef[] {
 }
 
 // ---------------------------------------------------------------------------
+// Farm (Schedule F) — apiary-friendly names chosen so the Schedule F keyword
+// mapper (src/lib/business/schedule-f.ts) lands each account on the right line
+// ---------------------------------------------------------------------------
+
+function farmTemplate(): TemplateAccountDef[] {
+  return [
+    {
+      name: 'Assets',
+      type: 'ASSET',
+      children: [
+        { name: 'Farm Checking', type: 'BANK' },
+        { name: 'Hives & Bee Colonies', type: 'ASSET' },
+        { name: 'Farm Equipment', type: 'ASSET' },
+        { name: 'Honey & Wax Inventory', type: 'ASSET' },
+      ],
+    },
+    {
+      name: 'Liabilities',
+      type: 'LIABILITY',
+      children: [
+        { name: 'Credit Card', type: 'CREDIT' },
+        { name: 'Equipment Loan', type: 'LIABILITY' },
+      ],
+    },
+    {
+      name: 'Income',
+      type: 'INCOME',
+      children: [
+        { name: 'Honey Sales', type: 'INCOME' },
+        { name: 'Beeswax & Hive Products', type: 'INCOME' },
+        { name: 'Bee & Nuc Sales', type: 'INCOME' },
+        { name: 'Pollination Services', type: 'INCOME' },
+        { name: 'Ag Program Payments', type: 'INCOME' },
+        { name: 'Other Farm Income', type: 'INCOME' },
+      ],
+    },
+    {
+      name: 'Expenses',
+      type: 'EXPENSE',
+      children: [
+        { name: 'Feed & Syrup', type: 'EXPENSE' },
+        { name: 'Medications & Mite Treatments', type: 'EXPENSE' },
+        { name: 'Bee Purchases (Queens & Packages)', type: 'EXPENSE' },
+        { name: 'Jars & Packaging', type: 'EXPENSE' },
+        { name: 'Supplies', type: 'EXPENSE' },
+        { name: 'Small Tools', type: 'EXPENSE' },
+        { name: 'Repairs & Maintenance', type: 'EXPENSE' },
+        { name: 'Vehicle & Truck', type: 'EXPENSE' },
+        { name: 'Gasoline & Fuel', type: 'EXPENSE' },
+        { name: 'Insurance', type: 'EXPENSE' },
+        { name: 'Utilities', type: 'EXPENSE' },
+        { name: 'Land Rent & Lease', type: 'EXPENSE' },
+        { name: 'Custom Hire', type: 'EXPENSE' },
+        { name: 'Freight & Trucking', type: 'EXPENSE' },
+        { name: 'Professional Fees', type: 'EXPENSE' },
+        { name: 'Taxes & Licenses', type: 'EXPENSE' },
+      ],
+    },
+    {
+      name: 'Equity',
+      type: 'EQUITY',
+      children: [
+        { name: 'Opening Balances', type: 'EQUITY' },
+        { name: "Owner's Contributions", type: 'EQUITY' },
+        { name: "Owner's Draw", type: 'EQUITY' },
+      ],
+    },
+  ];
+}
+
+/** Farm template with partnership-style per-partner capital equity. */
+function farmPartnershipTemplate(): TemplateAccountDef[] {
+  const template = farmTemplate();
+  const equity = template.find((a) => a.name === 'Equity')!;
+  equity.children = [
+    { name: 'Opening Balances', type: 'EQUITY' },
+    {
+      name: 'Partner 1 Capital',
+      type: 'EQUITY',
+      children: [
+        { name: 'Contributions', type: 'EQUITY' },
+        { name: 'Draws', type: 'EQUITY' },
+      ],
+    },
+    {
+      name: 'Partner 2 Capital',
+      type: 'EQUITY',
+      children: [
+        { name: 'Contributions', type: 'EQUITY' },
+        { name: 'Draws', type: 'EQUITY' },
+      ],
+    },
+  ];
+  return template;
+}
+
+// ---------------------------------------------------------------------------
 // S-Corp / C-Corp (payroll liabilities and expenses, shareholder equity)
 // ---------------------------------------------------------------------------
 
@@ -389,9 +510,28 @@ export const ENTITY_ACCOUNT_TEMPLATES: Record<EntityType, TemplateAccountDef[]> 
 };
 
 /**
- * Returns the account template for an entity type, falling back to the
- * household hierarchy for unknown values.
+ * Pass-through entity types where a 'farm' business activity is meaningful
+ * (Schedule F chart of accounts, farm compliance items, farm analyzer
+ * whole-book mode). Single source of truth — import this rather than
+ * redeclaring the set.
  */
-export function getEntityAccountTemplate(entityType: EntityType): TemplateAccountDef[] {
+export const FARM_CAPABLE_ENTITY_TYPES: ReadonlySet<EntityType> = new Set([
+  'sole_prop',
+  'llc_single',
+  'llc_partnership',
+]);
+
+/**
+ * Returns the account template for an entity type, falling back to the
+ * household hierarchy for unknown values. A 'farm' business activity swaps
+ * in the Schedule F hierarchy for pass-through business entity types.
+ */
+export function getEntityAccountTemplate(
+  entityType: EntityType,
+  businessActivity: BusinessActivity = 'general'
+): TemplateAccountDef[] {
+  if (businessActivity === 'farm' && FARM_CAPABLE_ENTITY_TYPES.has(entityType)) {
+    return entityType === 'llc_partnership' ? farmPartnershipTemplate() : farmTemplate();
+  }
   return ENTITY_ACCOUNT_TEMPLATES[entityType] ?? HOUSEHOLD_TEMPLATE;
 }

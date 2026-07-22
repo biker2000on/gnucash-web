@@ -3,8 +3,10 @@ import { createDefaultBook } from '@/lib/default-book';
 import { requireAuth } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
 import {
+  BUSINESS_ACTIVITIES,
   ENTITY_TYPES,
   saveEntityProfile,
+  type BusinessActivity,
   type EntityType,
   type SaveEntityProfileInput,
 } from '@/lib/services/entity.service';
@@ -20,6 +22,7 @@ import {
  *   currency?: string,     // ISO 4217, default 'USD'
  *   entityType?: string,   // one of ENTITY_TYPES, default 'household'
  *   entityName?: string,
+ *   businessActivity?: string, // one of BUSINESS_ACTIVITIES, default 'general'
  * }
  */
 export async function POST(request: NextRequest) {
@@ -42,7 +45,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const bookGuid = await createDefaultBook(name, description, entityType, currency);
+    const businessActivity: BusinessActivity = body.businessActivity ?? 'general';
+    if (!BUSINESS_ACTIVITIES.includes(businessActivity)) {
+      return NextResponse.json(
+        { error: `Invalid business activity: ${String(body.businessActivity)}` },
+        { status: 400 }
+      );
+    }
+
+    const bookGuid = await createDefaultBook(
+      name,
+      description,
+      entityType,
+      currency,
+      businessActivity
+    );
 
     // Grant the creating user admin access so the book shows up in their list
     await grantRole(user.id, bookGuid, 'admin', user.id);
@@ -52,7 +69,7 @@ export async function POST(request: NextRequest) {
       entityType === 'household'
         ? [{ role: 'self', coveredByEmployerPlan: true, sortOrder: 0 }]
         : [];
-    await saveEntityProfile(bookGuid, { entityType, entityName, members });
+    await saveEntityProfile(bookGuid, { entityType, entityName, businessActivity, members });
 
     return NextResponse.json({ success: true, bookGuid });
   } catch (error) {

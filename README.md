@@ -29,6 +29,8 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - Net worth and income/expense charts
 - Mortgage payoff calculator with amortization schedule
 - FIRE calculator with savings rate and projection
+- Farm & Apiary Analyzer: side-by-side tax comparison of four ways to handle home-farm income (hobby, Schedule F, Schedule F + NC LLC), fed by your actual book data
+- Schedule F report mapping farm income/expense accounts onto IRS lines, with a farm chart of accounts for books labeled "Farm or ranch" and farm deadlines on the compliance calendar
 
 **Infrastructure**
 - Progressive Web App (installable on phone/desktop)
@@ -98,7 +100,7 @@ docker run -p 3000:3000 -e DATABASE_URL="your_db_url" gnucash-web
 - **UI**: React 19, [Tailwind CSS](https://tailwindcss.com/)
 - **Database**: PostgreSQL via [Prisma](https://www.prisma.io/)
 - **Queue**: [BullMQ](https://docs.bullmq.io/) + Redis
-- **Testing**: [Vitest](https://vitest.dev/) (227 tests)
+- **Testing**: [Vitest](https://vitest.dev/) (3,300+ tests)
 - **Auth**: iron-session + bcrypt, optional OIDC SSO (openid-client)
 - **Typing**: TypeScript
 

@@ -2,6 +2,21 @@
 
 Items deferred from plan reviews for future implementation.
 
+## P2 - Farm feature follow-ups (deferred from v0.14.0.0 ship review)
+
+**What:** Items surfaced by the v0.14.0.0 pre-landing review that were deliberately deferred:
+1. **Tool-config concurrency**: `gnucash_web_tool_config` has no unique constraint on (user, book, tool_type) — two concurrent first-time PUTs to `/api/tools/farm-analysis` can create duplicate rows and pinned inputs then flap by `updated_at`. Add a unique index + upsert, or serialize with an advisory lock.
+2. **Household-income context dedup**: `householdIncomeContext()` now lives in `src/app/api/tools/farm-analysis/route.ts` — extract to `src/lib/tax/` and reuse in `src/app/api/business/s-corp-analysis/route.ts` (which still hand-rolls the same ~20-line aggregation).
+3. **Multi-currency farm sums**: `farm-book-data.ts` and `schedule-f-report.ts` sum `split.value` in transaction currency without FX conversion (same convention as `book-income.ts`). Multi-currency books get silently mixed-currency Schedule F lines — convert via `findExchangeRate()` or warn when multiple currencies detected.
+4. **Farm scope per-user vs per-book**: the Schedule F report on a household book scopes to the *requesting user's* pinned farm accounts (ToolConfig is per-user), while mapping overrides are book-wide — two users of one book can see different "official" Schedule F numbers. Decide and unify.
+5. **NC 3-year-average qualifying test**: the analyzer only checks prior-year income ≥ $10k; NCDOR also qualifies on the 3-preceding-years average. Accept a 3-year history (or auto-derive from the book) in `analyzeFarmScenarios`.
+6. **Graft farm subtree onto existing book**: no primitive exists to add the farm chart-of-accounts to an *existing* book (`findOrCreateAccount` hard-codes INCOME type). Build `addTemplateAccounts(bookGuid, defs, parentName)`.
+7. **E-595QF/E-595CF document tracking**: store the exemption certificate in the documents module with expiry reminders (conditional cert's 3-year clock, 90-day return-copy duty).
+
+**Context:** Deferred from ship review 2026-07-22 (v0.14.0.0, feat/farm-apiary). Items 1-2 are code-quality, 3-5 correctness-completeness for edge cases, 6-7 product follow-ups from the original plan.
+
+---
+
 ## P2 - Ledger data cleanup: corrupt FXAIX sale on 2024-05-22 — ✅ ROOT CAUSE FOUND 2026-07-12 (dev-only)
 
 **What:** The FXAIX lot `a125d771` (1.563 shares bought 2024-04-18 for $272) has a "Sale of Assets" split on 2024-05-22 valued at **-$4,272.95** — an implied ~$2,734/share, when every other FXAIX lot sold that same day is ~$178/share. This inflates the lot's realized gain by ~$4,000.

@@ -5,6 +5,10 @@ import {
   getEntityAccountTemplate,
   type TemplateAccountDef,
 } from '../book-templates';
+import {
+  mapFarmExpenseAccountToLine,
+  mapFarmIncomeAccountToLine,
+} from '../business/schedule-f';
 
 /** Mirrors EntityType in src/lib/services/entity.service.ts (kept inline to
  *  avoid importing the prisma-backed service module into unit tests). */
@@ -226,5 +230,49 @@ describe('getEntityAccountTemplate', () => {
     for (const entityType of ALL_ENTITY_TYPES) {
       expect(getEntityAccountTemplate(entityType)).toBe(ENTITY_ACCOUNT_TEMPLATES[entityType]);
     }
+  });
+
+  it("swaps in the Schedule F farm template only for pass-through business types", () => {
+    // Farm-capable types get the farm chart of accounts.
+    for (const t of ['sole_prop', 'llc_single', 'llc_partnership'] as const) {
+      const tpl = getEntityAccountTemplate(t, 'farm');
+      const expenses = tpl.find((a) => a.name === 'Expenses')!;
+      expect(expenses.children!.map((c) => c.name)).toContain('Feed & Syrup');
+      const income = tpl.find((a) => a.name === 'Income')!;
+      expect(income.children!.map((c) => c.name)).toContain('Honey Sales');
+      // Structural invariants shared with every other template.
+      expect(tpl.map((a) => a.name)).toEqual(TOP_LEVEL.map((a) => a.name));
+    }
+    // Partnership farm keeps per-partner capital equity.
+    const partnership = getEntityAccountTemplate('llc_partnership', 'farm');
+    const equity = partnership.find((a) => a.name === 'Equity')!;
+    expect(equity.children!.map((c) => c.name)).toContain('Partner 1 Capital');
+    // Non-farm-capable types ignore the activity flag entirely.
+    for (const t of ['household', 's_corp', 'c_corp', 'nonprofit_501c3'] as const) {
+      expect(getEntityAccountTemplate(t, 'farm')).toBe(ENTITY_ACCOUNT_TEMPLATES[t]);
+    }
+    // Default activity is 'general' → the standard template.
+    expect(getEntityAccountTemplate('sole_prop')).toBe(ENTITY_ACCOUNT_TEMPLATES.sole_prop);
+  });
+
+  it('farm template account names land on Schedule F lines via the keyword mapper', () => {
+    const tpl = getEntityAccountTemplate('sole_prop', 'farm');
+    const expenses = tpl.find((a) => a.name === 'Expenses')!.children!;
+    const unmapped = expenses
+      .filter((c) => mapFarmExpenseAccountToLine(c.name, `Expenses:${c.name}`) === null)
+      .map((c) => c.name);
+    // Only Professional Fees has no dedicated Schedule F line (falls to 32).
+    expect(unmapped).toEqual(['Professional Fees']);
+
+    const income = tpl.find((a) => a.name === 'Income')!.children!;
+    const incomeLines = Object.fromEntries(
+      income.map((c) => [c.name, mapFarmIncomeAccountToLine(c.name, `Income:${c.name}`)]),
+    );
+    expect(incomeLines['Ag Program Payments']).toBe('4a');
+    expect(incomeLines['Pollination Services']).toBe('8');
+    expect(incomeLines['Other Farm Income']).toBe('8');
+    // Product sales default to line 2 (null → default).
+    expect(incomeLines['Honey Sales']).toBeNull();
+    expect(incomeLines['Bee & Nuc Sales']).toBeNull();
   });
 });
