@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0.0] - 2026-07-22
+
+### Added — Live job progress
+- **Server work now reports back**: clicking Sync on SimpleFin (and other long-running actions — scrub all lots, index backfill, thumbnail regeneration, price refresh) streams live progress to the browser over SSE. A floating progress card shows per-step status ("Syncing Checking (3/7) — 42 imported so far") and finishes with a toast summarizing the result; the SimpleFin card on the Connections page shows the same progress inline and now populates its results panel even when the sync runs on the background worker.
+- Failures surface as error toasts with the actual reason instead of silently landing in the notification bell; a polling fallback covers dropped connections, so a sync's outcome always reaches the page.
+
+### Added — More frequent SimpleFin sync
+- **SimpleFin syncs on its own schedule** — every 2 hours by default, configurable from 1 hour to daily in Settings → Schedules — instead of once a day with the evening price refresh. Late-posting bank transactions now land the same day. Scheduled runs are silent (no toasts) and only notify on failure; concurrent syncs of the same connection are guarded against double-importing.
+
+### Fixed
+- Notification/job SSE streams no longer leak their Redis subscription and heartbeat when a browser disconnects abruptly.
+- "Run now" keeps refreshing prices and syncing SimpleFin together in both deployment modes.
+
 ## [0.14.1.0] - 2026-07-22
 
 ### Fixed — Tax-advantaged accounts
