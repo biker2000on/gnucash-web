@@ -1,245 +1,666 @@
-# TODOS
+# Product Roadmap and TODOs
 
-Items deferred from plan reviews for future implementation.
+Updated 2026-07-23.
 
-## P2 - Farm feature follow-ups (deferred from v0.14.0.0 ship review)
+GnuCash Web has passed the point where desktop parity or raw feature count is the
+right roadmap. The product already has accounting-grade books, household and
+business workflows, tax and planning engines, document evidence, automation,
+audit history, and undo.
 
-**What:** Items surfaced by the v0.14.0.0 pre-landing review that were deliberately deferred:
-1. **Tool-config concurrency**: `gnucash_web_tool_config` has no unique constraint on (user, book, tool_type) — two concurrent first-time PUTs to `/api/tools/farm-analysis` can create duplicate rows and pinned inputs then flap by `updated_at`. Add a unique index + upsert, or serialize with an advisory lock.
-2. **Household-income context dedup**: `householdIncomeContext()` now lives in `src/app/api/tools/farm-analysis/route.ts` — extract to `src/lib/tax/` and reuse in `src/app/api/business/s-corp-analysis/route.ts` (which still hand-rolls the same ~20-line aggregation).
-3. **Multi-currency farm sums**: `farm-book-data.ts` and `schedule-f-report.ts` sum `split.value` in transaction currency without FX conversion (same convention as `book-income.ts`). Multi-currency books get silently mixed-currency Schedule F lines — convert via `findExchangeRate()` or warn when multiple currencies detected.
-4. **Farm scope per-user vs per-book**: the Schedule F report on a household book scopes to the *requesting user's* pinned farm accounts (ToolConfig is per-user), while mapping overrides are book-wide — two users of one book can see different "official" Schedule F numbers. Decide and unify.
-5. **NC 3-year-average qualifying test**: the analyzer only checks prior-year income ≥ $10k; NCDOR also qualifies on the 3-preceding-years average. Accept a 3-year history (or auto-derive from the book) in `analyzeFarmScenarios`.
-6. **Graft farm subtree onto existing book**: no primitive exists to add the farm chart-of-accounts to an *existing* book (`findOrCreateAccount` hard-codes INCOME type). Build `addTemplateAccounts(bookGuid, defs, parentName)`.
-7. **E-595QF/E-595CF document tracking**: store the exemption certificate in the documents module with expiry reminders (conditional cert's 3-year clock, 90-day return-copy duty).
+The next version of the product should become an **explainable, self-hosted
+financial operating system**:
 
-**Context:** Deferred from ship review 2026-07-22 (v0.14.0.0, feat/farm-apiary). Items 1-2 are code-quality, 3-5 correctness-completeness for edge cases, 6-7 product follow-ups from the original plan.
+1. Tell the user what needs attention.
+2. Rank the highest-value decisions.
+3. Show what will happen before anything changes.
+4. Carry out approved work safely.
+5. Prove every number afterward.
 
----
+## Product rules
 
-## P2 - Ledger data cleanup: corrupt FXAIX sale on 2024-05-22 — ✅ ROOT CAUSE FOUND 2026-07-12 (dev-only)
+Every new feature should satisfy these rules:
 
-**What:** The FXAIX lot `a125d771` (1.563 shares bought 2024-04-18 for $272) has a "Sale of Assets" split on 2024-05-22 valued at **-$4,272.95** — an implied ~$2,734/share, when every other FXAIX lot sold that same day is ~$178/share. This inflates the lot's realized gain by ~$4,000.
+- **No orphan tools.** New capabilities must feed at least one shared surface:
+  Action Center, Money Timeline, Living Plan, or Financial Provenance.
+- **Deterministic before generative.** Financial calculations, ranking, and
+  mutations use typed domain logic. AI may explain, normalize, or suggest, but
+  it does not invent figures or write unrestricted SQL.
+- **Preview, approve, undo.** Material changes show their balanced transaction
+  or configuration diff before execution and produce an audit record afterward.
+- **Evidence is part of the result.** Recommendations identify their source
+  transactions, documents, prices, FX rates, rules, assumptions, and confidence.
+- **Book-aware by default.** New services must declare whether they operate on
+  one book, linked books, or a consolidated household/entity graph.
+- **Close loops.** Prefer features that move from observation to decision to
+  action to reconciliation instead of producing another passive report.
 
-**Resolution (2026-07-12):** Not a bad import — this is the systematic legacy `splitSellAcrossLots` sign bug: an older engine version dropped the value sign on sell sub-splits, and the remainder sub-split absorbed the error. Audit found 598 corrupted sub-splits across 59 sells / 42 accounts in **gnucash_dev only** — **prod is clean** (0 mismatches; its 654 gains transactions are sign-consistent). Repair for dev when wanted: `npx tsx scripts/fix-lot-scrub-sign-corruption.ts --execute` (table snapshot in schema `backup_20260712` already taken).
+## Priority definitions
 
----
+| Priority | Meaning |
+|---|---|
+| **P0** | Product foundation; build before expanding the feature catalog |
+| **P1** | Next major workflow or correctness requirement |
+| **P2** | Valuable feature pack that should use the shared foundations |
+| **P3** | Targeted expansion or connector |
+| **P4** | Nice-to-have, cleanup, or low-frequency operation |
 
-## P3 - Amazon Order History Reports CSV Format Support
+## North-star measures
 
-**What:** Support Amazon's "Order History Reports" CSV format (multi-file: orders CSV + items CSV joined by Order ID) as an alternative to the "Request My Data" single-file format.
+- Minutes per week required to reach a trusted, reviewed financial position
+- Percentage of Action Center items resolved, automated, or converted into rules
+- Annual dollar impact surfaced and accepted through the Opportunity Engine
+- Percentage of material report figures with complete provenance
+- Reconciled-account coverage and latest verified-through date
+- Difference between the adopted plan and actual results, with causes explained
 
-**Why:** The MVP Amazon import only supports "Request My Data" format. The "Order History Reports" format includes Amazon's item categories (useful for auto-categorization) and is more familiar to users who've used Amazon's built-in download feature. Requires a multi-file upload UI and a join step in the parser.
+## Recommended delivery sequence
 
-**Effort:** S (human: ~3 days) / with CC: S (~15 min)
+1. Define the shared `FinancialAction`, `EvidenceRef`, and `CalculationTrace`
+   contracts.
+2. Ship the Action Center using existing review, receipt, statement, health,
+   compliance, close, job, and notification sources.
+3. Add Universal Financial Provenance to the highest-value KPIs, reports, and
+   existing deterministic insights.
+4. Add the first eight Opportunity Engine packs and rank them in the Action
+   Center.
+5. Normalize existing dated obligations into the Money Timeline.
+6. Let a scenario become an adopted Living Plan and reconcile it to actuals.
+7. Extend book links into cross-book consolidation.
+8. Add the Safe Operator Agent only after previewable domain commands are
+   available.
 
-**Depends on:** Amazon Order Import feature.
-
-**Context:** Deferred from eng review 2026-04-06. The "Request My Data" format has item-level detail in one file, making it simpler to parse. Adding "Order History Reports" later is a clean extension: add a second parser function, detect format by header row, and allow multi-file upload. The two formats have different column names and structures, but both normalize to the same `AmazonOrder` interface.
-
----
-
-## P2 - Monte Carlo FIRE Projections — ✅ SHIPPED 2026-06-12 (v0.4.0.0)
-
-**What:** Replace the single-line FIRE projection with a Monte Carlo simulation that samples from historical market return distributions. Show confidence bands (e.g., 10th/25th/50th/75th/90th percentile outcomes) instead of a single deterministic line.
-
-**Why:** The current FIRE projection uses a single expected return rate (default 7%), which gives a false sense of precision. Real markets are volatile — a Monte Carlo approach using historical annual return distributions would show the range of possible outcomes: "you have a 75% chance of reaching FI by 2038, but a 25% chance it takes until 2042."
-
-**Effort:** M (human: ~1 week) / with CC: M (~30 min)
-
-**Depends on:** FIRE calculator data-driven upgrade (shipped). Needs a historical return dataset (e.g., S&P 500 annual returns 1928-present) either embedded or fetched.
-
-**Context:** Deferred from QA review 2026-03-22. The single-year TWR (20.92%) was being used as the default expected return, which was wildly optimistic. Fixed to default to 7%. Monte Carlo would make the projection genuinely useful for planning by showing probability distributions instead of point estimates. Consider: Shiller CAPE data, sequence-of-returns risk modeling, and configurable asset allocation (stocks/bonds mix affects return distribution).
-
----
-
----
-
-## P2 - Payslip Integration (PDF + QuickBooks Online)
-
-**What:** Import payroll stubs into GnuCash Web. Phase 1: PDF upload + AI extraction into structured line items, mapped to GnuCash accounts via reusable per-employer templates, posted as detailed split transactions. Phase 2: QuickBooks Online API as an optional structured data source (OAuth 2.0 + Intuit Payroll API).
-
-**Why:** Paychecks currently import via SimpleFin as lump-sum deposits with no breakdown. Users who want to track taxes, deductions, and retirement contributions must manually create split transactions. This automates that workflow and stores payslip PDFs alongside receipts.
-
-**Effort:** L (human: ~2-3 weeks) / with CC: M-L (~1-2 hours)
-
-**Depends on:** Receipt storage infrastructure (shipped), AI extraction pipeline (shipped), BullMQ queue (shipped).
-
-**Spec:** [`docs/superpowers/specs/2026-03-24-payslip-integration-design.md`](docs/superpowers/specs/2026-03-24-payslip-integration-design.md)
-
-**Context:** Designed 2026-03-24. Phase 1 (PDF + AI) builds on existing receipt/OCR infrastructure. Phase 2 (QBO API) deferred — requires Intuit developer approval and paid QuickBooks Payroll subscription. Key features: per-employer account mapping templates, SimpleFin deposit enrichment/dedup, balance validation with imbalance account fallback, employer contribution tracking (informational only).
-
----
-
-## P4 - Receipt AI Re-Extraction Batch Job
-
-**What:** A "Re-extract all" button in AI settings that enqueues BullMQ jobs to re-run extraction on all existing receipts that used regex, using the newly configured AI provider.
-
-**Why:** When a user configures AI for the first time, their existing receipts have `extraction_method: "regex"`. Re-extraction with AI would improve match quality for the backlog without requiring re-upload.
-
-**Effort:** S (human: ~2 days) / with CC: S (~10 min)
-
-**Depends on:** Receipt auto-matching feature with AI provider configuration.
-
-**Context:** Deferred from eng review 2026-03-22. Users get AI extraction on new uploads immediately. The batch re-extraction is a nice-to-have that adds batch job management complexity. Users can also manually trigger re-extraction per receipt.
+Feature packs may ship alongside this sequence when they use the shared
+contracts. They should not introduce a new private inbox, recommendation feed,
+calendar model, scenario engine, or evidence format.
 
 ---
 
----
+# Platform roadmap
 
-## P1 - OIDC Authentication & Per-Book Authorization — ✅ SHIPPED 2026-06-12 (v0.4.0.0; OIDC login via Pocket ID, email auto-link migration, readonly/edit/admin enforcement across the API; per-book permission editor UI shipped in settings/users)
+## P0 - Financial Action Center
 
-**What:** Full authentication and authorization system. OIDC-based login (supporting providers like Keycloak, Auth0, Google, etc.), with a per-book permission model. Components:
-1. **OIDC authentication:** Login via OpenID Connect provider, session management, token refresh.
-2. **Book-level permissions:** Users are granted access to specific books with role-based permissions (admin, editor, viewer).
-3. **Permission editor UI:** Admin users can list users with access to a book, invite new users, change roles, and revoke access.
-4. **Default admin on import:** When a book is imported, the importing user automatically becomes the admin for that book.
-5. **Security reimplementation:** Replace any existing auth mechanisms with the OIDC-based system. All API routes and pages enforce authorization.
+**Outcome:** One trusted place answers, “What needs my attention?” The target
+workflow is a five-minute weekly financial close, not a tour through many pages.
 
-**Why:** Currently the app has no access control — anyone with the URL can view all financial data. Multi-user support is essential for shared households, accountants managing client books, and basic security. Per-book permissions are necessary once multiple books exist in the same database.
+**What:** Create a shared `FinancialAction` model and an Action Center with three
+lanes:
 
-**Effort:** XL (human: ~3-4 weeks) / with CC: L (~2-3 hours)
+- **Fix:** unreviewed imports, uncertain categories, unmatched receipts,
+  statement discrepancies, unbalanced transactions, stale prices, failed jobs,
+  and missing source documents.
+- **Decide:** tax shortfalls, contribution opportunities, budget tradeoffs,
+  expiring policies, replacement needs, large anomalies, and plan deviations.
+- **Do:** approved payments, scheduled transactions, reimbursements, close
+  tasks, document requests, and other pending operations.
 
-**Depends on:** Multi-book support (needed for per-book permissions to be meaningful).
+Each action carries book scope, origin, severity, due date, estimated dollar
+impact, confidence, evidence references, available operations, assignee, and a
+state of open, snoozed, accepted, resolved, dismissed, or expired.
 
-**Context:** Added 2026-03-26. Implementation approach: use `next-auth` (Auth.js v5) with the OIDC provider for authentication. Store user-book-role mappings in a new `user_book_permissions` table. Roles: `admin` (full control + permission management), `editor` (read/write transactions), `viewer` (read-only). Middleware checks session + book permission on every request. The permission editor is an admin-only settings page per book. Consider: API key auth for programmatic access, audit logging of permission changes, and graceful handling of OIDC provider downtime.
+**MVP:**
 
----
+1. Adapters for transaction review, receipt inbox, statement reconciliation,
+   Data Health, proactive insights, compliance deadlines, business close,
+   failed jobs, and notifications.
+2. Keyboard-first desktop triage and swipe-friendly mobile review.
+3. Batch accept/dismiss/snooze, “create a rule,” and direct links to the exact
+   resolution surface.
+4. A meaningful empty state: “Books reviewed through July 23.”
+5. Weekly summary showing new, resolved, automated, and overdue actions.
 
-## P1 - Tax Estimator (Federal + State) — ✅ SHIPPED 2026-06-12
+**Depends on:** Existing review metadata, notifications, insights, audit log,
+job progress, receipts, statements, Data Health, and compliance services.
 
-Shipped at `/tools/tax-estimator`: federal engine (2024-2026, all five filing statuses, LTCG stacking, NIIT, Additional Medicare, SE tax, OBBBA SALT cap + senior deduction, safe-harbor 1040-ES schedule), pluggable state modules (9 no-tax states, 10 flat states, CA + NY brackets, flat-rate fallback), account→tax-category mapper with auto-suggestions (`gnucash_web_tax_mappings`), book-data aggregation with annualize toggle, and contribution scenario modeling validated against IRS limits.
-
-**What:** A tax estimation tool that computes federal and state income tax liability (and quarterly estimated payments) from actual book data. Reads income, deductions, capital gains, retirement contributions, and withholding from GnuCash accounts, applies current tax brackets and rules, and produces: (1) projected annual tax liability, (2) quarterly estimated payment schedule (1040-ES / state equivalent), (3) comparison of withheld vs. owed, (4) marginal and effective tax rate breakdown.
-
-**Why:** Users with investment income, self-employment, or multiple income sources need to make quarterly estimated tax payments. Today this requires exporting data to a spreadsheet or tax software. A tool that reads directly from the book eliminates double-entry and gives real-time visibility into tax exposure as transactions flow in throughout the year.
-
-**Scope:**
-- **Federal:** Ordinary income, long-term/short-term capital gains (from lot data), qualified dividends, standard vs. itemized deductions, AMT screening, retirement contribution deductions (traditional IRA/401k), self-employment tax (Schedule SE), estimated payment safe harbor rules.
-- **State:** Configurable state of residence. Start with a few high-population states (CA, NY, TX, FL, etc.) and a framework for adding more. Handle state-specific treatment of retirement income, capital gains, and deductions.
-- **Data mapping:** Account-to-tax-line mapping (e.g., "this Income:Salary account maps to W-2 wages"). Persisted per-book so it survives re-imports. Pre-populate common mappings from account names/types.
-- **Filing status:** Single, MFJ, MFS, HoH, QSS — affects brackets, standard deduction, phase-outs.
-
-**Effort:** XL (human: ~4-6 weeks) / with CC: L-XL (~3-5 hours)
-
-**Depends on:** Contribution tracking (shipped), lot/capital gains engine (shipped), account hierarchy (shipped). IRS bracket data needs annual updates (2024-2026 already in `irs-limits.ts` pattern).
-
-**Context:** Added 2026-04-12. This is a large feature but high-value for the target user (self-directed investors managing their own finances). Start with a read-only estimation report, not actual form generation. Could later extend to produce draft 1040-ES worksheets or integrate with tax-prep APIs. Key risk: tax law complexity and state variation — scope the MVP to federal + 1 state, with a pluggable state-tax module pattern.
+**Effort:** L.
 
 ---
 
-## P2 - FIRE Calculator: Expose Assumptions & Monte Carlo Analysis — ✅ SHIPPED 2026-06-12 (v0.4.0.0; incl. Social Security estimation from book earnings history)
+## P0 - Opportunity Engine / “Next Best Dollar”
 
-**What:** Enhance the FIRE calculator with two improvements: (1) Surface and make configurable the underlying assumptions (inflation rate, withdrawal strategy, Social Security estimates, tax rates, healthcare costs, asset allocation glide path, etc.). (2) Add Monte Carlo simulation using historical return distributions to show probability-weighted outcome ranges instead of a single deterministic projection.
+**Outcome:** Answer, “What is the most valuable safe thing I can do with the next
+$1,000, hour, or decision?”
 
-**Why:** The current calculator uses fixed assumptions that may not match the user's situation, and a single expected return rate that gives false precision. Exposing assumptions lets users model their specific scenario. Monte Carlo analysis (see existing P2 TODO) shows the range of possible outcomes — "you have an 80% chance of not running out of money by age 90" is far more useful than "you'll have $X at age 90."
+**What:** Add deterministic opportunity packs that emit `FinancialAction`
+records. Rank them by estimated after-tax value, urgency, confidence, liquidity
+cost, reversibility, and user goals. AI can rewrite the explanation, but the
+calculation and ranking remain inspectable domain logic.
 
-**Effort:** L (human: ~2 weeks) / with CC: M (~45 min)
+**Initial opportunity packs:**
 
-**Depends on:** FIRE calculator (shipped). Monte Carlo needs a historical return dataset.
+1. Estimated-tax and safe-harbor shortfalls
+2. Unused employer match and tax-advantaged contribution capacity
+3. High-interest debt versus excess cash
+4. Emergency-fund and near-term cash-flow shortfalls
+5. Portfolio drift, idle investment cash, and maturing fixed income
+6. Tax-loss harvesting, gain realization, and Roth-conversion windows
+7. Subscription price increases, duplicates, and avoidable recurring costs
+8. Budget funding gaps for known future obligations
+9. Insurance, healthcare, home, and vehicle gaps as those feature packs land
 
-**Context:** Added 2026-03-26. This extends the existing P2 Monte Carlo TODO with the assumptions exposure component. Key assumptions to surface: expected real return rate, inflation rate, safe withdrawal rate (4% default), Social Security start age and estimated benefit, tax rate in retirement, healthcare cost model, and asset allocation changes over time. Monte Carlo specifics: use Shiller CAPE or S&P 500 annual return data (1928-present), run 10,000+ simulations, show confidence bands (10th/25th/50th/75th/90th percentile), and highlight sequence-of-returns risk in early retirement years.
+Every opportunity should show:
+
+- Estimated annual/lifetime value and the calculation range
+- Deadline or reason it matters now
+- Cash and liquidity required
+- Important tradeoffs and assumptions
+- Evidence and “show the math”
+- A prefilled scenario or safe next action
+- Accepted/dismissed outcome tracking so recommendations improve over time
+
+**MVP completion:** At least eight high-confidence detectors, a common scoring
+contract, deterministic tests, ranking in the Action Center, and outcome
+tracking. Do not begin with a generic AI advice feed.
+
+**Depends on:** Financial Action Center, existing tax/planning/investment
+engines, goals, cash-flow forecast, and Financial Provenance.
+
+**Effort:** L.
+
+---
+
+## P0 - Universal Financial Provenance
+
+**Outcome:** Any material number or recommendation can answer, “Where did this
+come from, how was it calculated, and how current is it?”
+
+**What:** Introduce common `EvidenceRef` and `CalculationTrace` contracts for
+reports, tools, and actions. A trace can point to transactions, splits,
+accounts, statements, receipts, payslips, prices, FX rates, categorization
+rules, tax tables, assumptions, and intermediate calculations.
+
+**MVP:**
+
+1. “Explain this number” drill-through for dashboard KPIs, tax estimates,
+   balances, net worth, cash-flow forecast, and Action Center dollar impacts.
+2. Source badges for statement/receipt/payslip/manual/SimpleFIN provenance.
+3. Price and FX quote timestamps with stale-data warnings.
+4. Reconciliation state plus a per-book “verified through” date.
+5. Exportable calculation/evidence manifest for accountant share links and
+   tax packages.
+6. Stable trace identifiers so a saved decision remains auditable after data
+   changes.
+
+**Architecture rule:** New report endpoints should return trace metadata or a
+trace token instead of making each page invent a bespoke drill-down query.
+
+**Depends on:** Existing report drill-downs, receipt/statement matching, price
+audit, change history, and reconciliation metadata.
+
+**Effort:** L.
+
+---
+
+## P1 - Living Financial Plan of Record
+
+**Outcome:** Turn the Scenario Sandbox from a one-time calculator into a living
+plan continuously reconciled against the real books.
+
+**What:**
+
+- Save a scenario as the household’s adopted baseline plan.
+- Model dated life events such as a job change, child, move, home purchase,
+  rental, sabbatical, retirement, education, vehicle replacement, or business
+  transition.
+- Rerun the plan monthly using actual balances, income, spending, taxes,
+  contributions, inflation, and market results.
+- Explain changes in goal probability, liquidity, tax exposure, net worth, and
+  FIRE date.
+- Maintain a decision journal: alternatives considered, assumptions, selected
+  action, expected impact, and actual outcome.
+
+**MVP:**
+
+1. Adopt, version, and archive plans.
+2. Life-event timeline and reusable event templates.
+3. Monthly actual-versus-plan update with cause attribution.
+4. Plan-impact link on every relevant Opportunity Engine item.
+5. Guardrails for minimum cash, debt payoff, contribution priorities, and goal
+   deadlines.
+
+**Depends on:** Scenario Sandbox, goals, budgets, cash-flow forecast, tax
+estimator, FIRE/drawdown engines, and Universal Financial Provenance.
+
+**Effort:** L.
+
+---
+
+## P1 - Unified Money Timeline
+
+**Outcome:** One chronological view shows what will happen, what may happen, and
+what the user must do.
+
+**What:** Normalize scheduled transactions, bills, invoices, tax deadlines,
+renewals, vesting, RMDs, bond coupons/maturities, warranties, home maintenance,
+insurance events, goal deadlines, and planned capital replacement into a
+shared `FinancialEvent` contract.
+
+**MVP:**
+
+1. Day/month/year views with expected cash impact and confidence.
+2. Event adapters for existing scheduled transactions, compliance calendar,
+   fixed income, renewals, equity compensation, home tasks, invoices/bills,
+   goals, and report schedules.
+3. Links between timeline events, cash-flow forecast, Action Center, and the
+   adopted plan.
+4. Conflict detection: projected low cash, duplicate obligations, missed
+   contribution windows, and overdue actions.
+5. Expanded tokenized iCal feeds with per-domain filters.
+
+**Depends on:** Existing recurrence, compliance, renewal, home-task, fixed-income,
+equity-compensation, invoice, and iCal services.
+
+**Effort:** M-L.
+
+---
+
+## P1 - Family Office / Cross-Book Consolidation
+
+**Outcome:** A household, its businesses, farms, rentals, nonprofits, and future
+trusts can be understood as one financial graph without corrupting the
+boundaries of their individual books.
+
+**What:**
+
+1. Extend book links into a typed entity/ownership graph.
+2. Consolidated balance sheet, income statement, cash flow, net worth, tax
+   context, liquidity, and opportunity view.
+3. Match inter-book transfers and propose eliminations.
+4. Ownership look-through for business profit, property, and investment
+   exposure.
+5. Global document search, Ask Your Books, Action Center, and Money Timeline
+   across the authorized graph.
+6. Advisor/accountant sharing scoped to selected entities and reports.
+
+**MVP:** Household plus linked businesses, ownership percentages, consolidated
+net worth/P&L/cash flow, transfer matching, and explicit elimination previews.
+Do not silently combine books or currencies.
+
+**Depends on:** Existing book links, RBAC, tax linked-business support,
+multi-currency conversion, Universal Financial Provenance, and Action Center.
+
+**Effort:** L-XL.
+
+---
+
+## P2 - Safe Operator Agent
+
+**Outcome:** “Ask Your Books” can complete bounded financial work, not merely
+answer questions.
+
+**Safety contract:**
+
+- The agent calls typed domain commands; it never receives unrestricted
+  write-SQL access.
+- Every material operation produces a preview and balanced-diff validation.
+- Approval is scoped to the proposed operation.
+- Execution creates an audit entry and supports undo where the domain permits.
+- The response links to evidence and separates facts from assumptions.
+
+**Initial intents:**
+
+1. Prepare the weekly review or month-end close.
+2. Categorize selected transactions and create reusable rules.
+3. Match receipts/statements and explain ambiguous matches.
+4. Create or modify a scheduled transaction from ledger history.
+5. Build and compare a scenario, then adopt approved plan changes.
+6. Prepare an accountant/tax package and request missing evidence.
+7. Draft a budget/funding-rule adjustment from an accepted opportunity.
+8. Explain and resolve a Data Health issue.
+
+**Gate:** Build only after the Action Center, provenance contracts, and domain
+command previews are stable. Generic proactive chat is not the differentiator;
+auditable action is.
+
+**Effort:** L-XL.
+
+---
+
+# Integrated feature packs
+
+These remain valuable, but they should land as reusable data, detector, event,
+and action packs rather than isolated pages.
+
+## P1 - Business Cash-Conversion Pack
+
+### Invoice Payment Links and Client Portal
+
+**What:** Add Stripe and/or PayPal “Pay now” support to public invoices,
+auto-record cleared payments and processor fees from signed webhooks, and
+extend the public view into a lightweight portal for open invoices, payment
+history, and estimate accept/decline.
+
+**Why:** Invoices, estimates, dunning, recurring billing, settlement import, and
+public views exist, but the money loop does not close.
+
+**Integration:**
+
+- Payment due/failed/cleared events appear in the Money Timeline.
+- Failed and overdue payments become Action Center items.
+- Webhook postings link invoice → payment → fee → settlement → reconciliation
+  through Financial Provenance.
+- Estimate acceptance uses the existing estimate-to-invoice conversion.
+
+**Implementation notes:** Store processor credentials per book in Connections.
+Reuse settlement-import split logic for fees and refunds.
+
+**Effort:** M-L.
+
+### P2 - Job Costing and Project Profitability
+
+Join tracked labor, employee rates, materials/vouchers, job expenses, invoiced
+revenue, and unbilled WIP into a per-job margin view. Emit actions for unbilled
+time/expense, margin erosion, and overdue collections. Expenses use explicit job
+links with tag fallback.
+
+**Depends on:** Jobs, time tracking, invoices, vouchers, and Action Center.
+
+**Effort:** M.
+
+### P2 - Employee Expense Reimbursement
+
+Add submitted → approved → posted/rejected workflow over the receipt inbox.
+An employee-role user submits a reimbursable receipt; an approver creates a
+voucher in one action. Surface approvals in the Action Center and payment due
+dates in the Money Timeline.
+
+**Depends on:** Receipts, RBAC, employees, vouchers, notifications, and Action
+Center.
+
+**Effort:** S-M.
+
+---
+
+## P2 - Property, Protection, and Capital-Replacement Pack
+
+### Rental Property Management
+
+Add properties/units, tenants, leases, escalations, renewal reminders, rent roll,
+security-deposit liabilities, late-fee rules, and per-tenant ledgers/statements
+on top of Schedule E and existing customer/recurring-invoice machinery.
+
+**Integration:** Lease and rent events feed the Timeline; overdue rent and lease
+renewals feed the Action Center; property cash flow feeds the Living Plan and
+cross-book consolidation; every Schedule E figure remains traceable.
+
+**Effort:** L.
+
+### Insurance Coverage-Gap Analysis
+
+Track policies, limits, sub-limits/riders, deductibles, premiums, renewals, and
+covered entities. Compare home-inventory replacement value against coverage,
+flag category sub-limit gaps, and export a claims package containing photos,
+values, receipts, and policy evidence.
+
+**Integration:** Renewal and coverage-gap actions, Timeline events, plan stress
+tests, and a shared policy model for life/health/property coverage.
+
+**Effort:** M.
+
+### Home Capital-Replacement Forecast
+
+Add expected lifespan and replacement cost to roofs, HVAC, water heaters,
+appliances, and other inventory. Inflate known costs, show the replacement
+timeline, and propose envelope funding rules such as “set aside $110/month.”
+
+**Integration:** Capital events feed Timeline and Living Plan; funding gaps
+become ranked opportunities; accepted recommendations create previewed funding
+rules.
+
+**Effort:** M.
+
+### Life Insurance Needs Analysis
+
+Calculate per-spouse coverage need from actual income, debts, education goals,
+final expenses, liquid assets, and existing policies. Start with DIME, then add
+a survivor-cash-flow mode using the FIRE engine.
+
+**Integration:** Uses the shared policy model, emergency information, Living
+Plan stress tests, and coverage-gap actions.
+
+**Effort:** S-M.
+
+---
+
+## P2 - Household Cost and Resilience Pack
+
+### Personal Price Index
+
+Normalize recurring receipt line items and units, track the household’s actual
+price history, and compare personal inflation with BLS categories. Start with
+the top recurring items rather than attempting universal normalization.
+
+**Integration:** Emit evidence-backed price-increase and substitution
+opportunities. Link each result to receipts and ledger transactions.
+
+**Effort:** M.
+
+### Healthcare Deductible and Open-Enrollment Comparator
+
+Track deductible/OOP progress by plan and family member. Replay one to three
+years of actual claims against candidate HDHP/HSA and PPO designs, including
+premiums, expected out-of-pocket costs, and HSA tax effects.
+
+**Integration:** Deductible milestones feed Timeline; open-enrollment choices
+become plan scenarios and ranked opportunities; EOBs remain attached evidence.
+
+**Effort:** L.
+
+### P3 - 529 and Education Savings Planner
+
+Add per-child education goals, public/private cost projections, tuition
+inflation, 529 balances, state deduction tracking, and glide-path guidance.
+Later phases may cover five-year gift elections and SECURE 2.0 529-to-Roth
+rollovers.
+
+**Integration:** Education events and contributions feed Living Plan, Timeline,
+and Next Best Dollar ranking.
+
+**Effort:** M.
+
+### P3 - Utility Usage and Solar Payback
+
+Extract kWh, therms, and water usage from bills so rate increases can be
+separated from consumption changes. Use actual rates and usage for solar-payback
+scenarios.
+
+**Integration:** Price/usage anomalies become actions; solar is a Living Plan
+capital scenario; source bills provide provenance.
+
+**Effort:** M.
+
+### P3 - Family Banking and Kids’ Allowance
+
+Create honest liability-backed child balances, scheduled allowances,
+chore-based credits, savings goals, optional parent matching, and a restricted
+kid-facing view.
+
+**Integration:** Allowance and goal events feed Timeline; parent approvals use
+Action Center; RBAC scopes the child view.
+
+**Effort:** M-L.
+
+### P3 - Trip and Vacation Budgeting
+
+Model a trip as a tag, envelope, and date range with a savings target, live
+spend, and post-trip plan-versus-actual report. Offer a current-trip toggle in
+Quick Add and review suggested date-range auto-tags.
+
+**Integration:** A trip is a first-class Living Plan event, funding opportunity,
+and temporary Action Center context rather than a standalone accounting silo.
+
+**Effort:** S.
+
+---
+
+## P2 - Mobility and Vehicle Pack
+
+### Mileage Log
+
+Capture date, purpose, vehicle, miles or odometer pair, and business-use
+classification. Maintain annual IRS business/medical/charity mileage rates and
+feed deductions to Schedules C, E, and F. Provide thumb-first mobile entry.
+
+**Effort:** S-M.
+
+### Fuel-Tracker Integration
+
+Ingest vehicles and fill-ups from `../fuel-tracker`, then match total/date
+against SimpleFIN gas purchases and attach gallons, price per gallon, location,
+odometer, and MPG.
+
+Preferred integration: token-authenticated `GET /api/fillups?since=` polled by a
+BullMQ job, with source ID dedupe and a one-time vehicle-to-asset mapping.
+Webhook push is an acceptable alternative; direct database access is not the
+preferred contract.
+
+**Effort:** M.
+
+### P3 - Vehicle Total Cost of Ownership
+
+Combine fuel, insurance, maintenance, registration, depreciation, and mileage
+into monthly run rate and cost per mile. Add evidence-backed repair-versus-
+replace scenarios using the Living Plan rather than a context-free warning.
+
+**Depends on:** Mileage Log, Fuel-Tracker integration, assets/depreciation, and
+service-log patterns.
+
+**Effort:** M.
+
+---
+
+# Core workflow and connector backlog
+
+## P1 - Scheduled Transactions: Edit and Create from Existing
+
+1. Reuse `CreateScheduledPanel` in edit mode for name, recurrence, splits,
+   amounts, dates, and auto-create/notify settings.
+2. Add “Schedule” to ledger transaction actions and prefill it from the selected
+   transaction.
+3. Optionally infer a likely cadence from transaction history.
+4. Add a validated update endpoint such as
+   `PATCH /api/scheduled-transactions/[guid]`.
+
+This is promoted because the Action Center and Safe Operator Agent need a
+complete scheduled-transaction command surface.
+
+**Effort:** M.
+
+---
+
+## P1 - Reconciliation UX Discovery and Continuous Close
+
+Use real books to identify why the current flow feels wrong. Measure clicks,
+time-to-tie-out, abandoned reconciliations, unclear balance states, and missing
+transaction handling.
+
+The redesign should connect statement import, manual reconcile, connection
+balances, transaction review, and Data Health into the Action Center. Accounts
+should expose reconciliation coverage and a verified-through date.
+
+**Effort:** Discovery first; implementation TBD.
+
+---
+
+## P3 - Payslip Structured-Source Follow-Up
+
+PDF/AI payslip extraction and employer templates are shipped. The remaining
+scope is an optional QuickBooks Online/Intuit Payroll connector, subject to
+developer approval and product access. Preserve SimpleFIN deposit enrichment,
+dedupe, balanced posting, and employer contribution metadata.
+
+**Existing design:** `docs/superpowers/specs/2026-03-24-payslip-integration-design.md`
+
+**Effort:** M-L after external access is available.
 
 ---
 
 ## P3 - Scheduled Book Sync to External PostgreSQL / GnuCash Desktop
 
-**What:** A scheduled background job that syncs the GnuCash Web book data to an external PostgreSQL database (or other target) in a format compatible with GnuCash desktop. This enables round-tripping: edit in the web app, sync back to a database that GnuCash desktop can open.
+Export one web book on a schedule into a vanilla GnuCash-compatible PostgreSQL
+database, with initial seed, incremental changes, conflict detection, schema
+compatibility, and securely stored per-book target credentials.
 
-**Why:** Once GnuCash Web supports multiple books in a single database, the database schema diverges from what GnuCash desktop expects (desktop assumes one book per database). A sync job that exports a single book to a separate database preserves desktop compatibility for users who still use both interfaces.
+Evaluate application-level sync before logical replication. Never silently
+overwrite a desktop-modified target; conflicts must become Action Center items.
 
-**Effort:** L (human: ~2 weeks) / with CC: M (~1 hour)
+**Depends on:** Multi-book support, authorization, audit history, and a clear
+conflict policy.
 
-**Depends on:** Multi-book support, OIDC auth (to know which books exist and who owns them).
-
-**Context:** Added 2026-03-26. Approach: scheduled BullMQ job (configurable interval, e.g., nightly) that dumps a single book's tables to a target PostgreSQL database in vanilla GnuCash schema format. Must handle: incremental sync (only changed rows since last sync), conflict detection (warn if desktop made changes since last sync), schema compatibility (GnuCash desktop expects specific table structures), and connection management (target DB credentials stored per-book in settings). Consider: pg_dump/pg_restore for initial seed, logical replication for incremental, or application-level row-by-row sync.
-
----
-
-## P3 - Account & Transaction Tagging — ✅ SHIPPED 2026-06-12 (v0.4.0.0)
-
-**What:** A tagging system for accounts and transactions that provides an alternative, non-hierarchical grouping mechanism alongside the existing account hierarchy. Tags are flat labels (not hierarchical) that can be applied to any account or transaction. Features:
-1. **Tag CRUD:** Create, rename, delete tags. Tags are global to the book.
-2. **Apply tags:** Tag individual transactions or accounts. Bulk-tag operations for transaction ranges.
-3. **Tag-based views:** Filter/group transactions and accounts by tag. A "tag browser" page showing all tags with counts.
-4. **Tag-based reporting:** Run existing reports (balance, P&L) scoped to a tag instead of an account subtree.
-5. **Multi-tag support:** Accounts and transactions can have multiple tags.
-
-**Why:** The GnuCash account hierarchy is great for standard accounting structure, but users often need cross-cutting categorization that doesn't fit the tree — e.g., tagging all "vacation" expenses across Food, Travel, and Entertainment accounts, or tagging transactions related to a specific project, property, or tax event. Tags provide this flexibility without restructuring the chart of accounts.
-
-**Effort:** L (human: ~2-3 weeks) / with CC: L (~1-2 hours)
-
-**Depends on:** Core transaction/account infrastructure (shipped). OIDC auth (tags should respect book permissions).
-
-**Context:** Added 2026-03-26. Storage: new `tags` table (id, book_guid, name, color) and junction tables `transaction_tags` (transaction_guid, tag_id) and `account_tags` (account_guid, tag_id). UI: tag chips with colors displayed on transaction rows and account tree nodes, a tag picker autocomplete component, and a dedicated tag management page. Consider: tag groups/categories as a future extension (but keep V1 flat), import/export of tags, and whether GnuCash desktop's `slots` KVP system could store tags for round-trip compatibility.
+**Effort:** L.
 
 ---
 
-## P3 - Revisit Account Reconciliation UX
+## P3 - Accounts API: Remove Book Name from `fullname`
 
-**What:** Re-evaluate the account reconciliation flow after go-live based on real-world usage. The current flow doesn't feel right, but the specific pain points and improvements need to be identified through actual use.
+Return `Assets:Checking` rather than
+`Crawford Personal Finances:Assets:Checking`, with `book_name` as a separate
+field. Update both flat-account and hierarchy responses and remove redundant
+client-side stripping.
 
-**Why:** Reconciliation is a core accounting workflow — if it's clunky, users will skip it or fall behind, leading to unreconciled accounts and reduced trust in the data. Getting this right matters for the app to be a credible GnuCash companion.
-
-**Effort:** TBD (needs discovery first)
-
-**Depends on:** Go-live, real user feedback.
-
-**Context:** Added 2026-03-26. This is intentionally open-ended — the current reconciliation flow needs to be used in practice before specific improvements can be scoped. After go-live, collect friction points: Is the workflow too many clicks? Is it unclear which transactions are unreconciled? Is the balance matching confusing? Does it need bank statement import integration? Revisit this TODO with concrete findings and then scope specific fixes.
+**Effort:** XS.
 
 ---
 
-## P2 - Scheduled Transaction: Edit & Create from Existing
+## P4 - Receipt AI Re-Extraction Batch Job
 
-**What:** Two enhancements to scheduled transactions:
-1. **Edit scheduled transaction:** From the scheduled transactions list, click an existing scheduled transaction to open an edit panel (similar to the create panel) where users can modify the name, recurrence, splits, amounts, start/end dates, and auto-create/notify settings.
-2. **Create scheduled transaction from existing transaction:** From any ledger (account ledger or general ledger), select a transaction and click "Schedule" to pre-populate a new scheduled transaction with that transaction's description, splits, and amounts. The user then sets the recurrence and saves.
+Add “Re-extract all” in AI settings for receipts still using regex extraction.
+Queue jobs through BullMQ, expose progress through the existing job-progress
+system, and avoid reprocessing already-AI-extracted receipts unless explicitly
+requested.
 
-**Why:** Currently scheduled transactions can only be created from scratch with no way to edit after creation. Most scheduled transactions originate from an existing real transaction ("I paid rent, now I want this to repeat monthly"). Creating from an existing transaction saves manual re-entry of accounts and amounts.
-
-**Effort:** M (human: ~1 week) / with CC: S-M (~20-30 min)
-
-**Depends on:** Scheduled transaction create (shipped), AccountSelector component (shipped).
-
-**Context:** Added 2026-03-30. The edit panel should reuse the `CreateScheduledPanel` component (refactored to handle both create and edit modes). The right-click transaction context menu now exists in Account Ledger and General Ledger; add the "Schedule" action there when create-from-existing is implemented. Consider: pre-selecting the recurrence based on transaction patterns (e.g., if similar transactions appear monthly, default to monthly), and an update API endpoint (`PATCH /api/scheduled-transactions/[guid]`).
-
-## P3 - Accounts API: Strip Book Name from Fullname
-
-**What:** Update the `/api/accounts` endpoint to strip the book name (first segment) from the `fullname` field in responses. Return the book name as a separate `book_name` field instead. Currently `fullname` returns `Crawford Personal Finances:Assets:Checking` — it should return `Assets:Checking` with `book_name: "Crawford Personal Finances"` as a secondary key.
-
-**Why:** Every consumer that displays account paths has to strip the book name manually. The ledger uses `formatDisplayAccountPath()`, the payslip detail panel strips the first segment inline, and the AccountSelector shows full paths. A single fix at the API level eliminates all the client-side stripping.
-
-**Effort:** XS (human: ~1 hour) / with CC: XS (~5 min)
-
-**Depends on:** Nothing. Standalone change on main.
-
-**Context:** Discovered during payslip integration QA (2026-04-13). The `account_hierarchy` view includes the book name as the root. The `buildAccountPathMap()` util in reports already handles this. The fix should update the flat accounts query and the account_hierarchy view response to strip the first segment, and add `book_name` as a top-level field.
+**Effort:** S.
 
 ---
 
-## Completed
+# Correctness and reliability backlog
 
-### Asset Analysis Tool: Manual Account Selection
-**Completed:** 2026-05-25
+## P1 - Farm Correctness and Follow-Ups
 
-Asset Analysis now starts from a blank account set instead of auto-adding all ASSET accounts. Users choose either a parent fixed asset account, whose non-placeholder ASSET descendants are included, or manually select individual ASSET accounts. The selection is stored in the database-backed user preferences table so it is available across machines.
+Correctness items should land before more farm expansion:
 
-### Ledger Transaction Context Menu
-**Completed:** 2026-05-25
+1. **Tool-config concurrency:** Add uniqueness on
+   `(user, book, tool_type)` and use an upsert or advisory lock so concurrent
+   first writes cannot create flapping duplicate configurations.
+2. **Multi-currency farm sums:** Convert through `findExchangeRate()` or block
+   with an explicit warning; never silently mix currencies in Schedule F.
+3. **Farm scope:** Decide whether official Schedule F scope is per user or per
+   book and make mappings/configuration consistent.
+4. **Household-income context:** Extract the duplicated helper into
+   `src/lib/tax/` and reuse it in farm and S-corp analysis.
+5. **NC three-year average:** Support the NCDOR three-preceding-years average
+   qualifying test, preferably derived from book history.
+6. **Graft farm accounts:** Build a type-aware
+   `addTemplateAccounts(bookGuid, defs, parentName)` primitive for existing
+   books instead of the INCOME-only `findOrCreateAccount` path.
+7. **E-595QF/E-595CF tracking:** Store certificates in Documents and emit
+   expiry/return-copy obligations into Timeline and Action Center.
 
-Added a shared portal-based transaction context menu and wired it to right-clicks on Account Ledger and General Ledger rows. Shipped existing actions only: view details, edit, duplicate, delete, copy transaction ID, plus General Ledger "View in account" based on the clicked split account. Schedule and receipt-specific actions remain deferred until those flows have first-class implementations.
-
-### SimpleFin Import: Manual Transaction Reconciliation & Transfer Dedup
-**Completed:** v0.2.1.0 (2026-03-27)
-
-Reconciliation matching links bank-imported transactions to existing manually-entered ones. Transfer dedup detects when the same transfer is imported from both sides and links them. "Bank-verified" badge in ledger. Match counts in sync results.
-
-## P3 - Ledger data cleanup: three credit cards with backwards balances
-
-**What:** Cara Chase Amazon Prime Card (+$3,785.34), Discover Card (+$154.92), and Chase Ink Unlimited (+$29.78) carry positive (debit) raw balances in the book — opposite the normal GnuCash credit-card sign convention.
-
-**Why:** Found by /qa on 2026-07-08 while testing the Debt Payoff Planner against live data. The planner shows them as negative "owed" and excludes them by default, which is faithful but confusing. Likely sign-flipped data entry or unmatched payments in the ledger.
-
-**Effort:** XS (data fix in the ledger, no code change)
+Items 1-3 are correctness; 4 is technical debt; 5-7 are feature completion.
 
 ---
+
+## P4 - Ledger Data Cleanup: Backwards Credit-Card Balances
+
+Cara Chase Amazon Prime Card (+$3,785.34), Discover Card (+$154.92), and Chase
+Ink Unlimited (+$29.78) have debit-positive raw balances, opposite the normal
+credit-card convention. Inspect for sign-flipped entry or unmatched payments
+and correct the data. No planner should conceal or auto-correct the source book.
+
+**Effort:** XS data repair.
+
+---
+
+# Backlog admission checklist
+
+Before adding another feature to this file, answer:
+
+1. What user decision or recurring workflow does it improve?
+2. Does it emit an Action, Timeline event, Plan input, or evidence trace?
+3. What existing engine or data does it reuse?
+4. What calculation is deterministic and testable?
+5. What is the preview/approval/undo behavior?
+6. Is it single-book or cross-book, and how are currencies handled?
+7. What measurable outcome proves it was useful?
+
+If those answers are weak, improve an existing workflow instead of adding
+another destination to the feature catalog.

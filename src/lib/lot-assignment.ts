@@ -321,7 +321,7 @@ export async function autoAssignLots(
       default:
         throw new Error(`Unknown assignment method: ${method}`);
     }
-  });
+  }, { timeout: 120_000, maxWait: 15_000 });
 }
 
 export async function clearLotAssignments(
@@ -493,7 +493,7 @@ export async function clearLotAssignments(
       splitsUnassigned: updateResult.count,
       lotsDeleted: lotsToDelete.length,
     };
-  });
+  }, { timeout: 120_000, maxWait: 15_000 });
 }
 
 export async function revertScrubRun(runId: string): Promise<{ reverted: number }> {
@@ -597,7 +597,7 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
     });
 
     return { reverted: taggedGuids.length };
-  });
+  }, { timeout: 120_000, maxWait: 15_000 });
 }
 
 export async function scrubAllAccounts(
