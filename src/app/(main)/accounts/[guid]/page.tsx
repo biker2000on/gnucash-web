@@ -10,6 +10,8 @@ import { useDateFilter } from '@/hooks/useDateFilter';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useBooks } from '@/contexts/BookContext';
+import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
+import SimpleFinSyncIndicator from '@/components/SimpleFinSyncIndicator';
 import Link from 'next/link';
 
 interface AccountData {
@@ -44,6 +46,8 @@ function AccountPageContent() {
     const { startDate, endDate, setDateFilter, isInitialized } = useDateFilter();
     const { balanceReversal } = useUserPreferences();
     const { activeBookGuid } = useBooks();
+    const { data: reviewStatus } = useReviewStatus();
+    const simpleFinStatus = reviewStatus?.[guid];
     const handleEscapeBack = useCallback(() => {
         router.push(`/accounts?focus=${guid}`);
     }, [router, guid]);
@@ -119,9 +123,15 @@ function AccountPageContent() {
                         <span>/</span>
                         <span className="text-foreground-secondary">{account?.name || 'Loading...'}</span>
                     </nav>
-                    <h1 className="text-3xl font-bold text-foreground flex items-center gap-3">
+                    <h1 className="text-3xl font-bold text-foreground flex flex-wrap items-center gap-3">
                         {account?.name || 'Loading...'}
                         <span className="text-xs font-normal px-2 py-1 rounded bg-background-tertiary text-foreground-muted border border-border-hover uppercase tracking-tighter">Ledger</span>
+                        {simpleFinStatus?.hasSimpleFin && (
+                            <SimpleFinSyncIndicator
+                                status={simpleFinStatus.simpleFinSyncStatus}
+                                error={simpleFinStatus.simpleFinSyncError}
+                            />
+                        )}
                     </h1>
                     {/* Account Path Breadcrumb */}
                     {account?.fullname && (
