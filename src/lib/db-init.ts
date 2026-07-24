@@ -1,4 +1,4 @@
-import { query } from './db';
+import { query, withDatabaseAdvisoryLock } from './db';
 import {
     CALCULATION_TRACES_SCHEMA_SQL,
     FINANCIAL_ACTIONS_SCHEMA_SQL,
@@ -1758,9 +1758,11 @@ async function createPerformanceIndexes() {
 export async function initializeDatabase() {
     try {
         console.log('Initializing database schema...');
-        await createAccountHierarchyView();
-        await createExtensionTables();
-        await createPerformanceIndexes();
+        await withDatabaseAdvisoryLock('gnucash-web:database-initialization', async () => {
+            await createAccountHierarchyView();
+            await createExtensionTables();
+            await createPerformanceIndexes();
+        });
         console.log('✓ Database initialization complete');
     } catch (error) {
         console.error('Database initialization failed:', error);
