@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
 import { getEntityProfile } from '@/lib/services/entity.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
@@ -11,6 +11,7 @@ import { getLinkedBusinessIncome, applyLinkedBusinessIncome } from '@/lib/tax/li
 import { computeFederalTax, computeSafeHarbor, emptyFederalInputs } from '@/lib/tax/federal';
 import { summarizeTaxPayments, resolveContributionActuals } from '@/lib/tax/payments';
 import { computeQuarterStatuses, quarterForPaymentDate, type EstimatedPayment } from '@/lib/tax/estimated-quarters';
+import { createCalculationTrace, persistCalculationTrace } from '@/lib/provenance';
 import {
   FILING_STATUSES,
   isSupportedTaxYear,
@@ -226,7 +227,7 @@ export async function GET(request: NextRequest) {
     }).length;
 
     /* --- Aggregate book data + linked business profit ------------------ */
-    const bookAccountGuids = await getBookAccountGuids();
+    const bookAccountGuids = await getAccountGuidsForBook(bookGuid);
     const bookData = await aggregateBookTaxData(bookAccountGuids, year, birthday);
 
     let linkedBusinesses: Awaited<ReturnType<typeof getLinkedBusinessIncome>> = [];
@@ -271,7 +272,7 @@ export async function GET(request: NextRequest) {
       payments,
     });
 
-    return NextResponse.json({
+    const responseData = {
       applicable: true,
       year,
       asOfDate: bookData.asOfDate,
@@ -306,6 +307,82 @@ export async function GET(request: NextRequest) {
         })),
       },
       quarters,
+    };
+    const trace = createCalculationTrace({
+      namespace: 'estimated-tax',
+      identity: { bookGuid, year, filingStatus },
+      title: `${year} estimated-tax safe harbor`,
+      summary: 'Projected federal tax, annualized withholding, prior-year safe-harbor inputs, and recorded estimated payments.',
+      asOfDate: bookData.asOfDate,
+      formula: 'required annual payment − annualized withholding − estimated payments',
+      result: safeHarbor.requiredAnnualPayment,
+      unit: 'currency',
+      steps: [
+        {
+          key: 'projected-tax',
+          label: 'Project current-year federal tax',
+          inputs: {
+            agi: federal.agi,
+            selfEmploymentTax: federal.selfEmploymentTax,
+            effectiveRate: federal.effectiveRate,
+          },
+          result: federal.totalTax,
+        },
+        {
+          key: 'safe-harbor',
+          label: 'Apply the lower safe-harbor target',
+          inputs: {
+            projectedTax: federal.totalTax,
+            priorYearTax,
+            priorYearAgi,
+          },
+          result: safeHarbor.requiredAnnualPayment,
+        },
+        {
+          key: 'payments',
+          label: 'Subtract withholding and estimated payments',
+          inputs: {
+            annualizedWithholding: annualized.withholding,
+            estimatedPaymentsYtd: ytd.estimatedPayments,
+          },
+          result: quarters.reduce((sum, quarter) => sum + quarter.shortfall, 0),
+        },
+      ],
+      evidence: [
+        {
+          kind: 'report_query',
+          id: `tax-book-data:${year}`,
+          label: `${year} tax-mapped account activity`,
+          source: 'system',
+          href: `/tools/tax-estimator?year=${year}`,
+          observedAt: new Date().toISOString(),
+          verified: false,
+        },
+        {
+          kind: 'tax_table',
+          id: `federal-tax-rules:${year}:${filingStatus}`,
+          label: `${year} federal tax rules for ${filingStatus}`,
+          source: 'system',
+          observedAt: new Date().toISOString(),
+          verified: true,
+        },
+      ],
+      assumptions: [
+        `Year-to-date annualizable amounts use an elapsed-year factor of ${factor.toFixed(4)}.`,
+        priorYearTax === null
+          ? 'No prior-year tax was supplied; safe-harbor comparisons may be incomplete.'
+          : 'Prior-year tax is supplied or pinned by the user.',
+      ],
+      warnings: priorYearTax === null
+        ? ['Pin prior-year tax and AGI to evaluate both statutory safe-harbor paths.']
+        : [],
+      metadata: { linkedBusinessCount: linkedBusinesses.length },
+    });
+    await persistCalculationTrace(user.id, bookGuid, trace);
+
+    return NextResponse.json({
+      ...responseData,
+      trace: { traceId: trace.id, href: `/api/provenance/${trace.id}` },
     });
   } catch (error) {
     console.error('Error generating estimated tax tracker:', error);

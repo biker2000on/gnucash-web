@@ -55,14 +55,14 @@ Every new feature should satisfy these rules:
 
 ## Recommended delivery sequence
 
-1. Define the shared `FinancialAction`, `EvidenceRef`, and `CalculationTrace`
-   contracts.
-2. Ship the Action Center using existing review, receipt, statement, health,
-   compliance, close, job, and notification sources.
-3. Add Universal Financial Provenance to the highest-value KPIs, reports, and
-   existing deterministic insights.
-4. Add the first eight Opportunity Engine packs and rank them in the Action
-   Center.
+1. [Done] Define the shared `FinancialAction`, `EvidenceRef`, and
+   `CalculationTrace` contracts.
+2. [Done] Ship the Action Center using existing review, receipt, statement,
+   health, compliance, close, job, and notification sources.
+3. [Done] Add Universal Financial Provenance to the highest-value KPIs,
+   reports, balances, forecasts, and existing deterministic insights.
+4. [Done] Add the first eight Opportunity Engine packs and rank them in the
+   Action Center.
 5. Normalize existing dated obligations into the Money Timeline.
 6. Let a scenario become an adopted Living Plan and reconcile it to actuals.
 7. Extend book links into cross-book consolidation.
@@ -78,6 +78,8 @@ calendar model, scenario engine, or evidence format.
 # Platform roadmap
 
 ## P0 - Financial Action Center
+
+**Status:** Implemented 2026-07-23.
 
 **Outcome:** One trusted place answers, “What needs my attention?” The target
 workflow is a five-minute weekly financial close, not a tour through many pages.
@@ -113,9 +115,16 @@ job progress, receipts, statements, Data Health, and compliance services.
 
 **Effort:** L.
 
+**Delivered:** Shared typed action/state contracts, nine source adapters,
+Fix/Decide/Do lanes, keyboard and mobile triage, bulk state operations, direct
+resolution links, weekly close metrics, verified-through empty state, and
+durable outcome tracking.
+
 ---
 
 ## P0 - Opportunity Engine / “Next Best Dollar”
+
+**Status:** Implemented 2026-07-23.
 
 **Outcome:** Answer, “What is the most valuable safe thing I can do with the next
 $1,000, hour, or decision?”
@@ -156,9 +165,16 @@ engines, goals, cash-flow forecast, and Financial Provenance.
 
 **Effort:** L.
 
+**Delivered:** Eight deterministic opportunity packs, a common weighted scoring
+contract, value ranges and liquidity/tradeoff context, evidence-backed
+calculation traces, prefilled next-step links, Action Center ranking, and
+deterministic tests.
+
 ---
 
 ## P0 - Universal Financial Provenance
+
+**Status:** Implemented 2026-07-23.
 
 **Outcome:** Any material number or recommendation can answer, “Where did this
 come from, how was it calculated, and how current is it?”
@@ -187,6 +203,12 @@ trace token instead of making each page invent a bespoke drill-down query.
 audit, change history, and reconciliation metadata.
 
 **Effort:** L.
+
+**Delivered:** Stable trace IDs, evidence/source contracts, calculation steps,
+source and stale-price badges, Explain drill-through for Action Center impacts
+and dashboard KPIs, trace tokens on balances, estimated tax, and cash-flow
+forecasts, per-book verified-through dates, retained decision snapshots, and an
+exportable evidence manifest.
 
 ---
 
@@ -636,17 +658,6 @@ Correctness items should land before more farm expansion:
    expiry/return-copy obligations into Timeline and Action Center.
 
 Items 1-3 are correctness; 4 is technical debt; 5-7 are feature completion.
-
----
-
-## P4 - Ledger Data Cleanup: Backwards Credit-Card Balances
-
-Cara Chase Amazon Prime Card (+$3,785.34), Discover Card (+$154.92), and Chase
-Ink Unlimited (+$29.78) have debit-positive raw balances, opposite the normal
-credit-card convention. Inspect for sign-flipped entry or unmatched payments
-and correct the data. No planner should conceal or auto-correct the source book.
-
-**Effort:** XS data repair.
 
 ---
 

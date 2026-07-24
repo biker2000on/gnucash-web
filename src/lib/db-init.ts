@@ -1,4 +1,8 @@
 import { query } from './db';
+import {
+    CALCULATION_TRACES_SCHEMA_SQL,
+    FINANCIAL_ACTIONS_SCHEMA_SQL,
+} from './financial-actions/schema';
 
 /**
  * Creates the account_hierarchy view if it doesn't exist.
@@ -649,59 +653,6 @@ async function createExtensionTables() {
                 EXECUTE FUNCTION update_updated_at_column();
             END IF;
         END $$;
-    `;
-
-    // Amazon Order Import tables
-    const amazonOrdersTableDDL = `
-        CREATE TABLE IF NOT EXISTS gnucash_web_amazon_orders (
-            id SERIAL PRIMARY KEY,
-            book_guid VARCHAR(32) NOT NULL,
-            order_id VARCHAR(100) NOT NULL,
-            order_date DATE NOT NULL,
-            item_name TEXT NOT NULL,
-            item_price NUMERIC(15,4) NOT NULL,
-            item_quantity INTEGER NOT NULL DEFAULT 1,
-            category VARCHAR(200),
-            tax_amount NUMERIC(15,4) DEFAULT 0,
-            shipping_amount NUMERIC(15,4) DEFAULT 0,
-            order_total NUMERIC(15,4) NOT NULL,
-            charge_amount NUMERIC(15,4),
-            currency VARCHAR(3) NOT NULL DEFAULT 'USD',
-            transaction_guid VARCHAR(32),
-            split_guid VARCHAR(32),
-            match_status VARCHAR(20) NOT NULL DEFAULT 'unmatched',
-            apply_status VARCHAR(20) NOT NULL DEFAULT 'pending',
-            import_batch_id INTEGER,
-            raw_csv_row JSONB,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            csv_row_index INTEGER,
-            UNIQUE(book_guid, order_id, item_name, item_price, csv_row_index)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_amazon_orders_match
-          ON gnucash_web_amazon_orders (book_guid, match_status);
-        CREATE INDEX IF NOT EXISTS idx_amazon_orders_date
-          ON gnucash_web_amazon_orders (order_date);
-        CREATE INDEX IF NOT EXISTS idx_amazon_orders_tx
-          ON gnucash_web_amazon_orders (transaction_guid);
-    `;
-
-    const categoryMappingsTableDDL = `
-        CREATE TABLE IF NOT EXISTS gnucash_web_category_mappings (
-            id SERIAL PRIMARY KEY,
-            book_guid VARCHAR(32) NOT NULL,
-            source VARCHAR(50) NOT NULL DEFAULT 'amazon',
-            keyword TEXT NOT NULL,
-            keyword_normalized TEXT NOT NULL,
-            account_guid VARCHAR(32) NOT NULL,
-            use_count INTEGER NOT NULL DEFAULT 1,
-            last_used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(book_guid, source, keyword_normalized)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_category_mappings_lookup
-          ON gnucash_web_category_mappings (book_guid, source, keyword_normalized);
     `;
 
     // Tagging tables: flat labels applied to accounts and transactions
@@ -1535,7 +1486,7 @@ async function createExtensionTables() {
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
             book_guid VARCHAR(32) NOT NULL,
-            source VARCHAR(50) NOT NULL DEFAULT 'amazon',
+            source VARCHAR(50) NOT NULL,
             filename VARCHAR(500),
             total_items INTEGER NOT NULL DEFAULT 0,
             matched_items INTEGER NOT NULL DEFAULT 0,
@@ -1545,8 +1496,10 @@ async function createExtensionTables() {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             completed_at TIMESTAMP
         );
-    `;
 
+        ALTER TABLE gnucash_web_import_batches
+          ALTER COLUMN source DROP DEFAULT;
+    `;
     const notificationsTableDDL = `
         DO $$
         BEGIN
@@ -1574,6 +1527,15 @@ async function createExtensionTables() {
                 WHERE read_at IS NULL;
             CREATE INDEX IF NOT EXISTS idx_notifications_user_book
                 ON gnucash_web_notifications(user_id, book_guid, created_at DESC);
+        END $$;
+    `;
+
+    const financialActionsTableDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_financial_actions_schema'));
+            ${FINANCIAL_ACTIONS_SCHEMA_SQL}
+            ${CALCULATION_TRACES_SCHEMA_SQL}
         END $$;
     `;
 
@@ -1612,10 +1574,9 @@ async function createExtensionTables() {
         await query(receiptsFtsDDL);
         await query(payslipsTableDDL);
         await query(aiConfigTableDDL);
-        await query(amazonOrdersTableDDL);
-        await query(categoryMappingsTableDDL);
         await query(importBatchesTableDDL);
         await query(notificationsTableDDL);
+        await query(financialActionsTableDDL);
         await query(tagsTableDDL);
         await query(taxMappingsTableDDL);
         await query(entityProfilesTableDDL);

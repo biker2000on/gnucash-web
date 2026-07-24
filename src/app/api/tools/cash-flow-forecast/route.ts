@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { loadForecastData } from '@/lib/forecast-data';
+import { createCalculationTrace, persistCalculationTrace } from '@/lib/provenance';
 
 /**
  * @openapi
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { searchParams } = new URL(request.url);
-        const bookAccountGuids = await getBookAccountGuids();
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
 
         const daysParam = searchParams.get('days');
         const days = daysParam ? parseInt(daysParam, 10) : 90;
@@ -69,7 +70,61 @@ export async function GET(request: NextRequest) {
             threshold,
         });
 
-        return NextResponse.json(forecast);
+        const endingBalance = forecast.series.at(-1)?.combined ?? 0;
+        const startingBalance = forecast.series[0]?.combined ?? 0;
+        const selectedAccounts = forecast.accounts.map(account => account.guid);
+        const trace = createCalculationTrace({
+            namespace: 'cash-flow-forecast',
+            identity: {
+                bookGuid: roleResult.bookGuid,
+                days,
+                threshold,
+                accounts: [...selectedAccounts].sort(),
+            },
+            title: `${days}-day projected cash balance`,
+            summary: 'Current balances projected with scheduled transactions and the historical daily net-flow run rate.',
+            asOfDate: forecast.startDate,
+            formula: 'starting balance + scheduled events + (historical daily run rate × days)',
+            result: endingBalance,
+            unit: 'currency',
+            steps: [
+                {
+                    key: 'starting-balance',
+                    label: 'Starting combined balance',
+                    inputs: { accountCount: selectedAccounts.length },
+                    result: startingBalance,
+                },
+                {
+                    key: 'projection',
+                    label: 'Apply scheduled events and historical run rates',
+                    inputs: {
+                        horizonDays: days,
+                        scheduledEventCount: forecast.events.length,
+                        lookbackDays: forecast.lookbackDays,
+                    },
+                    result: endingBalance,
+                },
+            ],
+            evidence: selectedAccounts.map(guid => ({
+                kind: 'account' as const,
+                id: guid,
+                label: forecast.accounts.find(account => account.guid === guid)?.name ?? guid,
+                source: 'system' as const,
+                href: `/accounts/${guid}`,
+                observedAt: new Date().toISOString(),
+                verified: false,
+            })),
+            assumptions: [forecast.runRateNote],
+            warnings: forecast.warnings.map(warning =>
+                `${warning.accountName} is projected below ${warning.threshold.toLocaleString('en-US', { style: 'currency', currency: 'USD' })} on ${warning.date}.`
+            ),
+        });
+        await persistCalculationTrace(roleResult.user.id, roleResult.bookGuid, trace);
+
+        return NextResponse.json({
+            ...forecast,
+            trace: { traceId: trace.id, href: `/api/provenance/${trace.id}` },
+        });
     } catch (error) {
         console.error('Error generating cash flow forecast:', error);
         return NextResponse.json(

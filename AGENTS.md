@@ -28,6 +28,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 
 - `(main)/` - Route group containing primary pages
   - `accounts/page.tsx` - Account hierarchy tree view
+  - `actions/page.tsx` - Financial Action Center with Fix/Decide/Do lanes, batch triage, mobile swipe actions, weekly close metrics, and calculation drill-through
   - `accounts/[guid]/page.tsx` - Individual account ledger with running balance
   - `ledger/page.tsx` - General ledger (all transactions)
   - `scheduled-transactions/page.tsx` - Scheduled transactions with execute/skip, enable/disable, batch mode, create new
@@ -63,6 +64,8 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `tax/farm-book-data.ts` - Pulls and annualizes farm income/expense actuals from user-selected account subtrees
 - `business/schedule-f.ts` / `schedule-f-mappings.ts` / `schedule-f-report.ts` - Schedule F line classification (apiary-aware keyword mapper + manual overrides in the lazily-created `gnucash_web_schedule_f_mappings` table) and report generation
 - `book-templates.ts` - Chart-of-accounts templates per entity type, including the Schedule F-aligned farm template for books with `business_activity = 'farm'`
+- `financial-actions/` - Shared action contracts, source adapters, deterministic eight-pack Opportunity Engine, durable state store, refresh throttling, and lazy schema
+- `provenance.ts` - Stable calculation trace IDs, bounded trace persistence, retrieval, and evidence-manifest support
 
 ### Reports (src/lib/reports/)
 
@@ -86,6 +89,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `reports/ContributionTable.tsx` - Contribution report with expandable per-account drill-down and tax-year editing
 - `reports/ContributionLimitBar.tsx` - IRS limit progress bar with color-coded thresholds
 - `scheduled-transactions/CreateScheduledPanel.tsx` - Slide-over form for creating new scheduled transactions
+- `provenance/ProvenanceModal.tsx` - Shared “Explain this number” drill-through for formulas, steps, assumptions, warnings, and source evidence
 
 ## Key Technical Details
 

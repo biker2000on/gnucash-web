@@ -52,7 +52,6 @@ export const FEATURE_PAGES: FeaturePage[] = [
                 items: [
                     { name: 'Statement import & reconcile', description: 'Upload PDF, CSV, or OFX statements; auto-match lines to the ledger and tie out to the closing balance before finalizing.' },
                     { name: 'Receipt management', description: 'Drag-and-drop or camera capture, OCR extraction, auto-matching to transactions, and a searchable gallery.' },
-                    { name: 'Amazon order import', description: 'Match order history to card charges with item-level splits and learned category mappings.' },
                     { name: 'Payslip import', description: 'PDF paystubs extracted into full split transactions — taxes, deductions, and retirement contributions itemized.' },
                     { name: 'Multiple books', description: 'Household, business, or organization books in one database with per-book roles and permissions.' },
                     { name: 'Scheduled backups', description: 'Every book exported on your schedule to desktop-compatible GnuCash XML with retention, download, and restore.' },

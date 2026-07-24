@@ -340,6 +340,7 @@ const navItems: NavItem[] = [
         icon: 'LayoutDashboard',
         children: [
             { name: 'Overview', href: '/dashboard' },
+            { name: 'Action Center', href: '/actions' },
             { name: 'Ask Your Books', href: '/tools/ask' },
             { name: 'Feature Catalog', href: '/catalog' },
         ],
