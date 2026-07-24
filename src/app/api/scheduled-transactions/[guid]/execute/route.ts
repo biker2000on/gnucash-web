@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { executeOccurrence } from '@/lib/services/scheduled-tx-execute';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
+import { isScheduledTransactionInBook } from '@/lib/services/scheduled-tx-create';
 
 export async function POST(
   request: NextRequest,
@@ -13,6 +14,9 @@ export async function POST(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
+    if (!await isScheduledTransactionInBook(guid, roleResult.bookGuid)) {
+      return NextResponse.json({ error: 'Scheduled transaction not found' }, { status: 404 });
+    }
     const body = await request.json();
     const { occurrenceDate } = body;
 

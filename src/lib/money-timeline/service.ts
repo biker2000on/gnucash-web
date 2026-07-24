@@ -376,6 +376,119 @@ export async function collectFinancialEventsForBook(
   }
 
   try {
+    const paymentEvents = await prisma.$queryRaw<Array<{
+      id: number;
+      provider_event_id: string;
+      invoice_guid: string | null;
+      status: string;
+      amount: number;
+      fee: number;
+      received_at: Date;
+      processed_at: Date | null;
+      error_message: string | null;
+    }>>`
+      SELECT id, provider_event_id, invoice_guid, status,
+             amount::float8 AS amount, fee::float8 AS fee,
+             received_at, processed_at, error_message
+        FROM gnucash_web_payment_events
+       WHERE book_guid = ${bookGuid}
+         AND status IN ('cleared', 'failed', 'payment_posted')
+       ORDER BY received_at DESC
+       LIMIT 500
+    `;
+    for (const payment of paymentEvents) {
+      const date = normalizeDate(payment.processed_at ?? payment.received_at);
+      const failed = payment.status === 'failed';
+      const feePending = payment.status === 'payment_posted';
+      events.push({
+        id: `${bookGuid}:payment:${payment.provider_event_id}`,
+        bookGuid,
+        domain: 'payment',
+        title: failed ? 'Customer payment failed' : feePending ? 'Payment posted; fee pending' : 'Customer payment cleared',
+        description: failed || feePending
+          ? payment.error_message || 'The payment provider could not complete the charge.'
+          : `Net settlement ${(payment.amount - payment.fee).toLocaleString('en-US', { style: 'currency', currency })}`,
+        date,
+        endDate: null,
+        cashImpact: failed ? null : Math.max(0, payment.amount - payment.fee),
+        currency,
+        confidence: 1,
+        status: failed || feePending ? 'needs_action' : 'complete',
+        href: '/business/invoices',
+        sourceId: payment.provider_event_id,
+        actionId: null,
+        planId: null,
+        evidence: [{
+          kind: 'transaction',
+          id: payment.provider_event_id,
+          label: 'Signed Stripe webhook',
+          source: 'system',
+          observedAt: payment.received_at.toISOString(),
+          verified: !failed,
+        }],
+        metadata: {
+          invoiceGuid: payment.invoice_guid,
+          paymentStatus: payment.status,
+          grossAmount: payment.amount,
+          fee: payment.fee,
+        },
+      });
+    }
+  } catch (error) {
+    console.warn('Money Timeline payment source failed:', error);
+  }
+
+  try {
+    const reimbursements = await prisma.$queryRaw<Array<{
+      id: number;
+      employee_name: string;
+      status: string;
+      amount: number;
+      expense_date: Date;
+      due_date: Date | null;
+      receipt_id: number | null;
+    }>>`
+      SELECT r.id, COALESCE(e.addr_name, e.username) AS employee_name,
+             r.status, r.amount::float8 AS amount, r.expense_date,
+             r.due_date, r.receipt_id
+      FROM gnucash_web_reimbursement_requests r
+      JOIN employees e ON e.guid = r.employee_guid
+      WHERE r.book_guid = ${bookGuid}
+        AND r.status IN ('submitted', 'approved', 'posted')
+      ORDER BY COALESCE(r.due_date, r.expense_date)
+      LIMIT 500
+    `;
+    for (const reimbursement of reimbursements) {
+      const date = normalizeDate(reimbursement.due_date ?? reimbursement.expense_date);
+      events.push({
+        id: `${bookGuid}:reimbursement:${reimbursement.id}:${date}`,
+        bookGuid,
+        domain: 'reimbursement',
+        title: reimbursement.status === 'posted'
+          ? `Pay ${reimbursement.employee_name}'s reimbursement`
+          : `Reimburse ${reimbursement.employee_name}`,
+        description: `${reimbursement.status === 'submitted' ? 'Approval needed' : reimbursement.status === 'approved' ? 'Voucher ready to post' : 'Payment due'} · request #${reimbursement.id}`,
+        date,
+        endDate: null,
+        cashImpact: -Math.abs(reimbursement.amount),
+        currency,
+        confidence: 1,
+        status: eventStatus(date, true, now),
+        href: `/business/reimbursements?request=${reimbursement.id}`,
+        sourceId: String(reimbursement.id),
+        actionId: null,
+        planId: null,
+        evidence: reimbursement.receipt_id
+          ? [{ kind: 'receipt', id: String(reimbursement.receipt_id), label: `Receipt #${reimbursement.receipt_id}`, source: 'receipt' }]
+          : [{ kind: 'assumption', id: String(reimbursement.id), label: 'Submitted employee expense', source: 'manual' }],
+        metadata: { reimbursementStatus: reimbursement.status },
+      });
+    }
+  } catch (error) {
+    console.warn('Money Timeline reimbursement source failed:', error);
+  }
+
+  try {
     for (const goal of await listGoals(bookGuid)) {
       if (!goal.targetDate) continue;
       events.push({

@@ -1607,6 +1607,143 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Operator and business workflow foundations. These tables stay outside
+    // the native GnuCash schema so desktop compatibility is preserved while
+    // previews, processor events, workflow state, and explicit job links are
+    // durable and book-scoped.
+    const operatorBusinessWorkflowsDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_operator_business_workflows'));
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_domain_commands (
+                id VARCHAR(40) PRIMARY KEY,
+                book_guid VARCHAR(32) NOT NULL,
+                user_id INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                command_type VARCHAR(80) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                input JSONB NOT NULL DEFAULT '{}',
+                preview JSONB NOT NULL DEFAULT '{}',
+                result JSONB,
+                undo_payload JSONB,
+                error_message TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                executed_at TIMESTAMP,
+                undone_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_domain_commands_book_created
+                ON gnucash_web_domain_commands(book_guid, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_domain_commands_user_status
+                ON gnucash_web_domain_commands(user_id, status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_payment_connections (
+                book_guid VARCHAR(32) PRIMARY KEY,
+                provider VARCHAR(20) NOT NULL DEFAULT 'stripe',
+                secret_key_encrypted TEXT,
+                webhook_secret_encrypted TEXT,
+                transfer_account_guid VARCHAR(32),
+                fee_account_guid VARCHAR(32),
+                enabled BOOLEAN NOT NULL DEFAULT false,
+                updated_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_payment_events (
+                id BIGSERIAL PRIMARY KEY,
+                book_guid VARCHAR(32) NOT NULL,
+                provider VARCHAR(20) NOT NULL,
+                provider_event_id VARCHAR(255) NOT NULL,
+                provider_payment_id VARCHAR(255),
+                invoice_guid VARCHAR(32),
+                status VARCHAR(30) NOT NULL,
+                amount NUMERIC(14, 2),
+                fee NUMERIC(14, 2),
+                currency VARCHAR(10),
+                payment_transaction_guid VARCHAR(32),
+                fee_transaction_guid VARCHAR(32),
+                payload JSONB NOT NULL DEFAULT '{}',
+                error_message TEXT,
+                received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP,
+                UNIQUE(provider, provider_event_id)
+            );
+            ALTER TABLE gnucash_web_payment_events
+                ADD COLUMN IF NOT EXISTS received_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+            CREATE INDEX IF NOT EXISTS idx_payment_events_invoice
+                ON gnucash_web_payment_events(invoice_guid, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_payment_events_book_status
+                ON gnucash_web_payment_events(book_guid, status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_job_cost_links (
+                id SERIAL PRIMARY KEY,
+                book_guid VARCHAR(32) NOT NULL,
+                job_guid VARCHAR(32) NOT NULL,
+                source_type VARCHAR(20) NOT NULL,
+                source_id VARCHAR(64),
+                description TEXT,
+                cost_date DATE NOT NULL,
+                amount NUMERIC(14, 2) NOT NULL,
+                billable BOOLEAN NOT NULL DEFAULT false,
+                invoiced_invoice_guid VARCHAR(32),
+                created_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(book_guid, job_guid, source_type, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_cost_links_job_date
+                ON gnucash_web_job_cost_links(book_guid, job_guid, cost_date DESC);
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_reimbursement_requests (
+                id SERIAL PRIMARY KEY,
+                book_guid VARCHAR(32) NOT NULL,
+                receipt_id INTEGER REFERENCES gnucash_web_receipts(id) ON DELETE SET NULL,
+                employee_guid VARCHAR(32) NOT NULL,
+                submitted_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                approved_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+                amount NUMERIC(14, 2) NOT NULL,
+                expense_account_guid VARCHAR(32) NOT NULL,
+                description TEXT,
+                notes TEXT,
+                expense_date DATE NOT NULL,
+                due_date DATE,
+                voucher_guid VARCHAR(32),
+                rejection_reason TEXT,
+                submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TIMESTAMP,
+                posted_at TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_reimbursements_book_status
+                ON gnucash_web_reimbursement_requests(book_guid, status, submitted_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_reimbursements_employee
+                ON gnucash_web_reimbursement_requests(employee_guid, submitted_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_reimbursements_open_receipt
+                ON gnucash_web_reimbursement_requests(book_guid, receipt_id)
+                WHERE receipt_id IS NOT NULL AND status <> 'rejected';
+
+            CREATE TABLE IF NOT EXISTS gnucash_web_reconciliation_sessions (
+                id VARCHAR(40) PRIMARY KEY,
+                book_guid VARCHAR(32) NOT NULL,
+                account_guid VARCHAR(32) NOT NULL,
+                user_id INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                statement_date DATE,
+                status VARCHAR(20) NOT NULL DEFAULT 'started',
+                interaction_count INTEGER NOT NULL DEFAULT 0,
+                started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                ending_difference NUMERIC(14, 2),
+                metadata JSONB NOT NULL DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS idx_reconciliation_sessions_book_started
+                ON gnucash_web_reconciliation_sessions(book_guid, started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_reconciliation_sessions_account
+                ON gnucash_web_reconciliation_sessions(account_guid, started_at DESC);
+        END $$;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -1645,6 +1782,7 @@ async function createExtensionTables() {
         await query(importBatchesTableDDL);
         await query(notificationsTableDDL);
         await query(financialActionsTableDDL);
+        await query(operatorBusinessWorkflowsDDL);
         await query(LIVING_PLAN_SCHEMA_SQL);
         await query(tagsTableDDL);
         await query(taxMappingsTableDDL);

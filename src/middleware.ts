@@ -12,7 +12,8 @@ export async function middleware(request: NextRequest) {
   if (
     pathname.startsWith('/api/auth/') ||
     pathname.startsWith('/api/calendar/') ||
-    pathname.startsWith('/api/public/')
+    pathname.startsWith('/api/public/') ||
+    pathname === '/api/webhooks/stripe'
   ) {
     return NextResponse.next();
   }

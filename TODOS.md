@@ -364,6 +364,12 @@ auditable action is.
 
 **Effort:** L-XL.
 
+**Delivered:** A bounded Operator page routes supported natural-language intents
+to typed commands, shows facts/assumptions/evidence and a balanced diff, requires
+explicit approval, records durable idempotent execution, and offers undo where
+the command permits it. Unsupported write requests are refused rather than
+translated to arbitrary SQL.
+
 ---
 
 # Integrated feature packs
@@ -396,6 +402,11 @@ Reuse settlement-import split logic for fees and refunds.
 
 **Effort:** M-L.
 
+**Delivered:** Per-book encrypted Stripe credentials and account mappings,
+signed/deduplicated webhook processing, automatic invoice payment and processor
+fee posting, public payment history and Pay now, estimate accept/decline, plus
+failed/cleared payment signals in the Action Center and Money Timeline.
+
 ### P2 - Job Costing and Project Profitability
 
 Join tracked labor, employee rates, materials/vouchers, job expenses, invoiced
@@ -406,6 +417,11 @@ links with tag fallback.
 **Depends on:** Jobs, time tracking, invoices, vouchers, and Action Center.
 
 **Effort:** M.
+
+**Delivered:** Job reports now combine invoice revenue and collections, tracked
+labor at employee rates, unbilled WIP, vendor bills, explicitly linked costs,
+and tag fallback into gross profit and margin. The Action Center surfaces
+unbilled work, margin erosion, and overdue collections.
 
 ### P2 - Employee Expense Reimbursement
 
@@ -418,6 +434,11 @@ dates in the Money Timeline.
 Center.
 
 **Effort:** S-M.
+
+**Delivered:** Employees can submit receipt-backed expenses, approvers use a
+previewed command to approve or reject them, approval creates a draft voucher,
+and voucher posting advances the request. Approval work and payment dates feed
+the Action Center and Money Timeline.
 
 ---
 
@@ -446,6 +467,11 @@ values, receipts, and policy evidence.
 tests, and a shared policy model for life/health/property coverage.
 
 **Effort:** M.
+
+**Delivered:** Scheduled transactions can now be edited through the shared
+panel and validated PATCH endpoint, or created from a ledger transaction with
+prefilled splits. Both create and update operations use a durable preview,
+explicit approval, audit trail, and reversible command state.
 
 ### Home Capital-Replacement Forecast
 
@@ -609,6 +635,12 @@ balances, transaction review, and Data Health into the Action Center. Accounts
 should expose reconciliation coverage and a verified-through date.
 
 **Effort:** Discovery first; implementation TBD.
+
+**Delivered:** Continuous Close measures account-level reconciliation coverage,
+verified-through dates, stale and never-reconciled accounts, clicks,
+time-to-tie-out, abandoned sessions, and interaction counts. The reconciliation
+report presents these metrics and routes each gap into manual reconciliation
+and the Action Center.
 
 ---
 

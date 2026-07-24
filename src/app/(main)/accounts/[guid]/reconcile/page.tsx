@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useToast } from '@/contexts/ToastContext';
@@ -37,6 +37,8 @@ function ReconcilePageContent() {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [submitting, setSubmitting] = useState(false);
     const [finished, setFinished] = useState<{ count: number; date: string } | null>(null);
+    const sessionId = useRef<string | null>(null);
+    const pendingInteractions = useRef(0);
 
     const fetchWorkspace = useCallback(async () => {
         if (!guid || !statementDate) return;
@@ -68,18 +70,76 @@ function ReconcilePageContent() {
         fetchWorkspace();
     }, [fetchWorkspace]);
 
+    useEffect(() => {
+        sessionId.current = null;
+        pendingInteractions.current = 0;
+        if (!guid || !statementDate) return;
+        let cancelled = false;
+        fetch('/api/reconciliation/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accountGuid: guid, statementDate }),
+        })
+            .then(response => response.ok ? response.json() : null)
+            .then(body => {
+                if (!cancelled && body?.id) {
+                    sessionId.current = body.id;
+                    if (pendingInteractions.current > 0) {
+                        const interactionDelta = pendingInteractions.current;
+                        pendingInteractions.current = 0;
+                        fetch('/api/reconciliation/sessions', {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: body.id, interactionDelta }),
+                        }).catch(() => undefined);
+                    }
+                }
+            })
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+            const id = sessionId.current;
+            if (id) {
+                fetch('/api/reconciliation/sessions', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id,
+                        status: 'abandoned',
+                        interactionDelta: pendingInteractions.current,
+                    }),
+                    keepalive: true,
+                }).catch(() => undefined);
+            }
+        };
+    }, [guid, statementDate]);
+
+    const recordInteraction = useCallback(() => {
+        pendingInteractions.current += 1;
+        if (!sessionId.current || pendingInteractions.current < 5) return;
+        const interactionDelta = pendingInteractions.current;
+        pendingInteractions.current = 0;
+        fetch('/api/reconciliation/sessions', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: sessionId.current, interactionDelta }),
+        }).catch(() => undefined);
+    }, []);
+
     const toggle = useCallback((splitGuid: string) => {
+        recordInteraction();
         setSelected((prev) => {
             const next = new Set(prev);
             if (next.has(splitGuid)) next.delete(splitGuid);
             else next.add(splitGuid);
             return next;
         });
-    }, []);
+    }, [recordInteraction]);
 
     const selectAllCleared = useCallback(
         (select: boolean) => {
             if (!workspace) return;
+            recordInteraction();
             setSelected((prev) => {
                 const next = new Set(prev);
                 for (const c of workspace.candidates) {
@@ -90,7 +150,7 @@ function ReconcilePageContent() {
                 return next;
             });
         },
-        [workspace],
+        [workspace, recordInteraction],
     );
 
     const currency = workspace?.account.currency || 'USD';
@@ -135,6 +195,20 @@ function ReconcilePageContent() {
                 throw new Error(body?.error || 'Failed to finalize reconciliation');
             }
             const count: number = body?.reconciledSplits ?? selected.size;
+            if (sessionId.current) {
+                await fetch('/api/reconciliation/sessions', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: sessionId.current,
+                        status: 'completed',
+                        interactionDelta: pendingInteractions.current,
+                        endingDifference: differenceCents / 100,
+                    }),
+                }).catch(() => undefined);
+                pendingInteractions.current = 0;
+                sessionId.current = null;
+            }
             toast.success(
                 `Reconciled ${count} transaction${count === 1 ? '' : 's'} through ${statementDate}`,
             );
@@ -240,7 +314,10 @@ function ReconcilePageContent() {
                         Auto-select Cleared
                     </button>
                     <button
-                        onClick={() => setSelected(new Set())}
+                        onClick={() => {
+                            recordInteraction();
+                            setSelected(new Set());
+                        }}
                         disabled={loading || selected.size === 0}
                         className="px-3 py-1.5 text-xs font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >

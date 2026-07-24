@@ -17,6 +17,9 @@ export type FinancialActionOrigin =
   | 'business_close'
   | 'failed_job'
   | 'notification'
+  | 'payment'
+  | 'reimbursement'
+  | 'job_profitability'
   | 'opportunity';
 
 export type EvidenceKind =
@@ -33,6 +36,7 @@ export type EvidenceKind =
   | 'assumption'
   | 'report_query'
   | 'notification'
+  | 'payment'
   | 'job';
 
 export type EvidenceSource =

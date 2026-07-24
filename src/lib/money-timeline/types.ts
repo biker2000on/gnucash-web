@@ -8,6 +8,8 @@ export const FINANCIAL_EVENT_DOMAINS = [
   'renewal',
   'home',
   'invoice',
+  'payment',
+  'reimbursement',
   'goal',
   'equity_comp',
   'report_schedule',

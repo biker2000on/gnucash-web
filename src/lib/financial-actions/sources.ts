@@ -15,6 +15,8 @@ import { createCalculationTrace } from '@/lib/provenance';
 import { getBaseCurrency } from '@/lib/currency';
 import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
+import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
+import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
 import type {
   EvidenceRef,
   FinancialActionCandidate,
@@ -423,6 +425,215 @@ async function businessCloseActions(
     }));
 }
 
+async function continuousCloseActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const coverage = await getReconciliationCoverage(bookGuid);
+  return coverage.accounts
+    .filter(account => account.status !== 'current')
+    .map(account => sourceAction({
+      stableKey: `continuous-close:${account.accountGuid}:${account.status}`,
+      lane: 'fix',
+      origin: 'statement_reconciliation',
+      sourceId: account.accountGuid,
+      severity: account.status === 'never' || (account.staleDays ?? 0) > 90 ? 'critical' : 'warning',
+      title: account.status === 'never'
+        ? `Establish a baseline for ${account.name}`
+        : `Reconcile ${account.name}`,
+      summary: account.status === 'never'
+        ? 'This active balance-sheet account has never been verified.'
+        : `Last verified ${account.staleDays} days ago; ${account.outstandingSplits} outstanding split${account.outstandingSplits === 1 ? '' : 's'}.`,
+      dueDate: null,
+      impact: null,
+      confidence: 1,
+      operations: [
+        { id: 'reconcile', label: 'Start reconciliation', kind: 'link', href: `/accounts/${account.accountGuid}/reconcile`, primary: true },
+        { id: 'coverage', label: 'View coverage', kind: 'link', href: '/reports/reconciliation' },
+      ],
+      traceResult: account.coveragePercent,
+      evidence: [{
+        kind: 'account',
+        id: account.accountGuid,
+        label: account.name,
+        source: 'system',
+        href: `/accounts/${account.accountGuid}`,
+        observedAt: coverage.generatedAt,
+        verified: false,
+      }],
+      metadata: { coveragePercent: account.coveragePercent, staleDays: account.staleDays },
+    }));
+}
+
+async function failedPaymentActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: number;
+    provider_event_id: string;
+    invoice_guid: string | null;
+    amount: number;
+    error_message: string | null;
+    received_at: Date;
+  }>>`
+    SELECT id, provider_event_id, invoice_guid, amount::float8 AS amount,
+           error_message, received_at
+      FROM gnucash_web_payment_events
+     WHERE book_guid = ${bookGuid} AND status IN ('failed', 'payment_posted')
+     ORDER BY received_at DESC
+     LIMIT 100
+  `;
+  return rows.map(row => sourceAction({
+    stableKey: `payment-failed:${row.provider_event_id}`,
+    lane: 'fix',
+    origin: 'payment',
+    sourceId: String(row.id),
+    severity: 'critical',
+    title: row.error_message?.includes('fee')
+      ? 'Payment posted; processor fee needs attention'
+      : 'Customer payment needs attention',
+    summary: row.error_message || 'The payment provider reported a failed payment.',
+    dueDate: null,
+    impact: row.amount > 0 ? { low: row.amount, high: row.amount, period: 'one_time' } : null,
+    confidence: 1,
+    operations: [
+      { id: 'invoice', label: 'Open invoices', kind: 'link', href: '/business/invoices', primary: true },
+      { id: 'connection', label: 'Check payment connection', kind: 'link', href: '/settings/connections' },
+      { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+    ],
+    evidence: [{
+      kind: 'payment',
+      id: row.provider_event_id,
+      label: 'Stripe payment event',
+      source: 'system',
+      observedAt: row.received_at.toISOString(),
+      verified: false,
+    }],
+    metadata: { invoiceGuid: row.invoice_guid, paymentEventId: row.provider_event_id },
+  }));
+}
+
+async function reimbursementActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: number;
+    employee_guid: string;
+    employee_name: string;
+    amount: number;
+    due_date: Date | null;
+    submitted_at: Date;
+  }>>`
+    SELECT r.id, r.employee_guid,
+           COALESCE(e.addr_name, e.username) AS employee_name,
+           r.amount::float8 AS amount, r.due_date, r.submitted_at
+    FROM gnucash_web_reimbursement_requests r
+    JOIN employees e ON e.guid = r.employee_guid
+    WHERE r.book_guid = ${bookGuid} AND r.status = 'submitted'
+    ORDER BY COALESCE(r.due_date, r.expense_date), r.submitted_at
+    LIMIT 100
+  `;
+  return rows.map(row => sourceAction({
+    stableKey: `reimbursement:${row.id}`,
+    lane: 'do',
+    origin: 'reimbursement',
+    sourceId: String(row.id),
+    severity: row.due_date ? severityFromDueDate(isoDate(row.due_date)) : 'info',
+    title: `Approve ${row.employee_name}'s reimbursement`,
+    summary: `${row.amount.toFixed(2)} is waiting for approval and voucher creation.`,
+    dueDate: row.due_date ? isoDate(row.due_date) : null,
+    impact: { low: row.amount, high: row.amount, period: 'one_time' },
+    confidence: 1,
+    operations: [
+      { id: 'review', label: 'Review request', kind: 'link', href: `/business/reimbursements?request=${row.id}`, primary: true },
+      { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+    ],
+    evidence: [{
+      kind: 'receipt',
+      id: String(row.id),
+      label: `Reimbursement #${row.id}`,
+      source: 'manual',
+      href: `/business/reimbursements?request=${row.id}`,
+      observedAt: row.submitted_at.toISOString(),
+      verified: false,
+    }],
+  }));
+}
+
+async function jobProfitabilityActions(
+  bookGuid: string,
+  bookAccountGuids: string[],
+): Promise<FinancialActionCandidate[]> {
+  const jobs = (await listJobsEx({ active: 'active' })).slice(0, 50);
+  const reports: Array<{
+    job: Awaited<ReturnType<typeof listJobsEx>>[number];
+    report: Awaited<ReturnType<typeof generateJobReport>>;
+  }> = [];
+  // Job reports involve multiple aggregate queries. Bound concurrency so a
+  // large job list cannot exhaust the shared PostgreSQL pool during refresh.
+  for (let offset = 0; offset < jobs.length; offset += 4) {
+    const batch = await Promise.all(jobs.slice(offset, offset + 4).map(async job => {
+      try {
+        return {
+          job,
+          report: await generateJobReport(job.guid, bookAccountGuids, { bookGuid }),
+        };
+      } catch (error) {
+        console.error(`Failed to load profitability for job ${job.guid}:`, error);
+        return null;
+      }
+    }));
+    reports.push(...batch.filter((item): item is NonNullable<typeof item> => item !== null));
+  }
+  return reports.flatMap(({ job, report }) => {
+    const p = report.profitability;
+    const actions: FinancialActionCandidate[] = [];
+    const wip = p.unbilledTimeValue + p.unbilledExpenseValue;
+    if (wip > 0.005) {
+      actions.push(sourceAction({
+        stableKey: `job-wip:${job.guid}`,
+        lane: 'do',
+        origin: 'job_profitability',
+        sourceId: job.guid,
+        severity: 'info',
+        title: `Invoice unbilled work: ${job.name}`,
+        summary: `${wip.toFixed(2)} of time and expenses is ready to bill.`,
+        dueDate: null,
+        impact: { low: wip, high: wip, period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Open job', kind: 'link', href: `/business/jobs?job=${job.guid}`, primary: true }],
+        evidence: [{ kind: 'job', id: job.guid, label: job.name, source: 'system', href: `/business/jobs?job=${job.guid}`, verified: true }],
+      }));
+    }
+    if (p.marginPercent != null && p.marginPercent < 20) {
+      actions.push(sourceAction({
+        stableKey: `job-margin:${job.guid}`,
+        lane: 'decide',
+        origin: 'job_profitability',
+        sourceId: job.guid,
+        severity: p.marginPercent < 0 ? 'critical' : 'warning',
+        title: `Margin erosion: ${job.name}`,
+        summary: `Current gross margin is ${p.marginPercent.toFixed(1)}% after direct and labor costs.`,
+        dueDate: null,
+        impact: { low: Math.abs(p.grossProfit), high: Math.abs(p.grossProfit), period: 'one_time' },
+        confidence: 0.9,
+        operations: [{ id: 'open', label: 'Review profitability', kind: 'link', href: `/business/jobs?job=${job.guid}`, primary: true }],
+        evidence: [{ kind: 'job', id: job.guid, label: job.name, source: 'system', href: `/business/jobs?job=${job.guid}`, verified: true }],
+      }));
+    }
+    if (p.overdueCollections > 0.005) {
+      actions.push(sourceAction({
+        stableKey: `job-collections:${job.guid}`,
+        lane: 'do',
+        origin: 'job_profitability',
+        sourceId: job.guid,
+        severity: 'warning',
+        title: `Collect overdue job balance: ${job.name}`,
+        summary: `${p.overdueCollections.toFixed(2)} has been outstanding for more than 30 days.`,
+        dueDate: null,
+        impact: { low: p.overdueCollections, high: p.overdueCollections, period: 'one_time' },
+        confidence: 0.9,
+        operations: [{ id: 'open', label: 'Open job', kind: 'link', href: `/business/jobs?job=${job.guid}`, primary: true }],
+        evidence: [{ kind: 'job', id: job.guid, label: job.name, source: 'system', href: `/business/jobs?job=${job.guid}`, verified: true }],
+      }));
+    }
+    return actions;
+  });
+}
+
 async function notificationActions(
   userId: number,
   bookGuid: string,
@@ -528,10 +739,14 @@ export async function loadSourceActions(input: {
     safeActionSource('Transaction review', () => transactionReviewActions(bookAccountGuids)),
     safeActionSource('Receipt inbox', () => receiptActions(bookGuid)),
     safeActionSource('Statement reconciliation', () => statementActions(bookGuid)),
+    safeActionSource('Continuous Close', () => continuousCloseActions(bookGuid)),
     safeActionSource('Data Health', () => dataHealthActions(bookAccountGuids)),
     safeActionSource('Insights', () => insightActions(bookGuid)),
     safeActionSource('Compliance', () => complianceActions(userId, bookGuid)),
     safeActionSource('Business close', () => businessCloseActions(userId, bookGuid)),
+    safeActionSource('Employee reimbursements', () => reimbursementActions(bookGuid)),
+    safeActionSource('Job profitability', () => jobProfitabilityActions(bookGuid, bookAccountGuids)),
+    safeActionSource('Failed payments', () => failedPaymentActions(bookGuid)),
     safeActionSource('Notifications and failed jobs', () => notificationActions(userId, bookGuid)),
   ]);
   return results.flat();

@@ -22,7 +22,12 @@ export type EntityType =
     | 'BUDGET'
     | 'SCHEDULED_TRANSACTION'
     | 'TAG'
-    | 'INVOICE';
+    | 'INVOICE'
+    | 'REIMBURSEMENT'
+    | 'JOB_COST'
+    | 'PAYMENT_CONNECTION'
+    | 'PAYMENT'
+    | 'DOMAIN_COMMAND';
 
 /**
  * Log an audit event for a mutation operation.
@@ -38,23 +43,26 @@ export async function logAudit(
     entityType: EntityType,
     entityId: string,
     oldValues?: object | null,
-    newValues?: object | null
+    newValues?: object | null,
+    context?: { bookGuid?: string | null; userId?: number | null },
 ): Promise<void> {
     try {
-        const user = await getCurrentUser();
+        const user = context?.userId === undefined ? await getCurrentUser() : null;
 
         // Attribute the entry to the active book; if resolution fails the
         // entry is still written (book_guid null) so the mutation isn't lost.
-        let bookGuid: string | null = null;
-        try {
-            bookGuid = await getActiveBookGuid();
-        } catch {
-            bookGuid = null;
+        let bookGuid: string | null = context?.bookGuid ?? null;
+        if (context?.bookGuid === undefined) {
+            try {
+                bookGuid = await getActiveBookGuid();
+            } catch {
+                bookGuid = null;
+            }
         }
 
         await prisma.gnucash_web_audit.create({
             data: {
-                user_id: user?.id ?? null,
+                user_id: context?.userId ?? user?.id ?? null,
                 book_guid: bookGuid,
                 action,
                 entity_type: entityType,

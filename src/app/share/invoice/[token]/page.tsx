@@ -6,6 +6,7 @@ import {
     type PublicLineView,
 } from '@/lib/business/invoice-shares.service';
 import { PrintButton } from './PrintButton';
+import { PublicPortalActions } from './PublicPortalActions';
 
 /**
  * Public customer-facing invoice/estimate page: /share/invoice/<token>
@@ -299,8 +300,10 @@ export default async function PublicInvoicePage({ params }: { params: Promise<{ 
                     : <EstimateDocument est={view} />}
             </div>
 
+            <PublicPortalActions token={token} view={view} />
+
             <footer className="mt-6 text-xs text-foreground-muted print:hidden">
-                This is a read-only snapshot. It grants no access to the underlying books.
+                This portal grants no access to the underlying books.
                 If you were not expecting this document, you can ignore it.
             </footer>
         </main>

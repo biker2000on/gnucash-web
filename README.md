@@ -15,6 +15,7 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - Execute or skip individual occurrences, creating real GnuCash transactions from templates
 - "Since Last Run" batch mode to process all overdue occurrences at once
 - Enable/disable toggle and create new scheduled transactions with full GnuCash template compatibility
+- Edit schedules or create one from an existing ledger transaction through a previewed, auditable command
 - Mortgage-linked transactions compute dynamic principal/interest splits
 
 **Investment Management**
@@ -37,12 +38,19 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - Eight deterministic opportunity packs for taxes, contributions, debt, cash reserves, portfolios, tax strategy, subscriptions, and budget gaps
 - “Explain this number” calculation traces with source evidence, assumptions, stale-data warnings, and accountant-ready manifest export
 - Keyboard triage, mobile swipe actions, batch operations, durable accept/dismiss outcomes, and per-book verified-through dates
+- Safe Operator commands with balanced previews, explicit approval, audit history, bounded undo, and evidence links
+- Continuous Close coverage with stale-account actions and reconciliation time/interaction metrics
 
 **Planning & Family Office**
 - Unified Money Timeline for scheduled cash, deadlines, renewals, invoices, home tasks, goals, equity vesting, and adopted plan events, with conflict detection and filtered iCal feeds
 - Living Financial Plan that adopts Scenario Sandbox models, versions life events and guardrails, reconciles monthly actuals, explains variances, and retains a decision journal
 - Permission-safe Family Office for ownership-aware cross-book net worth, P&L, cash flow, investments, liquidity, transfer eliminations, documents, actions, timeline events, and Ask Your Books
 - Explicit FX conversion and exclusion warnings keep consolidated figures honest when linked books use different currencies
+
+**Business Operations**
+- Job profitability combining invoiced revenue, collections, labor cost, WIP, linked expenses, gross profit, and margin alerts
+- Employee receipt reimbursement with submitted, approved, voucher-posted, and rejected states
+- Stripe payment links and signed webhook posting for invoice payments and processing fees; public customers can also review payment history and accept or decline estimates
 
 **Infrastructure**
 - Progressive Web App (installable on phone/desktop)

@@ -419,6 +419,11 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 onSelect: () => { void handleDuplicate(guid); },
             },
             {
+                id: 'schedule',
+                label: 'Create schedule from this…',
+                onSelect: () => router.push(`/scheduled-transactions?fromTransaction=${guid}`),
+            },
+            {
                 id: 'tags',
                 label: 'Tags…',
                 onSelect: () => setTagEditorGuid(guid),

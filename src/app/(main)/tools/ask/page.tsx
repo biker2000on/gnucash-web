@@ -146,6 +146,12 @@ export default function AskBooksPage() {
                         Ask questions in plain English — answered with read-only queries against your book.
                     </p>
                 </div>
+                <Link
+                    href="/tools/operator"
+                    className="rounded-lg border border-primary/40 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary-light"
+                >
+                    Take action safely
+                </Link>
                 {exchanges.length > 0 && (
                     <button
                         type="button"

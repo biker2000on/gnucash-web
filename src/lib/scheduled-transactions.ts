@@ -116,6 +116,7 @@ interface ScheduledTransactionRow {
   num_occur: number;
   rem_occur: number;
   auto_create: number;
+  auto_notify: number;
   template_act_guid: string;
   recurrence_mult: number | null;
   recurrence_period_type: string | null;
@@ -132,6 +133,7 @@ export interface ScheduledTransaction {
   lastOccur: string | null;
   remainingOccurrences: number;
   autoCreate: boolean;
+  autoNotify: boolean;
   recurrence: {
     periodType: string;
     mult: number;
@@ -173,6 +175,7 @@ export async function fetchScheduledTransactions(enabledOnly?: boolean): Promise
       num_occur: s.num_occur,
       rem_occur: s.rem_occur,
       auto_create: s.auto_create,
+      auto_notify: s.auto_notify,
       template_act_guid: s.template_act_guid,
       recurrence_mult: r?.recurrence_mult ?? null,
       recurrence_period_type: r?.recurrence_period_type ?? null,
@@ -242,6 +245,7 @@ export async function fetchScheduledTransactions(enabledOnly?: boolean): Promise
       lastOccur: row.last_occur ? formatDate(parseGnuCashDate(row.last_occur)) : null,
       remainingOccurrences: row.rem_occur,
       autoCreate: row.auto_create === 1,
+      autoNotify: row.auto_notify === 1,
       recurrence,
       nextOccurrence,
       splits,

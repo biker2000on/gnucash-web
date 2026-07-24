@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.19.0.0] - 2026-07-24
+
+### Added
+- Added previewable domain commands and a bounded Safe Operator with explicit approval, durable idempotency, audit history, evidence, and supported undo.
+- Added scheduled-transaction editing and create-from-ledger actions through the shared preview workflow.
+- Added per-book Stripe Connections, public invoice payment links and payment history, estimate accept/decline, signed webhook posting for payments and processor fees, and payment events in the Timeline and Action Center.
+- Added job profitability across invoice revenue, collections, tracked labor, WIP, vendor/linked/tagged costs, gross margin, and operational alerts.
+- Added employee receipt reimbursements with approval/rejection previews, automatic draft vouchers, posting-state synchronization, Action Center approvals, and Timeline due dates.
+- Added Continuous Close reconciliation coverage, verified-through and stale-account status, session duration/interaction/abandonment telemetry, report drill-through, and close actions.
+
+### Changed
+- Ask Your Books now links into the Safe Operator for supported financial actions.
+- Public invoice shares act as a lightweight customer portal without exposing authenticated book data.
+
 ## [0.18.0.1] - 2026-07-23
 
 ### Fixed

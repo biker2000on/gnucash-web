@@ -25,6 +25,7 @@ interface ScheduledTransaction {
   lastOccur: string | null;
   remainingOccurrences: number;
   autoCreate: boolean;
+  autoNotify: boolean;
   recurrence: {
     periodType: string;
     mult: number;
@@ -139,6 +140,17 @@ export default function ScheduledTransactionsPage() {
   const [batchLoading, setBatchLoading] = useState(false);
   const { isReadonly } = useCurrentUser();
   const [showCreatePanel, setShowCreatePanel] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<ScheduledTransaction | null>(null);
+  const [sourceTransactionGuid, setSourceTransactionGuid] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sourceGuid = params.get('fromTransaction');
+    if (/^[0-9a-f]{32}$/.test(sourceGuid ?? '')) {
+      setSourceTransactionGuid(sourceGuid);
+      setShowCreatePanel(true);
+    }
+  }, []);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -485,6 +497,17 @@ export default function ScheduledTransactionsPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingTransaction(tx);
+                setShowCreatePanel(true);
+              }}
+              disabled={isReadonly}
+              className="text-xs text-primary hover:text-primary-hover transition-colors disabled:opacity-50"
+            >
+              Edit
+            </button>
             {isMortgage && (
               <Link
                 href="/tools/mortgage"
@@ -509,6 +532,17 @@ export default function ScheduledTransactionsPage() {
             </Link>
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            setEditingTransaction(tx);
+            setShowCreatePanel(true);
+          }}
+          disabled={isReadonly}
+          className="sm:hidden mt-2 text-xs text-primary disabled:opacity-50"
+        >
+          Edit schedule
+        </button>
       </div>
     );
   }
@@ -643,7 +677,11 @@ export default function ScheduledTransactionsPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowCreatePanel(true)}
+          onClick={() => {
+            setEditingTransaction(null);
+            setSourceTransactionGuid(null);
+            setShowCreatePanel(true);
+          }}
           disabled={isReadonly}
           title={isReadonly ? READONLY_TOOLTIP : undefined}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -797,9 +835,18 @@ export default function ScheduledTransactionsPage() {
 
       {showCreatePanel && (
         <CreateScheduledPanel
-          onClose={() => setShowCreatePanel(false)}
+          initialValue={editingTransaction}
+          sourceTransactionGuid={sourceTransactionGuid}
+          onClose={() => {
+            setShowCreatePanel(false);
+            setEditingTransaction(null);
+            setSourceTransactionGuid(null);
+          }}
           onCreated={() => {
             setShowCreatePanel(false);
+            setEditingTransaction(null);
+            setSourceTransactionGuid(null);
+            window.history.replaceState({}, '', '/scheduled-transactions');
             fetchData();
           }}
         />
