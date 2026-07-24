@@ -23,7 +23,19 @@ import type { UpcomingMaturity, CouponPaymentEstimate } from '@/lib/fixed-income
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-export const CALENDAR_EVENT_TYPES = ['scheduled', 'fixed_income', 'rmd', 'compliance'] as const;
+export const CALENDAR_EVENT_TYPES = [
+    'scheduled',
+    'fixed_income',
+    'rmd',
+    'compliance',
+    'renewal',
+    'home',
+    'invoice',
+    'goal',
+    'equity_comp',
+    'report_schedule',
+    'plan',
+] as const;
 export type CalendarEventType = (typeof CALENDAR_EVENT_TYPES)[number];
 
 export interface IcsEvent {
@@ -496,6 +508,32 @@ export async function buildCalendarFeed(
             })));
         } catch (err) {
             console.warn('Calendar feed: compliance collector failed:', err);
+        }
+    }
+
+    const timelineTypes = eventTypes.filter(type =>
+        ['renewal', 'home', 'invoice', 'goal', 'equity_comp', 'report_schedule', 'plan'].includes(type),
+    );
+    if (timelineTypes.length > 0) {
+        try {
+            const { collectFinancialEventsForBook } = await import('@/lib/money-timeline/service');
+            const timeline = await collectFinancialEventsForBook(userId, bookGuid, now);
+            events.push(...timeline.events
+                .filter(event => timelineTypes.includes(event.domain as CalendarEventType))
+                .map(event => ({
+                    uid: `timeline-${event.id.replace(/[^a-zA-Z0-9.-]/g, '-')}@gnucash-web`,
+                    date: event.date,
+                    summary: event.title,
+                    description: [
+                        event.description,
+                        event.cashImpact === null
+                            ? null
+                            : `Expected cash impact: ${event.cashImpact.toFixed(2)} ${event.currency}`,
+                        event.href ? `Open in GnuCash Web: ${event.href}` : null,
+                    ].filter(Boolean).join('\n'),
+                })));
+        } catch (err) {
+            console.warn('Calendar feed: Money Timeline collector failed:', err);
         }
     }
 

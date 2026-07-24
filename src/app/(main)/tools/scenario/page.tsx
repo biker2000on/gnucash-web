@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { FILING_STATUS_LABELS } from '@/lib/tax/types';
@@ -150,6 +151,7 @@ export default function ScenarioSandboxPage() {
 
     const [saved, setSaved] = useState<SavedScenario[]>([]);
     const [savingState, setSavingState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [adoptingState, setAdoptingState] = useState<'idle' | 'adopting' | 'adopted' | 'error'>('idle');
 
     const patchAssumptions = (p: Partial<ScenarioAssumptions>) =>
         setAssumptions(prev => mergeScenarioAssumptions({ ...prev, ...p }));
@@ -259,6 +261,27 @@ export default function ScenarioSandboxPage() {
         void persistSaved(saved.filter(s => s.scenario.name !== name));
     };
 
+    const adoptCurrent = async () => {
+        setAdoptingState('adopting');
+        try {
+            const response = await fetch('/api/planning/living-plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'adopt',
+                    scenario,
+                    assumptions,
+                    changeNote: 'Adopted from Scenario Sandbox',
+                }),
+            });
+            if (!response.ok) throw new Error('adopt failed');
+            setAdoptingState('adopted');
+        } catch {
+            setAdoptingState('error');
+            setTimeout(() => setAdoptingState('idle'), 3000);
+        }
+    };
+
     /* --- Derived headline numbers --- */
     const cash = result?.cashFlow ?? null;
     const lastCash = cash && cash.months.length > 0 ? cash.months[cash.months.length - 1] : null;
@@ -365,6 +388,21 @@ export default function ScenarioSandboxPage() {
                                 : savingState === 'saved' ? 'Saved ✓'
                                     : savingState === 'error' ? 'Save failed' : 'Save'}
                         </button>
+                        <button
+                            type="button"
+                            onClick={() => void adoptCurrent()}
+                            disabled={adoptingState === 'adopting' || running || !result}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-primary/50 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                        >
+                            {adoptingState === 'adopting' ? 'Adoptingâ€¦'
+                                : adoptingState === 'adopted' ? 'Adopted âœ“'
+                                    : adoptingState === 'error' ? 'Adopt failed' : 'Adopt as living plan'}
+                        </button>
+                        {adoptingState === 'adopted' && (
+                            <Link href="/planning/plan" className="px-2 py-1.5 text-xs font-semibold text-primary">
+                                Open plan
+                            </Link>
+                        )}
                         {saved.length > 0 && (
                             <select
                                 className={`${INPUT_CLASS} w-44 font-sans`}

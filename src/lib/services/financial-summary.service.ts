@@ -69,9 +69,12 @@ export class FinancialSummaryService {
   static async computeFullSummary(
     bookAccountGuids: string[],
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    baseCurrencyOverride?: Currency | null,
   ): Promise<FinancialSummary> {
-    const baseCurrency = await getBaseCurrency();
+    const baseCurrency = baseCurrencyOverride === undefined
+      ? await getBaseCurrency()
+      : baseCurrencyOverride;
 
     const netWorthSummary = await this.computeNetWorthSummary(
       bookAccountGuids,
