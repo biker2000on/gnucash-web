@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.18.0.0] - 2026-07-23
+
+### Added
+- Added the Unified Money Timeline under Money with a shared evidence-backed `FinancialEvent` contract, day/month/year views, expected cash and confidence across eleven event domains, conflict detection, and per-domain iCal filters.
+- Added the Living Financial Plan of Record under Planning: adopt Scenario Sandbox models, retain immutable versions, model life events and guardrails, reconcile actuals monthly, explain causes, and keep a decision journal.
+- Added Family Office consolidation from the main navigation across the caller's authorized ownership graph, including ownership look-through, net worth/P&L/cash flow/investments/liquidity, explicit cross-currency exclusions, transfer matching, and approved presentation-only eliminations.
+- Added family-scoped document/OCR search, Ask Your Books, Action Center, and Money Timeline views.
+
+### Security
+- Cross-book graph expansion now intersects every relationship endpoint with the caller's existing per-book permissions; book links never grant access.
+- Consolidation never silently combines currencies when a required exchange rate is missing.
+
 ## [0.17.0.0] - 2026-07-23
 
 ### Added
