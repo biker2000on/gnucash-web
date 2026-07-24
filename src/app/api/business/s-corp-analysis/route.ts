@@ -7,6 +7,10 @@ import { hasMinimumRole } from '@/lib/services/permission.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import {
+  buildHouseholdIncomeContext,
+  taxCategoryTotal,
+} from '@/lib/tax/household-income-context';
+import {
   compareScenarios,
   soloEmployerCapacity,
   MODEL_ASSUMPTIONS,
@@ -14,9 +18,7 @@ import {
 import {
   FILING_STATUSES,
   isSupportedTaxYear,
-  type BookTaxData,
   type FilingStatus,
-  type TaxCategory,
 } from '@/lib/tax/types';
 
 /** Entity types the S-corp election analysis applies to. */
@@ -28,10 +30,6 @@ const CONFIG_NAME = 'S-corp analyzer inputs';
 const DEFAULT_PAYROLL_COST = 600;
 const DEFAULT_PREP_COST = 800;
 const DEFAULT_FRANCHISE_TAX = 200;
-
-function categoryTotal(data: BookTaxData, category: TaxCategory): number {
-  return data.categories.find(c => c.category === category)?.total ?? 0;
-}
 
 function parseMoney(raw: string | null): number | null {
   if (raw === null || raw === '') return null;
@@ -100,8 +98,8 @@ export async function GET(request: NextRequest) {
     const bookAccountGuids = await getBookAccountGuids();
     const bookData = await aggregateBookTaxData(bookAccountGuids, year, null);
     const ytdNetProfit =
-      categoryTotal(bookData, 'self_employment_income') -
-      categoryTotal(bookData, 'business_expense');
+      taxCategoryTotal(bookData, 'self_employment_income') -
+      taxCategoryTotal(bookData, 'business_expense');
     const elapsed = bookData.elapsedYearFraction;
     const annualizedProfit =
       elapsed > 0 ? Math.round((ytdNetProfit / elapsed) * 100) / 100 : ytdNetProfit;
@@ -130,30 +128,14 @@ export async function GET(request: NextRequest) {
       const hhGuids = await getAccountGuidsForBook(link.householdBookGuid);
       const hhProfile = await getEntityProfile(link.householdBookGuid, user.id);
       const hhData = await aggregateBookTaxData(hhGuids, year, null);
-      const hhElapsed = hhData.elapsedYearFraction > 0 ? hhData.elapsedYearFraction : 1;
-      // Annualize household YTD figures so marginal rates reflect a full year.
-      const annualizedCat = (cat: TaxCategory) => categoryTotal(hhData, cat) / hhElapsed;
-
-      otherHouseholdW2Wages = annualizedCat('w2_wages');
+      const household = buildHouseholdIncomeContext(hhData);
+      otherHouseholdW2Wages = household.w2Wages;
       // Ordinary income stack outside this business: wages, interest,
       // dividends, rental, retirement income, other income.
-      otherHouseholdOrdinaryIncome =
-        Math.round(
-          (otherHouseholdW2Wages +
-            annualizedCat('interest_income') +
-            annualizedCat('ordinary_dividends') +
-            annualizedCat('rental_income') +
-            annualizedCat('retirement_income') +
-            annualizedCat('other_income')) * 100,
-        ) / 100;
+      otherHouseholdOrdinaryIncome = household.ordinaryIncome;
       // Household-side SE income (e.g. spouse's Schedule C) — kept separate
       // so its SE tax cancels between scenarios.
-      otherHouseholdSeIncome = Math.max(
-        0,
-        Math.round(
-          (annualizedCat('self_employment_income') - annualizedCat('business_expense')) * 100,
-        ) / 100,
-      );
+      otherHouseholdSeIncome = household.seIncome;
 
       const hhStatus = hhProfile.filingStatus;
       filingStatus =
@@ -281,16 +263,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'No valid inputs to pin' }, { status: 400 });
     }
 
-    const existing = await ToolConfigService.listByUser(user.id, bookGuid, TOOL_TYPE);
-    if (existing.length > 0) {
-      await ToolConfigService.update(existing[0].id, user.id, bookGuid, { config });
-    } else {
-      await ToolConfigService.create(user.id, bookGuid, {
-        toolType: TOOL_TYPE,
-        name: CONFIG_NAME,
-        config,
-      });
-    }
+    await ToolConfigService.upsertUserSingleton(user.id, bookGuid, {
+      toolType: TOOL_TYPE,
+      name: CONFIG_NAME,
+      config,
+    });
 
     return NextResponse.json({ ok: true, pinned: config });
   } catch (error) {

@@ -60,7 +60,7 @@ export const MODEL_ASSUMPTIONS: string[] = [
   'Additional Medicare tax (0.9%) and NIIT are not modeled — they are nearly identical across scenarios at these income levels.',
   'Sales-tax savings assume the entered annual farm purchases would otherwise all bear the combined rate and all fall in exempt categories.',
   'The §179 business-income limit includes W-2 wages and other active business income (Form 4562 instructions), so equipment expensing can create a farm loss that offsets wages.',
-  'Amounts are summed in transaction currency without FX conversion — a single-currency book is assumed.',
+  'Farm book amounts are converted to the book report currency using historical GnuCash prices; the analysis stops when a required rate is missing.',
 ];
 
 export type FarmScenarioKey = 'unreported_cash' | 'hobby' | 'schedule_f' | 'schedule_f_llc';
@@ -86,6 +86,8 @@ export interface FarmAnalysisInput {
   combinedSalesTaxRate?: number;
   /** Prior-year gross farm income (qualifying-farmer test); null = unknown. */
   priorYearFarmIncome: number | null;
+  /** Gross farm income for years -1, -2, and -3 when available. */
+  priorThreeYearFarmIncome?: Array<number | null>;
   /** Acres in actual agricultural production (PUV hint); null = skip. */
   acreage: number | null;
   /** First LLC year adds the formation fee on top of the annual report. */
@@ -146,6 +148,8 @@ export interface FarmAnalysisResult {
   /** Cost of moving from unreported cash to the best compliant scenario. */
   costOfCompliance: number;
   qualifiesForSalesTaxExemption: boolean;
+  /** Three-preceding-year average, only when all three years are known. */
+  priorThreeYearAverage: number | null;
   /** Current-year income clears $10k but prior-year doesn't/unknown. */
   conditionalFarmerPath: boolean;
   salesTaxSavingsBasis: SalesTaxSavingsBasis;
@@ -226,9 +230,21 @@ export function analyzeFarmScenarios(input: FarmAnalysisInput): FarmAnalysisResu
   const baselineTotal = baseline.incomeTax + baseline.seTax + baseline.stateTax;
 
   /* ---- Sales-tax exemption gating ------------------------------------ */
-  const qualifies =
-    input.priorYearFarmIncome !== null &&
-    input.priorYearFarmIncome >= QUALIFYING_FARMER_INCOME_THRESHOLD;
+  const history = (input.priorThreeYearFarmIncome ?? [
+    input.priorYearFarmIncome,
+  ]).slice(0, 3);
+  while (history.length < 3) history.push(null);
+  if (input.priorYearFarmIncome !== null) history[0] = input.priorYearFarmIncome;
+  const completeHistory = history.every((value): value is number => value !== null);
+  const priorThreeYearAverage = completeHistory
+    ? round2(history.reduce((sum, value) => sum + value, 0) / 3)
+    : null;
+  const qualifiesByPriorYear =
+    history[0] !== null && history[0] >= QUALIFYING_FARMER_INCOME_THRESHOLD;
+  const qualifiesByThreeYearAverage =
+    priorThreeYearAverage !== null &&
+    priorThreeYearAverage >= QUALIFYING_FARMER_INCOME_THRESHOLD;
+  const qualifies = qualifiesByPriorYear || qualifiesByThreeYearAverage;
   // The conditional certificate (E-595CF) is available on intent to farm —
   // any active farming operation can take this path; the clawback risk is
   // what scales with how far income sits below the threshold.
@@ -366,6 +382,16 @@ export function analyzeFarmScenarios(input: FarmAnalysisInput): FarmAnalysisResu
       }`,
     );
   }
+  if (qualifiesByThreeYearAverage && !qualifiesByPriorYear) {
+    warnings.push(
+      `The immediately preceding year is below $${QUALIFYING_FARMER_INCOME_THRESHOLD.toLocaleString()}, but the three-preceding-year average is ${formatUsd(priorThreeYearAverage!)}; the average test qualifies under N.C. G.S. 105-164.13E.`,
+    );
+  }
+  if (!completeHistory) {
+    warnings.push(
+      'A complete three-preceding-year farm-income history is not available, so the NC average-income qualification test could not be fully evaluated.',
+    );
+  }
   if (salesTaxSavingsBasis === 'none' && purchases > 0) {
     warnings.push(
       `No farming income is entered — no sales-tax savings are counted (the E-595QF/E-595CF certificates require an active farming operation).`,
@@ -413,6 +439,7 @@ export function analyzeFarmScenarios(input: FarmAnalysisInput): FarmAnalysisResu
       Math.min(hobby.totalCost, scheduleF.totalCost, scheduleFLlc.totalCost),
     ),
     qualifiesForSalesTaxExemption: qualifies,
+    priorThreeYearAverage,
     conditionalFarmerPath,
     salesTaxSavingsBasis,
     section179Clamped,

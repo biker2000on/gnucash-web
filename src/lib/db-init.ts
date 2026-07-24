@@ -474,6 +474,64 @@ async function createExtensionTables() {
         CREATE INDEX IF NOT EXISTS idx_tool_config_user_id ON gnucash_web_tool_config(user_id);
         CREATE INDEX IF NOT EXISTS idx_tool_config_tool_type ON gnucash_web_tool_config(tool_type);
         CREATE INDEX IF NOT EXISTS idx_tool_config_user_book ON gnucash_web_tool_config(user_id, book_guid, tool_type);
+
+        -- Singleton configs used to be implemented as read-then-create, which
+        -- allowed duplicate rows under concurrent requests. Keep the newest
+        -- singleton and enforce both personal and shared-book scopes while
+        -- preserving account-associated multi-instance tools (mortgages).
+        DELETE FROM gnucash_web_tool_config older
+        USING gnucash_web_tool_config newer
+        WHERE older.id < newer.id
+          AND older.book_guid = newer.book_guid
+          AND older.tool_type = newer.tool_type
+          AND older.user_id IS NOT DISTINCT FROM newer.user_id
+          AND older.account_guid IS NULL
+          AND newer.account_guid IS NULL;
+        DELETE FROM gnucash_web_tool_config older
+        USING gnucash_web_tool_config newer
+        WHERE older.id < newer.id
+          AND older.user_id = newer.user_id
+          AND older.book_guid = newer.book_guid
+          AND older.tool_type = newer.tool_type
+          AND older.account_guid = newer.account_guid
+          AND older.account_guid IS NOT NULL;
+
+        -- Farm setup is book policy: promote the newest legacy per-user row
+        -- to the shared scope, then discard the stale personal copies.
+        WITH newest_farm AS (
+          SELECT DISTINCT ON (book_guid) id, book_guid
+          FROM gnucash_web_tool_config
+          WHERE tool_type = 'farm_analyzer'
+            AND user_id IS NOT NULL
+            AND account_guid IS NULL
+          ORDER BY book_guid, updated_at DESC, id DESC
+        )
+        UPDATE gnucash_web_tool_config config
+        SET user_id = NULL
+        FROM newest_farm candidate
+        WHERE config.id = candidate.id
+          AND NOT EXISTS (
+            SELECT 1
+            FROM gnucash_web_tool_config shared
+            WHERE shared.book_guid = candidate.book_guid
+              AND shared.tool_type = 'farm_analyzer'
+              AND shared.user_id IS NULL
+              AND shared.account_guid IS NULL
+          );
+        DELETE FROM gnucash_web_tool_config
+        WHERE tool_type = 'farm_analyzer'
+          AND user_id IS NOT NULL
+          AND account_guid IS NULL;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_config_user_singleton
+          ON gnucash_web_tool_config(user_id, book_guid, tool_type)
+          WHERE user_id IS NOT NULL AND account_guid IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_config_book_singleton
+          ON gnucash_web_tool_config(book_guid, tool_type)
+          WHERE user_id IS NULL AND account_guid IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_config_account_instance
+          ON gnucash_web_tool_config(user_id, book_guid, tool_type, account_guid)
+          WHERE user_id IS NOT NULL AND account_guid IS NOT NULL;
     `;
 
     const accountPreferencesTableDDL = `
@@ -1072,11 +1130,17 @@ async function createExtensionTables() {
             mime_type VARCHAR(100),
             size_bytes BIGINT,
             expires_on DATE,
+            issued_on DATE,
+            return_copy_due_on DATE,
             notes TEXT,
             uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_entity_documents_book
             ON gnucash_web_entity_documents(book_guid);
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS issued_on DATE;
+        ALTER TABLE gnucash_web_entity_documents
+          ADD COLUMN IF NOT EXISTS return_copy_due_on DATE;
         END $$;
     `;
 

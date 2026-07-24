@@ -56,6 +56,7 @@ interface AnalysisResponse {
     purchases: number;
     salesTaxRate: number;
     priorYearFarmIncome: number | null;
+    priorThreeYearFarmIncome: Array<number | null>;
     acreage: number | null;
     isFirstLlcYear: boolean;
     filingStatus: string;
@@ -70,6 +71,7 @@ interface AnalysisResponse {
   llcVsSoleProp: number;
   costOfCompliance: number;
   qualifiesForSalesTaxExemption: boolean;
+  priorThreeYearAverage: number | null;
   conditionalFarmerPath: boolean;
   salesTaxSavingsBasis: SalesTaxSavingsBasis;
   section179Clamped: boolean;
@@ -266,6 +268,7 @@ export default function FarmAnalyzerPage() {
   const [showNc, setShowNc] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [newBookOpen, setNewBookOpen] = useState(false);
+  const [graftState, setGraftState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [refreshKey, setRefreshKey] = useState(0);
   const seededRef = useRef(false);
   const { data: allAccounts = [] } = useAccounts({ flat: true });
@@ -394,6 +397,19 @@ export default function FarmAnalyzerPage() {
     } catch {
       setPinState('error');
       setTimeout(() => setPinState('idle'), 3000);
+    }
+  };
+
+  const graftFarmAccounts = async () => {
+    setGraftState('saving');
+    try {
+      const res = await fetch('/api/tools/farm-analysis/graft', { method: 'POST' });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? 'graft failed');
+      setGraftState('saved');
+      setRefreshKey((key) => key + 1);
+    } catch {
+      setGraftState('error');
     }
   };
 
@@ -580,6 +596,9 @@ export default function FarmAnalyzerPage() {
             accounts ({formatCurrency(data.ytdGross)} income / {formatCurrency(data.ytdExpenses)}{' '}
             expenses YTD ÷ {data.elapsedYearFraction.toFixed(2)} of the year elapsed). Edit any
             number to explore what-ifs.
+            {data.priorThreeYearAverage !== null && (
+              <> NC three-year average: {formatCurrency(data.priorThreeYearAverage)}.</>
+            )}
           </p>
         </div>
       )}
@@ -740,6 +759,19 @@ export default function FarmAnalyzerPage() {
                   sales, feed, treatments, jars, equipment) — as a sole proprietorship or LLC.
                 </p>
               </div>
+              <button
+                onClick={graftFarmAccounts}
+                disabled={graftState === 'saving'}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
+              >
+                {graftState === 'saving'
+                  ? 'Adding…'
+                  : graftState === 'saved'
+                    ? 'Farm accounts added ✓'
+                    : graftState === 'error'
+                      ? 'Could not add accounts'
+                      : 'Add farm accounts here'}
+              </button>
               <button
                 onClick={() => setNewBookOpen(true)}
                 className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-lg hover:bg-primary-hover transition-colors"
