@@ -47,6 +47,8 @@ export async function POST(request: Request) {
         const title = (formData.get('title') as string | null)?.trim() || file.name;
         const docType = (formData.get('doc_type') as string | null) ?? 'other';
         const expiresOn = (formData.get('expires_on') as string | null) || null;
+        const issuedOn = (formData.get('issued_on') as string | null) || null;
+        const returnCopyDueOn = (formData.get('return_copy_due_on') as string | null) || null;
         const notes = (formData.get('notes') as string | null) || null;
 
         const buffer = Buffer.from(await file.arrayBuffer());
@@ -54,6 +56,8 @@ export async function POST(request: Request) {
             title,
             docType,
             expiresOn,
+            issuedOn,
+            returnCopyDueOn,
             notes,
             file: { buffer, filename: file.name },
         });

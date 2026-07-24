@@ -636,28 +636,30 @@ requested.
 
 # Correctness and reliability backlog
 
-## P1 - Farm Correctness and Follow-Ups
+## Completed - Farm Correctness and Follow-Ups
 
-Correctness items should land before more farm expansion:
-
-1. **Tool-config concurrency:** Add uniqueness on
-   `(user, book, tool_type)` and use an upsert or advisory lock so concurrent
-   first writes cannot create flapping duplicate configurations.
-2. **Multi-currency farm sums:** Convert through `findExchangeRate()` or block
-   with an explicit warning; never silently mix currencies in Schedule F.
-3. **Farm scope:** Decide whether official Schedule F scope is per user or per
-   book and make mappings/configuration consistent.
-4. **Household-income context:** Extract the duplicated helper into
-   `src/lib/tax/` and reuse it in farm and S-corp analysis.
-5. **NC three-year average:** Support the NCDOR three-preceding-years average
-   qualifying test, preferably derived from book history.
-6. **Graft farm accounts:** Build a type-aware
-   `addTemplateAccounts(bookGuid, defs, parentName)` primitive for existing
-   books instead of the INCOME-only `findOrCreateAccount` path.
-7. **E-595QF/E-595CF tracking:** Store certificates in Documents and emit
-   expiry/return-copy obligations into Timeline and Action Center.
-
-Items 1-3 are correctness; 4 is technical debt; 5-7 are feature completion.
+- [x] **Tool-config concurrency:** Partial unique indexes now distinguish
+  personal singletons, shared-book singletons, and account-associated
+  multi-instance tools. Singleton writes use PostgreSQL upserts.
+- [x] **Multi-currency farm sums:** Schedule F and the farm analyzer convert
+  posting-date transaction values through `findExchangeRate()` into the book
+  currency. Missing historical rates stop the report with an explicit 422.
+- [x] **Farm scope:** Official farm roots and pinned assumptions are shared
+  per book, matching the existing book-scoped Schedule F mappings. Startup
+  promotes the newest legacy personal farm config to the shared scope.
+- [x] **Household-income context:** The annualization/exclusion helper lives
+  in `src/lib/tax/household-income-context.ts` and is shared by farm and
+  S-corp analysis.
+- [x] **NC three-year average:** The analyzer derives the three preceding
+  years from book history and applies the statutory prior-year OR
+  three-year-average qualification test.
+- [x] **Graft farm accounts:** Existing books can receive the Schedule F chart
+  through idempotent, type-aware `addTemplateAccounts()`, without routing
+  assets, liabilities, expenses, or equity through an INCOME-only helper.
+- [x] **E-595QF/E-595CF tracking:** Documents stores certificate issue,
+  expiration, and return-copy dates. Obligations feed the Action Center and
+  the compliance calendar/iCal timeline; E-595CF expiration is inferred from
+  its issue year when omitted.
 
 ---
 

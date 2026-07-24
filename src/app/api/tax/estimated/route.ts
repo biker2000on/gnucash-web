@@ -427,9 +427,13 @@ export async function PUT(request: NextRequest) {
           : {}),
         ...config,
       };
-      await ToolConfigService.update(existing[0].id, user.id, bookGuid, { config: merged });
+      await ToolConfigService.upsertUserSingleton(user.id, bookGuid, {
+        toolType: TOOL_TYPE,
+        name: CONFIG_NAME,
+        config: merged,
+      });
     } else {
-      await ToolConfigService.create(user.id, bookGuid, {
+      await ToolConfigService.upsertUserSingleton(user.id, bookGuid, {
         toolType: TOOL_TYPE,
         name: CONFIG_NAME,
         config,

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.17.0.0] - 2026-07-23
+
+### Added
+- Existing books can now receive the complete Schedule F chart through an idempotent, type-aware farm-account graft.
+- E-595QF and E-595CF certificates now carry issue, expiry, and return-copy dates in Documents; their obligations appear in the Action Center and compliance calendar/iCal feed.
+- The Farm Analyzer now evaluates North Carolina's preceding-year OR three-preceding-year-average qualifying-farmer test from book history.
+
+### Fixed
+- Farm Analyzer configuration is now shared per book and protected by atomic singleton upserts and partial unique indexes; account-associated multi-instance tool configs remain supported.
+- Farm Analyzer and Schedule F totals now convert foreign transaction values into the book currency at historical posting-date rates and fail clearly when a required rate is missing.
+- Farm and S-corp analysis now share one tested household-income annualization and exclusion calculation.
+
+### Changed
+- Other singleton tool settings now use race-safe upserts, and startup removes legacy duplicate configuration rows.
+- The farm correctness and reliability backlog is marked delivered.
+
 ## [0.16.0.0] - 2026-07-23
 
 ### Added

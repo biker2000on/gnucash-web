@@ -349,6 +349,11 @@ function farmTemplate(): TemplateAccountDef[] {
   ];
 }
 
+/** Fresh Schedule F hierarchy for grafting into an existing book. */
+export function getFarmAccountTemplate(): TemplateAccountDef[] {
+  return farmTemplate();
+}
+
 /** Farm template with partnership-style per-partner capital equity. */
 function farmPartnershipTemplate(): TemplateAccountDef[] {
   const template = farmTemplate();

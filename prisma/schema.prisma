@@ -1014,13 +1014,15 @@ model gnucash_web_entity_documents {
   id          Int       @id @default(autoincrement())
   book_guid   String    @db.VarChar(32)
   title       String    @db.VarChar(255)
-  /// formation | ein | election | insurance | license | agreement | other
+  /// formation | ein | election | insurance | license | agreement | farm_certificate_qf | farm_certificate_cf | other
   doc_type    String    @default("other") @db.VarChar(40)
   file_key    String?   @db.VarChar(500)
   file_name   String?   @db.VarChar(255)
   mime_type   String?   @db.VarChar(100)
   size_bytes  BigInt?
   expires_on  DateTime? @db.Date
+  issued_on   DateTime? @db.Date
+  return_copy_due_on DateTime? @db.Date
   notes       String?   @db.Text
   uploaded_at DateTime  @default(now())
 

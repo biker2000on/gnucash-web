@@ -486,6 +486,14 @@ export async function buildCalendarFeed(
             });
             const resolvedKeys = new Set(statusRows.map(r => `${r.item_key}|${r.period}`));
             events.push(...complianceDeadlineEvents(items, resolvedKeys, now));
+            const { getFarmCertificateObligations } = await import('@/lib/tax/farm-certificates');
+            const certificateItems = await getFarmCertificateObligations(bookGuid);
+            events.push(...certificateItems.map(item => ({
+                uid: `${item.key}@gnucash-web`,
+                date: item.dueDate,
+                summary: `Due: ${item.title}`,
+                description: item.description,
+            })));
         } catch (err) {
             console.warn('Calendar feed: compliance collector failed:', err);
         }

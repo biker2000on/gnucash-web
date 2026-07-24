@@ -33,6 +33,8 @@ export const DOC_TYPES = [
     'insurance',
     'license',
     'agreement',
+    'farm_certificate_qf',
+    'farm_certificate_cf',
     'other',
 ] as const;
 export type DocType = (typeof DOC_TYPES)[number];
@@ -78,6 +80,8 @@ export interface EntityDocument {
     sizeBytes: number | null;
     /** ISO date (YYYY-MM-DD) or null. */
     expiresOn: string | null;
+    issuedOn: string | null;
+    returnCopyDueOn: string | null;
     notes: string | null;
     uploadedAt: string;
     /** Negative = expired, null = no expiry set. */
@@ -94,6 +98,8 @@ interface DocDbRow {
     mime_type: string | null;
     size_bytes: bigint | null;
     expires_on: Date | null;
+    issued_on: Date | null;
+    return_copy_due_on: Date | null;
     notes: string | null;
     uploaded_at: Date;
 }
@@ -107,20 +113,24 @@ function mapDocument(row: DocDbRow, today: Date = new Date()): EntityDocument {
         mimeType: row.mime_type,
         sizeBytes: row.size_bytes === null ? null : Number(row.size_bytes),
         expiresOn: row.expires_on ? row.expires_on.toISOString().slice(0, 10) : null,
+        issuedOn: row.issued_on ? row.issued_on.toISOString().slice(0, 10) : null,
+        returnCopyDueOn: row.return_copy_due_on
+            ? row.return_copy_due_on.toISOString().slice(0, 10)
+            : null,
         notes: row.notes,
         uploadedAt: row.uploaded_at.toISOString(),
         daysUntilExpiry: daysUntilExpiry(row.expires_on, today),
     };
 }
 
-function parseExpiresOn(value: string | null | undefined): Date | null {
+function parseDate(value: string | null | undefined, field: string): Date | null {
     if (value === null || value === undefined || value === '') return null;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        throw new EntityDocumentValidationError('expiresOn must be YYYY-MM-DD');
+        throw new EntityDocumentValidationError(`${field} must be YYYY-MM-DD`);
     }
     const date = new Date(`${value}T00:00:00.000Z`);
     if (isNaN(date.getTime())) {
-        throw new EntityDocumentValidationError('Invalid expiresOn date');
+        throw new EntityDocumentValidationError(`Invalid ${field} date`);
     }
     return date;
 }
@@ -149,6 +159,8 @@ export interface CreateEntityDocumentInput {
     title: string;
     docType: string;
     expiresOn?: string | null;
+    issuedOn?: string | null;
+    returnCopyDueOn?: string | null;
     notes?: string | null;
     file: { buffer: Buffer; filename: string };
 }
@@ -166,7 +178,9 @@ export async function createEntityDocument(
             `Invalid document type (expected one of: ${DOC_TYPES.join(', ')})`
         );
     }
-    const expiresOn = parseExpiresOn(input.expiresOn);
+    const expiresOn = parseDate(input.expiresOn, 'expiresOn');
+    const issuedOn = parseDate(input.issuedOn, 'issuedOn');
+    const returnCopyDueOn = parseDate(input.returnCopyDueOn, 'returnCopyDueOn');
 
     const { buffer, filename } = input.file;
     if (buffer.byteLength === 0) {
@@ -198,6 +212,8 @@ export async function createEntityDocument(
                 mime_type: mimeType,
                 size_bytes: BigInt(buffer.byteLength),
                 expires_on: expiresOn,
+                issued_on: issuedOn,
+                return_copy_due_on: returnCopyDueOn,
                 notes: input.notes?.trim() || null,
             },
         });
@@ -225,6 +241,8 @@ export interface UpdateEntityDocumentInput {
     title?: string;
     docType?: string;
     expiresOn?: string | null;
+    issuedOn?: string | null;
+    returnCopyDueOn?: string | null;
     notes?: string | null;
 }
 
@@ -239,6 +257,8 @@ export async function updateEntityDocument(
         title?: string;
         doc_type?: string;
         expires_on?: Date | null;
+        issued_on?: Date | null;
+        return_copy_due_on?: Date | null;
         notes?: string | null;
     } = {};
 
@@ -257,7 +277,13 @@ export async function updateEntityDocument(
         data.doc_type = input.docType;
     }
     if (input.expiresOn !== undefined) {
-        data.expires_on = parseExpiresOn(input.expiresOn);
+        data.expires_on = parseDate(input.expiresOn, 'expiresOn');
+    }
+    if (input.issuedOn !== undefined) {
+        data.issued_on = parseDate(input.issuedOn, 'issuedOn');
+    }
+    if (input.returnCopyDueOn !== undefined) {
+        data.return_copy_due_on = parseDate(input.returnCopyDueOn, 'returnCopyDueOn');
     }
     if (input.notes !== undefined) {
         data.notes = input.notes?.trim() || null;

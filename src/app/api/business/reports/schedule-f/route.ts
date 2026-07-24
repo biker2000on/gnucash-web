@@ -10,6 +10,7 @@ import {
 } from '@/lib/tax/farm-book-data';
 import { requireRole } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { FarmCurrencyConversionError } from '@/lib/tax/farm-currency';
 
 /**
  * GET /api/business/reports/schedule-f?year=YYYY
@@ -65,13 +66,19 @@ export async function GET(request: NextRequest) {
         }
 
         const overrides = await getMappings(bookAccountGuids);
-        const report = await generateScheduleF(bookAccountGuids, year, overrides, restrictToGuids);
+        const report = await generateScheduleF(bookGuid, bookAccountGuids, year, overrides, restrictToGuids);
         return NextResponse.json({
             ...report,
             scopedToFarmSelection,
             businessActivity: entity.businessActivity,
         });
     } catch (error) {
+        if (error instanceof FarmCurrencyConversionError) {
+            return NextResponse.json(
+                { error: error.message, missingRates: error.missingRates },
+                { status: 422 },
+            );
+        }
         console.error('Error generating Schedule F report:', error);
         return NextResponse.json(
             { error: 'Failed to generate Schedule F report' },

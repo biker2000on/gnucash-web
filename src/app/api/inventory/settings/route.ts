@@ -57,16 +57,11 @@ export async function PUT(request: NextRequest) {
     }
     const config = { enabledForHousehold: body.enabledForHousehold };
 
-    const existing = await ToolConfigService.listByUser(user.id, bookGuid, TOOL_TYPE);
-    if (existing.length > 0) {
-      await ToolConfigService.update(existing[0].id, user.id, bookGuid, { config });
-    } else {
-      await ToolConfigService.create(user.id, bookGuid, {
-        toolType: TOOL_TYPE,
-        name: 'Inventory Settings',
-        config,
-      });
-    }
+    await ToolConfigService.upsertUserSingleton(user.id, bookGuid, {
+      toolType: TOOL_TYPE,
+      name: 'Inventory Settings',
+      config,
+    });
     return NextResponse.json(config);
   } catch (error) {
     console.error('Error saving inventory settings:', error);

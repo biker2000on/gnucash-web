@@ -13,6 +13,7 @@ import { computeRebalance } from '@/lib/rebalancing';
 import { parseRebalanceConfig } from '@/lib/rebalancing-sector';
 import { createCalculationTrace } from '@/lib/provenance';
 import { getBaseCurrency } from '@/lib/currency';
+import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
 import type {
   EvidenceRef,
@@ -303,7 +304,7 @@ async function complianceActions(
     where: { book_guid: bookGuid },
   });
   const done = new Set(statuses.map(row => complianceStatusKey(row.item_key, row.period)));
-  return items
+  const standard = items
     .filter(item => !done.has(complianceStatusKey(item.key, item.period)))
     .filter(item => daysUntil(item.dueDate, now) <= 60)
     .map(item => sourceAction({
@@ -331,6 +332,40 @@ async function complianceActions(
         verified: false,
       }],
     }));
+  const certificateObligations = await getFarmCertificateObligations(bookGuid);
+  const certificates = certificateObligations
+    .filter(item => daysUntil(item.dueDate, now) <= 90)
+    .map(item => sourceAction({
+      stableKey: item.key,
+      lane: 'do',
+      origin: 'compliance',
+      sourceId: item.key,
+      severity: severityFromDueDate(item.dueDate),
+      title: item.title,
+      summary: item.description,
+      dueDate: item.dueDate,
+      impact: null,
+      confidence: 1,
+      operations: [
+        { id: 'open', label: 'Open certificate', kind: 'link', href: '/business/documents', primary: true },
+        { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+      ],
+      evidence: [{
+        kind: 'rule',
+        id: item.key,
+        label: item.certificateType,
+        source: 'manual',
+        href: '/business/documents',
+        observedAt: isoDate(now),
+        verified: true,
+      }],
+      metadata: {
+        documentId: item.documentId,
+        certificateType: item.certificateType,
+        obligationKind: item.kind,
+      },
+    }));
+  return [...standard, ...certificates];
 }
 
 const CLOSE_ITEMS = [
