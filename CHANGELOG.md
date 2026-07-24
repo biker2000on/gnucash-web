@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.18.0.1] - 2026-07-23
+
+### Fixed
+- Serialized the complete database initializer with a PostgreSQL advisory lock so concurrently starting app and worker containers cannot race while creating extension tables.
+
 ## [0.18.0.0] - 2026-07-23
 
 ### Added
