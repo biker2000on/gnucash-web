@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { isAccountInActiveBook } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { createCalculationTrace, persistCalculationTrace } from '@/lib/provenance';
 
 export async function GET(
     request: Request,
@@ -14,9 +15,23 @@ export async function GET(
         const { guid } = await params;
         const { searchParams } = new URL(request.url);
         const asOfDate = searchParams.get('asOfDate');
+        if (asOfDate) {
+            const parsedAsOf = new Date(`${asOfDate}T00:00:00Z`);
+            if (
+                !/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)
+                || !Number.isFinite(parsedAsOf.getTime())
+                || parsedAsOf.toISOString().slice(0, 10) !== asOfDate
+            ) {
+                return NextResponse.json(
+                    { error: 'asOfDate must be a valid YYYY-MM-DD date' },
+                    { status: 400 },
+                );
+            }
+        }
 
         // Verify account belongs to active book
-        if (!await isAccountInActiveBook(guid)) {
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
+        if (!bookAccountGuids.includes(guid)) {
             return NextResponse.json({ error: 'Account not found' }, { status: 404 });
         }
 
@@ -41,10 +56,34 @@ export async function GET(
             `;
         }
 
+        const asOf = asOfDate || new Date().toISOString();
+        const trace = createCalculationTrace({
+            namespace: 'account-balance',
+            identity: { bookGuid: roleResult.bookGuid, guid, asOfDate: asOfDate ?? 'current' },
+            title: 'Account balance',
+            summary: 'The sum of all split quantities posted to this account through the selected date.',
+            asOfDate: asOf.slice(0, 10),
+            formula: 'sum(split quantity numerator ÷ split quantity denominator)',
+            result: Number(result[0].total_balance),
+            unit: 'currency',
+            evidence: [{
+                kind: 'account',
+                id: guid,
+                label: 'GnuCash account splits',
+                source: 'system',
+                href: `/accounts/${guid}`,
+                observedAt: new Date().toISOString(),
+                verified: false,
+            }],
+            assumptions: ['The result is expressed in the account commodity; no market-price conversion is applied.'],
+        });
+        await persistCalculationTrace(roleResult.user.id, roleResult.bookGuid, trace);
+
         return NextResponse.json({
             guid,
             total_balance: result[0].total_balance,
-            as_of: asOfDate || new Date().toISOString(),
+            as_of: asOf,
+            trace: { traceId: trace.id, href: `/api/provenance/${trace.id}` },
         });
     } catch (error) {
         console.error('Error fetching account balance:', error);

@@ -1,6 +1,6 @@
 {
   "name": "gnucash-web",
-  "version": "0.15.0.1",
+  "version": "0.16.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",

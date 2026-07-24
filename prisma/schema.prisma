@@ -841,25 +841,10 @@ model gnucash_web_account_tags {
   @@index([tag_id], map: "idx_account_tags_tag")
 }
 
-model gnucash_web_category_mappings {
-  id                  Int       @id @default(autoincrement())
-  book_guid           String    @db.VarChar(32)
-  source              String    @default("amazon") @db.VarChar(50)
-  keyword             String    @db.Text
-  keyword_normalized  String    @db.Text
-  account_guid        String    @db.VarChar(32)
-  use_count           Int       @default(1)
-  last_used_at        DateTime  @default(now())
-  created_at          DateTime  @default(now())
-
-  @@unique([book_guid, source, keyword_normalized])
-  @@index([book_guid, source, keyword_normalized], map: "idx_category_mappings_lookup")
-}
-
 model gnucash_web_import_batches {
   id            Int       @id @default(autoincrement())
   book_guid     String    @db.VarChar(32)
-  source        String    @default("amazon") @db.VarChar(50)
+  source        String    @db.VarChar(50)
   filename      String?   @db.VarChar(500)
   total_items   Int       @default(0)
   matched_items Int       @default(0)
@@ -868,39 +853,6 @@ model gnucash_web_import_batches {
   settings      Json      @default("{}")
   created_at    DateTime  @default(now())
   completed_at  DateTime?
-
-  orders        gnucash_web_amazon_orders[]
-}
-
-model gnucash_web_amazon_orders {
-  id               Int       @id @default(autoincrement())
-  book_guid        String    @db.VarChar(32)
-  order_id         String    @db.VarChar(100)
-  order_date       DateTime  @db.Date
-  item_name        String    @db.Text
-  item_price       Decimal   @db.Decimal(15, 4)
-  item_quantity    Int       @default(1)
-  category         String?   @db.VarChar(200)
-  tax_amount       Decimal?  @default(0) @db.Decimal(15, 4)
-  shipping_amount  Decimal?  @default(0) @db.Decimal(15, 4)
-  order_total      Decimal   @db.Decimal(15, 4)
-  charge_amount    Decimal?  @db.Decimal(15, 4)
-  currency         String    @default("USD") @db.VarChar(3)
-  transaction_guid String?   @db.VarChar(32)
-  split_guid       String?   @db.VarChar(32)
-  match_status     String    @default("unmatched") @db.VarChar(20)
-  apply_status     String    @default("pending") @db.VarChar(20)
-  import_batch_id  Int?
-  raw_csv_row      Json?
-  created_at       DateTime  @default(now())
-  csv_row_index    Int?
-
-  import_batch     gnucash_web_import_batches? @relation(fields: [import_batch_id], references: [id])
-
-  @@unique([book_guid, order_id, item_name, item_price, csv_row_index])
-  @@index([book_guid, match_status], map: "idx_amazon_orders_match")
-  @@index([order_date], map: "idx_amazon_orders_date")
-  @@index([transaction_guid], map: "idx_amazon_orders_tx")
 }
 
 // Entity/household profile per book: consumed by the tax estimator and

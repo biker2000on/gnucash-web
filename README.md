@@ -32,6 +32,12 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - Farm & Apiary Analyzer: side-by-side tax comparison of four ways to handle home-farm income (hobby, Schedule F, Schedule F + NC LLC), fed by your actual book data
 - Schedule F report mapping farm income/expense accounts onto IRS lines, with a farm chart of accounts for books labeled "Farm or ranch" and farm deadlines on the compliance calendar
 
+**Financial Action & Evidence**
+- Financial Action Center with ranked Fix, Decide, and Do lanes for a five-minute weekly close
+- Eight deterministic opportunity packs for taxes, contributions, debt, cash reserves, portfolios, tax strategy, subscriptions, and budget gaps
+- “Explain this number” calculation traces with source evidence, assumptions, stale-data warnings, and accountant-ready manifest export
+- Keyboard triage, mobile swipe actions, batch operations, durable accept/dismiss outcomes, and per-book verified-through dates
+
 **Infrastructure**
 - Progressive Web App (installable on phone/desktop)
 - Docker Compose with PostgreSQL, Redis, and optional MinIO for S3 storage

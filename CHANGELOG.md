@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+## [0.16.0.0] - 2026-07-23
+
+### Added
+- Added the Financial Action Center: one keyboard- and mobile-friendly Fix / Decide / Do inbox fed by transaction review, receipts, statements, Data Health, insights, compliance, business close, failed jobs, and notifications.
+- Added eight deterministic “Next Best Dollar” opportunity packs with inspectable value ranges, urgency, confidence, liquidity, reversibility, goal alignment, evidence, and outcome tracking.
+- Added Universal Financial Provenance with stable calculation traces, “Explain this number” drill-through, stale-price warnings, per-book verified-through dates, retained decision snapshots, and an exportable evidence manifest.
+- Added trace metadata to dashboard KPIs, account balances, estimated-tax results, and cash-flow forecasts.
+
+### Changed
+- Action detection is persisted and refreshed on a bounded five-minute cadence, with explicit refresh throttling and atomic, serialized materialization.
+- P0 roadmap items are marked delivered and the next roadmap sequence now starts with the Money Timeline and Living Plan.
+
+### Removed
+- Removed the incomplete Amazon order-history importer, its dedicated APIs, parser/matching pipeline, database models, and stale product references.
+
 ## [0.15.0.1] - 2026-07-22
 
 ### Fixed
