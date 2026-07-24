@@ -7,6 +7,7 @@ import {
   FinancialActionValidationError,
 } from '@/lib/financial-actions/store';
 import type { FinancialActionState } from '@/lib/financial-actions/types';
+import { getAuthorizedFamilyGraph } from '@/lib/family-office/service';
 
 const WRITABLE_STATES = new Set<FinancialActionState>([
   'open',
@@ -21,21 +22,40 @@ export async function GET(request: NextRequest) {
     if (roleResult instanceof NextResponse) return roleResult;
     const includeCompleted = request.nextUrl.searchParams.get('includeCompleted') === 'true';
     const refresh = request.nextUrl.searchParams.get('refresh') === 'true';
+    const familyScope = request.nextUrl.searchParams.get('scope') === 'family';
     if (refresh && roleResult.role === 'readonly') {
       return NextResponse.json(
         { error: 'Refreshing actions requires edit access' },
         { status: 403 },
       );
     }
-    const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
-    const result = await listFinancialActions({
-      userId: roleResult.user.id,
-      bookGuid: roleResult.bookGuid,
-      bookAccountGuids,
-      includeCompleted,
-      refresh,
+    const bookGuids = familyScope
+      ? (await getAuthorizedFamilyGraph(roleResult.user.id, roleResult.bookGuid)).entities.map(entity => entity.bookGuid)
+      : [roleResult.bookGuid];
+    const results = await Promise.all(bookGuids.map(async bookGuid => {
+      const bookAccountGuids = await getAccountGuidsForBook(bookGuid);
+      return listFinancialActions({
+        userId: roleResult.user.id,
+        bookGuid,
+        bookAccountGuids,
+        includeCompleted,
+        refresh,
+      });
+    }));
+    if (!familyScope) return NextResponse.json(results[0]);
+    const verifiedDates = results.map(result => result.verifiedThrough).filter((date): date is string => !!date);
+    return NextResponse.json({
+      actions: results.flatMap(result => result.actions),
+      summary: results.reduce((summary, result) => ({
+        new: summary.new + result.summary.new,
+        resolved: summary.resolved + result.summary.resolved,
+        automated: summary.automated + result.summary.automated,
+        overdue: summary.overdue + result.summary.overdue,
+      }), { new: 0, resolved: 0, automated: 0, overdue: 0 }),
+      verifiedThrough: verifiedDates.length === results.length ? verifiedDates.sort()[0] : null,
+      generatedAt: new Date().toISOString(),
+      scope: 'family',
     });
-    return NextResponse.json(result);
   } catch (error) {
     console.error('Error loading Financial Action Center:', error);
     return NextResponse.json(
@@ -63,13 +83,22 @@ export async function PATCH(request: NextRequest) {
     if (body.snoozedUntil !== undefined && body.snoozedUntil !== null && typeof body.snoozedUntil !== 'string') {
       return NextResponse.json({ error: 'snoozedUntil must be an ISO date' }, { status: 400 });
     }
-    const updated = await updateFinancialActions({
-      userId: roleResult.user.id,
-      bookGuid: roleResult.bookGuid,
-      ids: body.ids,
-      state: body.state as FinancialActionState,
-      snoozedUntil: body.snoozedUntil as string | null | undefined,
-    });
+    const familyScope = request.nextUrl.searchParams.get('scope') === 'family';
+    const bookGuids = familyScope
+      ? (await getAuthorizedFamilyGraph(roleResult.user.id, roleResult.bookGuid)).entities
+          .filter(entity => entity.role === 'edit' || entity.role === 'admin')
+          .map(entity => entity.bookGuid)
+      : [roleResult.bookGuid];
+    let updated = 0;
+    for (const bookGuid of bookGuids) {
+      updated += await updateFinancialActions({
+        userId: roleResult.user.id,
+        bookGuid,
+        ids: body.ids,
+        state: body.state as FinancialActionState,
+        snoozedUntil: body.snoozedUntil as string | null | undefined,
+      });
+    }
     return NextResponse.json({ ok: true, updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update actions';

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
@@ -200,6 +201,8 @@ function ActionCard({
 
 export default function FinancialActionCenterPage() {
   const toast = useToast();
+  const searchParams = useSearchParams();
+  const familyScope = searchParams.get('scope') === 'family';
   const [data, setData] = useState<FinancialActionList | null>(null);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
@@ -214,7 +217,7 @@ export default function FinancialActionCenterPage() {
     setError(null);
     try {
       const response = await fetch(
-        `/api/actions?includeCompleted=${includeCompleted}&refresh=${refresh}`,
+        `/api/actions?includeCompleted=${includeCompleted}&refresh=${refresh}&scope=${familyScope ? 'family' : 'book'}`,
         { cache: 'no-store' },
       );
       if (!response.ok) throw new Error('The Action Center could not be loaded.');
@@ -224,7 +227,7 @@ export default function FinancialActionCenterPage() {
     } finally {
       setLoading(false);
     }
-  }, [includeCompleted]);
+  }, [includeCompleted, familyScope]);
 
   useEffect(() => {
     void load();
@@ -240,7 +243,7 @@ export default function FinancialActionCenterPage() {
     if (ids.length === 0 || mutating) return;
     setMutating(true);
     try {
-      const response = await fetch('/api/actions', {
+      const response = await fetch(`/api/actions?scope=${familyScope ? 'family' : 'book'}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, state, snoozedUntil }),
@@ -255,7 +258,7 @@ export default function FinancialActionCenterPage() {
     } finally {
       setMutating(false);
     }
-  }, [load, mutating, toast]);
+  }, [familyScope, load, mutating, toast]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -306,6 +309,11 @@ export default function FinancialActionCenterPage() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-foreground">Financial Action Center</h1>
+            {familyScope && (
+              <span className="rounded border border-primary/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                Family graph
+              </span>
+            )}
             {data && data.summary.overdue > 0 && (
               <span className="rounded-full bg-negative/15 px-2 py-0.5 text-xs font-semibold text-negative">
                 {data.summary.overdue} overdue

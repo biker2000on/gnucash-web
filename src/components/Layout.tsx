@@ -341,12 +341,21 @@ const navItems: NavItem[] = [
         children: [
             { name: 'Overview', href: '/dashboard' },
             { name: 'Action Center', href: '/actions' },
+            { name: 'Family Office', href: '/family-office' },
             { name: 'Ask Your Books', href: '/tools/ask' },
             { name: 'Feature Catalog', href: '/catalog' },
         ],
     },
     { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle', mobileOnly: true },
-    { name: 'Money', href: '/money', icon: 'BookOpen', children: registryNavChildren('money') },
+    {
+        name: 'Money',
+        href: '/money',
+        icon: 'BookOpen',
+        children: [
+            { name: 'Money Timeline', href: '/money/timeline' },
+            ...registryNavChildren('money'),
+        ],
+    },
     {
         name: 'Budgets & Goals',
         href: '/budgets',
@@ -358,7 +367,15 @@ const navItems: NavItem[] = [
     },
     { name: 'Investments', href: '/investments', icon: 'TrendingUp', children: registryNavChildren('investments') },
     { name: 'Taxes', href: '/taxes', icon: 'Percent', children: registryNavChildren('taxes') },
-    { name: 'Planning', href: '/planning', icon: 'Wrench', children: registryNavChildren('planning') },
+    {
+        name: 'Planning',
+        href: '/planning',
+        icon: 'Wrench',
+        children: [
+            { name: 'Living Plan', href: '/planning/plan' },
+            ...registryNavChildren('planning'),
+        ],
+    },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
     { name: 'Settings', href: '/settings', icon: 'Settings', children: registryNavChildren('settings') },
 ];

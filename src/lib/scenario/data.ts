@@ -10,8 +10,8 @@
 
 import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { getBookAccountGuids } from '@/lib/book-scope';
-import { getBaseCurrency } from '@/lib/currency';
+import { getAccountGuidsForBook, getBookAccountGuids } from '@/lib/book-scope';
+import { getBaseCurrency, getBaseCurrencyForBook } from '@/lib/currency';
 import { getPreference } from '@/lib/user-preferences';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
@@ -79,24 +79,29 @@ function toIsoDate(d: Date): string {
 }
 
 /**
- * Build the full baseline for the scenario engine from the active book and
- * the user's tax preferences.
+ * Build the full baseline for the scenario engine from an explicit book when
+ * provided, otherwise from the active book, plus the user's tax preferences.
  */
-export async function buildScenarioBaseline(userId: number): Promise<ScenarioBaseline> {
+export async function buildScenarioBaseline(
+  userId: number,
+  bookGuid?: string,
+): Promise<ScenarioBaseline> {
   const now = new Date();
   const yearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
   const calendarYear = now.getFullYear();
   const currentTaxYear = toTaxYear(calendarYear);
   const nextTaxYear = toTaxYear(calendarYear + 1);
 
-  const bookAccountGuids = await getBookAccountGuids();
+  const bookAccountGuids = bookGuid
+    ? await getAccountGuidsForBook(bookGuid)
+    : await getBookAccountGuids();
 
   const [filingStatusPref, statePref, flatRatePref, birthday, baseCurrency] = await Promise.all([
     getPreference<string>(userId, 'tax_filing_status', 'single'),
     getPreference<string>(userId, 'tax_state', 'OTHER'),
     getPreference<number>(userId, 'tax_state_flat_rate', 0),
     getPreference<string | null>(userId, 'birthday', null),
-    getBaseCurrency(),
+    bookGuid ? getBaseCurrencyForBook(bookGuid) : getBaseCurrency(),
   ]);
 
   const filingStatus: FilingStatus = (FILING_STATUSES as readonly string[]).includes(

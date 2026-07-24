@@ -53,6 +53,7 @@ describe('Opportunity Engine', () => {
       expect(action.lane).toBe('decide');
       expect(action.operations.map(operation => operation.id)).toEqual([
         'review',
+        'plan-impact',
         'accept',
         'dismiss',
       ]);

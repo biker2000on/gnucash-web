@@ -135,6 +135,12 @@ function signalToAction(
     score,
     operations: [
       { id: 'review', label: 'Review plan', kind: 'link', href: signal.href, primary: true },
+      {
+        id: 'plan-impact',
+        label: 'Plan impact',
+        kind: 'link',
+        href: `/planning/plan?opportunity=${encodeURIComponent(`${pack}:${signal.key}`)}`,
+      },
       { id: 'accept', label: 'Accept', kind: 'state', targetState: 'accepted' },
       { id: 'dismiss', label: 'Dismiss', kind: 'state', targetState: 'dismissed' },
     ],

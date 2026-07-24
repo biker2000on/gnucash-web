@@ -17,6 +17,13 @@ const EVENT_TYPE_OPTIONS: Array<{ key: string; label: string }> = [
     { key: 'fixed_income', label: 'Bond/CD maturities & coupon payments' },
     { key: 'rmd', label: 'RMD deadlines' },
     { key: 'compliance', label: 'Tax & compliance deadlines (next 12 months)' },
+    { key: 'renewal', label: 'Renewals & contracts' },
+    { key: 'home', label: 'Home maintenance' },
+    { key: 'invoice', label: 'Invoices & bills' },
+    { key: 'goal', label: 'Goal deadlines' },
+    { key: 'equity_comp', label: 'Equity compensation vesting' },
+    { key: 'report_schedule', label: 'Scheduled report delivery' },
+    { key: 'plan', label: 'Living plan events' },
 ];
 
 function typeLabel(key: string): string {

@@ -50,6 +50,7 @@ export default function AskBooksPage() {
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
     const [configured, setConfigured] = useState<boolean | null>(null);
+    const [familyScope, setFamilyScope] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -101,7 +102,7 @@ export default function AskBooksPage() {
             const res = await fetch('/api/ai/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question: q, history }),
+                body: JSON.stringify({ question: q, history, scope: familyScope ? 'family' : 'book' }),
             });
             const data = await res.json().catch(() => ({}));
 
@@ -127,7 +128,7 @@ export default function AskBooksPage() {
             setBusy(false);
             inputRef.current?.focus();
         }
-    }, [busy, exchanges]);
+    }, [busy, exchanges, familyScope]);
 
     const clearHistory = useCallback(() => {
         setExchanges([]);
@@ -154,6 +155,14 @@ export default function AskBooksPage() {
                         Clear history
                     </button>
                 )}
+                <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-foreground-secondary">
+                    <input
+                        type="checkbox"
+                        checked={familyScope}
+                        onChange={event => setFamilyScope(event.target.checked)}
+                    />
+                    Authorized family graph
+                </label>
             </header>
 
             {configured === false && (
@@ -226,7 +235,7 @@ export default function AskBooksPage() {
             </form>
 
             <p className="mt-2 text-xs text-foreground-muted">
-                Answers are computed by AI-generated, read-only SQL scoped to the active book. Verify
+                Answers are computed by AI-generated, read-only SQL scoped to {familyScope ? 'the authorized family graph' : 'the active book'}. Verify
                 important numbers against the reports.
             </p>
         </div>

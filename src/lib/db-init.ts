@@ -3,6 +3,10 @@ import {
     CALCULATION_TRACES_SCHEMA_SQL,
     FINANCIAL_ACTIONS_SCHEMA_SQL,
 } from './financial-actions/schema';
+import {
+    FAMILY_OFFICE_SCHEMA_SQL,
+    LIVING_PLAN_SCHEMA_SQL,
+} from './planning/schema';
 
 /**
  * Creates the account_hierarchy view if it doesn't exist.
@@ -1641,6 +1645,7 @@ async function createExtensionTables() {
         await query(importBatchesTableDDL);
         await query(notificationsTableDDL);
         await query(financialActionsTableDDL);
+        await query(LIVING_PLAN_SCHEMA_SQL);
         await query(tagsTableDDL);
         await query(taxMappingsTableDDL);
         await query(entityProfilesTableDDL);
@@ -1648,6 +1653,7 @@ async function createExtensionTables() {
         await query(entityProfilesActivityColumnDDL);
         await query(bookFeaturesTableDDL);
         await query(bookLinksTableDDL);
+        await query(FAMILY_OFFICE_SCHEMA_SQL);
         await query(membershipTablesDDL);
         await query(auditBookScopeDDL);
         await query(tagsBookScopeDDL);

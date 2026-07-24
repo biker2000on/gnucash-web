@@ -30,6 +30,30 @@ export interface Currency {
 }
 
 /**
+ * Get the report currency for a specific book without consulting request
+ * session state. Cross-book and API-token workflows must use this helper.
+ */
+export async function getBaseCurrencyForBook(bookGuid: string): Promise<Currency | null> {
+    const book = await prisma.books.findUnique({
+        where: { guid: bookGuid },
+        select: { root_account_guid: true },
+    });
+    if (!book) return null;
+
+    const rootAccount = await prisma.accounts.findUnique({
+        where: { guid: book.root_account_guid },
+        select: { commodity: true },
+    });
+    if (rootAccount?.commodity?.namespace !== 'CURRENCY') return null;
+    return {
+        guid: rootAccount.commodity.guid,
+        mnemonic: rootAccount.commodity.mnemonic,
+        fullname: rootAccount.commodity.fullname,
+        fraction: rootAccount.commodity.fraction,
+    };
+}
+
+/**
  * Get the active book's report currency from its root account.
  * Falls back to USD, then the first available currency, when no active book exists.
  */

@@ -38,6 +38,12 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - “Explain this number” calculation traces with source evidence, assumptions, stale-data warnings, and accountant-ready manifest export
 - Keyboard triage, mobile swipe actions, batch operations, durable accept/dismiss outcomes, and per-book verified-through dates
 
+**Planning & Family Office**
+- Unified Money Timeline for scheduled cash, deadlines, renewals, invoices, home tasks, goals, equity vesting, and adopted plan events, with conflict detection and filtered iCal feeds
+- Living Financial Plan that adopts Scenario Sandbox models, versions life events and guardrails, reconciles monthly actuals, explains variances, and retains a decision journal
+- Permission-safe Family Office for ownership-aware cross-book net worth, P&L, cash flow, investments, liquidity, transfer eliminations, documents, actions, timeline events, and Ask Your Books
+- Explicit FX conversion and exclusion warnings keep consolidated figures honest when linked books use different currencies
+
 **Infrastructure**
 - Progressive Web App (installable on phone/desktop)
 - Docker Compose with PostgreSQL, Redis, and optional MinIO for S3 storage

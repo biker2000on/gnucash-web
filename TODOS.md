@@ -63,9 +63,9 @@ Every new feature should satisfy these rules:
    reports, balances, forecasts, and existing deterministic insights.
 4. [Done] Add the first eight Opportunity Engine packs and rank them in the
    Action Center.
-5. Normalize existing dated obligations into the Money Timeline.
-6. Let a scenario become an adopted Living Plan and reconcile it to actuals.
-7. Extend book links into cross-book consolidation.
+5. [Done] Normalize existing dated obligations into the Money Timeline.
+6. [Done] Let a scenario become an adopted Living Plan and reconcile it to actuals.
+7. [Done] Extend book links into cross-book consolidation.
 8. Add the Safe Operator Agent only after previewable domain commands are
    available.
 
@@ -214,6 +214,8 @@ exportable evidence manifest.
 
 ## P1 - Living Financial Plan of Record
 
+**Status:** Implemented 2026-07-23.
+
 **Outcome:** Turn the Scenario Sandbox from a one-time calculator into a living
 plan continuously reconciled against the real books.
 
@@ -244,9 +246,18 @@ estimator, FIRE/drawdown engines, and Universal Financial Provenance.
 
 **Effort:** L.
 
+**Delivered:** Scenario adoption from the sandbox, immutable plan versions,
+archive support, reusable typed life-event templates, plan events on the shared
+timeline, automatic once-per-month actual reconciliation, deterministic cause
+attribution for income/spending/markets/liquidity, net-worth/tax/FIRE variance,
+a decision journal, plan-impact links on ranked opportunities, and tested cash,
+debt, contribution-priority, and goal-deadline guardrails.
+
 ---
 
 ## P1 - Unified Money Timeline
+
+**Status:** Implemented 2026-07-23.
 
 **Outcome:** One chronological view shows what will happen, what may happen, and
 what the user must do.
@@ -273,9 +284,19 @@ equity-compensation, invoice, and iCal services.
 
 **Effort:** M-L.
 
+**Delivered:** Shared typed `FinancialEvent` and conflict contracts; day, month,
+and year views; expected cash and confidence; adapters for scheduled
+transactions, compliance, fixed income, RMDs, renewals, warranties, home tasks,
+invoices/bills, goals, planned equity vesting, report schedules, and adopted
+plan events; low-cash, duplicate, overdue, and missed-contribution-window
+detection; source/evidence links; family-graph aggregation; and tokenized iCal
+filters for every event domain.
+
 ---
 
 ## P1 - Family Office / Cross-Book Consolidation
+
+**Status:** Implemented 2026-07-23.
 
 **Outcome:** A household, its businesses, farms, rentals, nonprofits, and future
 trusts can be understood as one financial graph without corrupting the
@@ -301,6 +322,14 @@ Do not silently combine books or currencies.
 multi-currency conversion, Universal Financial Provenance, and Action Center.
 
 **Effort:** L-XL.
+
+**Delivered:** A permission-intersected typed ownership graph, household and
+linked-business consolidation with ownership look-through, net worth, P&L,
+cash flow, investments, and liquidity, explicit currency conversion/exclusion
+warnings, cross-book cash-transfer matching, durable presentation-only
+elimination approvals, global entity-document and receipt-OCR search, and
+family-scoped Ask Your Books, Action Center, and Money Timeline. Existing
+per-book RBAC remains the access boundary for advisor/accountant sharing.
 
 ---
 
