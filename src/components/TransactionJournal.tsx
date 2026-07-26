@@ -134,11 +134,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     });
     const [debouncedFilters, setDebouncedFilters] = useState<TransactionFilters>(filters);
 
-    // Track if filters were previously active (to detect clearing)
-    const prevFiltersRef = useRef<{ hadTextFilter: boolean; hadAdvancedFilters: boolean }>({
-        hadTextFilter: false,
-        hadAdvancedFilters: false,
-    });
+    const filtersInitializedRef = useRef(false);
 
     const handleRowClick = useCallback((guid: string) => {
         setSelectedTxGuid(guid);
@@ -175,6 +171,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
 
     // Count active filters
     const activeFilterCount = [
+        filterText !== '',
         filters.accountTypes.length > 0,
         filters.minAmount !== '',
         filters.maxAmount !== '',
@@ -183,12 +180,16 @@ export default function TransactionJournal({ initialTransactions, startDate, end
 
     // Clear all filters
     const clearAllFilters = () => {
-        setFilters({
+        const emptyFilters: TransactionFilters = {
             accountTypes: [],
             minAmount: '',
             maxAmount: '',
             reconcileStates: [],
-        });
+        };
+        setFilterText('');
+        setDebouncedFilter('');
+        setFilters(emptyFilters);
+        setDebouncedFilters(emptyFilters);
     };
 
     // Build URL params helper
@@ -502,25 +503,18 @@ export default function TransactionJournal({ initialTransactions, startDate, end
             }
         };
 
-        // Check current filter state
-        const hasTextFilter = debouncedFilter !== '';
-        const hasAdvancedFilters = debouncedFilters.accountTypes.length > 0 ||
-            debouncedFilters.minAmount !== '' ||
-            debouncedFilters.maxAmount !== '' ||
-            debouncedFilters.reconcileStates.length > 0;
-
-        // Check if filters were just cleared (had filters before, none now)
-        const filtersWereCleared =
-            (prevFiltersRef.current.hadTextFilter || prevFiltersRef.current.hadAdvancedFilters) &&
-            !hasTextFilter && !hasAdvancedFilters;
-
-        // Update the ref for next comparison
-        prevFiltersRef.current = { hadTextFilter: hasTextFilter, hadAdvancedFilters: hasAdvancedFilters };
-
-        // Run when any filter is active OR when filters were just cleared
-        if (hasTextFilter || hasAdvancedFilters || filtersWereCleared) {
-            resetAndFetch();
+        // The parent supplies the initial unfiltered page. Every subsequent
+        // debounced change must fetch, including the transition back to an
+        // empty filter set. This avoids stale filtered rows after "Clear all".
+        if (!filtersInitializedRef.current) {
+            filtersInitializedRef.current = true;
+            if (!debouncedFilter && debouncedFilters.accountTypes.length === 0 &&
+                !debouncedFilters.minAmount && !debouncedFilters.maxAmount &&
+                debouncedFilters.reconcileStates.length === 0) {
+                return;
+            }
         }
+        resetAndFetch();
     }, [debouncedFilter, debouncedFilters, buildUrlParams]);
 
     const fetchMoreTransactions = useCallback(async () => {

@@ -137,6 +137,7 @@ export function TransactionFormModal({
             size="2xl"
             closeOnBackdrop={false}
             closeOnEscape={true}
+            resetKey={transaction?.guid ?? 'new'}
         >
             <div className="px-6 py-4">
                 {error && (

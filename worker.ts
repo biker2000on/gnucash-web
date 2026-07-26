@@ -36,6 +36,7 @@ const JOB_LABELS: Record<string, string> = {
   'sync-simplefin': 'SimpleFin sync',
   'ocr-receipt': 'Receipt OCR',
   'regenerate-thumbnails': 'Thumbnail regeneration',
+  'reextract-receipts': 'Receipt AI re-extraction',
   'extract-payslip': 'Payslip extraction',
   'extract-statement': 'Statement extraction',
   'run-backups': 'Backup run',
@@ -561,6 +562,20 @@ async function main() {
         case 'renewal-reminders': {
           const { handleRenewalReminders } = await import('./src/lib/queue/jobs/renewal-reminders');
           await handleRenewalReminders(job);
+          break;
+        }
+        case 'reextract-receipts': {
+          const { handleReextractReceipts } = await import('./src/lib/queue/jobs/reextract-receipts');
+          const result = await handleReextractReceipts(
+            job,
+            async (progress) => {
+              await emit?.progress(progress);
+            },
+          );
+          jobSummary = { ...result };
+          console.log(
+            `Receipt re-extraction: ${result.upgraded} upgraded, ${result.fallback} fallback, ${result.failed} failed`,
+          );
           break;
         }
         case 'sync-fuel-tracker': {

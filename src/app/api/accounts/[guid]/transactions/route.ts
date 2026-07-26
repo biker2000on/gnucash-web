@@ -397,6 +397,13 @@ export async function GET(
                 commodity_mnemonic: accountMnemonic,
                 account_split_guid: accountSplit?.guid || '',
                 account_split_reconcile_state: accountSplit?.reconcile_state || 'n',
+                account_splits: accountSplits.map((split) => ({
+                    guid: split.guid,
+                    reconcile_state: split.reconcile_state || 'n',
+                    amount: (
+                        Number(split.quantity_num) / Number(split.quantity_denom)
+                    ).toString(),
+                })),
                 // Transaction meta: reviewed status and source
                 reviewed: meta?.reviewed ?? true, // default to reviewed if no meta row
                 source: meta?.source ?? 'manual',

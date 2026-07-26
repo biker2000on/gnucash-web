@@ -11,12 +11,6 @@ import { FEATURES } from '@/lib/feature-registry'
 import { isFeatureVisible, useBookGating } from '@/lib/hooks/useBookGating'
 import { formatCurrency } from '@/lib/format'
 
-/** Strip the root/book account name (first colon-delimited segment) from fullname */
-function stripRoot(fullname: string): string {
-  const idx = fullname.indexOf(':')
-  return idx >= 0 ? fullname.slice(idx + 1) : fullname
-}
-
 interface TxHit {
   guid: string
   description: string
@@ -55,6 +49,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [txHits, setTxHits] = useState<TxHit[]>([])
+  const [txHitQuery, setTxHitQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const { data: accounts } = useAccounts({ flat: true })
@@ -74,18 +69,19 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   useEffect(() => {
     if (!isOpen) return
     const q = query.trim()
-    if (q.length < 3) {
-      setTxHits([])
-      return
-    }
+    if (q.length < 3) return
     const timer = setTimeout(() => {
       fetch(`/api/transactions?search=${encodeURIComponent(q)}&limit=5`)
         .then(r => (r.ok ? r.json() : []))
         .then((data) => {
           const list = Array.isArray(data) ? data : data?.transactions
           setTxHits(Array.isArray(list) ? list.slice(0, 5) : [])
+          setTxHitQuery(q)
         })
-        .catch(() => setTxHits([]))
+        .catch(() => {
+          setTxHits([])
+          setTxHitQuery(q)
+        })
     }, 250)
     return () => clearTimeout(timer)
   }, [query, isOpen])
@@ -113,7 +109,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       accountRows = flat
         .filter(a => a.account_type !== 'ROOT')
         .map(a => {
-          const display = stripRoot(a.fullname || a.name)
+          const display = a.fullname || a.name
           return { kind: 'account' as const, account: a, score: fuzzyScore(q, display) }
         })
         .filter(r => r.score >= 0)
@@ -121,7 +117,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
         .slice(0, 6)
     }
 
-    const txRows: PaletteRow[] = q.length >= 3
+    const txRows: PaletteRow[] = q.length >= 3 && txHitQuery === q
       ? txHits.map(tx => ({ kind: 'transaction' as const, tx }))
       : []
 
@@ -129,7 +125,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     const strong = commandRows.filter(r => r.kind === 'command' && r.command.score >= 250)
     const weak = commandRows.filter(r => r.kind === 'command' && r.command.score < 250)
     return [...strong, ...accountRows, ...weak, ...txRows]
-  }, [query, accounts, txHits, hiddenFeatureIds])
+  }, [query, accounts, txHits, txHitQuery, hiddenFeatureIds])
 
   useEffect(() => {
     if (isOpen) {
@@ -260,7 +256,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                       </>
                     )}
                     {row.kind === 'account' && (
-                      <span className="truncate">{stripRoot(row.account.fullname || row.account.name)}</span>
+                      <span className="truncate">{row.account.fullname || row.account.name}</span>
                     )}
                     {row.kind === 'transaction' && (
                       <>

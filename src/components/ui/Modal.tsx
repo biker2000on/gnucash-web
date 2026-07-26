@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useRef, useSyncExternalStore } from 'react';
+import { ReactNode, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
@@ -12,6 +12,8 @@ interface ModalProps {
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'fullscreen';
     closeOnBackdrop?: boolean;
     closeOnEscape?: boolean;
+    /** Reset the scroll container when asynchronously loaded content changes identity. */
+    resetKey?: string | number | null;
 }
 
 const sizeClasses = {
@@ -31,6 +33,7 @@ export function Modal({
     size = 'md',
     closeOnBackdrop = true,
     closeOnEscape = true,
+    resetKey,
 }: ModalProps) {
     const modalRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
@@ -62,21 +65,28 @@ export function Modal({
     // Lock body scroll when modal is open
     useEffect(() => {
         if (isOpen) {
+            const previousOverflow = document.body.style.overflow;
             document.body.style.overflow = 'hidden';
-        } else {
-            document.body.style.overflow = '';
+            return () => {
+                document.body.style.overflow = previousOverflow;
+            };
         }
-        return () => {
-            document.body.style.overflow = '';
-        };
     }, [isOpen]);
 
-    // Reset scroll position when modal opens
-    useEffect(() => {
-        if (isOpen && contentRef.current) {
+    // Reset before paint and once more after async content has laid out. The
+    // second reset prevents browsers from restoring the prior scroll offset
+    // when a transaction fetch replaces the loading state.
+    useLayoutEffect(() => {
+        if (!isOpen) return;
+        const reset = () => {
+            if (!contentRef.current) return;
             contentRef.current.scrollTop = 0;
-        }
-    }, [isOpen]);
+            contentRef.current.scrollLeft = 0;
+        };
+        reset();
+        const frame = requestAnimationFrame(reset);
+        return () => cancelAnimationFrame(frame);
+    }, [isOpen, resetKey]);
 
     // Focus trap
     useEffect(() => {
@@ -111,7 +121,7 @@ export function Modal({
     if (!mounted || !isOpen) return null;
 
     const modalContent = (
-        <div className={`fixed inset-0 z-[9999] flex items-center justify-center ${mobileFullscreen ? '' : 'p-4'}`}>
+        <div className={`fixed inset-0 z-[9999] flex h-[100dvh] items-center justify-center overflow-y-auto overscroll-contain ${mobileFullscreen ? '' : 'p-4'}`}>
             {/* Backdrop */}
             <div
                 className="absolute inset-0 bg-black/70 backdrop-blur-sm"
@@ -123,8 +133,8 @@ export function Modal({
                 ref={modalRef}
                 className={`relative bg-background-secondary border border-border shadow-2xl w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200 ${
                     mobileFullscreen
-                        ? 'w-full h-full max-w-none max-h-none rounded-none'
-                        : `rounded-2xl ${sizeClasses[effectiveSize]} max-h-[90vh]`
+                        ? 'w-full h-[100dvh] max-w-none max-h-none rounded-none'
+                        : `my-auto rounded-2xl ${sizeClasses[effectiveSize]} max-h-[calc(100dvh-2rem)]`
                 }`}
                 role="dialog"
                 aria-modal="true"

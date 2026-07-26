@@ -129,6 +129,7 @@ export function TransactionModal({
             onClose={onClose}
             title="Transaction Details"
             size="xl"
+            resetKey={transactionGuid}
         >
             {loading ? (
                 <div className="p-8 flex items-center justify-center">

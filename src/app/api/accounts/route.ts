@@ -7,6 +7,7 @@ import { AccountService, CreateAccountSchema } from '@/lib/services/account.serv
 import { getBookAccountGuids, getActiveBookRootGuid, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
+import { buildBookRelativeAccountPaths } from '@/lib/account-path';
 
 /**
  * @openapi
@@ -55,6 +56,11 @@ export async function GET(request: NextRequest) {
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();
         const bookRootGuid = await getActiveBookRootGuid();
+        const bookRoot = await prisma.accounts.findUnique({
+            where: { guid: bookRootGuid },
+            select: { name: true },
+        });
+        const bookName = bookRoot?.name ?? '';
 
         // Flat mode: return all accounts with fullname (for account selector)
         if (flat) {
@@ -67,26 +73,30 @@ export async function GET(request: NextRequest) {
                 parent_guid: string | null;
                 commodity_guid: string | null;
                 fullname: string;
+                book_name: string;
                 commodity_mnemonic: string;
             }>>`
                 WITH RECURSIVE account_path AS (
-                    SELECT guid, name, account_type, parent_guid, commodity_guid,
-                           name::text as fullname
-                    FROM accounts
-                    WHERE guid = ${bookRootGuid}
+                    SELECT a.guid, a.name, a.account_type, a.parent_guid, a.commodity_guid,
+                           a.name::text AS fullname,
+                           root.name::text AS book_name
+                    FROM accounts a
+                    JOIN accounts root ON root.guid = a.parent_guid
+                    WHERE root.guid = ${bookRootGuid}
 
                     UNION ALL
 
                     SELECT a.guid, a.name, a.account_type, a.parent_guid, a.commodity_guid,
-                           (ap.fullname || ':' || a.name)::text as fullname
+                           (ap.fullname || ':' || a.name)::text AS fullname,
+                           ap.book_name
                     FROM accounts a
                     JOIN account_path ap ON a.parent_guid = ap.guid
                 )
-                SELECT ap.guid, ap.name, ap.account_type, ap.parent_guid, ap.commodity_guid, ap.fullname,
+                SELECT ap.guid, ap.name, ap.account_type, ap.parent_guid, ap.commodity_guid,
+                       ap.fullname, ap.book_name,
                        c.mnemonic as commodity_mnemonic
                 FROM account_path ap
                 JOIN commodities c ON ap.commodity_guid = c.guid
-                WHERE ap.account_type NOT IN ('ROOT')
                 ORDER BY ap.fullname
             `;
             return NextResponse.json(serializeBigInts(flatAccounts));
@@ -206,6 +216,13 @@ export async function GET(request: NextRequest) {
                 };
             });
         }
+
+        const relativePaths = buildBookRelativeAccountPaths(accounts, bookRootGuid);
+        accounts = accounts.map((account) => ({
+            ...account,
+            fullname: relativePaths.get(account.guid) ?? account.name,
+            book_name: bookName,
+        }));
 
         // Build hierarchy
         const accountMap: Record<string, AccountWithChildren> = {};

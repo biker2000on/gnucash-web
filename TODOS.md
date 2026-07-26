@@ -383,6 +383,8 @@ and action packs rather than isolated pages.
 
 ### Invoice Payment Links and Client Portal
 
+**Status:** Implemented 2026-07-24.
+
 **What:** Add Stripe and/or PayPal “Pay now” support to public invoices,
 auto-record cleared payments and processor fees from signed webhooks, and
 extend the public view into a lightweight portal for open invoices, payment
@@ -411,6 +413,8 @@ failed/cleared payment signals in the Action Center and Money Timeline.
 
 ### P2 - Job Costing and Project Profitability
 
+**Status:** Implemented 2026-07-24.
+
 Join tracked labor, employee rates, materials/vouchers, job expenses, invoiced
 revenue, and unbilled WIP into a per-job margin view. Emit actions for unbilled
 time/expense, margin erosion, and overdue collections. Expenses use explicit job
@@ -426,6 +430,8 @@ and tag fallback into gross profit and margin. The Action Center surfaces
 unbilled work, margin erosion, and overdue collections.
 
 ### P2 - Employee Expense Reimbursement
+
+**Status:** Implemented 2026-07-24.
 
 Add submitted → approved → posted/rejected workflow over the receipt inbox.
 An employee-role user submits a reimbursable receipt; an approver creates a
@@ -726,12 +732,6 @@ complete scheduled-transaction command surface.
 
 **Effort:** M.
 
-**Delivered:** Vehicle profiles link to Mileage Log and Fuel Tracker evidence,
-reuse shared auto-policy premiums, and combine fuel, insurance, registration,
-maintenance, other costs, and depreciation into annual cost, monthly run rate,
-and cost per mile. Repair-versus-replace scenarios compare a shared horizon and
-emit evidence-backed decisions through the Action Center.
-
 **Delivered:** Scheduled transactions can now be edited through the shared
 panel and validated PATCH endpoint, or created from a ledger transaction with
 prefilled splits. Both create and update operations use a durable preview,
@@ -792,6 +792,8 @@ conflict policy.
 
 ## P3 - Accounts API: Remove Book Name from `fullname`
 
+**Status:** Implemented 2026-07-26.
+
 Return `Assets:Checking` rather than
 `Crawford Personal Finances:Assets:Checking`, with `book_name` as a separate
 field. Update both flat-account and hierarchy responses and remove redundant
@@ -799,9 +801,16 @@ client-side stripping.
 
 **Effort:** XS.
 
+**Delivered:** Flat and hierarchical account responses now expose book-relative
+`fullname` values and a separate `book_name`. Account pickers, command search,
+quick switching, and payslip account display consume the normalized API contract
+without client-side root stripping.
+
 ---
 
 ## P4 - Receipt AI Re-Extraction Batch Job
+
+**Status:** Implemented 2026-07-26.
 
 Add “Re-extract all” in AI settings for receipts still using regex extraction.
 Queue jobs through BullMQ, expose progress through the existing job-progress
@@ -809,6 +818,11 @@ system, and avoid reprocessing already-AI-extracted receipts unless explicitly
 requested.
 
 **Effort:** S.
+
+**Delivered:** Receipt administrators can queue AI re-extraction for legacy
+regex and missing extractions from the receipt gallery. The book-scoped BullMQ
+job reports live progress, preserves review metadata, continues past individual
+failures, and protects already-AI-extracted receipts by default.
 
 ---
 

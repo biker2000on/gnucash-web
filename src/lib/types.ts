@@ -59,6 +59,8 @@ export interface Account {
     hidden: number;
     placeholder: number;
     fullname?: string;
+    /** Active book's display name, kept separate from the book-relative path. */
+    book_name?: string;
     /** Account's own owner preference ('self' | 'spouse' | 'joint') — not inherited */
     owner?: string | null;
     total_balance?: string;

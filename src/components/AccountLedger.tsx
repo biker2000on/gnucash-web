@@ -48,6 +48,15 @@ import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useQueryClient } from '@tanstack/react-query';
+import {
+    getRowAccountSplits,
+    getSelectableRowSplits,
+    isRowSelected,
+    selectAllRows,
+    sumSelectedRows,
+    toggleRowSelection,
+    type ReconciliationRowSplit,
+} from '@/lib/reconciliation-selection';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -55,6 +64,7 @@ export interface AccountTransaction extends Transaction {
     commodity_mnemonic: string;
     account_split_guid: string;
     account_split_reconcile_state: string;
+    account_splits?: ReconciliationRowSplit[];
     reviewed?: boolean;
     source?: string;
     match_type?: string | null;
@@ -351,23 +361,12 @@ export default function AccountLedger({
     }, []);
 
 
-    const toggleSplitSelection = useCallback((splitGuid: string) => {
-        setSelectedSplits(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(splitGuid)) {
-                newSet.delete(splitGuid);
-            } else {
-                newSet.add(splitGuid);
-            }
-            return newSet;
-        });
+    const toggleTransactionSelection = useCallback((tx: AccountTransaction) => {
+        setSelectedSplits(prev => toggleRowSelection(tx, prev));
     }, []);
 
     const selectAllUnreconciled = useCallback(() => {
-        const unreconciledSplits = transactions
-            .filter(tx => tx.account_split_reconcile_state !== 'y')
-            .map(tx => tx.account_split_guid);
-        setSelectedSplits(new Set(unreconciledSplits));
+        setSelectedSplits(selectAllRows(transactions));
     }, [transactions]);
 
     const clearSelection = useCallback(() => {
@@ -376,22 +375,27 @@ export default function AccountLedger({
 
     // Calculate the sum of selected splits for reconciliation
     const selectedBalance = useMemo(() => {
-        let sum = 0;
-        for (const tx of transactions) {
-            if (selectedSplits.has(tx.account_split_guid)) {
-                sum += parseFloat(tx.account_split_value) || 0;
-            }
-        }
-        return sum;
+        return sumSelectedRows(transactions, selectedSplits);
     }, [transactions, selectedSplits]);
 
     const handleReconcileComplete = useCallback(() => {
         // Refresh the transactions to show updated reconcile states
         setTransactions(prev => prev.map(tx => {
-            if (selectedSplits.has(tx.account_split_guid)) {
-                return { ...tx, account_split_reconcile_state: 'y' };
-            }
-            return tx;
+            const accountSplits = getRowAccountSplits(tx);
+            if (!accountSplits.some(split => selectedSplits.has(split.guid))) return tx;
+            const nextAccountSplits = accountSplits.map(split => (
+                selectedSplits.has(split.guid) ? { ...split, reconcile_state: 'y' } : split
+            ));
+            const nextSplits = tx.splits?.map(split => (
+                selectedSplits.has(split.guid) ? { ...split, reconcile_state: 'y' } : split
+            ));
+            return {
+                ...tx,
+                splits: nextSplits,
+                account_splits: nextAccountSplits,
+                account_split_reconcile_state:
+                    nextAccountSplits.every(split => split.reconcile_state === 'y') ? 'y' : tx.account_split_reconcile_state,
+            };
         }));
         setSelectedSplits(new Set());
         setIsReconciling(false);
@@ -2087,7 +2091,6 @@ export default function AccountLedger({
                     {/* Reconcile button in toolbar; panel floats separately */}
                     {!isReconciling && (
                         <ReconciliationPanel
-                            accountGuid={accountGuid}
                             accountCurrency={accountCurrency}
                             isInvestment={isInvestmentAccount}
                             sharePrecision={sharePrecision}
@@ -2095,7 +2098,6 @@ export default function AccountLedger({
                             selectedBalance={selectedBalance}
                             onReconcileComplete={handleReconcileComplete}
                             selectedSplits={selectedSplits}
-                            onToggleSplit={toggleSplitSelection}
                             onSelectAll={selectAllUnreconciled}
                             onClearSelection={clearSelection}
                             isReconciling={isReconciling}
@@ -2309,7 +2311,7 @@ export default function AccountLedger({
                                             {isReconciling && (
                                                 <input
                                                     type="checkbox"
-                                                    checked={selectedSplits.size > 0 && displayTransactions.every(tx => tx.account_split_reconcile_state === 'y' || selectedSplits.has(tx.account_split_guid))}
+                                                    checked={selectedSplits.size > 0 && displayTransactions.every(tx => getSelectableRowSplits(tx).length === 0 || isRowSelected(tx, selectedSplits))}
                                                     onChange={(e) => {
                                                         if (e.target.checked) selectAllUnreconciled();
                                                         else clearSelection();
@@ -2624,7 +2626,7 @@ export default function AccountLedger({
                                 const isUnreviewed = tx.reviewed === false;
                                 const amount = parseFloat(tx.account_split_value);
                                 const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
-                                const isSelected = selectedSplits.has(tx.account_split_guid);
+                                const isSelected = isRowSelected(tx, selectedSplits);
 
                                 if (editingGuid === tx.guid) {
                                     return (
@@ -2662,11 +2664,11 @@ export default function AccountLedger({
                                             if (colId === 'select') {
                                                 return (
                                                     <td key={cell.id} className="px-3 py-2 align-middle">
-                                                        {tx.account_split_reconcile_state !== 'y' && (
+                                                        {getSelectableRowSplits(tx).length > 0 && (
                                                             <input
                                                                 type="checkbox"
                                                                 checked={isSelected}
-                                                                onChange={() => toggleSplitSelection(tx.account_split_guid)}
+                                                                onChange={() => toggleTransactionSelection(tx)}
                                                                 className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
                                                             />
                                                         )}
@@ -3210,7 +3212,6 @@ export default function AccountLedger({
         {/* Floating reconciliation panel - outside overflow-clip container */}
         {isReconciling && (
             <ReconciliationPanel
-                accountGuid={accountGuid}
                 accountCurrency={accountCurrency}
                 isInvestment={isInvestmentAccount}
                 sharePrecision={sharePrecision}
@@ -3218,7 +3219,6 @@ export default function AccountLedger({
                 selectedBalance={selectedBalance}
                 onReconcileComplete={handleReconcileComplete}
                 selectedSplits={selectedSplits}
-                onToggleSplit={toggleSplitSelection}
                 onSelectAll={selectAllUnreconciled}
                 onClearSelection={clearSelection}
                 isReconciling={isReconciling}

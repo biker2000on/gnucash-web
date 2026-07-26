@@ -7,7 +7,6 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 
 interface ReconciliationPanelProps {
-    accountGuid: string;
     accountCurrency: string;
     isInvestment?: boolean;
     sharePrecision?: number;
@@ -15,7 +14,6 @@ interface ReconciliationPanelProps {
     selectedBalance: number;
     onReconcileComplete?: () => void;
     selectedSplits: Set<string>;
-    onToggleSplit: (splitGuid: string) => void;
     onSelectAll: () => void;
     onClearSelection: () => void;
     isReconciling: boolean;

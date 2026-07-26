@@ -138,6 +138,7 @@ export function TransactionEditModal({
             onClose={onClose}
             title={getTitle()}
             size="lg"
+            resetKey={`${transactionGuid ?? 'new'}:${mode}`}
         >
             {loading ? (
                 <div className="p-8 flex items-center justify-center">

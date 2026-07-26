@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.21.1.0] - 2026-07-26
+
+### Added
+- Added an administrator-triggered, book-scoped BullMQ job that upgrades
+  legacy receipt extractions with the configured AI provider and reports live
+  progress without overwriting reviewed metadata or reprocessing AI results by
+  default.
+
+### Changed
+- Account API `fullname` values are now book-relative in flat and hierarchical
+  responses, with the book name exposed separately as `book_name`.
+
+### Fixed
+- Clearing General Ledger filters now reloads the complete unfiltered result.
+- Transaction modals reset their scroll state and open in the current viewport.
+- Reconciliation selection, totals, and completion now include every account
+  split represented by an aggregated ledger row.
+- Command-palette transaction results no longer reuse hits from an earlier
+  short query.
+
 ## [0.21.0.0] - 2026-07-26
 
 ### Added
