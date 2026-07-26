@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.20.0.0] - 2026-07-26
+
+### Added
+- Added Rental Portfolio management with properties, units, tenants, leases, escalation and late-fee terms, rent roll, security-deposit liabilities, payment ledgers, tenant statement export, and Schedule E links.
+- Added a shared insurance policy and coverage-gap system with inventory and category sub-limit analysis, renewal signals, and a claims ZIP containing home inventory, photos, receipts, and masked policy evidence.
+- Added an inflation-aware home capital-replacement forecast and DIME/survivor-cash-flow life insurance needs analysis.
+- Added a receipt-backed Personal Price Index with normalized unit prices and live official BLS CPI benchmarks.
+- Added a healthcare open-enrollment comparator that replays actual claims across premiums, deductibles, coinsurance, OOP limits, and HSA tax effects.
+- Added a mobile mileage log with Schedule C/E/F substantiation and effective-date IRS rates, including the July 2026 mid-year adjustment.
+- Added encrypted Fuel Tracker integration with vehicle mapping, paginated incremental fill-up import, source deduplication, transaction matching, manual sync, and nightly worker synchronization.
+- Added Rental, Insurance, Capital, Healthcare, and Vehicle events to the Money Timeline and evidence-backed decisions to the Action Center.
+
 ## [0.19.0.0] - 2026-07-24
 
 ### Added

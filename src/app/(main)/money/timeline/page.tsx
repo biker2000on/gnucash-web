@@ -23,6 +23,11 @@ const DOMAIN_LABELS: Record<FinancialEventDomain, string> = {
   equity_comp: 'Equity compensation',
   report_schedule: 'Report delivery',
   plan: 'Living plan',
+  rental: 'Rentals',
+  insurance: 'Insurance',
+  capital: 'Capital replacement',
+  healthcare: 'Healthcare',
+  vehicle: 'Vehicles',
 };
 
 const DOMAIN_COLORS: Record<FinancialEventDomain, string> = {
@@ -39,6 +44,11 @@ const DOMAIN_COLORS: Record<FinancialEventDomain, string> = {
   equity_comp: 'border-secondary/40 text-secondary',
   report_schedule: 'border-secondary/40 text-secondary',
   plan: 'border-primary/40 text-primary',
+  rental: 'border-positive/40 text-positive',
+  insurance: 'border-secondary/40 text-secondary',
+  capital: 'border-warning/40 text-warning',
+  healthcare: 'border-primary/40 text-primary',
+  vehicle: 'border-secondary/40 text-secondary',
 };
 
 type ViewMode = 'day' | 'month' | 'year';

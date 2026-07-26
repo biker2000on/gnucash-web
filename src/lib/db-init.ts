@@ -1744,6 +1744,25 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    const resilienceProfilesDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_resilience_profiles_schema'));
+            CREATE TABLE IF NOT EXISTS gnucash_web_resilience_profiles (
+                book_guid VARCHAR(32) NOT NULL,
+                section VARCHAR(32) NOT NULL,
+                data JSONB NOT NULL DEFAULT '{}'::jsonb,
+                secret_encrypted TEXT,
+                updated_by INTEGER REFERENCES gnucash_web_users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (book_guid, section)
+            );
+            CREATE INDEX IF NOT EXISTS idx_resilience_profiles_book
+                ON gnucash_web_resilience_profiles(book_guid);
+        END $$;
+    `;
+
     try {
         await query(userTableDDL);
         await query(auditTableDDL);
@@ -1783,6 +1802,7 @@ async function createExtensionTables() {
         await query(notificationsTableDDL);
         await query(financialActionsTableDDL);
         await query(operatorBusinessWorkflowsDDL);
+        await query(resilienceProfilesDDL);
         await query(LIVING_PLAN_SCHEMA_SQL);
         await query(tagsTableDDL);
         await query(taxMappingsTableDDL);

@@ -38,6 +38,9 @@ const ORIGIN_LABELS: Record<FinancialAction['origin'], string> = {
   opportunity: 'Opportunity',
   reimbursement: 'Reimbursement',
   job_profitability: 'Job profitability',
+  rental: 'Rental',
+  resilience: 'Household resilience',
+  vehicle: 'Vehicle',
 };
 
 function formatCurrency(value: number): string {

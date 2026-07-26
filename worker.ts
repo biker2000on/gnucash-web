@@ -42,6 +42,7 @@ const JOB_LABELS: Record<string, string> = {
   'check-price-alerts': 'Price alert check',
   'poll-email-ingest': 'Email ingest poll',
   'run-report-schedules': 'Report schedules',
+  'sync-fuel-tracker': 'Fuel Tracker sync',
   'run-insights': 'Insights run',
 };
 
@@ -562,6 +563,17 @@ async function main() {
           await handleRenewalReminders(job);
           break;
         }
+        case 'sync-fuel-tracker': {
+          const { syncEnabledFuelTrackers } = await import('./src/lib/resilience/service');
+          const outcomes = await syncEnabledFuelTrackers();
+          jobSummary = {
+            connections: outcomes.length,
+            imported: outcomes.reduce((sum, outcome) => sum + outcome.imported, 0),
+            matched: outcomes.reduce((sum, outcome) => sum + outcome.matched, 0),
+            failed: outcomes.filter(outcome => outcome.error).length,
+          };
+          break;
+        }
         default:
           console.warn(`Unknown job type: ${job.name}`);
       }
@@ -729,6 +741,19 @@ async function main() {
       await handleRenewalReminders(fakeJob);
     } catch (err) {
       console.error('Renewal reminders run failed:', err);
+    }
+  });
+
+  // Nightly Fuel Tracker import. Source IDs make every run idempotent and the
+  // service preserves manual match decisions while updating changed fill-ups.
+  setScheduleGeneric('fuel-tracker-sync', '04:30', async () => {
+    console.log(`[${new Date().toISOString()}] Running Fuel Tracker sync`);
+    try {
+      const { syncEnabledFuelTrackers } = await import('./src/lib/resilience/service');
+      const outcomes = await syncEnabledFuelTrackers();
+      console.log(`Fuel Tracker sync: ${outcomes.length} connection(s), ${outcomes.reduce((sum, item) => sum + item.imported, 0)} imported`);
+    } catch (err) {
+      console.error('Fuel Tracker sync failed:', err);
     }
   });
 

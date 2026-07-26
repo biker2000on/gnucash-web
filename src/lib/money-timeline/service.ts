@@ -21,6 +21,7 @@ import {
   schedulableReportLabel,
 } from '@/lib/report-scheduler';
 import { ENTITY_TYPES } from '@/lib/services/entity.service';
+import { loadResilienceEvents } from '@/lib/resilience/service';
 import { buildMoneyTimeline, eventStatus, isoDate } from './core';
 import type { FinancialEvent, FinancialEventDomain, MoneyTimeline } from './types';
 
@@ -552,6 +553,11 @@ export async function collectFinancialEventsForBook(
   }
 
   events.push(...await loadPlanEvents(userId, bookGuid, currency, now));
+  try {
+    events.push(...await loadResilienceEvents(bookGuid, currency, now));
+  } catch (error) {
+    console.warn('Money Timeline resilience source failed:', error);
+  }
   return { events, openingCash, currency };
 }
 

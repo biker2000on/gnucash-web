@@ -17,6 +17,7 @@ import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
 import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
+import { loadResilienceActions } from '@/lib/resilience/service';
 import type {
   EvidenceRef,
   FinancialActionCandidate,
@@ -747,6 +748,7 @@ export async function loadSourceActions(input: {
     safeActionSource('Employee reimbursements', () => reimbursementActions(bookGuid)),
     safeActionSource('Job profitability', () => jobProfitabilityActions(bookGuid, bookAccountGuids)),
     safeActionSource('Failed payments', () => failedPaymentActions(bookGuid)),
+    safeActionSource('Household resilience', () => loadResilienceActions(bookGuid)),
     safeActionSource('Notifications and failed jobs', () => notificationActions(userId, bookGuid)),
   ]);
   return results.flat();

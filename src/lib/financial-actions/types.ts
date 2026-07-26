@@ -20,6 +20,9 @@ export type FinancialActionOrigin =
   | 'payment'
   | 'reimbursement'
   | 'job_profitability'
+  | 'rental'
+  | 'resilience'
+  | 'vehicle'
   | 'opportunity';
 
 export type EvidenceKind =
@@ -37,7 +40,11 @@ export type EvidenceKind =
   | 'report_query'
   | 'notification'
   | 'payment'
-  | 'job';
+  | 'job'
+  | 'policy'
+  | 'lease'
+  | 'home_item'
+  | 'vehicle';
 
 export type EvidenceSource =
   | 'manual'

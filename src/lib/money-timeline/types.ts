@@ -14,6 +14,11 @@ export const FINANCIAL_EVENT_DOMAINS = [
   'equity_comp',
   'report_schedule',
   'plan',
+  'rental',
+  'insurance',
+  'capital',
+  'healthcare',
+  'vehicle',
 ] as const;
 
 export type FinancialEventDomain = (typeof FINANCIAL_EVENT_DOMAINS)[number];

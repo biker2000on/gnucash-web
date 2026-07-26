@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-07-23.
+Updated 2026-07-26.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -66,8 +66,8 @@ Every new feature should satisfy these rules:
 5. [Done] Normalize existing dated obligations into the Money Timeline.
 6. [Done] Let a scenario become an adopted Living Plan and reconcile it to actuals.
 7. [Done] Extend book links into cross-book consolidation.
-8. Add the Safe Operator Agent only after previewable domain commands are
-   available.
+8. [Done] Add the Safe Operator Agent only after previewable domain commands
+   are available.
 
 Feature packs may ship alongside this sequence when they use the shared
 contracts. They should not introduce a new private inbox, recommendation feed,
@@ -335,6 +335,8 @@ per-book RBAC remains the access boundary for advisor/accountant sharing.
 
 ## P2 - Safe Operator Agent
 
+**Status:** Implemented 2026-07-24.
+
 **Outcome:** “Ask Your Books” can complete bounded financial work, not merely
 answer questions.
 
@@ -446,6 +448,8 @@ the Action Center and Money Timeline.
 
 ### Rental Property Management
 
+**Status:** Implemented 2026-07-26.
+
 Add properties/units, tenants, leases, escalations, renewal reminders, rent roll,
 security-deposit liabilities, late-fee rules, and per-tenant ledgers/statements
 on top of Schedule E and existing customer/recurring-invoice machinery.
@@ -456,7 +460,16 @@ cross-book consolidation; every Schedule E figure remains traceable.
 
 **Effort:** L.
 
+**Delivered:** A book-scoped rental portfolio models properties, units, tenants,
+leases, escalation terms, renewal dates, rent due dates, late fees, security
+deposit liabilities, and payment ledgers. The rent roll calculates current
+collections and overdue balances, exports per-tenant statements, links to
+Schedule E property definitions, and emits rent/renewal actions and Timeline
+events.
+
 ### Insurance Coverage-Gap Analysis
+
+**Status:** Implemented 2026-07-26.
 
 Track policies, limits, sub-limits/riders, deductibles, premiums, renewals, and
 covered entities. Compare home-inventory replacement value against coverage,
@@ -468,12 +481,16 @@ tests, and a shared policy model for life/health/property coverage.
 
 **Effort:** M.
 
-**Delivered:** Scheduled transactions can now be edited through the shared
-panel and validated PATCH endpoint, or created from a ledger transaction with
-prefilled splits. Both create and update operations use a durable preview,
-explicit approval, audit trail, and reversible command state.
+**Delivered:** A shared policy model tracks property, auto, umbrella, life,
+health, and other coverage with limits, deductibles, premiums, renewals,
+covered entities, category sub-limits, and document references. It compares
+home-inventory replacement value against whole-policy and category limits,
+emits renewal and coverage-gap actions/events, and exports a ZIP claims package
+containing inventory, photos, linked receipts, and masked policy evidence.
 
 ### Home Capital-Replacement Forecast
+
+**Status:** Implemented 2026-07-26.
 
 Add expected lifespan and replacement cost to roofs, HVAC, water heaters,
 appliances, and other inventory. Inflate known costs, show the replacement
@@ -485,7 +502,15 @@ rules.
 
 **Effort:** M.
 
+**Delivered:** Major home systems carry installed year, expected life,
+replacement cost, inflation, and funded amount. The deterministic forecast
+calculates replacement year, future cost, funding gap, and required monthly
+funding; near-term replacements feed the Action Center and every replacement
+feeds the Money Timeline.
+
 ### Life Insurance Needs Analysis
+
+**Status:** Implemented 2026-07-26.
 
 Calculate per-spouse coverage need from actual income, debts, education goals,
 final expenses, liquid assets, and existing policies. Start with DIME, then add
@@ -496,11 +521,18 @@ Plan stress tests, and coverage-gap actions.
 
 **Effort:** S-M.
 
+**Delivered:** Per-person DIME and survivor-cash-flow models use income,
+replacement years, debts, education goals, final expenses, liquid assets,
+existing coverage, and survivor income/expense assumptions. The larger modeled
+gap becomes an evidence-backed coverage action.
+
 ---
 
 ## P2 - Household Cost and Resilience Pack
 
 ### Personal Price Index
+
+**Status:** Implemented 2026-07-26.
 
 Normalize recurring receipt line items and units, track the household’s actual
 price history, and compare personal inflation with BLS categories. Start with
@@ -511,7 +543,14 @@ opportunities. Link each result to receipts and ledger transactions.
 
 **Effort:** M.
 
+**Delivered:** Receipt OCR lines are normalized into comparable recurring
+items, unit prices, source receipts, observed price change, and annualized
+change. The household index is shown beside current official BLS CPI category
+benchmarks fetched from the public API.
+
 ### Healthcare Deductible and Open-Enrollment Comparator
+
+**Status:** Implemented 2026-07-26.
 
 Track deductible/OOP progress by plan and family member. Replay one to three
 years of actual claims against candidate HDHP/HSA and PPO designs, including
@@ -521,6 +560,12 @@ premiums, expected out-of-pocket costs, and HSA tax effects.
 become plan scenarios and ranked opportunities; EOBs remain attached evidence.
 
 **Effort:** L.
+
+**Delivered:** Household members' allowed claims can be replayed across current
+and candidate plans using annual premiums, family deductible, coinsurance,
+out-of-pocket maximum, employer HSA funding, employee HSA contributions, and
+marginal-rate tax effects. Lower-cost candidates become ranked decisions in
+the Action Center.
 
 ### P3 - 529 and Education Savings Planner
 
@@ -573,13 +618,22 @@ and temporary Action Center context rather than a standalone accounting silo.
 
 ### Mileage Log
 
+**Status:** Implemented 2026-07-26.
+
 Capture date, purpose, vehicle, miles or odometer pair, and business-use
 classification. Maintain annual IRS business/medical/charity mileage rates and
 feed deductions to Schedules C, E, and F. Provide thumb-first mobile entry.
 
 **Effort:** S-M.
 
+**Delivered:** A mobile-friendly vehicle and trip log records date, purpose,
+description, miles or odometer evidence, and Schedule C/E/F classification.
+The deduction engine applies effective-date IRS rates—including the July 2026
+mid-year change—and reports substantiated miles and deduction by schedule.
+
 ### Fuel-Tracker Integration
+
+**Status:** Implemented 2026-07-26.
 
 Ingest vehicles and fill-ups from `../fuel-tracker`, then match total/date
 against SimpleFIN gas purchases and attach gallons, price per gallon, location,
@@ -591,6 +645,13 @@ Webhook push is an acceptable alternative; direct database access is not the
 preferred contract.
 
 **Effort:** M.
+
+**Delivered:** Per-book encrypted Fuel Tracker connection settings consume the
+read-only `/api/v1/vehicles` and paginated `/api/v1/fillups` contracts, retain
+one-time vehicle mappings, deduplicate by immutable source ID, incrementally
+refresh changed fill-ups, and match amount/date candidates to GnuCash
+transactions. A nightly worker sync and manual run share the same idempotent
+service; unmatched evidence feeds the Action Center.
 
 ### P3 - Vehicle Total Cost of Ownership
 
@@ -609,6 +670,8 @@ service-log patterns.
 
 ## P1 - Scheduled Transactions: Edit and Create from Existing
 
+**Status:** Implemented 2026-07-24.
+
 1. Reuse `CreateScheduledPanel` in edit mode for name, recurrence, splits,
    amounts, dates, and auto-create/notify settings.
 2. Add “Schedule” to ledger transaction actions and prefill it from the selected
@@ -622,9 +685,16 @@ complete scheduled-transaction command surface.
 
 **Effort:** M.
 
+**Delivered:** Scheduled transactions can now be edited through the shared
+panel and validated PATCH endpoint, or created from a ledger transaction with
+prefilled splits. Both create and update operations use a durable preview,
+explicit approval, audit trail, and reversible command state.
+
 ---
 
 ## P1 - Reconciliation UX Discovery and Continuous Close
+
+**Status:** Implemented 2026-07-24.
 
 Use real books to identify why the current flow feels wrong. Measure clicks,
 time-to-tie-out, abandoned reconciliations, unclear balance states, and missing
