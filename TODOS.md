@@ -569,6 +569,8 @@ the Action Center.
 
 ### P3 - 529 and Education Savings Planner
 
+**Status:** Implemented 2026-07-26.
+
 Add per-child education goals, public/private cost projections, tuition
 inflation, 529 balances, state deduction tracking, and glide-path guidance.
 Later phases may cover five-year gift elections and SECURE 2.0 529-to-Roth
@@ -579,7 +581,15 @@ and Next Best Dollar ranking.
 
 **Effort:** M.
 
+**Delivered:** Per-student plans project inflated annual education costs,
+current 529 growth, planned and required monthly contributions, state deduction
+room, and a time-based growth/preservation glide path. Funding gaps feed the
+Action Center and enrollment milestones feed the Money Timeline with calculation
+provenance.
+
 ### P3 - Utility Usage and Solar Payback
+
+**Status:** Implemented 2026-07-26.
 
 Extract kWh, therms, and water usage from bills so rate increases can be
 separated from consumption changes. Use actual rates and usage for solar-payback
@@ -590,7 +600,15 @@ capital scenario; source bills provide provenance.
 
 **Effort:** M.
 
+**Delivered:** Electric, gas, and water bills track usage, unit cost, provider,
+source transaction, and source receipt. Completed receipt OCR produces reviewed
+bill suggestions, rate and consumption changes are calculated separately, and
+the solar scenario uses actual electric rates with incentives, degradation,
+maintenance, inflation, payback, and lifetime savings.
+
 ### P3 - Family Banking and Kids’ Allowance
+
+**Status:** Implemented 2026-07-26.
 
 Create honest liability-backed child balances, scheduled allowances,
 chore-based credits, savings goals, optional parent matching, and a restricted
@@ -601,7 +619,15 @@ Action Center; RBAC scopes the child view.
 
 **Effort:** M-L.
 
+**Delivered:** Each child ledger links to a GnuCash liability account and tracks
+approved balances, scheduled allowances, pending chore credits, deposits,
+spending, automatic parent matches, and savings goals. Parent work feeds the
+Action Center, allowance dates feed the Timeline, and a scoped read-only child
+view hides pending approvals and parent controls.
+
 ### P3 - Trip and Vacation Budgeting
+
+**Status:** Implemented 2026-07-26.
 
 Model a trip as a tag, envelope, and date range with a savings target, live
 spend, and post-trip plan-versus-actual report. Offer a current-trip toggle in
@@ -611,6 +637,12 @@ Quick Add and review suggested date-range auto-tags.
 and temporary Action Center context rather than a standalone accounting silo.
 
 **Effort:** S.
+
+**Delivered:** Trips are date-ranged envelopes with budgets, savings targets,
+funded amounts, live expenses, plan variance, and monthly funding requirements.
+Reviewed transaction suggestions use dates and trip context, while the current
+trip toggle applies its configured tag to online and offline Quick Add entries.
+Funding gaps and trip dates feed the Action Center and Money Timeline.
 
 ---
 
@@ -655,6 +687,8 @@ service; unmatched evidence feeds the Action Center.
 
 ### P3 - Vehicle Total Cost of Ownership
 
+**Status:** Implemented 2026-07-26.
+
 Combine fuel, insurance, maintenance, registration, depreciation, and mileage
 into monthly run rate and cost per mile. Add evidence-backed repair-versus-
 replace scenarios using the Living Plan rather than a context-free warning.
@@ -663,6 +697,13 @@ replace scenarios using the Living Plan rather than a context-free warning.
 service-log patterns.
 
 **Effort:** M.
+
+**Delivered:** Each vehicle combines linked asset depreciation, Fuel Tracker
+fill-ups, insurance policies, registration, maintenance, and mileage into an
+annual and monthly run rate plus cost per mile. Evidence-backed
+repair-versus-replace scenarios compare repair cost, remaining life, current
+value, replacement price, and financing while surfacing decisions through the
+Action Center with calculation provenance.
 
 ---
 
@@ -684,6 +725,12 @@ This is promoted because the Action Center and Safe Operator Agent need a
 complete scheduled-transaction command surface.
 
 **Effort:** M.
+
+**Delivered:** Vehicle profiles link to Mileage Log and Fuel Tracker evidence,
+reuse shared auto-policy premiums, and combine fuel, insurance, registration,
+maintenance, other costs, and depreciation into annual cost, monthly run rate,
+and cost per mile. Repair-versus-replace scenarios compare a shared horizon and
+emit evidence-backed decisions through the Action Center.
 
 **Delivered:** Scheduled transactions can now be edited through the shared
 panel and validated PATCH endpoint, or created from a ledger transaction with

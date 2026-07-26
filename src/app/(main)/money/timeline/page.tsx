@@ -27,6 +27,10 @@ const DOMAIN_LABELS: Record<FinancialEventDomain, string> = {
   insurance: 'Insurance',
   capital: 'Capital replacement',
   healthcare: 'Healthcare',
+  education: 'Education',
+  utility: 'Utilities',
+  family: 'Family banking',
+  trip: 'Trips',
   vehicle: 'Vehicles',
 };
 
@@ -48,6 +52,10 @@ const DOMAIN_COLORS: Record<FinancialEventDomain, string> = {
   insurance: 'border-secondary/40 text-secondary',
   capital: 'border-warning/40 text-warning',
   healthcare: 'border-primary/40 text-primary',
+  education: 'border-positive/40 text-positive',
+  utility: 'border-warning/40 text-warning',
+  family: 'border-primary/40 text-primary',
+  trip: 'border-secondary/40 text-secondary',
   vehicle: 'border-secondary/40 text-secondary',
 };
 

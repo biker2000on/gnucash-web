@@ -22,6 +22,10 @@ export type FinancialActionOrigin =
   | 'job_profitability'
   | 'rental'
   | 'resilience'
+  | 'education'
+  | 'utility'
+  | 'family'
+  | 'trip'
   | 'vehicle'
   | 'opportunity';
 
@@ -44,6 +48,10 @@ export type EvidenceKind =
   | 'policy'
   | 'lease'
   | 'home_item'
+  | 'education_goal'
+  | 'utility_bill'
+  | 'family_ledger'
+  | 'trip'
   | 'vehicle';
 
 export type EvidenceSource =

@@ -17,8 +17,19 @@ import {
   parseReceiptPriceLines,
   summarizeMileage,
 } from './core';
+import {
+  calculateEducationPlan,
+  calculateFamilyBanking,
+  calculateSolarPayback,
+  calculateTripPlan,
+  calculateUtilityAnalysis,
+  calculateVehicleTco,
+  parseUtilityBillText,
+} from './p3-core';
 import type {
   CapitalProfile,
+  EducationProfile,
+  FamilyBankingProfile,
   FuelFillup,
   FuelProfile,
   HealthcareProfile,
@@ -27,6 +38,9 @@ import type {
   MileageProfile,
   RentalsProfile,
   ResilienceSection,
+  TripsProfile,
+  UtilitiesProfile,
+  VehicleTcoProfile,
 } from './types';
 import type { FinancialActionCandidate } from '@/lib/financial-actions/types';
 import type { EvidenceRef } from '@/lib/financial-actions/types';
@@ -35,6 +49,7 @@ import type { FinancialEvent } from '@/lib/money-timeline/types';
 const id = z.string().min(1).max(100);
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const money = z.number().finite().min(0).max(1_000_000_000);
+const signedMoney = z.number().finite().min(-1_000_000_000).max(1_000_000_000);
 const percent = z.number().finite().min(0).max(100);
 
 const rentalsSchema = z.object({
@@ -191,6 +206,116 @@ const fuelSchema = z.object({
   })).max(100_000),
 });
 
+const educationSchema = z.object({
+  children: z.array(z.object({
+    id,
+    name: z.string().trim().min(1).max(120),
+    birthYear: z.number().int().min(1900).max(2300),
+    collegeStartYear: z.number().int().min(1900).max(2300),
+    schoolType: z.enum(['public_in_state', 'public_out_of_state', 'private']),
+    yearsOfSchool: z.number().int().min(1).max(10),
+    annualCostToday: money,
+    tuitionInflationRate: z.number().finite().min(0).max(30),
+    current529Balance: money,
+    expectedAnnualReturn: z.number().finite().min(0).max(30),
+    plannedMonthlyContribution: money,
+    stateDeductionLimit: money,
+    contributions: z.array(z.object({
+      id,
+      date,
+      amount: money,
+    })).max(10_000),
+  })).max(100),
+});
+
+const utilitiesSchema = z.object({
+  bills: z.array(z.object({
+    id,
+    date,
+    type: z.enum(['electric', 'gas', 'water']),
+    provider: z.string().trim().max(160),
+    usage: z.number().finite().min(0).max(1_000_000_000),
+    unit: z.enum(['kWh', 'therms', 'gallons']),
+    totalCost: money,
+    transactionGuid: z.string().max(32).nullable().optional(),
+    receiptId: z.number().int().positive().nullable().optional(),
+  })).max(100_000),
+  solar: z.object({
+    enabled: z.boolean(),
+    systemCost: money,
+    incentives: money,
+    annualProductionKwh: z.number().finite().min(0).max(100_000_000),
+    degradationRate: z.number().finite().min(0).max(20),
+    electricRateInflation: z.number().finite().min(0).max(30),
+    annualMaintenance: money,
+    analysisYears: z.number().int().min(1).max(50),
+  }),
+});
+
+const familyBankingSchema = z.object({
+  children: z.array(z.object({
+    id,
+    name: z.string().trim().min(1).max(120),
+    liabilityAccountGuid: z.string().max(32),
+    allowanceAmount: money,
+    allowanceCadence: z.enum(['weekly', 'monthly']),
+    nextAllowanceDate: date,
+    parentMatchPercent: percent,
+    savingsGoal: money,
+    entries: z.array(z.object({
+      id,
+      date,
+      description: z.string().trim().min(1).max(300),
+      amount: signedMoney,
+      kind: z.enum(['allowance', 'chore', 'deposit', 'spend', 'match']),
+      approved: z.boolean(),
+      transactionGuid: z.string().max(32).nullable().optional(),
+    })).max(100_000),
+  })).max(100),
+});
+
+const tripsSchema = z.object({
+  trips: z.array(z.object({
+    id,
+    name: z.string().trim().min(1).max(160),
+    destination: z.string().trim().max(200),
+    startDate: date,
+    endDate: date,
+    budget: money,
+    savingsTarget: money,
+    fundedAmount: money,
+    tagId: z.number().int().positive().nullable().optional(),
+    tagName: z.string().regex(/^[a-z0-9_-]{1,100}$/).nullable().optional(),
+    current: z.boolean(),
+    expenses: z.array(z.object({
+      id,
+      date,
+      description: z.string().trim().min(1).max(300),
+      amount: money,
+      transactionGuid: z.string().max(32).nullable().optional(),
+    })).max(100_000),
+  })).max(500),
+});
+
+const vehicleTcoSchema = z.object({
+  vehicles: z.array(z.object({
+    id,
+    mileageVehicleId: z.string().max(100).nullable().optional(),
+    name: z.string().trim().min(1).max(160),
+    purchaseDate: date,
+    purchasePrice: money,
+    currentValue: money,
+    annualInsurance: money,
+    annualRegistration: money,
+    annualMaintenance: money,
+    annualOther: money,
+    repairCost: money,
+    repairExtendsYears: z.number().int().min(1).max(20),
+    replacementVehicleCost: money,
+    replacementAnnualOperatingCost: money,
+  })).max(200),
+});
+
 const schemas = {
   rentals: rentalsSchema,
   insurance: insuranceSchema,
@@ -199,6 +324,11 @@ const schemas = {
   healthcare: healthcareSchema,
   mileage: mileageSchema,
   fuel: fuelSchema,
+  education: educationSchema,
+  utilities: utilitiesSchema,
+  family_banking: familyBankingSchema,
+  trips: tripsSchema,
+  vehicle_tco: vehicleTcoSchema,
 } satisfies Record<ResilienceSection, z.ZodType>;
 
 const defaults = {
@@ -209,6 +339,23 @@ const defaults = {
   healthcare: { currentPlanId: null, plans: [], claims: [] },
   mileage: { vehicles: [], trips: [] },
   fuel: { baseUrl: '', enabled: false, hasToken: false, lastSyncAt: null, vehicles: [], fillups: [] },
+  education: { children: [] },
+  utilities: {
+    bills: [],
+    solar: {
+      enabled: false,
+      systemCost: 0,
+      incentives: 0,
+      annualProductionKwh: 0,
+      degradationRate: 0.5,
+      electricRateInflation: 3,
+      annualMaintenance: 0,
+      analysisYears: 25,
+    },
+  },
+  family_banking: { children: [] },
+  trips: { trips: [] },
+  vehicle_tco: { vehicles: [] },
 } satisfies Record<ResilienceSection, unknown>;
 
 interface ProfileRow {
@@ -367,7 +514,137 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
       summary: summarizeMileage((profile as MileageProfile).trips, new Date().getFullYear()),
     };
   }
+  if (section === 'education') {
+    return {
+      profile,
+      plans: (profile as EducationProfile).children.map(child => calculateEducationPlan(child)),
+    };
+  }
+  if (section === 'utilities') {
+    const utilities = profile as UtilitiesProfile;
+    return {
+      profile,
+      analysis: calculateUtilityAnalysis(utilities.bills),
+      solar: calculateSolarPayback(utilities),
+      suggestions: await loadUtilityBillSuggestions(bookGuid, utilities),
+    };
+  }
+  if (section === 'family_banking') {
+    return {
+      profile,
+      children: (profile as FamilyBankingProfile).children.map(child => calculateFamilyBanking(child)),
+    };
+  }
+  if (section === 'trips') {
+    const tripProfile = profile as TripsProfile;
+    return {
+      profile,
+      trips: tripProfile.trips.map(trip => calculateTripPlan(trip)),
+      suggestions: await loadTripSuggestions(bookGuid, tripProfile),
+    };
+  }
+  if (section === 'vehicle_tco') {
+    const [fuel, mileage, insurance] = await Promise.all([
+      getResilienceProfile(bookGuid, 'fuel') as Promise<FuelProfile>,
+      getResilienceProfile(bookGuid, 'mileage') as Promise<MileageProfile>,
+      getResilienceProfile(bookGuid, 'insurance') as Promise<InsuranceProfile>,
+    ]);
+    const trailingStart = new Date();
+    trailingStart.setUTCFullYear(trailingStart.getUTCFullYear() - 1);
+    const startDate = trailingStart.toISOString();
+    const currentYear = new Date().getUTCFullYear();
+    return {
+      profile,
+      vehicles: (profile as VehicleTcoProfile).vehicles.map(vehicle => {
+        const mappedVehicle = mileage.vehicles.find(item => item.id === vehicle.mileageVehicleId);
+        const sharedInsurancePremium = insurance.policies
+          .filter(policy => policy.type === 'auto')
+          .filter(policy => !mappedVehicle || !policy.coveredEntity
+            || policy.coveredEntity.toLowerCase().includes(mappedVehicle.name.toLowerCase()))
+          .reduce((sum, policy) => sum + policy.annualPremium, 0);
+        return calculateVehicleTco({
+          vehicle,
+          trailing12FuelCost: fuel.fillups
+            .filter(fillup => fillup.vehicleId === vehicle.mileageVehicleId && fillup.date >= startDate)
+            .reduce((sum, fillup) => sum + fillup.totalCost, 0),
+          trailing12Miles: mileage.trips
+            .filter(trip => trip.vehicleId === vehicle.mileageVehicleId && trip.date.startsWith(String(currentYear)))
+            .reduce((sum, trip) => sum + trip.miles, 0),
+          sharedInsurancePremium,
+        });
+      }),
+      mileageVehicles: mileage.vehicles,
+    };
+  }
   return { profile };
+}
+
+async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesProfile) {
+  const existingReceiptIds = new Set(profile.bills.flatMap(bill => bill.receiptId ? [bill.receiptId] : []));
+  const result = await query(
+    `SELECT r.id, COALESCE(t.post_date::date, r.created_at::date)::text AS bill_date,
+            COALESCE(t.description, 'Utility provider') AS provider, r.ocr_text
+       FROM gnucash_web_receipts r
+       LEFT JOIN transactions t ON t.guid = r.transaction_guid
+      WHERE r.book_guid = $1
+        AND r.ocr_status = 'completed'
+        AND r.ocr_text IS NOT NULL
+      ORDER BY COALESCE(t.post_date, r.created_at) DESC
+      LIMIT 500`,
+    [bookGuid],
+  );
+  return (result.rows as Array<{ id: number; bill_date: string; provider: string; ocr_text: string }>)
+    .filter(row => !existingReceiptIds.has(row.id))
+    .flatMap(row => {
+      const parsed = parseUtilityBillText({
+        receiptId: row.id,
+        date: row.bill_date,
+        provider: row.provider,
+        text: row.ocr_text,
+      });
+      return parsed ? [parsed] : [];
+    });
+}
+
+async function loadTripSuggestions(bookGuid: string, profile: TripsProfile) {
+  if (profile.trips.length === 0) return [];
+  const start = profile.trips.map(trip => trip.startDate).sort()[0];
+  const end = profile.trips.map(trip => trip.endDate).sort().at(-1)!;
+  const accountGuids = await getAccountGuidsForBook(bookGuid);
+  if (accountGuids.length === 0) return [];
+  const linked = new Set(profile.trips.flatMap(trip =>
+    trip.expenses.flatMap(expense => expense.transactionGuid ? [expense.transactionGuid] : [])));
+  const result = await query(
+    `SELECT t.guid, t.post_date::date::text AS date, t.description,
+            MAX(ABS(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric))::float8 AS amount
+       FROM transactions t
+       JOIN splits s ON s.tx_guid = t.guid
+      WHERE s.account_guid = ANY($1::text[])
+        AND t.post_date >= $2::date
+        AND t.post_date <= $3::date
+      GROUP BY t.guid, t.post_date, t.description
+      ORDER BY t.post_date DESC
+      LIMIT 1000`,
+    [accountGuids, start, end],
+  );
+  return (result.rows as Array<{ guid: string; date: string; description: string; amount: number }>)
+    .filter(row => !linked.has(row.guid))
+    .flatMap(row => {
+      const description = row.description.toLowerCase();
+      const trip = profile.trips.find(item => {
+        if (row.date < item.startDate || row.date > item.endDate) return false;
+        const tokens = `${item.name} ${item.destination}`.toLowerCase().split(/[^a-z0-9]+/)
+          .filter(token => token.length >= 4);
+        return item.current || tokens.some(token => description.includes(token));
+      });
+      return trip ? [{
+        tripId: trip.id,
+        transactionGuid: row.guid,
+        date: row.date,
+        description: row.description,
+        amount: Math.abs(Number(row.amount)),
+      }] : [];
+    });
 }
 
 interface FuelTrackerVehicle {
@@ -661,13 +938,33 @@ function action(input: Omit<FinancialActionCandidate, 'trace'> & {
 }
 
 export async function loadResilienceActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
-  const [rentals, insurance, capital, life, healthcare, fuel, items] = await Promise.all([
+  const [
+    rentals,
+    insurance,
+    capital,
+    life,
+    healthcare,
+    fuel,
+    mileage,
+    education,
+    utilities,
+    familyBanking,
+    trips,
+    vehicleTco,
+    items,
+  ] = await Promise.all([
     getResilienceProfile(bookGuid, 'rentals'),
     getResilienceProfile(bookGuid, 'insurance'),
     getResilienceProfile(bookGuid, 'capital'),
     getResilienceProfile(bookGuid, 'life'),
     getResilienceProfile(bookGuid, 'healthcare'),
     getResilienceProfile(bookGuid, 'fuel'),
+    getResilienceProfile(bookGuid, 'mileage'),
+    getResilienceProfile(bookGuid, 'education'),
+    getResilienceProfile(bookGuid, 'utilities'),
+    getResilienceProfile(bookGuid, 'family_banking'),
+    getResilienceProfile(bookGuid, 'trips'),
+    getResilienceProfile(bookGuid, 'vehicle_tco'),
     listItems(bookGuid),
   ]);
   const actions: FinancialActionCandidate[] = [];
@@ -826,6 +1123,166 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: unmatched.slice(0, 25).map(item => ({ kind: 'vehicle' as const, id: item.sourceId, label: `Fuel fill-up ${item.date.slice(0, 10)}`, source: 'system' as const, href: '/tools/mileage?tab=fuel', verified: false })),
     }));
   }
+  for (const plan of (education as EducationProfile).children.map(child => calculateEducationPlan(child))) {
+    if (plan.monthlyShortfall <= 0) continue;
+    actions.push(action({
+      stableKey: `education-funding:${plan.id}:${plan.collegeStartYear}`,
+      lane: 'decide',
+      origin: 'education',
+      sourceId: plan.id,
+      severity: plan.yearsRemaining <= 5 ? 'warning' : 'info',
+      title: `Close ${plan.name}'s education funding gap`,
+      summary: `${plan.monthlyShortfall.toFixed(2)} more per month is projected to fully fund the selected education path.`,
+      dueDate: `${Math.max(new Date().getUTCFullYear(), plan.collegeStartYear)}-08-01`,
+      impact: { low: plan.monthlyShortfall * 12, high: plan.fundingGap, period: 'lifetime' },
+      confidence: 0.75,
+      operations: [{ id: 'open', label: 'Review education plan', kind: 'link', href: '/planning/education', primary: true }],
+      formula: 'future tuition cost - projected 529 balance',
+      assumptions: ['Returns and tuition inflation follow the entered annual assumptions.'],
+      evidence: [{ kind: 'education_goal', id: plan.id, label: `${plan.name} education goal`, source: 'manual', href: '/planning/education', verified: false }],
+    }));
+  }
+  const utilityAnalysis = calculateUtilityAnalysis((utilities as UtilitiesProfile).bills);
+  for (const row of utilityAnalysis.byType) {
+    if (!row.latest || (row.rateChangePercent <= 15 && row.usageChangePercent <= 20)) continue;
+    const rateDriven = row.rateChangePercent > row.usageChangePercent;
+    actions.push(action({
+      stableKey: `utility-change:${row.type}:${row.latest.date}`,
+      lane: 'decide',
+      origin: 'utility',
+      sourceId: row.latest.id,
+      severity: Math.max(row.rateChangePercent, row.usageChangePercent) >= 30 ? 'warning' : 'info',
+      title: `Review ${row.type} ${rateDriven ? 'rate' : 'usage'} increase`,
+      summary: `${rateDriven ? 'Unit rate' : 'Usage'} rose ${Math.max(row.rateChangePercent, row.usageChangePercent).toFixed(1)}% from the prior bill.`,
+      dueDate: null,
+      impact: { low: 0, high: row.latest.totalCost * 12, period: 'annual' },
+      confidence: 0.9,
+      operations: [{ id: 'open', label: 'Review utility history', kind: 'link', href: '/planning/utilities', primary: true }],
+      evidence: [{ kind: 'utility_bill', id: row.latest.id, label: `${row.latest.provider} ${row.latest.date}`, source: row.latest.receiptId ? 'receipt' : 'manual', href: '/planning/utilities', verified: Boolean(row.latest.receiptId) }],
+    }));
+  }
+  const solar = calculateSolarPayback(utilities as UtilitiesProfile);
+  if ((utilities as UtilitiesProfile).solar.enabled && solar.paybackYear != null && solar.lifetimeSavings > 0) {
+    actions.push(action({
+      stableKey: `solar-scenario:${solar.upfrontCost}:${solar.paybackYear}`,
+      lane: 'decide',
+      origin: 'utility',
+      sourceId: 'solar',
+      severity: 'info',
+      title: 'Evaluate the solar capital scenario',
+      summary: `Entered usage and rates imply a ${solar.paybackYear}-year payback and ${solar.lifetimeSavings.toFixed(2)} lifetime net savings.`,
+      dueDate: null,
+      impact: { low: solar.lifetimeSavings, high: solar.lifetimeSavings, period: 'lifetime' },
+      confidence: 0.7,
+      operations: [{ id: 'open', label: 'Review solar scenario', kind: 'link', href: '/planning/utilities?tab=solar', primary: true }],
+      assumptions: ['Production, degradation, utility inflation, incentives, and maintenance follow entered assumptions.'],
+      evidence: [{ kind: 'assumption', id: 'solar', label: 'Solar scenario inputs', source: 'manual', href: '/planning/utilities?tab=solar', verified: false }],
+    }));
+  }
+  for (const child of (familyBanking as FamilyBankingProfile).children.map(item => calculateFamilyBanking(item))) {
+    if (child.pendingCount > 0) {
+      actions.push(action({
+        stableKey: `family-approval:${child.child.id}:${child.pendingCount}`,
+        lane: 'do',
+        origin: 'family',
+        sourceId: child.child.id,
+        severity: 'info',
+        title: `Approve ${child.pendingCount} item${child.pendingCount === 1 ? '' : 's'} for ${child.child.name}`,
+        summary: `${child.pendingAmount.toFixed(2)} in chores or adjustments is waiting for parent approval.`,
+        dueDate: today,
+        impact: { low: Math.abs(child.pendingAmount), high: Math.abs(child.pendingAmount), period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Review family ledger', kind: 'link', href: '/planning/family-banking', primary: true }],
+        evidence: [{ kind: 'family_ledger', id: child.child.id, label: `${child.child.name} ledger`, source: 'manual', href: '/planning/family-banking', verified: false }],
+      }));
+    }
+    if (child.allowanceDue) {
+      actions.push(action({
+        stableKey: `allowance-due:${child.child.id}:${child.child.nextAllowanceDate}`,
+        lane: 'do',
+        origin: 'family',
+        sourceId: child.child.id,
+        severity: 'info',
+        title: `Record ${child.child.name}'s allowance`,
+        summary: `${child.child.allowanceAmount.toFixed(2)} is due into the linked liability-backed balance.`,
+        dueDate: child.child.nextAllowanceDate,
+        impact: { low: child.child.allowanceAmount, high: child.child.allowanceAmount, period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Open family banking', kind: 'link', href: '/planning/family-banking', primary: true }],
+        evidence: [{ kind: 'rule', id: child.child.id, label: `${child.child.allowanceCadence} allowance rule`, source: 'rule', href: '/planning/family-banking', verified: true }],
+      }));
+    }
+  }
+  for (const trip of (trips as TripsProfile).trips.map(item => calculateTripPlan(item))) {
+    if (trip.status !== 'complete' && trip.fundingGap > 0) {
+      actions.push(action({
+        stableKey: `trip-funding:${trip.trip.id}:${trip.trip.startDate}`,
+        lane: 'decide',
+        origin: 'trip',
+        sourceId: trip.trip.id,
+        severity: trip.trip.startDate <= today ? 'critical' : 'info',
+        title: `Fund ${trip.trip.name}`,
+        summary: `${trip.fundingGap.toFixed(2)} remains, requiring about ${trip.requiredMonthlySavings.toFixed(2)} per month.`,
+        dueDate: trip.trip.startDate,
+        impact: { low: trip.fundingGap, high: trip.fundingGap, period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Review trip budget', kind: 'link', href: '/planning/trips', primary: true }],
+        evidence: [{ kind: 'trip', id: trip.trip.id, label: trip.trip.name, source: 'manual', href: '/planning/trips', verified: false }],
+      }));
+    }
+    if (trip.remainingBudget < 0) {
+      actions.push(action({
+        stableKey: `trip-over-budget:${trip.trip.id}:${Math.abs(trip.remainingBudget).toFixed(2)}`,
+        lane: 'decide',
+        origin: 'trip',
+        sourceId: trip.trip.id,
+        severity: 'warning',
+        title: `${trip.trip.name} is over budget`,
+        summary: `Linked and entered expenses exceed the plan by ${Math.abs(trip.remainingBudget).toFixed(2)}.`,
+        dueDate: trip.trip.endDate,
+        impact: { low: Math.abs(trip.remainingBudget), high: Math.abs(trip.remainingBudget), period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Review trip spending', kind: 'link', href: '/planning/trips', primary: true }],
+        evidence: [{ kind: 'trip', id: trip.trip.id, label: trip.trip.name, source: 'manual', href: '/planning/trips', verified: false }],
+      }));
+    }
+  }
+  const mileageProfile = mileage as MileageProfile;
+  const fuelProfile = fuel as FuelProfile;
+  const insuranceProfile = insurance as InsuranceProfile;
+  const trailingStart = new Date();
+  trailingStart.setUTCFullYear(trailingStart.getUTCFullYear() - 1);
+  for (const vehicle of (vehicleTco as VehicleTcoProfile).vehicles) {
+    const linked = mileageProfile.vehicles.find(item => item.id === vehicle.mileageVehicleId);
+    const result = calculateVehicleTco({
+      vehicle,
+      trailing12FuelCost: fuelProfile.fillups
+        .filter(fillup => fillup.vehicleId === vehicle.mileageVehicleId && fillup.date >= trailingStart.toISOString())
+        .reduce((sum, fillup) => sum + fillup.totalCost, 0),
+      trailing12Miles: mileageProfile.trips
+        .filter(trip => trip.vehicleId === vehicle.mileageVehicleId && trip.date.startsWith(String(new Date().getUTCFullYear())))
+        .reduce((sum, trip) => sum + trip.miles, 0),
+      sharedInsurancePremium: insuranceProfile.policies
+        .filter(policy => policy.type === 'auto' && (!linked || policy.coveredEntity.toLowerCase().includes(linked.name.toLowerCase())))
+        .reduce((sum, policy) => sum + policy.annualPremium, 0),
+    });
+    if (result.decisionSavings <= 0) continue;
+    actions.push(action({
+      stableKey: `vehicle-decision:${vehicle.id}:${result.recommendedDecision}:${vehicle.repairCost}:${vehicle.replacementVehicleCost}`,
+      lane: 'decide',
+      origin: 'vehicle',
+      sourceId: vehicle.id,
+      severity: result.decisionSavings >= 5_000 ? 'warning' : 'info',
+      title: `${result.recommendedDecision === 'repair' ? 'Repair' : 'Replace'} ${vehicle.name}`,
+      summary: `The entered ${vehicle.repairExtendsYears}-year scenario favors ${result.recommendedDecision} by ${result.decisionSavings.toFixed(2)}.`,
+      dueDate: null,
+      impact: { low: result.decisionSavings, high: result.decisionSavings, period: 'one_time' },
+      confidence: 0.75,
+      operations: [{ id: 'open', label: 'Review vehicle TCO', kind: 'link', href: '/tools/vehicle-tco', primary: true }],
+      assumptions: ['Future operating costs follow the entered repair and replacement assumptions.'],
+      evidence: [{ kind: 'vehicle', id: vehicle.id, label: vehicle.name, source: 'manual', href: '/tools/vehicle-tco', verified: false }],
+    }));
+  }
   return actions;
 }
 
@@ -834,10 +1291,14 @@ export async function loadResilienceEvents(
   currency: string,
   now = new Date(),
 ): Promise<FinancialEvent[]> {
-  const [rentals, insurance, capital] = await Promise.all([
+  const [rentals, insurance, capital, education, utilities, familyBanking, trips] = await Promise.all([
     getResilienceProfile(bookGuid, 'rentals'),
     getResilienceProfile(bookGuid, 'insurance'),
     getResilienceProfile(bookGuid, 'capital'),
+    getResilienceProfile(bookGuid, 'education'),
+    getResilienceProfile(bookGuid, 'utilities'),
+    getResilienceProfile(bookGuid, 'family_banking'),
+    getResilienceProfile(bookGuid, 'trips'),
   ]);
   const events: FinancialEvent[] = [];
   const today = now.toISOString().slice(0, 10);
@@ -925,6 +1386,99 @@ export async function loadResilienceEvents(
       planId: null,
       evidence: [],
       metadata: { monthlyFunding: asset.monthlyFunding },
+    });
+  }
+  for (const plan of (education as EducationProfile).children.map(child => calculateEducationPlan(child, now))) {
+    const collegeDate = `${plan.collegeStartYear}-08-01`;
+    if (collegeDate < today) continue;
+    events.push({
+      id: `education:start:${plan.id}:${plan.collegeStartYear}`,
+      bookGuid,
+      domain: 'education',
+      title: `${plan.name} education funding begins`,
+      description: `${plan.schoolType.replaceAll('_', ' ')}; ${plan.fundingGap.toFixed(2)} projected gap`,
+      date: collegeDate,
+      endDate: `${plan.collegeStartYear + plan.yearsOfSchool}-05-31`,
+      cashImpact: -plan.projectedCost,
+      currency,
+      confidence: 0.75,
+      status: plan.fundingGap > 0 ? 'needs_action' : 'expected',
+      href: '/planning/education',
+      sourceId: plan.id,
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: { monthlyFunding: plan.requiredMonthlyContribution, glidePath: plan.glidePath },
+    });
+  }
+  for (const row of calculateUtilityAnalysis((utilities as UtilitiesProfile).bills).byType) {
+    if (!row.latest) continue;
+    const nextDate = new Date(`${row.latest.date}T12:00:00Z`);
+    nextDate.setUTCMonth(nextDate.getUTCMonth() + 1);
+    const dateValue = nextDate.toISOString().slice(0, 10);
+    if (dateValue < today) continue;
+    events.push({
+      id: `utility:bill:${row.type}:${dateValue}`,
+      bookGuid,
+      domain: 'utility',
+      title: `Expected ${row.type} bill`,
+      description: row.latest.provider || null,
+      date: dateValue,
+      endDate: null,
+      cashImpact: -row.latest.totalCost,
+      currency,
+      confidence: 0.7,
+      status: 'expected',
+      href: '/planning/utilities',
+      sourceId: row.latest.id,
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: { expectedUsage: row.latest.usage, unit: row.latest.unit },
+    });
+  }
+  for (const child of (familyBanking as FamilyBankingProfile).children) {
+    if (child.nextAllowanceDate < today) continue;
+    events.push({
+      id: `family:allowance:${child.id}:${child.nextAllowanceDate}`,
+      bookGuid,
+      domain: 'family',
+      title: `${child.name} allowance`,
+      description: `${child.allowanceCadence} liability-backed allowance`,
+      date: child.nextAllowanceDate,
+      endDate: null,
+      cashImpact: -child.allowanceAmount,
+      currency,
+      confidence: 1,
+      status: 'needs_action',
+      href: '/planning/family-banking',
+      sourceId: child.id,
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: { liabilityAccountGuid: child.liabilityAccountGuid },
+    });
+  }
+  for (const trip of (trips as TripsProfile).trips.map(item => calculateTripPlan(item, now))) {
+    if (trip.trip.endDate < today) continue;
+    events.push({
+      id: `trip:start:${trip.trip.id}:${trip.trip.startDate}`,
+      bookGuid,
+      domain: 'trip',
+      title: `${trip.trip.name} begins`,
+      description: trip.trip.destination || null,
+      date: trip.trip.startDate,
+      endDate: trip.trip.endDate,
+      cashImpact: -Math.max(0, trip.remainingBudget),
+      currency,
+      confidence: 1,
+      status: trip.fundingGap > 0 ? 'needs_action' : 'expected',
+      href: '/planning/trips',
+      sourceId: trip.trip.id,
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: { budget: trip.trip.budget, spent: trip.spent, fundingGap: trip.fundingGap },
     });
   }
   return events;

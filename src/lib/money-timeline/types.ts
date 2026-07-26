@@ -18,6 +18,10 @@ export const FINANCIAL_EVENT_DOMAINS = [
   'insurance',
   'capital',
   'healthcare',
+  'education',
+  'utility',
+  'family',
+  'trip',
   'vehicle',
 ] as const;
 

@@ -30,6 +30,8 @@ export interface QueuedQuickAdd {
     createdAt: string;
     /** Full request body, including a client-generated transaction GUID */
     payload: CreateTransactionRequest;
+    /** Optional transaction tags applied after the idempotent transaction POST. */
+    tagNames?: string[];
     status: QuickAddStatus;
     /** Last sync error message (when status === 'failed') */
     error?: string;
@@ -58,7 +60,7 @@ export interface SyncOptions {
 }
 
 export interface QuickAddQueue {
-    enqueue(payload: CreateTransactionRequest): Promise<QueuedQuickAdd>;
+    enqueue(payload: CreateTransactionRequest, tagNames?: string[]): Promise<QueuedQuickAdd>;
     listPending(): Promise<QueuedQuickAdd[]>;
     /** All items regardless of status, oldest first */
     listAll(): Promise<QueuedQuickAdd[]>;
@@ -171,7 +173,8 @@ export interface PostResult {
  */
 export async function postQuickAdd(
     payload: CreateTransactionRequest,
-    fetchImpl: typeof fetch = globalThis.fetch
+    fetchImpl: typeof fetch = globalThis.fetch,
+    tagNames: string[] = [],
 ): Promise<PostResult> {
     let res: Response;
     try {
@@ -185,6 +188,20 @@ export async function postQuickAdd(
     }
 
     if (res.ok || res.status === 409) {
+        if (tagNames.length > 0 && payload.guid) {
+            try {
+                const tagResponse = await fetchImpl(`/api/transactions/${encodeURIComponent(payload.guid)}/tags`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tags: tagNames }),
+                });
+                if (!tagResponse.ok) {
+                    return { synced: false, error: `Transaction saved but trip tag failed: HTTP ${tagResponse.status}` };
+                }
+            } catch (err) {
+                return { synced: false, error: err instanceof Error ? err.message : 'Trip tag request failed' };
+            }
+        }
         return { synced: true };
     }
 
@@ -248,7 +265,7 @@ export function createQuickAddQueue(storage: QueueStorage): QuickAddQueue {
             if (!current || current.status === 'syncing') continue;
 
             await setStatus(current.localId, 'syncing');
-            const result = await postQuickAdd(current.payload, fetchImpl);
+            const result = await postQuickAdd(current.payload, fetchImpl, current.tagNames);
 
             if (result.synced) {
                 await storage.delete(current.localId);
@@ -264,11 +281,12 @@ export function createQuickAddQueue(storage: QueueStorage): QuickAddQueue {
     };
 
     return {
-        async enqueue(payload) {
+        async enqueue(payload, tagNames) {
             const item: QueuedQuickAdd = {
                 localId: generateGuid(),
                 createdAt: new Date().toISOString(),
                 payload,
+                tagNames,
                 status: 'pending',
             };
             await storage.put(item);

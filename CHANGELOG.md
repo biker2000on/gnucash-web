@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.21.0.0] - 2026-07-26
+
+### Added
+- Added per-student education and 529 planning with tuition inflation, projected balances, required contributions, state deduction tracking, glide-path guidance, Timeline milestones, and funding actions.
+- Added utility usage and unit-rate history with OCR-backed bill suggestions and an actual-rate solar payback scenario.
+- Added liability-backed family banking with allowances, chore approvals, deposits, spending, parent savings matches, goals, and a read-only child view.
+- Added trip and vacation envelopes with funding targets, current-trip Quick Add tagging, date-range transaction suggestions, live spending, and plan-versus-actual.
+- Added vehicle total-cost-of-ownership reporting across Fuel Tracker, mileage, insurance, maintenance, registration, depreciation, and repair-versus-replace scenarios.
+- Added Education, Utility, Family, Trip, and Vehicle evidence to the Action Center, Money Timeline, and shared calculation provenance.
+
 ## [0.20.0.0] - 2026-07-26
 
 ### Added

@@ -42,6 +42,16 @@ interface CachedAccount extends PickerAccount {
     placeholder?: number;
 }
 
+interface CurrentTrip {
+    id: string;
+    name: string;
+    destination: string;
+    startDate: string;
+    endDate: string;
+    tagName?: string | null;
+    current: boolean;
+}
+
 function readJson<T>(key: string, fallback: T): T {
     try {
         const raw = localStorage.getItem(key);
@@ -54,6 +64,18 @@ function readJson<T>(key: string, fallback: T): T {
 export default function QuickAddPage() {
     const { success, error: toastError, info } = useToast();
     const queueState = useQuickAddSync();
+    const [currentTrip, setCurrentTrip] = useState<CurrentTrip | null>(null);
+    const [applyTripTag, setApplyTripTag] = useState(true);
+
+    useEffect(() => {
+        fetch('/api/resilience/trips', { cache: 'no-store' })
+            .then(result => result.ok ? result.json() : null)
+            .then(json => {
+                const trips = (json?.profile?.trips ?? []) as CurrentTrip[];
+                setCurrentTrip(trips.find(trip => trip.current) ?? null);
+            })
+            .catch(() => undefined);
+    }, []);
 
     // --- Accounts: live list, with a localStorage snapshot for offline use ---
     const { data: liveAccounts } = useAccounts({ flat: true });
@@ -168,6 +190,10 @@ export default function QuickAddPage() {
 
     const amountNumber = parseFloat(amount) || 0;
     const canSave = amountNumber > 0 && !!fromGuid && !!toGuid && fromGuid !== toGuid && !saving;
+    const tripTags = useMemo(
+        () => currentTrip && applyTripTag && currentTrip.tagName ? [currentTrip.tagName] : [],
+        [currentTrip, applyTripTag],
+    );
 
     const rememberSelections = useCallback(
         (from: string, category: string) => {
@@ -235,15 +261,15 @@ export default function QuickAddPage() {
 
             let queued = false;
             if (typeof navigator !== 'undefined' && navigator.onLine) {
-                const result = await postQuickAdd(payload);
+                const result = await postQuickAdd(payload, globalThis.fetch, tripTags);
                 if (result.synced) {
                     success('Transaction saved');
                 } else {
-                    await getQuickAddQueue().enqueue(payload);
+                    await getQuickAddQueue().enqueue(payload, tripTags);
                     queued = true;
                 }
             } else {
-                await getQuickAddQueue().enqueue(payload);
+                await getQuickAddQueue().enqueue(payload, tripTags);
                 queued = true;
             }
 
@@ -274,6 +300,7 @@ export default function QuickAddPage() {
         info,
         toastError,
         queueState,
+        tripTags,
     ]);
 
     const currencyLabel = fromAccount?.commodity_mnemonic || '';
@@ -289,6 +316,26 @@ export default function QuickAddPage() {
                     </span>
                 )}
             </div>
+
+            {currentTrip && (
+                <label className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary-light px-3 py-2 text-sm">
+                    <span>
+                        <span className="font-medium text-foreground">{currentTrip.name}</span>
+                        <span className="ml-2 text-xs text-foreground-muted">
+                            {currentTrip.tagName ? `#${currentTrip.tagName}` : 'No trip tag configured'}
+                        </span>
+                    </span>
+                    <span className="flex items-center gap-2 text-xs text-primary">
+                        Current trip
+                        <input
+                            type="checkbox"
+                            checked={applyTripTag}
+                            disabled={!currentTrip.tagName}
+                            onChange={event => setApplyTripTag(event.target.checked)}
+                        />
+                    </span>
+                </label>
+            )}
 
             {/* Natural-language magic input (hidden when AI is unconfigured) */}
             <MagicAddInput isOnline={queueState.isOnline} onParsed={handleParsed} />

@@ -5,7 +5,12 @@ export type ResilienceSection =
   | 'life'
   | 'healthcare'
   | 'mileage'
-  | 'fuel';
+  | 'fuel'
+  | 'education'
+  | 'utilities'
+  | 'family_banking'
+  | 'trips'
+  | 'vehicle_tco';
 
 export interface RentalPayment {
   id: string;
@@ -211,4 +216,136 @@ export interface PersonalPriceIndexItem {
   changePercent: number;
   annualizedPercent: number | null;
   receiptIds: number[];
+}
+
+export interface EducationContribution {
+  id: string;
+  date: string;
+  amount: number;
+}
+
+export interface EducationChild {
+  id: string;
+  name: string;
+  birthYear: number;
+  collegeStartYear: number;
+  schoolType: 'public_in_state' | 'public_out_of_state' | 'private';
+  yearsOfSchool: number;
+  annualCostToday: number;
+  tuitionInflationRate: number;
+  current529Balance: number;
+  expectedAnnualReturn: number;
+  plannedMonthlyContribution: number;
+  stateDeductionLimit: number;
+  contributions: EducationContribution[];
+}
+
+export interface EducationProfile {
+  children: EducationChild[];
+}
+
+export type UtilityType = 'electric' | 'gas' | 'water';
+
+export interface UtilityBill {
+  id: string;
+  date: string;
+  type: UtilityType;
+  provider: string;
+  usage: number;
+  unit: 'kWh' | 'therms' | 'gallons';
+  totalCost: number;
+  transactionGuid?: string | null;
+  receiptId?: number | null;
+}
+
+export interface SolarScenario {
+  enabled: boolean;
+  systemCost: number;
+  incentives: number;
+  annualProductionKwh: number;
+  degradationRate: number;
+  electricRateInflation: number;
+  annualMaintenance: number;
+  analysisYears: number;
+}
+
+export interface UtilitiesProfile {
+  bills: UtilityBill[];
+  solar: SolarScenario;
+}
+
+export type FamilyBankEntryKind = 'allowance' | 'chore' | 'deposit' | 'spend' | 'match';
+
+export interface FamilyBankEntry {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  kind: FamilyBankEntryKind;
+  approved: boolean;
+  transactionGuid?: string | null;
+}
+
+export interface FamilyBankChild {
+  id: string;
+  name: string;
+  liabilityAccountGuid: string;
+  allowanceAmount: number;
+  allowanceCadence: 'weekly' | 'monthly';
+  nextAllowanceDate: string;
+  parentMatchPercent: number;
+  savingsGoal: number;
+  entries: FamilyBankEntry[];
+}
+
+export interface FamilyBankingProfile {
+  children: FamilyBankChild[];
+}
+
+export interface TripExpense {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  transactionGuid?: string | null;
+}
+
+export interface TripPlan {
+  id: string;
+  name: string;
+  destination: string;
+  startDate: string;
+  endDate: string;
+  budget: number;
+  savingsTarget: number;
+  fundedAmount: number;
+  tagId?: number | null;
+  tagName?: string | null;
+  current: boolean;
+  expenses: TripExpense[];
+}
+
+export interface TripsProfile {
+  trips: TripPlan[];
+}
+
+export interface VehicleTcoAsset {
+  id: string;
+  mileageVehicleId?: string | null;
+  name: string;
+  purchaseDate: string;
+  purchasePrice: number;
+  currentValue: number;
+  annualInsurance: number;
+  annualRegistration: number;
+  annualMaintenance: number;
+  annualOther: number;
+  repairCost: number;
+  repairExtendsYears: number;
+  replacementVehicleCost: number;
+  replacementAnnualOperatingCost: number;
+}
+
+export interface VehicleTcoProfile {
+  vehicles: VehicleTcoAsset[];
 }

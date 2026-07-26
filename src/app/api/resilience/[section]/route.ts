@@ -15,6 +15,11 @@ const SECTIONS = new Set<ResilienceSection>([
   'healthcare',
   'mileage',
   'fuel',
+  'education',
+  'utilities',
+  'family_banking',
+  'trips',
+  'vehicle_tco',
 ]);
 
 function sectionFrom(value: string): ResilienceSection | null {

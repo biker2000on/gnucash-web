@@ -40,6 +40,10 @@ const ORIGIN_LABELS: Record<FinancialAction['origin'], string> = {
   job_profitability: 'Job profitability',
   rental: 'Rental',
   resilience: 'Household resilience',
+  education: 'Education',
+  utility: 'Utilities',
+  family: 'Family banking',
+  trip: 'Trip',
   vehicle: 'Vehicle',
 };
 
