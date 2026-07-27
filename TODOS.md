@@ -73,6 +73,17 @@ Feature packs may ship alongside this sequence when they use the shared
 contracts. They should not introduce a new private inbox, recommendation feed,
 calendar model, scenario engine, or evidence format.
 
+## Product education and discoverability
+
+1. [Done 2026-07-27, v0.22.0.0] Refresh the public marketing site around the
+   explainable financial operating system, publish a searchable capability
+   catalog, and launch public documentation with getting started, seven core
+   workflows, and OpenAPI reference.
+2. [Done 2026-07-27, v0.23.0.0] Publish operating reference for every
+   registered feature, core financial concepts, and administrator/recovery
+   guidance; add route-aware in-app Help, documentation commands in Ctrl+K,
+   full-site search, and CI coverage enforcement.
+
 ---
 
 # Platform roadmap

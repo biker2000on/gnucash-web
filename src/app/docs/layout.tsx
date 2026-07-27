@@ -2,10 +2,11 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import packageJson from '../../../package.json';
 import { DocsSearch } from '@/components/docs/DocsSearch';
-import { GUIDE_PAGES, docsSearchEntries } from '@/lib/docs-content';
+import { GUIDE_PAGES } from '@/lib/docs-content';
+import { allDocsSearchEntries } from '@/lib/docs-reference';
 
 export default function DocsLayout({ children }: { children: ReactNode }) {
-  const entries = docsSearchEntries();
+  const entries = allDocsSearchEntries();
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -70,11 +71,24 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
             </div>
             <div>
               <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
+                Learn the system
+              </div>
+              <div className="mt-2 space-y-1">
+                <Link href="/docs/concepts" className="block rounded-md px-2 py-2 text-sm text-foreground-secondary transition-colors duration-150 hover:bg-surface-hover hover:text-foreground">
+                  Financial concepts
+                </Link>
+                <Link href="/docs/admin" className="block rounded-md px-2 py-2 text-sm text-foreground-secondary transition-colors duration-150 hover:bg-surface-hover hover:text-foreground">
+                  Administration
+                </Link>
+              </div>
+            </div>
+            <div>
+              <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">
                 Reference
               </div>
               <div className="mt-2 space-y-1">
-                <Link href="/features" className="block rounded-md px-2 py-2 text-sm text-foreground-secondary transition-colors duration-150 hover:bg-surface-hover hover:text-foreground">
-                  Complete feature catalog
+                <Link href="/docs/features" className="block rounded-md px-2 py-2 text-sm text-foreground-secondary transition-colors duration-150 hover:bg-surface-hover hover:text-foreground">
+                  All feature guides
                 </Link>
                 <Link href="/docs/api" className="block rounded-md px-2 py-2 text-sm text-foreground-secondary transition-colors duration-150 hover:bg-surface-hover hover:text-foreground">
                   API reference

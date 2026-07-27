@@ -66,7 +66,7 @@ export function PublicFeatureCatalog({ features }: { features: Feature[] }) {
                     <p className="mt-2 text-sm leading-relaxed text-foreground-muted">{feature.description}</p>
                     <div className="mt-4 flex items-center justify-between gap-3">
                       <span className="text-xs text-foreground-muted">{feature.task}</span>
-                      <Link href="/docs" className="text-xs font-medium text-primary transition-colors duration-150 hover:text-primary-hover">
+                      <Link href={`/docs/features/${feature.id}`} className="text-xs font-medium text-primary transition-colors duration-150 hover:text-primary-hover">
                         Learn how
                       </Link>
                     </div>

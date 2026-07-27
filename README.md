@@ -63,7 +63,9 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 The public [documentation site](http://localhost:3000/docs) starts with a
 book-to-weekly-review tutorial and task-oriented guides for reconciliation,
 document evidence, planning, Family Office, business cash flow, and investment
-tax review. The interactive OpenAPI reference is available at
+tax review. It also includes searchable reference guidance for every registered
+feature, financial concepts, self-hosting administration and recovery, plus
+route-aware Help links inside the application. The interactive OpenAPI reference is available at
 [http://localhost:3000/docs/api](http://localhost:3000/docs/api).
 
 ### Prerequisites

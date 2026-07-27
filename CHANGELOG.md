@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.23.0.0] - 2026-07-27
+
+### Added
+- Added reference documentation for every registered feature, including its
+  purpose, prerequisites, permissions, operating steps, read/write boundaries,
+  and verification checklist.
+- Added concept guides for double-entry books, investment quantity and value,
+  reconciliation and close, provenance and safe actions, and Family Office.
+- Added administrator guides for upgrades, backups and recovery, security,
+  workers and connections, and API automation.
+- Added route-aware Help links throughout the authenticated application and
+  documentation destinations to the command palette.
+- Added a documentation coverage check and made it a required pre-build step
+  in the release workflow.
+
+### Changed
+- Documentation search now covers tutorials, workflow guides, concepts,
+  administration, API reference, and the complete feature registry.
+- Public feature catalog entries now link directly to their matching operating
+  guide.
+
+### Fixed
+- Corrected the commodity-verification OpenAPI annotation so the public API
+  specification builds without YAML parser errors.
+
 ## [0.22.0.0] - 2026-07-27
 
 ### Added

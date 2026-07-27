@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { DocsSearch } from '@/components/docs/DocsSearch';
-import { GUIDE_PAGES, docsSearchEntries } from '@/lib/docs-content';
+import { GUIDE_PAGES } from '@/lib/docs-content';
+import { allDocsSearchEntries } from '@/lib/docs-reference';
 
 export const metadata: Metadata = {
   title: 'Documentation — GnuCash Web',
@@ -32,7 +33,7 @@ const PATHS = [
 ];
 
 export default function DocumentationHome() {
-  const entries = docsSearchEntries();
+  const entries = allDocsSearchEntries();
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -62,13 +63,36 @@ export default function DocumentationHome() {
           </p>
         </Link>
         <Link
-          href="/features"
+          href="/docs/features"
           className="rounded-lg border border-border bg-surface p-6 transition-colors duration-150 hover:border-border-hover"
         >
           <div className="text-[11px] font-semibold uppercase tracking-wider text-foreground-muted">Reference</div>
-          <h2 className="mt-2 text-xl font-semibold text-foreground">Browse the complete feature catalog</h2>
+          <h2 className="mt-2 text-xl font-semibold text-foreground">Browse every feature guide</h2>
           <p className="mt-2 text-sm leading-relaxed text-foreground-secondary">
-            Find every page, report, planning tool, business workflow, and administrative surface.
+            Purpose, prerequisites, permissions, operation, and verification for every registered capability.
+          </p>
+        </Link>
+      </section>
+
+      <section className="mt-16 grid gap-4 md:grid-cols-2">
+        <Link
+          href="/docs/concepts"
+          className="rounded-lg border border-border bg-surface p-6 transition-colors duration-150 hover:border-primary/60"
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-primary">Understand</div>
+          <h2 className="mt-2 text-xl font-semibold text-foreground">Financial and system concepts</h2>
+          <p className="mt-2 text-sm leading-relaxed text-foreground-secondary">
+            Double-entry, cost basis, reconciliation, provenance, roles, and multi-book consolidation.
+          </p>
+        </Link>
+        <Link
+          href="/docs/admin"
+          className="rounded-lg border border-border bg-surface p-6 transition-colors duration-150 hover:border-primary/60"
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-primary">Operate</div>
+          <h2 className="mt-2 text-xl font-semibold text-foreground">Administration and recovery</h2>
+          <p className="mt-2 text-sm leading-relaxed text-foreground-secondary">
+            Install, upgrade, secure, back up, connect, automate, and recover the complete stack.
           </p>
         </Link>
       </section>

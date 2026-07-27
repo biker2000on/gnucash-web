@@ -29,6 +29,7 @@ const GROUP_LABELS: Record<string, string> = {
   report: 'Reports',
   tool: 'Tools',
   business: 'Business',
+  help: 'Help & Documentation',
   account: 'Accounts',
   transaction: 'Transactions',
 }

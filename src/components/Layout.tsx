@@ -10,6 +10,7 @@ import { JobProgressStream } from '@/contexts/JobProgressContext';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
+import { ContextualHelpLink } from './docs/ContextualHelpLink';
 import { FEATURES, featureById, type FeatureDomain } from '@/lib/feature-registry';
 import { isFeatureIdEnabled, type ResolvedBookFeatures } from '@/lib/book-features';
 
@@ -1050,6 +1051,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         <div className="hidden md:block" />
 
                         <div className="flex items-center gap-2">
+                            <ContextualHelpLink />
                             <NotificationBell />
                             <JobProgressStream />
                             <UserMenu />

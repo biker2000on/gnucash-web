@@ -77,7 +77,7 @@ const BulkSchema = z.object({
  *                 items: { type: string }
  *     responses:
  *       200:
- *         description: Map of { symbol: { exists, fullname? } }.
+ *         description: "Map of symbol keys to verification result objects."
  */
 export async function POST(request: NextRequest) {
     const roleResult = await requireRole('readonly');

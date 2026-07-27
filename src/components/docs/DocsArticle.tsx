@@ -77,10 +77,10 @@ export function DocsArticle({ page }: { page: DocPage }) {
             Back to documentation
           </Link>
           <Link
-            href="/features"
+            href="/docs/features"
             className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary-hover"
           >
-            Browse all features
+            Browse feature reference
           </Link>
         </div>
       </footer>

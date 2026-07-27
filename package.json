@@ -1,6 +1,6 @@
 {
   "name": "gnucash-web",
-  "version": "0.22.0.0",
+  "version": "0.23.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
@@ -10,6 +10,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "docs:check": "tsx scripts/check-docs-coverage.ts",
     "worker": "tsx worker.ts",
     "prices:audit": "tsx utilities/run-price-audit.ts"
   },

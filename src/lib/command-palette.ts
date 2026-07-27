@@ -8,7 +8,7 @@
 
 import { FEATURES, type Feature } from '@/lib/feature-registry';
 
-export type PaletteGroup = 'action' | 'navigate' | 'report' | 'tool' | 'business';
+export type PaletteGroup = 'action' | 'navigate' | 'report' | 'tool' | 'business' | 'help';
 
 export interface PaletteCommand {
     id: string;
@@ -32,6 +32,15 @@ const ACTIONS: PaletteCommand[] = [
     { id: 'act-edit-mode', title: 'Enter Edit Mode', group: 'action', event: 'enter-edit-mode', keywords: 'bulk select', shortcut: 'e' },
 ];
 
+const HELP_COMMANDS: PaletteCommand[] = [
+    { id: 'help-docs-home', title: 'Documentation Home', group: 'help', href: '/docs', keywords: 'help manual learn how to guide' },
+    { id: 'help-getting-started', title: 'Getting Started Guide', group: 'help', href: '/docs/getting-started', keywords: 'setup first book weekly review tutorial' },
+    { id: 'help-feature-reference', title: 'Complete Feature Reference', group: 'help', href: '/docs/features', keywords: 'help all capabilities pages reports tools' },
+    { id: 'help-concepts', title: 'Financial Concepts', group: 'help', href: '/docs/concepts', keywords: 'double entry cost basis reconciliation provenance family office explain' },
+    { id: 'help-administration', title: 'Administration Guide', group: 'help', href: '/docs/admin', keywords: 'install upgrade backup security recovery worker connections' },
+    { id: 'help-api', title: 'API Reference', group: 'help', href: '/docs/api', keywords: 'openapi swagger automation integration tokens' },
+];
+
 function paletteGroupFor(feature: Feature): PaletteGroup {
     if (feature.domain === 'business') return 'business';
     if (feature.kind === 'report') return 'report';
@@ -41,6 +50,7 @@ function paletteGroupFor(feature: Feature): PaletteGroup {
 
 export const PALETTE_COMMANDS: PaletteCommand[] = [
     ...ACTIONS,
+    ...HELP_COMMANDS,
     ...FEATURES.map(f => ({
         id: f.id,
         title: f.title,
