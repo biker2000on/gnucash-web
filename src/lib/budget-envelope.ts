@@ -42,7 +42,10 @@ import {
     type PeriodRange,
     type PacingStatus,
 } from '@/lib/budget-actuals';
-import { contextualizeBudgetAlert } from '@/lib/budget-alert-context';
+import {
+    contextualizeBudgetAlert,
+    currentYearActiveBudgetPeriod,
+} from '@/lib/budget-alert-context';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -547,7 +550,10 @@ export async function scanBudgetAlerts(
 
             const ranges = computePeriodRanges(recurrence, budget.num_periods);
             const currentPeriod = findCurrentPeriodNum(ranges, asOf);
-            if (currentPeriod === null) continue; // inactive budget
+            if (
+                currentPeriod === null
+                || currentYearActiveBudgetPeriod(ranges, asOf, currentPeriod) === null
+            ) continue; // inactive or not a current-year budget
 
             // Book-scoped, sign-corrected budgeted matrices.
             const accMeta = new Map<string, ScanBudgetAccount>();

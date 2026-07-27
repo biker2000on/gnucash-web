@@ -9,6 +9,7 @@ import {
 } from '@/lib/budget-actuals';
 import {
   contextualizeBudgetAlert,
+  currentYearActiveBudgetPeriod,
   parseBudgetAlertSourceId,
 } from '@/lib/budget-alert-context';
 import { complianceItemsForYear, complianceStatusKey } from '@/lib/compliance';
@@ -222,6 +223,7 @@ async function statementActions(bookGuid: string): Promise<FinancialActionCandid
         observedAt: batch.updatedAt.toISOString(),
         verified: batch.status === 'reconciled',
       }],
+      metadata: batch.accountGuid ? { accountGuid: batch.accountGuid } : undefined,
     })];
   });
 }
@@ -468,7 +470,11 @@ async function continuousCloseActions(bookGuid: string): Promise<FinancialAction
         observedAt: coverage.generatedAt,
         verified: false,
       }],
-      metadata: { coveragePercent: account.coveragePercent, staleDays: account.staleDays },
+      metadata: {
+        accountGuid: account.accountGuid,
+        coveragePercent: account.coveragePercent,
+        staleDays: account.staleDays,
+      },
     }));
 }
 
@@ -651,7 +657,9 @@ async function notificationActions(
   const { notifications } = await listNotifications(userId, bookGuid, 100);
   const budgetContexts = await loadBudgetNotificationContexts(notifications);
   return notifications
-    .filter(notification => notification.readAt === null)
+    .filter(notification =>
+      notification.readAt === null
+      && (!isBudgetNotification(notification) || budgetContexts.has(notification.id)))
     .map(notification => {
       const budgetContext = budgetContexts.get(notification.id);
       const content = budgetContext
@@ -705,6 +713,7 @@ async function notificationActions(
             ? {
                 budgetGuid: budgetContext.budgetGuid,
                 budgetName: budgetContext.budgetName,
+                budgetYear: budgetContext.budgetYear,
                 budgetPeriod: budgetContext.period,
               }
             : {}),
@@ -716,15 +725,23 @@ async function notificationActions(
 interface BudgetNotificationContext {
   budgetGuid: string;
   budgetName: string;
+  budgetYear: number;
   kind: 'over' | 'threshold' | 'projected';
   period: PeriodRange;
+}
+
+function isBudgetNotification(notification: AppNotification): boolean {
+  return notification.source === 'budget-alert'
+    || notification.source === 'budget-envelope'
+    || notification.type.includes('budget');
 }
 
 async function loadBudgetNotificationContexts(
   notifications: AppNotification[],
 ): Promise<Map<number, BudgetNotificationContext>> {
+  const asOf = isoDate(new Date());
   const references = notifications
-    .filter(notification => notification.readAt === null && notification.source === 'budget-alert')
+    .filter(notification => notification.readAt === null && isBudgetNotification(notification))
     .flatMap(notification => {
       const parsed = parseBudgetAlertSourceId(notification.sourceId);
       return parsed ? [{ notification, parsed }] : [];
@@ -734,14 +751,17 @@ async function loadBudgetNotificationContexts(
   const budgetGuids = [...new Set(references.map(reference => reference.parsed.budgetGuid))];
   const budgets = await prisma.budgets.findMany({
     where: { guid: { in: budgetGuids } },
-    include: { recurrences: true },
+    include: {
+      recurrences: true,
+      _count: { select: { amounts: true } },
+    },
   });
   const budgetByGuid = new Map(budgets.map(budget => [budget.guid, budget]));
   const contexts = new Map<number, BudgetNotificationContext>();
 
   for (const { notification, parsed } of references) {
     const budget = budgetByGuid.get(parsed.budgetGuid);
-    if (!budget) continue;
+    if (!budget || budget._count.amounts === 0) continue;
     const recurrenceRow = budget.recurrences[0] ?? null;
     const recurrence: BudgetRecurrence = recurrenceRow
       ? {
@@ -752,13 +772,15 @@ async function loadBudgetNotificationContexts(
       : {
           periodType: 'month',
           mult: 1,
-          periodStart: `${notification.createdAt.getUTCFullYear()}-01-01`,
+          periodStart: `${asOf.slice(0, 4)}-01-01`,
         };
-    const period = computePeriodRanges(recurrence, budget.num_periods)[parsed.periodNum];
+    const periods = computePeriodRanges(recurrence, budget.num_periods);
+    const period = currentYearActiveBudgetPeriod(periods, asOf, parsed.periodNum);
     if (!period) continue;
     contexts.set(notification.id, {
       budgetGuid: budget.guid,
       budgetName: budget.name,
+      budgetYear: Number(periods[0].start.slice(0, 4)),
       kind: parsed.kind,
       period,
     });
@@ -1188,6 +1210,7 @@ async function notificationOpportunitySignals(
 ): Promise<{ estimatedTax: OpportunitySignal | null; budgetGaps: OpportunitySignal[] }> {
   const { notifications } = await listNotifications(userId, bookGuid, 200);
   const unread = notifications.filter(item => item.readAt === null);
+  const budgetContexts = await loadBudgetNotificationContexts(unread);
   const tax = unread.find(item =>
     item.type.includes('estimated_tax') || /safe.?harbor|estimated tax shortfall/i.test(`${item.title} ${item.message}`),
   );
@@ -1221,14 +1244,21 @@ async function notificationOpportunitySignals(
       }
     : null;
   const budgetGaps = unread
-    .filter(item => item.type.includes('budget') || item.source === 'budget-envelope')
+    .filter(item => isBudgetNotification(item) && budgetContexts.has(item.id))
     .flatMap(item => {
-      const amount = moneyFromText(item.message);
+      const budgetContext = budgetContexts.get(item.id)!;
+      const content = contextualizeBudgetAlert(
+        budgetContext.kind,
+        item.message || 'A known obligation is not fully funded.',
+        budgetContext.budgetName,
+        budgetContext.period,
+      );
+      const amount = moneyFromText(content.message);
       if (!amount || amount <= 0) return [];
       return [{
         key: item.sourceId || String(item.id),
-        title: item.title,
-        summary: item.message || 'A known obligation is not fully funded.',
+        title: content.title,
+        summary: content.message,
         href: item.href || '/budgets',
         valueLow: amount * 0.01,
         valueHigh: amount * 0.05,
@@ -1240,7 +1270,13 @@ async function notificationOpportunitySignals(
         reversibility: 75,
         goalAlignment: 80,
         assumptions: ['Funding gap is taken from the existing deterministic budget alert.'],
-        metadata: { fundingGap: amount },
+        metadata: {
+          fundingGap: amount,
+          budgetGuid: budgetContext.budgetGuid,
+          budgetName: budgetContext.budgetName,
+          budgetYear: budgetContext.budgetYear,
+          budgetPeriod: budgetContext.period,
+        },
         evidence: [{
           kind: 'notification' as const,
           id: String(item.id),

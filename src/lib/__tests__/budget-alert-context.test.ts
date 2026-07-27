@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   contextualizeBudgetAlert,
+  currentYearActiveBudgetPeriod,
   parseBudgetAlertSourceId,
 } from '@/lib/budget-alert-context';
 
@@ -48,5 +49,27 @@ describe('budget alert context', () => {
 
     expect(second).toEqual(first);
     expect(second.message.match(/Budget "Household"/g)).toHaveLength(1);
+  });
+
+  it('accepts only the active period of a budget that starts this year', () => {
+    const periods = [
+      { periodNum: 0, start: '2026-01-01', end: '2026-01-31', label: 'Jan 2026' },
+      { periodNum: 1, start: '2026-02-01', end: '2026-02-28', label: 'Feb 2026' },
+    ];
+
+    expect(currentYearActiveBudgetPeriod(periods, '2026-02-15', 1)).toEqual(periods[1]);
+    expect(currentYearActiveBudgetPeriod(periods, '2026-02-15', 0)).toBeNull();
+    expect(currentYearActiveBudgetPeriod(periods, '2027-02-15', 1)).toBeNull();
+  });
+
+  it('rejects an older budget even if an extended period overlaps this year', () => {
+    const periods = [{
+      periodNum: 0,
+      start: '2017-01-01',
+      end: '2026-12-31',
+      label: 'Legacy budget',
+    }];
+
+    expect(currentYearActiveBudgetPeriod(periods, '2026-07-27', 0)).toBeNull();
   });
 });

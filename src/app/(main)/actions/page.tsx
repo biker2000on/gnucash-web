@@ -70,6 +70,14 @@ function snoozeDate(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
+function firstVisualActionIndex(actions: FinancialAction[]): number {
+  for (const lane of LANES) {
+    const index = actions.findIndex(action => action.lane === lane.id);
+    if (index >= 0) return index;
+  }
+  return 0;
+}
+
 function ActionCard({
   action,
   selected,
@@ -92,11 +100,15 @@ function ActionCard({
   const cashRequired = typeof action.metadata?.cashRequired === 'number'
     ? action.metadata.cashRequired
     : null;
+  const accountPath = typeof action.metadata?.accountPath === 'string'
+    ? action.metadata.accountPath
+    : null;
   const overdue = action.dueDate && action.dueDate < new Date().toISOString().slice(0, 10);
 
   return (
     <article
       data-action-id={action.id}
+      tabIndex={focused ? 0 : -1}
       className={`rounded-xl border bg-surface p-4 transition-colors ${
         selected || focused ? 'border-primary ring-1 ring-primary/30' : 'border-border hover:border-primary/40'
       }`}
@@ -141,7 +153,17 @@ function ActionCard({
             )}
           </div>
           <h3 className="mt-2 text-sm font-semibold leading-5 text-foreground">{action.title}</h3>
-          <p className="mt-1 text-xs leading-5 text-foreground-secondary">{action.summary}</p>
+          {accountPath && (
+            <p className="mt-1 break-words text-[11px] leading-4 text-foreground-muted">
+              {accountPath}
+            </p>
+          )}
+          <p className={accountPath
+            ? 'mt-2 text-xs leading-5 text-foreground-secondary'
+            : 'mt-1 text-xs leading-5 text-foreground-secondary'}
+          >
+            {action.summary}
+          </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
             {amount && (
@@ -226,6 +248,9 @@ export default function FinancialActionCenterPage() {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [actionView, setActionView] = useState<ActionView>('pending');
   const [trace, setTrace] = useState<CalculationTrace | null>(null);
+  const hasInitializedCardFocus = useRef(false);
+  const pendingCardFocusIndex = useRef<number | null>(null);
+  const shouldRevealFocusedCard = useRef(false);
 
   const load = useCallback(async (refresh = false, background = false) => {
     if (!background) {
@@ -251,9 +276,16 @@ export default function FinancialActionCenterPage() {
       setSelected(current =>
         new Set([...current].filter(id => visibleIds.has(id))),
       );
-      setFocusedIndex(current => nextData.actions.length === 0
-        ? 0
-        : Math.min(current, nextData.actions.length - 1));
+      if (!hasInitializedCardFocus.current && nextData.actions.length > 0) {
+        const initialIndex = firstVisualActionIndex(nextData.actions);
+        hasInitializedCardFocus.current = true;
+        pendingCardFocusIndex.current = initialIndex;
+        setFocusedIndex(initialIndex);
+      } else {
+        setFocusedIndex(current => nextData.actions.length === 0
+          ? 0
+          : Math.min(current, nextData.actions.length - 1));
+      }
     } catch (loadError) {
       if (!background) {
         setError(loadError instanceof Error ? loadError.message : 'Failed to load actions.');
@@ -333,7 +365,9 @@ export default function FinancialActionCenterPage() {
           const laneActions = visibleActions.filter(action => action.lane === current.lane);
           const row = laneActions.findIndex(action => action.id === current.id);
           const next = laneActions[Math.max(0, Math.min(laneActions.length - 1, row + direction))];
-          return visibleActions.findIndex(action => action.id === next.id);
+          const nextIndex = visibleActions.findIndex(action => action.id === next.id);
+          if (nextIndex !== index) shouldRevealFocusedCard.current = true;
+          return nextIndex;
         });
       };
 
@@ -353,7 +387,9 @@ export default function FinancialActionCenterPage() {
             const laneActions = visibleActions.filter(action => action.lane === LANES[laneIndex].id);
             if (laneActions.length === 0) continue;
             const next = laneActions[Math.min(row, laneActions.length - 1)];
-            return visibleActions.findIndex(action => action.id === next.id);
+            const nextIndex = visibleActions.findIndex(action => action.id === next.id);
+            if (nextIndex !== index) shouldRevealFocusedCard.current = true;
+            return nextIndex;
           }
 
           return index;
@@ -395,6 +431,31 @@ export default function FinancialActionCenterPage() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [focusedIndex, updateState, visibleActions]);
+
+  useEffect(() => {
+    const shouldApplyInitialFocus = pendingCardFocusIndex.current === focusedIndex;
+    const shouldReveal = shouldRevealFocusedCard.current;
+    if (!shouldApplyInitialFocus && !shouldReveal) return;
+    if (shouldApplyInitialFocus) pendingCardFocusIndex.current = null;
+    shouldRevealFocusedCard.current = false;
+    const focusedAction = visibleActions[focusedIndex];
+    if (!focusedAction) return;
+    const card = [...document.querySelectorAll<HTMLElement>('[data-action-id]')]
+      .find(element => element.dataset.actionId === focusedAction.id);
+    if (!card) return;
+
+    card.focus({ preventScroll: true });
+    if (!shouldReveal) return;
+
+    const bounds = card.getBoundingClientRect();
+    const viewportInset = 16;
+    if (
+      typeof card.scrollIntoView === 'function'
+      && (bounds.top < viewportInset || bounds.bottom > window.innerHeight - viewportInset)
+    ) {
+      card.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    }
+  }, [focusedIndex, visibleActions]);
 
   const toggleSelected = (id: string) => {
     setSelected(current => {

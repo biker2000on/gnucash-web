@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import prisma from '@/lib/prisma';
+import { formatDisplayAccountPath } from '@/lib/account-path';
 import { loadOpportunityActions, loadSourceActions } from './sources';
 import { FINANCIAL_ACTIONS_SCHEMA_SQL } from './schema';
 import type {
@@ -9,6 +10,11 @@ import type {
   FinancialActionState,
 } from './types';
 import { compareFinancialActions } from './order';
+import {
+  actionAccountGuids,
+  enrichActionsWithAccountPaths,
+} from './account-context';
+import { actionMatchesCurrentActiveBudget } from './budget-context';
 
 type ActionRow = {
   id: string;
@@ -388,9 +394,27 @@ export async function listFinancialActions(input: {
     WHERE user_id = ${input.userId}
       AND book_guid = ${input.bookGuid}
   `;
+  const asOf = new Date().toISOString().slice(0, 10);
+  const actions = rows
+    .map(rowToAction)
+    .filter(action => actionMatchesCurrentActiveBudget(action, asOf));
+  const allowedAccountGuids = new Set(input.bookAccountGuids);
+  const referencedAccountGuids = [...new Set(actions.flatMap(actionAccountGuids))]
+    .filter(guid => allowedAccountGuids.has(guid));
+  const accountRows = referencedAccountGuids.length > 0
+    ? await prisma.$queryRaw<Array<{ guid: string; fullname: string; name: string }>>`
+        SELECT guid, fullname, name
+        FROM account_hierarchy
+        WHERE guid = ANY(${referencedAccountGuids}::text[])
+      `
+    : [];
+  const accountPaths = new Map(accountRows.map(account => [
+    account.guid,
+    formatDisplayAccountPath(account.fullname, account.name),
+  ]));
   const weekly = weeklyRows[0];
   return {
-    actions: rows.map(rowToAction).sort(compareFinancialActions),
+    actions: enrichActionsWithAccountPaths(actions, accountPaths).sort(compareFinancialActions),
     summary: {
       new: weekly?.new_count ?? 0,
       resolved: weekly?.resolved_count ?? 0,

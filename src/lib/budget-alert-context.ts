@@ -42,3 +42,16 @@ export function contextualizeBudgetAlert(
       `(${period.start} through ${period.end}). ${detail}`,
   };
 }
+
+export function currentYearActiveBudgetPeriod(
+  periods: PeriodRange[],
+  asOf: string,
+  requiredPeriodNum?: number,
+): PeriodRange | null {
+  const budgetStart = periods[0]?.start;
+  if (!budgetStart || budgetStart.slice(0, 4) !== asOf.slice(0, 4)) return null;
+  const active = periods.find(period => asOf >= period.start && asOf <= period.end) ?? null;
+  if (!active) return null;
+  if (requiredPeriodNum !== undefined && active.periodNum !== requiredPeriodNum) return null;
+  return active;
+}

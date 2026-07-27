@@ -107,7 +107,7 @@ describe('FinancialActionCenterPage mutations', () => {
     expect(screen.getByText('Stay here')).toBeVisible();
     expect(screen.queryByText('Loading')).not.toBeInTheDocument();
 
-    finishBackgroundRefresh?.();
+    (finishBackgroundRefresh as (() => void) | null)?.();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 
@@ -119,6 +119,7 @@ describe('FinancialActionCenterPage mutations', () => {
     render(<FinancialActionCenterPage />);
     const firstCard = (await screen.findByText('First action')).closest('article')!;
     const secondCard = screen.getByText('Second action').closest('article')!;
+    await waitFor(() => expect(firstCard).toHaveFocus());
     expect(firstCard).toHaveClass('ring-1');
     expect(secondCard).not.toHaveClass('ring-1');
 
@@ -132,6 +133,88 @@ describe('FinancialActionCenterPage mutations', () => {
     fireEvent.keyDown(window, { key: 'ArrowUp' });
     expect(firstCard).toHaveClass('ring-1');
     expect(secondCard).not.toHaveClass('ring-1');
+  });
+
+  it('focuses the top-left Fix card on initial navigation regardless of API order', async () => {
+    const doAction = action('do-first', 'Do first', 'do');
+    const decideAction = action('decide-first', 'Decide first', 'decide');
+    const fixAction = action('fix-first', 'Fix first', 'fix');
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(list([
+      doAction,
+      decideAction,
+      fixAction,
+    ]))));
+
+    render(<FinancialActionCenterPage />);
+    const doCard = (await screen.findByText('Do first')).closest('article')!;
+    const fixCard = screen.getByText('Fix first').closest('article')!;
+
+    await waitFor(() => expect(fixCard).toHaveFocus());
+    expect(fixCard).toHaveClass('ring-1');
+    expect(fixCard).toHaveAttribute('tabindex', '0');
+    expect(doCard).not.toHaveClass('ring-1');
+    expect(doCard).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('shows the complete account path beneath an account-specific card title', async () => {
+    const accountAction = {
+      ...action('cash', 'Reconcile Cash'),
+      metadata: { accountPath: 'Assets:Household:Wallet:Cash' },
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(list([accountAction]))));
+
+    render(<FinancialActionCenterPage />);
+    const title = await screen.findByText('Reconcile Cash');
+    const path = screen.getByText('Assets:Household:Wallet:Cash');
+
+    expect(title.compareDocumentPosition(path) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(path).toHaveClass('text-foreground-muted');
+  });
+
+  it('scrolls a newly focused off-screen card into the nearest visible position', async () => {
+    const first = action('first', 'First action');
+    const second = action('second', 'Second action');
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(list([first, second]))));
+
+    render(<FinancialActionCenterPage />);
+    const firstCard = (await screen.findByText('First action')).closest('article')!;
+    const secondCard = (await screen.findByText('Second action')).closest('article')!;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(secondCard, 'scrollIntoView', { value: scrollIntoView });
+    vi.spyOn(secondCard, 'getBoundingClientRect').mockReturnValue({
+      top: window.innerHeight + 20,
+      bottom: window.innerHeight + 220,
+    } as DOMRect);
+
+    await waitFor(() => expect(firstCard).toHaveFocus());
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      block: 'nearest',
+      behavior: 'auto',
+    }));
+  });
+
+  it('does not scroll when the newly focused card is already fully visible', async () => {
+    const first = action('first', 'First action');
+    const second = action('second', 'Second action');
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(list([first, second]))));
+
+    render(<FinancialActionCenterPage />);
+    const firstCard = (await screen.findByText('First action')).closest('article')!;
+    const secondCard = (await screen.findByText('Second action')).closest('article')!;
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(secondCard, 'scrollIntoView', { value: scrollIntoView });
+    vi.spyOn(secondCard, 'getBoundingClientRect').mockReturnValue({
+      top: 100,
+      bottom: 300,
+    } as DOMRect);
+
+    await waitFor(() => expect(firstCard).toHaveFocus());
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+
+    await waitFor(() => expect(secondCard).toHaveClass('ring-1'));
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('moves within lanes vertically and between desktop lanes horizontally', async () => {
@@ -164,6 +247,7 @@ describe('FinancialActionCenterPage mutations', () => {
     const decideSecondCard = screen.getByText('Decide second').closest('article')!;
     const doFirstCard = screen.getByText('Do first').closest('article')!;
 
+    await waitFor(() => expect(fixFirstCard).toHaveFocus());
     expect(fixFirstCard).toHaveClass('ring-1');
 
     fireEvent.keyDown(window, { key: 'ArrowDown' });
@@ -197,6 +281,7 @@ describe('FinancialActionCenterPage mutations', () => {
     render(<FinancialActionCenterPage />);
     const fixCard = (await screen.findByText('Fix action')).closest('article')!;
 
+    await waitFor(() => expect(fixCard).toHaveFocus());
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     expect(fixCard).toHaveClass('ring-1');
   });
