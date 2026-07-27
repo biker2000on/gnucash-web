@@ -29,17 +29,28 @@ export async function GET() {
         const bookAccountGuids = await getBookAccountGuids();
 
         const results = await prisma.$queryRaw<ReconcileSummaryQueryResult[]>`
+            WITH completed_sessions AS (
+                SELECT account_guid, MAX(statement_date)::timestamp AS verified_through
+                FROM gnucash_web_reconciliation_sessions
+                WHERE account_guid = ANY(${bookAccountGuids}::text[])
+                  AND status = 'completed'
+                  AND statement_date IS NOT NULL
+                GROUP BY account_guid
+            )
             SELECT
                 a.guid as account_guid,
                 a.account_type,
                 a.commodity_guid,
                 c.namespace as commodity_namespace,
-                MAX(
-                    CASE
-                        WHEN s.reconcile_state = 'y' AND s.reconcile_date IS NOT NULL
-                        THEN s.reconcile_date
-                        ELSE NULL
-                    END
+                GREATEST(
+                    MAX(
+                        CASE
+                            WHEN s.reconcile_state = 'y' AND s.reconcile_date IS NOT NULL
+                            THEN s.reconcile_date
+                            ELSE NULL
+                        END
+                    ),
+                    completed_sessions.verified_through
                 ) as last_reconcile_date,
                 SUM(
                     CASE
@@ -51,8 +62,10 @@ export async function GET() {
             FROM accounts a
             LEFT JOIN splits s ON s.account_guid = a.guid
             LEFT JOIN commodities c ON a.commodity_guid = c.guid
+            LEFT JOIN completed_sessions ON completed_sessions.account_guid = a.guid
             WHERE a.guid = ANY(${bookAccountGuids}::text[])
-            GROUP BY a.guid, a.account_type, a.commodity_guid, c.namespace
+            GROUP BY a.guid, a.account_type, a.commodity_guid, c.namespace,
+                     completed_sessions.verified_through
         `;
 
         const investmentTypes = ['STOCK', 'MUTUAL'];

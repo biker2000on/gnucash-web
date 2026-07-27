@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'rea
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useToast } from '@/contexts/ToastContext';
+import { notifyActionCenterUpdated } from '@/lib/financial-actions/client-events';
 import {
     computeDifferenceCents,
+    toggleCandidateSelection,
     toCents,
     type ReconcileWorkspace,
 } from '@/lib/reconcile-shared';
@@ -35,10 +37,17 @@ function ReconcilePageContent() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selected, setSelected] = useState<Set<string>>(new Set());
+    const [simpleFinBalance, setSimpleFinBalance] = useState<{
+        balance: number;
+        balanceDate: string | null;
+    } | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [finished, setFinished] = useState<{ count: number; date: string } | null>(null);
     const sessionId = useRef<string | null>(null);
+    const sessionStart = useRef<Promise<string | null> | null>(null);
     const pendingInteractions = useRef(0);
+    const selectionAnchor = useRef<number | null>(null);
+    const endingInputTouched = useRef(false);
 
     const fetchWorkspace = useCallback(async () => {
         if (!guid || !statementDate) return;
@@ -54,6 +63,7 @@ function ReconcilePageContent() {
             }
             const data: ReconcileWorkspace = await res.json();
             setWorkspace(data);
+            selectionAnchor.current = null;
             // Keep only selections that are still candidates for this date.
             setSelected((prev) => {
                 const valid = new Set(data.candidates.map((c) => c.guid));
@@ -71,11 +81,31 @@ function ReconcilePageContent() {
     }, [fetchWorkspace]);
 
     useEffect(() => {
+        if (!guid) return;
+        setSimpleFinBalance(null);
+        fetch(`/api/simplefin/balance/${guid}`)
+            .then((response) => response.ok ? response.json() : null)
+            .then((body) => {
+                if (!body?.hasBalance || !Number.isFinite(Number(body.balance))) return;
+                const nextBalance = {
+                    balance: Number(body.balance),
+                    balanceDate: typeof body.balanceDate === 'string' ? body.balanceDate : null,
+                };
+                setSimpleFinBalance(nextBalance);
+                if (!endingInputTouched.current) {
+                    setEndingInput(nextBalance.balance.toFixed(2));
+                }
+            })
+            .catch(() => undefined);
+    }, [guid]);
+
+    useEffect(() => {
         sessionId.current = null;
+        sessionStart.current = null;
         pendingInteractions.current = 0;
         if (!guid || !statementDate) return;
         let cancelled = false;
-        fetch('/api/reconciliation/sessions', {
+        const startPromise = fetch('/api/reconciliation/sessions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ accountGuid: guid, statementDate }),
@@ -93,9 +123,12 @@ function ReconcilePageContent() {
                             body: JSON.stringify({ id: body.id, interactionDelta }),
                         }).catch(() => undefined);
                     }
+                    return body.id as string;
                 }
+                return null;
             })
-            .catch(() => undefined);
+            .catch(() => null);
+        sessionStart.current = startPromise;
         return () => {
             cancelled = true;
             const id = sessionId.current;
@@ -126,15 +159,33 @@ function ReconcilePageContent() {
         }).catch(() => undefined);
     }, []);
 
-    const toggle = useCallback((splitGuid: string) => {
+    const toggle = useCallback((index: number, shiftKey: boolean) => {
+        if (!workspace) return;
         recordInteraction();
-        setSelected((prev) => {
-            const next = new Set(prev);
-            if (next.has(splitGuid)) next.delete(splitGuid);
-            else next.add(splitGuid);
-            return next;
-        });
-    }, [recordInteraction]);
+        const anchorIndex = selectionAnchor.current;
+        setSelected((prev) =>
+            toggleCandidateSelection(
+                workspace.candidates,
+                prev,
+                index,
+                anchorIndex,
+                shiftKey,
+            ),
+        );
+        selectionAnchor.current = index;
+    }, [workspace, recordInteraction]);
+
+    const selectAll = useCallback(
+        (select: boolean) => {
+            if (!workspace) return;
+            recordInteraction();
+            setSelected(select
+                ? new Set(workspace.candidates.map((candidate) => candidate.guid))
+                : new Set());
+            selectionAnchor.current = null;
+        },
+        [workspace, recordInteraction],
+    );
 
     const selectAllCleared = useCallback(
         (select: boolean) => {
@@ -149,6 +200,7 @@ function ReconcilePageContent() {
                 }
                 return next;
             });
+            selectionAnchor.current = null;
         },
         [workspace, recordInteraction],
     );
@@ -181,6 +233,8 @@ function ReconcilePageContent() {
         if (!workspace || endingBalance === null || differenceCents !== 0) return;
         setSubmitting(true);
         try {
+            const activeSessionId = sessionId.current ?? await sessionStart.current;
+            const interactionDelta = pendingInteractions.current;
             const res = await fetch(`/api/accounts/${guid}/reconcile`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -188,6 +242,8 @@ function ReconcilePageContent() {
                     statementDate,
                     endingBalance,
                     splitGuids: [...selected],
+                    sessionId: activeSessionId,
+                    interactionDelta,
                 }),
             });
             const body = await res.json().catch(() => null);
@@ -195,20 +251,10 @@ function ReconcilePageContent() {
                 throw new Error(body?.error || 'Failed to finalize reconciliation');
             }
             const count: number = body?.reconciledSplits ?? selected.size;
-            if (sessionId.current) {
-                await fetch('/api/reconciliation/sessions', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        id: sessionId.current,
-                        status: 'completed',
-                        interactionDelta: pendingInteractions.current,
-                        endingDifference: differenceCents / 100,
-                    }),
-                }).catch(() => undefined);
-                pendingInteractions.current = 0;
-                sessionId.current = null;
-            }
+            pendingInteractions.current = 0;
+            sessionId.current = null;
+            sessionStart.current = null;
+            notifyActionCenterUpdated('reconciliation-completed');
             toast.success(
                 `Reconciled ${count} transaction${count === 1 ? '' : 's'} through ${statementDate}`,
             );
@@ -268,10 +314,21 @@ function ReconcilePageContent() {
                             inputMode="decimal"
                             placeholder="0.00"
                             value={endingInput}
-                            onChange={(e) => setEndingInput(e.target.value)}
+                            onChange={(e) => {
+                                endingInputTouched.current = true;
+                                setEndingInput(e.target.value);
+                            }}
                             className="px-3 py-2 bg-surface border border-border rounded-md text-sm text-foreground font-mono text-right focus:outline-none focus:border-border-hover w-40"
                             style={{ fontFeatureSettings: "'tnum'" }}
                         />
+                        {simpleFinBalance && (
+                            <span className="text-[11px] text-foreground-muted">
+                                From SimpleFIN
+                                {simpleFinBalance.balanceDate
+                                    ? ` · synced ${new Date(simpleFinBalance.balanceDate).toLocaleDateString()}`
+                                    : ''}
+                            </span>
+                        )}
                     </label>
                 </div>
             </header>
@@ -307,6 +364,17 @@ function ReconcilePageContent() {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                     <button
+                        onClick={() => selectAll(true)}
+                        disabled={
+                            loading ||
+                            !workspace?.candidates.length ||
+                            selected.size === workspace.candidates.length
+                        }
+                        className="px-3 py-1.5 text-xs font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Select All
+                    </button>
+                    <button
                         onClick={() => selectAllCleared(true)}
                         disabled={loading || !workspace?.candidates.some((c) => c.state === 'c')}
                         className="px-3 py-1.5 text-xs font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -317,6 +385,7 @@ function ReconcilePageContent() {
                         onClick={() => {
                             recordInteraction();
                             setSelected(new Set());
+                            selectionAnchor.current = null;
                         }}
                         disabled={loading || selected.size === 0}
                         className="px-3 py-1.5 text-xs font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -360,7 +429,7 @@ function ReconcilePageContent() {
                     candidates={workspace.candidates}
                     selected={selected}
                     onToggle={toggle}
-                    onSelectAllCleared={selectAllCleared}
+                    onSelectAll={selectAll}
                     currency={currency}
                 />
             ) : null}

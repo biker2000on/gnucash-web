@@ -51,4 +51,21 @@ describe('classifyCoverage', () => {
     expect(account.coveragePercent).toBe(100);
     expect(account.status).toBe('never');
   });
+
+  it('treats a completed zero-transaction reconciliation as current', () => {
+    const account = classifyCoverage({
+      account_guid: 'd'.repeat(32),
+      name: 'Unused Reserve',
+      account_type: 'BANK',
+      total_splits: '0',
+      reconciled_splits: '0',
+      cleared_splits: '0',
+      outstanding_splits: '0',
+      last_activity_date: null,
+      verified_through: new Date('2026-07-24T00:00:00Z'),
+    }, NOW);
+    expect(account.coveragePercent).toBe(100);
+    expect(account.verifiedThrough).toBe('2026-07-24');
+    expect(account.status).toBe('current');
+  });
 });

@@ -5,6 +5,7 @@ vi.mock('@/lib/prisma', () => ({
         accounts: { findUnique: vi.fn() },
         splits: { findMany: vi.fn(), updateMany: vi.fn() },
         $queryRaw: vi.fn(),
+        $executeRaw: vi.fn(),
         $transaction: vi.fn(),
     },
 }));
@@ -14,6 +15,7 @@ import {
     toCents,
     computeDifference,
     computeDifferenceCents,
+    toggleCandidateSelection,
     getReconcileWorkspace,
     finalizeReconciliation,
     statementDateCutoff,
@@ -106,6 +108,29 @@ describe('computeDifference / computeDifferenceCents', () => {
         expect(toCents(10.005)).toBe(1001);
         expect(toCents(-3.14)).toBe(-314);
         expect(toCents(0.1 + 0.2)).toBe(30);
+    });
+});
+
+describe('toggleCandidateSelection', () => {
+    const candidates = [SPLIT_1, SPLIT_2, SPLIT_3].map((guid, index) => ({
+        guid,
+        date: `2026-06-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+        num: '',
+        description: `Candidate ${index + 1}`,
+        memo: '',
+        amount: index + 1,
+        state: 'n' as const,
+    }));
+
+    it('toggles a normal click and selects an inclusive shift-click range', () => {
+        const first = toggleCandidateSelection(candidates, new Set(), 0, null, false);
+        expect([...first]).toEqual([SPLIT_1]);
+
+        const range = toggleCandidateSelection(candidates, first, 2, 0, true);
+        expect([...range]).toEqual([SPLIT_1, SPLIT_2, SPLIT_3]);
+
+        const toggled = toggleCandidateSelection(candidates, range, 1, 2, false);
+        expect([...toggled]).toEqual([SPLIT_1, SPLIT_3]);
     });
 });
 
@@ -365,6 +390,34 @@ describe('finalizeReconciliation', () => {
         const result = await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 100, []);
         expect(result.reconciledSplits).toBe(0);
         expect(mockPrisma.splits.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('records a completed verification and resolves its Action Center item atomically', async () => {
+        mockPrisma.splits.findMany.mockResolvedValue([]);
+        mockPrisma.$executeRaw.mockResolvedValue(1);
+
+        const result = await finalizeReconciliation(
+            ACCOUNT,
+            STATEMENT_DATE,
+            0,
+            [],
+            undefined,
+            {
+                bookGuid: 'book0000000000000000000000000001',
+                userId: 42,
+                sessionId: 'session-1',
+                interactionDelta: 3,
+            },
+        );
+
+        expect(result.reconciledSplits).toBe(0);
+        expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(2);
+        const executedSql = mockPrisma.$executeRaw.mock.calls
+            .map(([template]: [TemplateStringsArray]) => template.join('?'))
+            .join('\n');
+        expect(executedSql).toContain("origin = 'statement_reconciliation'");
+        expect(executedSql).toContain("state = 'resolved'");
+        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
     it('uses an injected transaction client when provided (no new $transaction)', async () => {

@@ -97,25 +97,36 @@ export async function getReconciliationCoverage(
 
   const [coverageResult, sessionsResult] = await Promise.all([
     query(
-      `SELECT a.guid AS account_guid, a.name, a.account_type,
+      `WITH completed_sessions AS (
+         SELECT account_guid, MAX(statement_date)::timestamp AS verified_through
+           FROM gnucash_web_reconciliation_sessions
+          WHERE book_guid = $2
+            AND status = 'completed'
+            AND statement_date IS NOT NULL
+          GROUP BY account_guid
+       )
+       SELECT a.guid AS account_guid, a.name, a.account_type,
               COUNT(s.guid)::text AS total_splits,
               COUNT(s.guid) FILTER (WHERE s.reconcile_state = 'y')::text AS reconciled_splits,
               COUNT(s.guid) FILTER (WHERE s.reconcile_state = 'c')::text AS cleared_splits,
               COUNT(s.guid) FILTER (WHERE s.reconcile_state = 'n')::text AS outstanding_splits,
               MAX(t.post_date) AS last_activity_date,
-              MAX(COALESCE(s.reconcile_date, t.post_date))
-                FILTER (WHERE s.reconcile_state = 'y') AS verified_through
+              GREATEST(
+                MAX(COALESCE(s.reconcile_date, t.post_date))
+                  FILTER (WHERE s.reconcile_state = 'y'),
+                completed_sessions.verified_through
+              ) AS verified_through
          FROM accounts a
          LEFT JOIN splits s ON s.account_guid = a.guid
          LEFT JOIN transactions t ON t.guid = s.tx_guid
+         LEFT JOIN completed_sessions ON completed_sessions.account_guid = a.guid
         WHERE a.guid = ANY($1::varchar[])
           AND a.account_type IN ('BANK','CASH','CREDIT')
           AND COALESCE(a.hidden, 0) = 0
           AND COALESCE(a.placeholder, 0) = 0
-        GROUP BY a.guid, a.name, a.account_type
-        HAVING COUNT(s.guid) > 0
+        GROUP BY a.guid, a.name, a.account_type, completed_sessions.verified_through
         ORDER BY a.account_type, a.name`,
-      [accountGuids],
+      [accountGuids, bookGuid],
     ),
     query(
       `SELECT

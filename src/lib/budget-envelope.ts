@@ -42,6 +42,7 @@ import {
     type PeriodRange,
     type PacingStatus,
 } from '@/lib/budget-actuals';
+import { contextualizeBudgetAlert } from '@/lib/budget-alert-context';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -486,12 +487,6 @@ export interface BudgetAlertScanOptions {
     maxNotifications?: number;
 }
 
-const ALERT_TITLES: Record<BudgetAlertKind, string> = {
-    over: 'Budget exceeded',
-    threshold: 'Budget threshold reached',
-    projected: 'Projected budget overspend',
-};
-
 const ALERT_SEVERITY: Record<BudgetAlertKind, NotificationSeverity> = {
     over: 'error',
     threshold: 'warning',
@@ -534,7 +529,11 @@ export async function scanBudgetAlerts(
             },
         });
 
-        const candidates: Array<BudgetAlertCandidate & { budgetGuid: string }> = [];
+        const candidates: Array<BudgetAlertCandidate & {
+            budgetGuid: string;
+            budgetName: string;
+            period: PeriodRange;
+        }> = [];
 
         for (const budget of budgets) {
             const rec = budget.recurrences?.[0] ?? null;
@@ -615,7 +614,12 @@ export async function scanBudgetAlerts(
                 {},
                 rollovers
             );
-            candidates.push(...alerts.map(a => ({ ...a, budgetGuid: budget.guid })));
+            candidates.push(...alerts.map(a => ({
+                ...a,
+                budgetGuid: budget.guid,
+                budgetName: budget.name,
+                period: ranges[currentPeriod],
+            })));
         }
 
         if (candidates.length === 0) return { detected: 0, created: 0 };
@@ -636,14 +640,20 @@ export async function scanBudgetAlerts(
             if (created >= maxNotifications) break;
             if (seen.has(alert.dedupeKey)) continue;
             seen.add(alert.dedupeKey);
+            const content = contextualizeBudgetAlert(
+                alert.kind,
+                alert.message,
+                alert.budgetName,
+                alert.period,
+            );
 
             await createNotification({
                 userId: opts.userId,
                 bookGuid,
                 type: 'budget_alert',
                 severity: ALERT_SEVERITY[alert.kind],
-                title: ALERT_TITLES[alert.kind],
-                message: alert.message,
+                title: content.title,
+                message: content.message,
                 href: `/budgets/${alert.budgetGuid}`,
                 source: BUDGET_ALERT_SOURCE,
                 sourceId: alert.dedupeKey,

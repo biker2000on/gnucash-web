@@ -8,6 +8,7 @@ import {
 } from '@/lib/financial-actions/store';
 import type { FinancialActionState } from '@/lib/financial-actions/types';
 import { getAuthorizedFamilyGraph } from '@/lib/family-office/service';
+import { compareFinancialActions } from '@/lib/financial-actions/order';
 
 const WRITABLE_STATES = new Set<FinancialActionState>([
   'open',
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
     if (!familyScope) return NextResponse.json(results[0]);
     const verifiedDates = results.map(result => result.verifiedThrough).filter((date): date is string => !!date);
     return NextResponse.json({
-      actions: results.flatMap(result => result.actions),
+      actions: results.flatMap(result => result.actions).sort(compareFinancialActions),
       summary: results.reduce((summary, result) => ({
         new: summary.new + result.summary.new,
         resolved: summary.resolved + result.summary.resolved,

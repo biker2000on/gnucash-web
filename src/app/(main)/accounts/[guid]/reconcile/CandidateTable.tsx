@@ -6,9 +6,9 @@ import type { ReconcileCandidate } from '@/lib/reconcile-shared';
 interface CandidateTableProps {
     candidates: ReconcileCandidate[];
     selected: Set<string>;
-    onToggle: (guid: string) => void;
-    /** Select (true) or deselect (false) every cleared ('c') candidate. */
-    onSelectAllCleared: (select: boolean) => void;
+    onToggle: (index: number, shiftKey: boolean) => void;
+    /** Select (true) or deselect (false) every candidate. */
+    onSelectAll: (select: boolean) => void;
     currency: string;
 }
 
@@ -22,18 +22,17 @@ function stateBadge(state: 'n' | 'c') {
 /**
  * The candidate splits table: checkbox, date, num, description, funds in/out,
  * cleared-state badge. Rows are keyboard-focusable and Space toggles the
- * focused row. The header checkbox selects/deselects all cleared splits.
+ * focused row. The header checkbox selects/deselects every candidate.
  */
 export function CandidateTable({
     candidates,
     selected,
     onToggle,
-    onSelectAllCleared,
+    onSelectAll,
     currency,
 }: CandidateTableProps) {
-    const cleared = candidates.filter((c) => c.state === 'c');
-    const allClearedSelected =
-        cleared.length > 0 && cleared.every((c) => selected.has(c.guid));
+    const allSelected =
+        candidates.length > 0 && candidates.every((c) => selected.has(c.guid));
 
     if (candidates.length === 0) {
         return (
@@ -51,11 +50,10 @@ export function CandidateTable({
                         <th className="p-3 w-10 text-left">
                             <input
                                 type="checkbox"
-                                checked={allClearedSelected}
-                                disabled={cleared.length === 0}
-                                onChange={(e) => onSelectAllCleared(e.target.checked)}
-                                title="Select all cleared"
-                                aria-label="Select all cleared splits"
+                                checked={allSelected}
+                                onChange={(e) => onSelectAll(e.target.checked)}
+                                title="Select all"
+                                aria-label="Select all splits"
                                 className="accent-[var(--primary)] cursor-pointer disabled:cursor-not-allowed"
                             />
                         </th>
@@ -68,7 +66,7 @@ export function CandidateTable({
                     </tr>
                 </thead>
                 <tbody>
-                    {candidates.map((c) => {
+                    {candidates.map((c, index) => {
                         const isSelected = selected.has(c.guid);
                         const badge = stateBadge(c.state);
                         return (
@@ -77,11 +75,11 @@ export function CandidateTable({
                                 tabIndex={0}
                                 role="row"
                                 aria-selected={isSelected}
-                                onClick={() => onToggle(c.guid)}
+                                onClick={(event) => onToggle(index, event.shiftKey)}
                                 onKeyDown={(e) => {
                                     if (e.key === ' ' || e.key === 'Spacebar') {
                                         e.preventDefault();
-                                        onToggle(c.guid);
+                                        onToggle(index, e.shiftKey);
                                     }
                                 }}
                                 className={`border-b border-border last:border-b-0 cursor-pointer transition-colors duration-150 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--primary)] ${
@@ -92,8 +90,11 @@ export function CandidateTable({
                                     <input
                                         type="checkbox"
                                         checked={isSelected}
-                                        onChange={() => onToggle(c.guid)}
-                                        onClick={(e) => e.stopPropagation()}
+                                        readOnly
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onToggle(index, e.shiftKey);
+                                        }}
                                         tabIndex={-1}
                                         aria-label={`Select ${c.description || 'split'}`}
                                         className="accent-[var(--primary)] cursor-pointer"

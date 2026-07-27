@@ -1,7 +1,16 @@
 import prisma from '@/lib/prisma';
 import { runDataHealth } from '@/lib/data-health';
 import { listInsights } from '@/lib/insights';
-import { listNotifications } from '@/lib/notifications';
+import { listNotifications, type AppNotification } from '@/lib/notifications';
+import {
+  computePeriodRanges,
+  type BudgetRecurrence,
+  type PeriodRange,
+} from '@/lib/budget-actuals';
+import {
+  contextualizeBudgetAlert,
+  parseBudgetAlertSourceId,
+} from '@/lib/budget-alert-context';
 import { complianceItemsForYear, complianceStatusKey } from '@/lib/compliance';
 import { getEntityProfile } from '@/lib/services/entity.service';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
@@ -640,9 +649,22 @@ async function notificationActions(
   bookGuid: string,
 ): Promise<FinancialActionCandidate[]> {
   const { notifications } = await listNotifications(userId, bookGuid, 100);
+  const budgetContexts = await loadBudgetNotificationContexts(notifications);
   return notifications
     .filter(notification => notification.readAt === null)
     .map(notification => {
+      const budgetContext = budgetContexts.get(notification.id);
+      const content = budgetContext
+        ? contextualizeBudgetAlert(
+            budgetContext.kind,
+            notification.message || 'Budget activity needs attention.',
+            budgetContext.budgetName,
+            budgetContext.period,
+          )
+        : {
+            title: notification.title,
+            message: notification.message || 'Unread notification needs attention.',
+          };
       const failed = notification.severity === 'error'
         || notification.type.includes('failed')
         || notification.type === 'background_job';
@@ -656,8 +678,8 @@ async function notificationActions(
           : notification.severity === 'success'
             ? 'info'
             : notification.severity,
-        title: notification.title,
-        summary: notification.message || 'Unread notification needs attention.',
+        title: content.title,
+        summary: content.message,
         dueDate: null,
         impact: null,
         confidence: 1,
@@ -670,15 +692,79 @@ async function notificationActions(
         evidence: [{
           kind: failed ? 'job' : 'notification',
           id: notification.sourceId || String(notification.id),
-          label: notification.title,
+          label: content.title,
           source: notification.source === 'simplefin' ? 'simplefin' : 'system',
           href: notification.href || undefined,
           observedAt: notification.createdAt.toISOString(),
           verified: false,
         }],
-        metadata: { notificationId: notification.id, notificationType: notification.type },
+        metadata: {
+          notificationId: notification.id,
+          notificationType: notification.type,
+          ...(budgetContext
+            ? {
+                budgetGuid: budgetContext.budgetGuid,
+                budgetName: budgetContext.budgetName,
+                budgetPeriod: budgetContext.period,
+              }
+            : {}),
+        },
       });
     });
+}
+
+interface BudgetNotificationContext {
+  budgetGuid: string;
+  budgetName: string;
+  kind: 'over' | 'threshold' | 'projected';
+  period: PeriodRange;
+}
+
+async function loadBudgetNotificationContexts(
+  notifications: AppNotification[],
+): Promise<Map<number, BudgetNotificationContext>> {
+  const references = notifications
+    .filter(notification => notification.readAt === null && notification.source === 'budget-alert')
+    .flatMap(notification => {
+      const parsed = parseBudgetAlertSourceId(notification.sourceId);
+      return parsed ? [{ notification, parsed }] : [];
+    });
+  if (references.length === 0) return new Map();
+
+  const budgetGuids = [...new Set(references.map(reference => reference.parsed.budgetGuid))];
+  const budgets = await prisma.budgets.findMany({
+    where: { guid: { in: budgetGuids } },
+    include: { recurrences: true },
+  });
+  const budgetByGuid = new Map(budgets.map(budget => [budget.guid, budget]));
+  const contexts = new Map<number, BudgetNotificationContext>();
+
+  for (const { notification, parsed } of references) {
+    const budget = budgetByGuid.get(parsed.budgetGuid);
+    if (!budget) continue;
+    const recurrenceRow = budget.recurrences[0] ?? null;
+    const recurrence: BudgetRecurrence = recurrenceRow
+      ? {
+          periodType: recurrenceRow.recurrence_period_type,
+          mult: recurrenceRow.recurrence_mult,
+          periodStart: isoDate(recurrenceRow.recurrence_period_start),
+        }
+      : {
+          periodType: 'month',
+          mult: 1,
+          periodStart: `${notification.createdAt.getUTCFullYear()}-01-01`,
+        };
+    const period = computePeriodRanges(recurrence, budget.num_periods)[parsed.periodNum];
+    if (!period) continue;
+    contexts.set(notification.id, {
+      budgetGuid: budget.guid,
+      budgetName: budget.name,
+      kind: parsed.kind,
+      period,
+    });
+  }
+
+  return contexts;
 }
 
 async function safe<T>(label: string, work: () => Promise<T>, fallback: T): Promise<T> {

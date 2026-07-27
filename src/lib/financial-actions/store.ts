@@ -8,6 +8,7 @@ import type {
   FinancialActionList,
   FinancialActionState,
 } from './types';
+import { compareFinancialActions } from './order';
 
 type ActionRow = {
   id: string;
@@ -285,16 +286,28 @@ async function verifiedThroughDate(bookAccountGuids: string[]): Promise<string |
         AND account_type IN ('BANK', 'CASH', 'CREDIT')
         AND COALESCE(placeholder, 0) = 0
     ),
+    completed_sessions AS (
+      SELECT account_guid, MAX(statement_date)::timestamp AS verified_through
+      FROM gnucash_web_reconciliation_sessions
+      WHERE account_guid = ANY(${bookAccountGuids}::text[])
+        AND status = 'completed'
+        AND statement_date IS NOT NULL
+      GROUP BY account_guid
+    ),
     account_coverage AS (
       SELECT
         account.guid,
-        MAX(t.post_date) FILTER (
-          WHERE s.reconcile_state = 'y'
+        GREATEST(
+          MAX(COALESCE(s.reconcile_date, t.post_date)) FILTER (
+            WHERE s.reconcile_state = 'y'
+          ),
+          completed_sessions.verified_through
         ) AS verified_through
       FROM relevant_accounts account
       LEFT JOIN splits s ON s.account_guid = account.guid
       LEFT JOIN transactions t ON t.guid = s.tx_guid
-      GROUP BY account.guid
+      LEFT JOIN completed_sessions ON completed_sessions.account_guid = account.guid
+      GROUP BY account.guid, completed_sessions.verified_through
     )
     SELECT
       MIN(verified_through) AS verified_through,
@@ -347,7 +360,9 @@ export async function listFinancialActions(input: {
       CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
       COALESCE((score->>'total')::float8, 0) DESC,
       due_date ASC NULLS LAST,
-      first_seen_at DESC
+      first_seen_at DESC,
+      stable_key ASC,
+      id ASC
   `;
   const weeklyRows = await prisma.$queryRaw<Array<{
     new_count: number;
@@ -375,7 +390,7 @@ export async function listFinancialActions(input: {
   `;
   const weekly = weeklyRows[0];
   return {
-    actions: rows.map(rowToAction),
+    actions: rows.map(rowToAction).sort(compareFinancialActions),
     summary: {
       new: weekly?.new_count ?? 0,
       resolved: weekly?.resolved_count ?? 0,

@@ -6,11 +6,13 @@ const {
   getAccountGuidsForBookMock,
   listFinancialActionsMock,
   updateFinancialActionsMock,
+  getAuthorizedFamilyGraphMock,
 } = vi.hoisted(() => ({
   requireRoleMock: vi.fn(),
   getAccountGuidsForBookMock: vi.fn(),
   listFinancialActionsMock: vi.fn(),
   updateFinancialActionsMock: vi.fn(),
+  getAuthorizedFamilyGraphMock: vi.fn(),
 }));
 
 vi.mock('@/lib/auth', () => ({ requireRole: requireRoleMock }));
@@ -21,6 +23,9 @@ vi.mock('@/lib/financial-actions/store', () => ({
   FinancialActionValidationError: class FinancialActionValidationError extends Error {},
   listFinancialActions: listFinancialActionsMock,
   updateFinancialActions: updateFinancialActionsMock,
+}));
+vi.mock('@/lib/family-office/service', () => ({
+  getAuthorizedFamilyGraph: getAuthorizedFamilyGraphMock,
 }));
 
 import { GET, PATCH } from '../route';
@@ -79,6 +84,46 @@ describe('GET /api/actions', () => {
       bookAccountGuids: ['account-a'],
       refresh: false,
     }));
+  });
+
+  it('globally and deterministically orders family actions', async () => {
+    const secondBook = 'c'.repeat(32);
+    getAuthorizedFamilyGraphMock.mockResolvedValue({
+      entities: [
+        { bookGuid: BOOK_GUID, role: 'edit' },
+        { bookGuid: secondBook, role: 'edit' },
+      ],
+    });
+    listFinancialActionsMock.mockImplementation(async ({ bookGuid }: { bookGuid: string }) => ({
+      actions: bookGuid === BOOK_GUID
+        ? [{
+            id: 'warning',
+            stableKey: 'warning',
+            bookGuid,
+            severity: 'warning',
+            score: null,
+            dueDate: null,
+            firstSeenAt: '2026-07-23T00:00:00.000Z',
+          }]
+        : [{
+            id: 'critical',
+            stableKey: 'critical',
+            bookGuid,
+            severity: 'critical',
+            score: null,
+            dueDate: null,
+            firstSeenAt: '2026-07-23T00:00:00.000Z',
+          }],
+      summary: { new: 0, resolved: 0, automated: 0, overdue: 0 },
+      verifiedThrough: '2026-07-01',
+      generatedAt: '2026-07-23T00:00:00.000Z',
+    }));
+
+    const response = await GET(new NextRequest('http://localhost/api/actions?scope=family'));
+    const body = await response.json() as { actions: Array<{ id: string }> };
+
+    expect(response.status).toBe(200);
+    expect(body.actions.map(action => action.id)).toEqual(['critical', 'warning']);
   });
 });
 

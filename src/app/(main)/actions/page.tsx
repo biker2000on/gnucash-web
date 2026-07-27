@@ -12,6 +12,7 @@ import type {
   FinancialActionList,
   FinancialActionState,
 } from '@/lib/financial-actions/types';
+import { subscribeToActionCenterUpdates } from '@/lib/financial-actions/client-events';
 
 const LANES: Array<{
   id: FinancialActionLane;
@@ -23,6 +24,10 @@ const LANES: Array<{
   { id: 'decide', label: 'Decide', description: 'Choose the highest-value next move', accent: 'border-warning/50' },
   { id: 'do', label: 'Do', description: 'Finish approved operations', accent: 'border-primary/50' },
 ];
+
+type ActionView = 'pending' | 'all' | 'completed';
+
+const COMPLETED_STATES = new Set<FinancialActionState>(['resolved', 'dismissed', 'expired']);
 
 const ORIGIN_LABELS: Record<FinancialAction['origin'], string> = {
   transaction_review: 'Transaction review',
@@ -219,28 +224,64 @@ export default function FinancialActionCenterPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [focusedIndex, setFocusedIndex] = useState(0);
-  const [includeCompleted, setIncludeCompleted] = useState(false);
+  const [actionView, setActionView] = useState<ActionView>('pending');
   const [trace, setTrace] = useState<CalculationTrace | null>(null);
 
-  const load = useCallback(async (refresh = false) => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async (refresh = false, background = false) => {
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
     try {
+      const includeCompleted = actionView !== 'pending';
       const response = await fetch(
         `/api/actions?includeCompleted=${includeCompleted}&refresh=${refresh}&scope=${familyScope ? 'family' : 'book'}`,
         { cache: 'no-store' },
       );
       if (!response.ok) throw new Error('The Action Center could not be loaded.');
-      setData(await response.json() as FinancialActionList);
+      const loadedData = await response.json() as FinancialActionList;
+      const nextData = actionView === 'completed'
+        ? {
+            ...loadedData,
+            actions: loadedData.actions.filter(action => COMPLETED_STATES.has(action.state)),
+          }
+        : loadedData;
+      const visibleIds = new Set(nextData.actions.map(action => action.id));
+      setData(nextData);
+      setSelected(current =>
+        new Set([...current].filter(id => visibleIds.has(id))),
+      );
+      setFocusedIndex(current => nextData.actions.length === 0
+        ? 0
+        : Math.min(current, nextData.actions.length - 1));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load actions.');
+      if (!background) {
+        setError(loadError instanceof Error ? loadError.message : 'Failed to load actions.');
+      }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
-  }, [includeCompleted, familyScope]);
+  }, [actionView, familyScope]);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => subscribeToActionCenterUpdates(() => {
+    void load(false, true);
+  }), [load]);
+
+  useEffect(() => {
+    const refreshOnFocus = () => void load(false, true);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load(false, true);
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [load]);
 
   const visibleActions = useMemo(() => data?.actions ?? [], [data]);
@@ -260,28 +301,78 @@ export default function FinancialActionCenterPage() {
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || 'The action update failed.');
+      const stateIsCompleted = COMPLETED_STATES.has(state);
+      if (
+        (actionView === 'pending' && stateIsCompleted)
+        || (actionView === 'completed' && !stateIsCompleted)
+      ) {
+        const removed = new Set(ids);
+        setData(current => current
+          ? { ...current, actions: current.actions.filter(action => !removed.has(action.id)) }
+          : current);
+      }
       setSelected(new Set());
       toast.success(`${ids.length} action${ids.length === 1 ? '' : 's'} updated.`);
-      await load();
+      await load(false, true);
     } catch (updateError) {
       toast.error(updateError instanceof Error ? updateError.message : 'Failed to update actions.');
     } finally {
       setMutating(false);
     }
-  }, [familyScope, load, mutating, toast]);
+  }, [actionView, familyScope, load, mutating, toast]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches('input, textarea, select, button, a')) return;
-      if (event.key === 'j') {
+      const target = event.target;
+      if (target instanceof Element && target.matches('input, textarea, select, button, a')) return;
+
+      const moveWithinLane = (direction: -1 | 1) => {
+        setFocusedIndex(index => {
+          if (visibleActions.length === 0) return 0;
+          const current = visibleActions[Math.min(index, visibleActions.length - 1)];
+          const laneActions = visibleActions.filter(action => action.lane === current.lane);
+          const row = laneActions.findIndex(action => action.id === current.id);
+          const next = laneActions[Math.max(0, Math.min(laneActions.length - 1, row + direction))];
+          return visibleActions.findIndex(action => action.id === next.id);
+        });
+      };
+
+      const moveBetweenLanes = (direction: -1 | 1) => {
+        setFocusedIndex(index => {
+          if (visibleActions.length === 0) return 0;
+          const current = visibleActions[Math.min(index, visibleActions.length - 1)];
+          const currentLaneIndex = LANES.findIndex(lane => lane.id === current.lane);
+          const currentLaneActions = visibleActions.filter(action => action.lane === current.lane);
+          const row = currentLaneActions.findIndex(action => action.id === current.id);
+
+          for (
+            let laneIndex = currentLaneIndex + direction;
+            laneIndex >= 0 && laneIndex < LANES.length;
+            laneIndex += direction
+          ) {
+            const laneActions = visibleActions.filter(action => action.lane === LANES[laneIndex].id);
+            if (laneActions.length === 0) continue;
+            const next = laneActions[Math.min(row, laneActions.length - 1)];
+            return visibleActions.findIndex(action => action.id === next.id);
+          }
+
+          return index;
+        });
+      };
+
+      if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setFocusedIndex(index => visibleActions.length === 0
-          ? 0
-          : Math.min(visibleActions.length - 1, index + 1));
-      } else if (event.key === 'k') {
+        moveWithinLane(1);
+      } else if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setFocusedIndex(index => Math.max(0, index - 1));
+        moveWithinLane(-1);
+      } else if (
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(min-width: 1280px)').matches
+      ) {
+        event.preventDefault();
+        moveBetweenLanes(event.key === 'ArrowLeft' ? -1 : 1);
       } else if (event.key === 'x' && visibleActions[focusedIndex]) {
         event.preventDefault();
         const id = visibleActions[focusedIndex].id;
@@ -342,17 +433,21 @@ export default function FinancialActionCenterPage() {
             Export evidence
           </Link>
           <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground-secondary">
-            <input
-              type="checkbox"
-              checked={includeCompleted}
-              onChange={event => setIncludeCompleted(event.target.checked)}
-              className="accent-primary"
-            />
-            Show completed
+            <span>View</span>
+            <select
+              aria-label="Action view"
+              value={actionView}
+              onChange={event => setActionView(event.target.value as ActionView)}
+              className="bg-transparent font-medium text-foreground outline-none"
+            >
+              <option value="pending">Pending</option>
+              <option value="all">All</option>
+              <option value="completed">Completed</option>
+            </select>
           </label>
           <button
             type="button"
-            onClick={() => void load(true)}
+            onClick={() => void load(true, true)}
             disabled={loading}
             className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground-secondary hover:border-primary/50 disabled:opacity-50"
           >
@@ -399,7 +494,7 @@ export default function FinancialActionCenterPage() {
       )}
 
       <div className="hidden text-right text-[11px] text-foreground-muted md:block">
-        Keyboard: <span className="font-mono">j/k</span> move · <span className="font-mono">x</span> select · <span className="font-mono">a</span> accept · <span className="font-mono">s</span> snooze · <span className="font-mono">d</span> dismiss
+        Keyboard: <span className="font-mono">↑/↓</span> row · <span className="font-mono">←/→</span> lane (desktop) · <span className="font-mono">x</span> select · <span className="font-mono">a</span> accept · <span className="font-mono">s</span> snooze · <span className="font-mono">d</span> dismiss
       </div>
 
       {loading && (
@@ -420,12 +515,18 @@ export default function FinancialActionCenterPage() {
         <div className="rounded-xl border border-positive/30 bg-surface px-6 py-14 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-positive/40 text-xl text-positive">✓</div>
           <h2 className="mt-4 text-lg font-semibold text-foreground">
-            {data.verifiedThrough ? 'Weekly close complete' : 'No actions pending'}
+            {actionView === 'completed'
+              ? 'No completed actions'
+              : data.verifiedThrough
+                ? 'Weekly close complete'
+                : 'No actions pending'}
           </h2>
           <p className="mt-2 text-sm text-foreground-secondary">
-            {data.verifiedThrough
-              ? `Books reviewed through ${new Date(`${data.verifiedThrough}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}.`
-              : 'No complete reconciliation coverage is available yet.'}
+            {actionView === 'completed'
+              ? 'Resolved, dismissed, and expired actions will appear here.'
+              : data.verifiedThrough
+                ? `Books reviewed through ${new Date(`${data.verifiedThrough}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}.`
+                : 'No complete reconciliation coverage is available yet.'}
           </p>
         </div>
       )}
