@@ -42,9 +42,9 @@ export default async function LandingPage() {
                         Your entire financial life, on a ledger you own.
                     </h1>
                     <p className="max-w-2xl mt-6 text-lg text-foreground-secondary leading-relaxed">
-                        GnuCash Web turns your GnuCash book into a modern platform: bank sync, lot-level
-                        investment tracking, IRS-ready tax reports, retirement planning, and small-business
-                        invoicing — running on your own server, against your own PostgreSQL.
+                        GnuCash Web turns your ledger into an evidence-backed financial operating system:
+                        daily accounting, decisions, long-range planning, family-office consolidation,
+                        investments, taxes, and business operations—running on infrastructure you control.
                     </p>
                     <div className="mt-9 flex flex-wrap gap-3">
                         <Link
@@ -54,10 +54,16 @@ export default async function LandingPage() {
                             Open your books
                         </Link>
                         <Link
-                            href="/features/accounting"
+                            href="/features/platform"
                             className="px-6 py-3 text-sm font-semibold border border-border hover:border-border-hover text-foreground rounded-md transition-colors duration-150 bg-background/60"
                         >
                             Explore the platform
+                        </Link>
+                        <Link
+                            href="/docs/getting-started"
+                            className="px-6 py-3 text-sm font-semibold text-foreground-secondary hover:text-foreground transition-colors duration-150"
+                        >
+                            Read the getting-started guide
                         </Link>
                     </div>
                 </div>
@@ -77,10 +83,47 @@ export default async function LandingPage() {
                 </div>
             </section>
 
+            {/* Operating system */}
+            <section className="border-b border-border bg-background-secondary">
+                <div className="max-w-7xl mx-auto px-6 py-20">
+                    <div className="max-w-3xl">
+                        <p className="text-[11px] uppercase tracking-wider text-primary font-semibold">The control plane</p>
+                        <h2 className="mt-3 text-3xl font-bold text-foreground tracking-tight">
+                            From “what needs attention?” to “why does this number exist?”
+                        </h2>
+                        <p className="mt-4 text-foreground-secondary leading-relaxed">
+                            Most finance software stops at dashboards. GnuCash Web connects action, planning,
+                            authorization, and evidence so the answer remains inspectable all the way back to the ledger.
+                        </p>
+                    </div>
+                    <div className="mt-10 grid gap-px overflow-hidden rounded-lg border border-border bg-border md:grid-cols-2 lg:grid-cols-4">
+                        {[
+                            ['Action Center', 'One ranked Fix / Decide / Do inbox for close work, opportunities, evidence, deadlines, and approved actions.'],
+                            ['Living Plan + Timeline', 'Adopt decisions into a versioned plan and see their cash, milestone, and conflict windows alongside real obligations.'],
+                            ['Family Office', 'Consolidate only authorized books with ownership look-through, explicit eliminations, and honest currency exclusions.'],
+                            ['Provenance + Operator', 'Explain calculations, preview balanced commands, require approval, preserve the audit trail, and undo supported actions.'],
+                        ].map(([title, description]) => (
+                            <div key={title} className="bg-surface p-6">
+                                <h3 className="font-semibold text-foreground">{title}</h3>
+                                <p className="mt-2 text-sm leading-relaxed text-foreground-muted">{description}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="mt-6 flex flex-wrap gap-4">
+                        <Link href="/features/platform" className="text-sm font-medium text-primary hover:text-primary-hover transition-colors duration-150">
+                            Explore the financial operating system
+                        </Link>
+                        <Link href="/features" className="text-sm font-medium text-foreground-secondary hover:text-foreground transition-colors duration-150">
+                            Browse every feature
+                        </Link>
+                    </div>
+                </div>
+            </section>
+
             {/* Pillars */}
             <section className="max-w-7xl mx-auto px-6 py-20">
                 <div className="max-w-2xl mb-12">
-                    <h2 className="text-3xl font-bold text-foreground tracking-tight">One book. Five disciplines.</h2>
+                    <h2 className="text-3xl font-bold text-foreground tracking-tight">One ledger. Six connected systems.</h2>
                     <p className="mt-3 text-foreground-secondary leading-relaxed">
                         Everything reads and writes the same double-entry ledger — so your net worth, your tax
                         estimate, and your invoice aging never disagree with each other.
@@ -156,17 +199,17 @@ export default async function LandingPage() {
                     <div>
                         <h3 className="text-base font-semibold text-foreground mb-2">Yours, verifiably</h3>
                         <p className="text-sm text-foreground-secondary leading-relaxed">
-                            One Docker image against your PostgreSQL. Receipts and backups go to your filesystem
-                            or S3. AI extraction uses the provider you configure — including local Ollama. No
-                            telemetry, no third-party aggregator.
+                            One Docker image against your PostgreSQL. Receipts and backups stay on your
+                            filesystem or S3. Optional connectors and AI providers are explicit; your
+                            self-hosted ledger remains the system of record.
                         </p>
                     </div>
                     <div>
                         <h3 className="text-base font-semibold text-foreground mb-2">Desktop round-trip</h3>
                         <p className="text-sm text-foreground-secondary leading-relaxed">
-                            The database is the standard GnuCash schema. Open the same book in GnuCash desktop,
-                            export nightly backups as desktop-readable XML, and walk away any time with
-                            everything intact.
+                            The core ledger remains GnuCash-compatible while web-only capabilities use
+                            separate extension tables. Export scheduled desktop-readable XML backups and
+                            retain control of the complete data set.
                         </p>
                     </div>
                     <div>
@@ -199,10 +242,10 @@ export default async function LandingPage() {
                             Sign in
                         </Link>
                         <Link
-                            href="/features/automation"
+                            href="/docs"
                             className="px-6 py-3 text-sm font-semibold border border-border hover:border-border-hover text-foreground rounded-md transition-colors duration-150"
                         >
-                            See the automation
+                            Read the documentation
                         </Link>
                     </div>
                 </div>

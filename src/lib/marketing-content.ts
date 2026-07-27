@@ -1,3 +1,5 @@
+import { FEATURES } from '@/lib/feature-registry';
+
 /**
  * Content model for the logged-out marketing pages ("/" and /features/*).
  * Pure data — rendered by src/app/(marketing)/.
@@ -25,6 +27,53 @@ export interface FeaturePage {
 }
 
 export const FEATURE_PAGES: FeaturePage[] = [
+    {
+        slug: 'platform',
+        navLabel: 'Platform',
+        title: 'A financial operating system that can explain itself',
+        tagline:
+            'One evidence-backed control plane connects the work to fix now, the decisions that shape the future, and every source number underneath.',
+        heroImage: '/marketing/hero-terminal.jpg',
+        heroAlt: 'A precise financial workspace with ledgers and planning data',
+        sections: [
+            {
+                heading: 'Know what deserves attention',
+                lead: 'The application turns a large financial system into a ranked, reviewable operating rhythm.',
+                items: [
+                    { name: 'Financial Action Center', description: 'Fix, Decide, and Do lanes combine close work, data quality, documents, deadlines, business operations, and approved actions.' },
+                    { name: 'Next Best Dollar', description: 'Deterministic opportunity packs rank taxes, contributions, debt, reserves, portfolios, subscriptions, and budget gaps.' },
+                    { name: 'Continuous Close', description: 'Reconciliation coverage, verified-through dates, stale accounts, and session telemetry make close quality visible.' },
+                    { name: 'Outcome tracking', description: 'Accepted, dismissed, completed, and deferred decisions remain durable instead of reappearing as generic alerts.' },
+                    { name: 'Weekly-review ergonomics', description: 'Keyboard triage, batch actions, mobile gestures, and drill-through keep the review short without hiding evidence.' },
+                    { name: 'Job progress', description: 'Imports, OCR, price work, backups, and connectors report progress and terminal outcomes across app and worker processes.' },
+                ],
+            },
+            {
+                heading: 'Plan with the same facts you reconcile',
+                lead: 'Long-range decisions stay connected to upcoming cash and actual results.',
+                items: [
+                    { name: 'Living Financial Plan', description: 'Adopt a scenario, preserve immutable versions, model life events and guardrails, and reconcile actuals monthly.' },
+                    { name: 'Unified Money Timeline', description: 'Expected cash, deadlines, renewals, invoices, goals, home work, vesting, and plan events share one timeline.' },
+                    { name: 'Family Office', description: 'Permission-safe ownership look-through consolidates authorized books without hiding currency exclusions or eliminations.' },
+                    { name: 'Scenario Sandbox', description: 'Compare a decision across cash flow, net worth, taxes, and long-term outcomes before adopting it.' },
+                    { name: 'Conflict detection', description: 'See when several individually reasonable commitments compete for the same liquidity window.' },
+                    { name: 'Decision journal', description: 'Retain what was decided, which assumptions mattered, and why actual results diverged from the plan.' },
+                ],
+            },
+            {
+                heading: 'Approve action without surrendering control',
+                lead: 'Automation is bounded, inspectable, and reversible where the accounting operation allows it.',
+                items: [
+                    { name: 'Explain this number', description: 'Calculation traces expose formulas, assumptions, warnings, and source evidence behind important figures.' },
+                    { name: 'Safe Operator', description: 'Natural-language intents route only to supported typed commands with a balanced preview and explicit approval.' },
+                    { name: 'Financial provenance', description: 'Stable trace IDs connect recommendations, reports, source transactions, documents, and evidence manifests.' },
+                    { name: 'Auditable undo', description: 'Supported commands record before and after state, durable idempotency, and a bounded undo path.' },
+                    { name: 'Permission boundaries', description: 'Cross-book relationships never grant access; every operation is intersected with existing per-book roles.' },
+                    { name: 'Honest uncertainty', description: 'Missing exchange rates, stale evidence, low confidence, and unsupported writes stop or qualify results explicitly.' },
+                ],
+            },
+        ],
+    },
     {
         slug: 'accounting',
         navLabel: 'Accounting',
@@ -163,6 +212,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Spending vs national averages', description: 'Your categories against BLS Consumer Expenditure figures for your household size.' },
                 ],
             },
+            {
+                heading: 'Run the household, not just the spreadsheet',
+                lead: 'Specialized plans remain connected to the same goals, timeline, actions, and evidence.',
+                items: [
+                    { name: 'Education & 529 planning', description: 'Per-student tuition inflation, contribution targets, state deductions, balances, and glide-path guidance.' },
+                    { name: 'Household resilience', description: 'Personal inflation, healthcare plan comparison, insurance gaps, and capital replacement use actual household evidence.' },
+                    { name: 'Family banking', description: 'Liability-backed child balances, allowances, chores, parent matching, goals, and a restricted child view.' },
+                    { name: 'Trips and vacations', description: 'Fund date-ranged trip envelopes, tag current spending, review suggestions, and compare plan with actual.' },
+                    { name: 'Utilities and solar', description: 'Separate usage changes from rate changes and model solar payback with actual bills.' },
+                    { name: 'Vehicles', description: 'Mileage, fuel, insurance, maintenance, depreciation, cost per mile, and repair-versus-replace share one model.' },
+                ],
+            },
         ],
     },
     {
@@ -210,6 +271,18 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Print-ready everything', description: 'Global print stylesheets turn any report into a clean PDF via your browser.' },
                 ],
             },
+            {
+                heading: 'Operate the whole entity',
+                lead: 'The business pack now reaches collections, profitability, compliance, people, and close.',
+                items: [
+                    { name: 'Payment links & client portal', description: 'Public invoices accept configured payments, show history, and let clients accept or decline estimates.' },
+                    { name: 'Job profitability', description: 'Invoice revenue, collections, labor, WIP, vendor and linked costs produce live gross margin and operational alerts.' },
+                    { name: 'Receipt-backed reimbursements', description: 'Employees submit evidence; approvers preview approval or rejection and create draft vouchers.' },
+                    { name: 'Rental portfolio', description: 'Properties, units, tenants, leases, rent roll, deposits, late fees, renewals, and statements sit above Schedule E.' },
+                    { name: 'Entity compliance', description: 'Schedule F, 1099-NEC, 990, restricted funds, memberships, documents, and filing deadlines match the entity.' },
+                    { name: 'Time, estimates, and close', description: 'Tracked labor flows through jobs and invoices while month-end work ends at a durable lock date.' },
+                ],
+            },
         ],
     },
     {
@@ -240,7 +313,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
                     { name: 'Spending watch', description: 'Duplicate charges, first-time merchants, amount outliers, and category spikes flagged on every sync.' },
                     { name: 'Subscription detection', description: 'Recurring charges found automatically, with price-increase tracking and annualized totals.' },
                     { name: 'Budget & balance alerts', description: 'Overspend thresholds, projected overruns, and low-balance warnings from the forecast.' },
-                    { name: 'Self-hosted & private', description: 'One Docker image, your PostgreSQL, your S3 or filesystem. No third party ever sees your ledger.' },
+                    { name: 'Self-hosted system of record', description: 'The application, PostgreSQL ledger, and document storage run on infrastructure you control; external connectors remain optional.' },
                     { name: 'OIDC single sign-on', description: 'Pocket ID, Keycloak, Auth0, or any OIDC provider, with per-book readonly/edit/admin roles.' },
                     { name: 'PWA everywhere', description: 'Installable on phone and desktop with offline capture and keyboard-driven power use (Ctrl+K).' },
                 ],
@@ -272,8 +345,8 @@ export const PILLARS = FEATURE_PAGES.map(p => ({
 }));
 
 export const LANDING_STATS = [
-    { value: '35+', label: 'report types' },
-    { value: '20+', label: 'planning & analysis tools' },
-    { value: '100%', label: 'GnuCash-compatible schema' },
-    { value: '0', label: 'third parties holding your data' },
+    { value: String(FEATURES.length), label: 'registered capabilities' },
+    { value: String(FEATURES.filter(feature => feature.kind === 'report').length), label: 'reports' },
+    { value: String(FEATURES.filter(feature => feature.kind === 'tool').length), label: 'planning & analysis tools' },
+    { value: '0', label: 'mandatory cloud data stores' },
 ];

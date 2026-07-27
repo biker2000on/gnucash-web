@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.22.0.0] - 2026-07-27
+
+### Added
+- Added a public, version-labeled documentation site with searchable onboarding,
+  seven core workflow guides, and a dedicated API reference at `/docs/api`.
+- Added a searchable public catalog generated from the complete feature
+  registry.
+- Added a Platform marketing page for the Action Center, Living Plan, Money
+  Timeline, Family Office, financial provenance, and Safe Operator.
+
+### Changed
+- Refreshed planning and business marketing coverage for the household,
+  resilience, mobility, cash-conversion, rental, and entity-operation packs.
+- Marketing navigation now links directly to documentation and the complete
+  feature catalog.
+- Public capability statistics now derive from the feature registry.
+- Refined self-hosting and GnuCash compatibility claims to distinguish the
+  compatible core ledger, web extension tables, and optional external
+  connectors.
+
 ## [0.21.1.0] - 2026-07-26
 
 ### Added

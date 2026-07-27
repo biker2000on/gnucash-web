@@ -13,6 +13,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/auth/') ||
     pathname.startsWith('/api/calendar/') ||
     pathname.startsWith('/api/public/') ||
+    pathname === '/api/docs' ||
     pathname === '/api/webhooks/stripe'
   ) {
     return NextResponse.next();
@@ -54,6 +55,7 @@ export const config = {
      * Match all paths except:
      * - / (landing page, public)
      * - /features/* (public marketing pages)
+     * - /docs/* (public product and API documentation)
      * - /login (auth page)
      * - /api/auth/* (auth endpoints)
      * - /_next (Next.js internals)
@@ -63,6 +65,6 @@ export const config = {
      * The regex (?!$) ensures the root path "/" (empty capture after
      * stripping the leading "/") is excluded, keeping the landing page public.
      */
-    '/((?!_next|login|features|share/|icon\\.svg|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|woff2?|ttf|css|js|json)$)(?!$).*)',
+    '/((?!_next|login|features|docs|share/|icon\\.svg|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|woff2?|ttf|css|js|json)$)(?!$).*)',
   ],
 };

@@ -25,7 +25,7 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - Cost basis tracing across account transfers
 
 **Reports & Analysis**
-- 16+ report types: balance sheet, income statement, cash flow, trial balance, general journal/ledger, and more
+- 35+ report types: balance sheet, income statement, cash flow, trial balance, general journal/ledger, and more
 - Contribution summary with IRS limit tracking, tax-year attribution, and progress bars
 - Net worth and income/expense charts
 - Mortgage payoff calculator with amortization schedule
@@ -59,6 +59,12 @@ A Progressive Web App for managing GnuCash financial data. Read and write access
 - Receipt upload with AI-powered extraction (OpenAI, Anthropic, or Ollama)
 
 ## 🚀 Getting Started
+
+The public [documentation site](http://localhost:3000/docs) starts with a
+book-to-weekly-review tutorial and task-oriented guides for reconciliation,
+document evidence, planning, Family Office, business cash flow, and investment
+tax review. The interactive OpenAPI reference is available at
+[http://localhost:3000/docs/api](http://localhost:3000/docs/api).
 
 ### Prerequisites
 
