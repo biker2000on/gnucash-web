@@ -111,6 +111,82 @@ describe('FinancialActionCenterPage mutations', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   });
 
+  it('keeps focus in the same Fix slot when the focused card is dismissed', async () => {
+    const firstFix = action('fix-first', 'Fix first', 'fix');
+    const firstDecide = action('decide-first', 'Decide first', 'decide');
+    const secondFix = action('fix-second', 'Fix second', 'fix');
+    let getCount = 0;
+
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse({ ok: true, updated: 1 });
+      getCount += 1;
+      return jsonResponse(list(getCount === 1
+        ? [firstFix, firstDecide, secondFix]
+        : [firstDecide, secondFix]));
+    }));
+
+    render(<FinancialActionCenterPage />);
+    const firstFixCard = (await screen.findByText('Fix first')).closest('article')!;
+    const secondFixCard = screen.getByText('Fix second').closest('article')!;
+    const decideCard = screen.getByText('Decide first').closest('article')!;
+    await waitFor(() => expect(firstFixCard).toHaveFocus());
+
+    fireEvent.click(within(firstFixCard).getByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => expect(screen.queryByText('Fix first')).not.toBeInTheDocument());
+    expect(secondFixCard).toHaveClass('ring-1');
+    expect(secondFixCard).toHaveFocus();
+    expect(decideCard).not.toHaveClass('ring-1');
+  });
+
+  it('keeps focus in the same Decide slot when the focused card is accepted into Do', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      media: '(min-width: 1280px)',
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    const firstFix = action('fix-first', 'Fix first', 'fix');
+    const firstDecide = action('decide-first', 'Decide first', 'decide');
+    const secondDecide = action('decide-second', 'Decide second', 'decide');
+    const accepted = {
+      ...firstDecide,
+      lane: 'do' as const,
+      state: 'accepted' as const,
+    };
+    let finishBackgroundRefresh: (() => void) | null = null;
+    let getCount = 0;
+
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse({ ok: true, updated: 1 });
+      getCount += 1;
+      if (getCount === 1) return jsonResponse(list([firstFix, firstDecide, secondDecide]));
+      return new Promise<Response>((resolve) => {
+        finishBackgroundRefresh = () => resolve(jsonResponse(list([firstFix, accepted, secondDecide])));
+      });
+    }));
+
+    render(<FinancialActionCenterPage />);
+    const firstDecideCard = (await screen.findByText('Decide first')).closest('article')!;
+    const secondDecideCard = screen.getByText('Decide second').closest('article')!;
+    fireEvent.keyDown(window, { key: 'ArrowRight' });
+    await waitFor(() => expect(firstDecideCard).toHaveFocus());
+
+    fireEvent.click(within(firstDecideCard).getByRole('button', { name: 'Accept' }));
+
+    await waitFor(() => expect(secondDecideCard).toHaveClass('ring-1'));
+    expect(secondDecideCard).toHaveFocus();
+    expect(screen.getByText('Decide first').closest('article')).not.toHaveClass('ring-1');
+
+    (finishBackgroundRefresh as (() => void) | null)?.();
+    await waitFor(() => expect(screen.getByText('Decide first').closest('article')).toHaveClass('border-border'));
+    expect(secondDecideCard).toHaveClass('ring-1');
+  });
+
   it('moves card focus with arrow keys instead of j/k', async () => {
     const first = action('first', 'First action');
     const second = action('second', 'Second action');

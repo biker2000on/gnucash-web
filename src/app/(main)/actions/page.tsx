@@ -78,6 +78,60 @@ function firstVisualActionIndex(actions: FinancialAction[]): number {
   return 0;
 }
 
+function focusIndexAfterActionChange(
+  previousActions: FinancialAction[],
+  nextActions: FinancialAction[],
+  currentIndex: number,
+  departingIds: ReadonlySet<string> = new Set(),
+): number {
+  if (nextActions.length === 0) return 0;
+
+  const currentAction = previousActions[Math.min(currentIndex, previousActions.length - 1)];
+  if (!currentAction) return firstVisualActionIndex(nextActions);
+
+  if (!departingIds.has(currentAction.id)) {
+    const retainedIndex = nextActions.findIndex(action => action.id === currentAction.id);
+    if (retainedIndex >= 0) return retainedIndex;
+  }
+
+  const currentLaneActions = previousActions.filter(action => action.lane === currentAction.lane);
+  const currentRow = Math.max(
+    0,
+    currentLaneActions.findIndex(action => action.id === currentAction.id),
+  );
+  const nextLaneActions = nextActions.filter(action => action.lane === currentAction.lane);
+  const nextAction = nextLaneActions[Math.min(currentRow, nextLaneActions.length - 1)];
+  if (nextAction) {
+    return nextActions.findIndex(action => action.id === nextAction.id);
+  }
+
+  return firstVisualActionIndex(nextActions);
+}
+
+function actionsAfterStateUpdate(
+  actions: FinancialAction[],
+  ids: ReadonlySet<string>,
+  state: FinancialActionState,
+  actionView: ActionView,
+): FinancialAction[] {
+  const stateIsCompleted = COMPLETED_STATES.has(state);
+
+  return actions.flatMap(action => {
+    if (!ids.has(action.id)) return [action];
+    if (
+      (actionView === 'pending' && stateIsCompleted)
+      || (actionView === 'completed' && !stateIsCompleted)
+    ) {
+      return [];
+    }
+    return [{
+      ...action,
+      state,
+      lane: state === 'accepted' ? 'do' : action.lane,
+    }];
+  });
+}
+
 function ActionCard({
   action,
   selected,
@@ -251,6 +305,43 @@ export default function FinancialActionCenterPage() {
   const hasInitializedCardFocus = useRef(false);
   const pendingCardFocusIndex = useRef<number | null>(null);
   const shouldRevealFocusedCard = useRef(false);
+  const displayedActions = useRef<FinancialAction[]>([]);
+  const focusedIndexRef = useRef(0);
+  const dataRef = useRef<FinancialActionList | null>(null);
+
+  const applyActionData = useCallback((
+    nextData: FinancialActionList,
+    departingIds: ReadonlySet<string> = new Set(),
+  ) => {
+    const previousActions = displayedActions.current;
+    const previousFocusedIndex = focusedIndexRef.current;
+    let nextFocusedIndex: number;
+
+    if (!hasInitializedCardFocus.current && nextData.actions.length > 0) {
+      nextFocusedIndex = firstVisualActionIndex(nextData.actions);
+      hasInitializedCardFocus.current = true;
+      pendingCardFocusIndex.current = nextFocusedIndex;
+    } else {
+      nextFocusedIndex = focusIndexAfterActionChange(
+        previousActions,
+        nextData.actions,
+        previousFocusedIndex,
+        departingIds,
+      );
+      const previouslyFocusedAction = previousActions[
+        Math.min(previousFocusedIndex, previousActions.length - 1)
+      ];
+      if (previouslyFocusedAction && departingIds.has(previouslyFocusedAction.id)) {
+        pendingCardFocusIndex.current = nextFocusedIndex;
+      }
+    }
+
+    displayedActions.current = nextData.actions;
+    focusedIndexRef.current = nextFocusedIndex;
+    dataRef.current = nextData;
+    setData(nextData);
+    setFocusedIndex(nextFocusedIndex);
+  }, []);
 
   const load = useCallback(async (refresh = false, background = false) => {
     if (!background) {
@@ -272,20 +363,10 @@ export default function FinancialActionCenterPage() {
           }
         : loadedData;
       const visibleIds = new Set(nextData.actions.map(action => action.id));
-      setData(nextData);
+      applyActionData(nextData);
       setSelected(current =>
         new Set([...current].filter(id => visibleIds.has(id))),
       );
-      if (!hasInitializedCardFocus.current && nextData.actions.length > 0) {
-        const initialIndex = firstVisualActionIndex(nextData.actions);
-        hasInitializedCardFocus.current = true;
-        pendingCardFocusIndex.current = initialIndex;
-        setFocusedIndex(initialIndex);
-      } else {
-        setFocusedIndex(current => nextData.actions.length === 0
-          ? 0
-          : Math.min(current, nextData.actions.length - 1));
-      }
     } catch (loadError) {
       if (!background) {
         setError(loadError instanceof Error ? loadError.message : 'Failed to load actions.');
@@ -293,7 +374,7 @@ export default function FinancialActionCenterPage() {
     } finally {
       if (!background) setLoading(false);
     }
-  }, [actionView, familyScope]);
+  }, [actionView, applyActionData, familyScope]);
 
   useEffect(() => {
     void load();
@@ -333,15 +414,26 @@ export default function FinancialActionCenterPage() {
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || 'The action update failed.');
-      const stateIsCompleted = COMPLETED_STATES.has(state);
-      if (
-        (actionView === 'pending' && stateIsCompleted)
-        || (actionView === 'completed' && !stateIsCompleted)
-      ) {
-        const removed = new Set(ids);
-        setData(current => current
-          ? { ...current, actions: current.actions.filter(action => !removed.has(action.id)) }
-          : current);
+      const currentData = dataRef.current;
+      if (currentData) {
+        const updatedIds = new Set(ids);
+        const nextActions = actionsAfterStateUpdate(
+          currentData.actions,
+          updatedIds,
+          state,
+          actionView,
+        );
+        const nextActionsById = new Map(nextActions.map(action => [action.id, action]));
+        const departingIds = new Set(
+          currentData.actions
+            .filter(action => updatedIds.has(action.id))
+            .filter(action => {
+              const nextAction = nextActionsById.get(action.id);
+              return !nextAction || nextAction.lane !== action.lane;
+            })
+            .map(action => action.id),
+        );
+        applyActionData({ ...currentData, actions: nextActions }, departingIds);
       }
       setSelected(new Set());
       toast.success(`${ids.length} action${ids.length === 1 ? '' : 's'} updated.`);
@@ -351,7 +443,7 @@ export default function FinancialActionCenterPage() {
     } finally {
       setMutating(false);
     }
-  }, [actionView, familyScope, load, mutating, toast]);
+  }, [actionView, applyActionData, familyScope, load, mutating, toast]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -367,6 +459,7 @@ export default function FinancialActionCenterPage() {
           const next = laneActions[Math.max(0, Math.min(laneActions.length - 1, row + direction))];
           const nextIndex = visibleActions.findIndex(action => action.id === next.id);
           if (nextIndex !== index) shouldRevealFocusedCard.current = true;
+          focusedIndexRef.current = nextIndex;
           return nextIndex;
         });
       };
@@ -389,6 +482,7 @@ export default function FinancialActionCenterPage() {
             const next = laneActions[Math.min(row, laneActions.length - 1)];
             const nextIndex = visibleActions.findIndex(action => action.id === next.id);
             if (nextIndex !== index) shouldRevealFocusedCard.current = true;
+            focusedIndexRef.current = nextIndex;
             return nextIndex;
           }
 
