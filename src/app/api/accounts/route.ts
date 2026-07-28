@@ -5,11 +5,23 @@ import { Account, AccountWithChildren } from '@/lib/types';
 import { Prisma } from '@prisma/client';
 import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
 import { getBookAccountGuids, getActiveBookRootGuid, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
-import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { cacheGet, cacheSet, cacheInvalidateAllForBook } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { buildBookRelativeAccountPaths } from '@/lib/account-path';
+
+/**
+ * Normalize a date query param for the cache key. Returns the fallback when
+ * absent, an ISO date when parseable, or null when unparseable (in which case
+ * the response is simply not cached).
+ */
+function dateKeyPart(param: string | null, fallback: string): string | null {
+    if (!param) return fallback;
+    const parsed = new Date(param);
+    if (isNaN(parsed.getTime())) return null;
+    return parsed.toISOString().slice(0, 10);
+}
 
 /**
  * @openapi
@@ -54,6 +66,29 @@ export async function GET(request: NextRequest) {
         const endDate = searchParams.get('endDate');
         const flat = searchParams.get('flat') === 'true';
         const noBalances = searchParams.get('noBalances') === 'true';
+
+        // Redis cache for the hierarchy + balances payload. The full-book
+        // split aggregate below is expensive and runs on every hierarchy page
+        // load; the response is user-independent (owner prefs are per-account,
+        // not per-user, and there is no balance-reversal dependence), so the
+        // key is book + params only. The trailing normalized date-range makes
+        // cacheSet index the key, so cacheInvalidateAllForBook (driven by
+        // 'transactions'/'accounts'/'book' data-change events via the
+        // data-events subscriber) can evict it; the open-ended range means any
+        // dated invalidation also hits it. Flat mode is cheap and uncached.
+        let cacheKey: string | null = null;
+        if (!flat) {
+            const startKey = dateKeyPart(startDate, '0001-01-01');
+            const endKey = dateKeyPart(endDate, '9999-12-31');
+            if (startKey && endKey) {
+                const rawParams = `${encodeURIComponent(startDate ?? '')}_${encodeURIComponent(endDate ?? '')}`;
+                cacheKey = `cache:${roleResult.bookGuid}:accounts-hierarchy:v1:${noBalances ? 'nobal' : 'bal'}:${rawParams}:${startKey}-${endKey}`;
+                const cached = await cacheGet(cacheKey);
+                if (cached) {
+                    return NextResponse.json(cached);
+                }
+            }
+        }
 
         // Get book account GUIDs for scoping
         const bookAccountGuids = await getBookAccountGuids();
@@ -247,17 +282,21 @@ export async function GET(request: NextRequest) {
         // and hide "Template Root" accounts.
         const rootNode = roots.find(r => r.name === 'Root Account' || r.account_type === 'ROOT' && !r.name.toLowerCase().includes('template'));
 
-        if (rootNode) {
-            return NextResponse.json(rootNode.children);
+        // Fallback: if no clear root is found, return roots that aren't system roots
+        const responsePayload = rootNode
+            ? rootNode.children
+            : roots.filter(r =>
+                r.account_type !== 'ROOT' &&
+                !r.name.toLowerCase().includes('template root')
+            );
+
+        // 24h TTL — freshness is handled by event-driven invalidation
+        // (data-change events -> cacheInvalidateAllForBook), not expiry.
+        if (cacheKey) {
+            await cacheSet(cacheKey, responsePayload, 86400);
         }
 
-        // Fallback: if no clear root is found, return roots that aren't system roots
-        const filteredRoots = roots.filter(r =>
-            r.account_type !== 'ROOT' &&
-            !r.name.toLowerCase().includes('template root')
-        );
-
-        return NextResponse.json(filteredRoots);
+        return NextResponse.json(responsePayload);
     } catch (error) {
         console.error('Error fetching accounts:', error);
         return NextResponse.json({ error: 'Failed to fetch accounts' }, { status: 500 });

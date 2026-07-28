@@ -352,6 +352,15 @@ async function main() {
   console.log('Starting GnuCash Web worker...');
   console.log(`Connecting to Redis at ${url.hostname}:${url.port || 6379}`);
 
+  // Cross-process cache coherence: react to data-change events published by
+  // any process (drops book-scope TTL cache + Redis dashboard caches).
+  try {
+    const { startDataEventsSubscriber } = await import('./src/lib/data-events-subscriber');
+    startDataEventsSubscriber();
+  } catch (err) {
+    console.warn('Data-events subscriber failed to start:', err);
+  }
+
   // Recover schedules from DB before processing jobs
   await recoverSchedules();
   await recoverSimpleFinSchedules();

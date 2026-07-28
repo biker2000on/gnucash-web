@@ -5,27 +5,95 @@
  * database queries to a specific book's account hierarchy.
  */
 
-import { cache } from 'react';
 import { getSession } from './auth';
 import prisma from './prisma';
+
+/**
+ * Module-global short-TTL cache for book scoping.
+ *
+ * History: this used to be wrapped in React's `cache()`, on the assumption it
+ * deduped per request. It does NOT — in route handlers the react-server build
+ * of `cache()` is a passthrough (no cache dispatcher is ever installed), so
+ * the recursive CTE ran on every single call, ~124 call sites, several twice
+ * per request.
+ *
+ * Design now:
+ * - A module-global Map keyed by root account guid with a ~3s TTL. That is
+ *   long enough to absorb the burst-of-calls-per-request pattern (and the
+ *   fan-out bursts when many requests land together), and short enough that
+ *   even with zero invalidation a process is at most 3s stale.
+ * - Cross-process correctness comes from the Redis data-change bus: the
+ *   server-side subscriber (src/lib/data-events-subscriber.ts) calls
+ *   invalidateBookAccountGuidsCache() on every 'accounts'/'book' event, so
+ *   web + worker both drop their entries immediately after a mutation.
+ * - In-process mutators (account routes, importers) still call
+ *   invalidateBookAccountGuidsCache() directly for same-request re-reads.
+ *
+ * Entries store the in-flight promise so concurrent callers share a single
+ * query; failed queries are evicted so errors are never cached.
+ */
+const BOOK_SCOPE_TTL_MS = 3_000;
+
+interface GuidCacheEntry {
+    promise: Promise<string[]>;
+    /** Set once the promise resolves — lets sync-ish consumers avoid a query. */
+    resolved: string[] | null;
+    at: number;
+}
+
+/** Account-guid lists keyed by root account guid. */
+const guidCacheByRoot = new Map<string, GuidCacheEntry>();
+
+/**
+ * book guid -> root_account_guid, same TTL. Safe to key by book guid alone:
+ * the mapping is user-independent (session reads themselves are NEVER cached
+ * — only the books.findUnique lookup that follows them is). Worst case a
+ * just-deleted book is served for up to the TTL; 'book' events and the TTL
+ * both bound that window.
+ */
+const bookRootByBookGuid = new Map<string, { rootGuid: string; at: number }>();
+
+function isFresh(at: number): boolean {
+    return Date.now() - at < BOOK_SCOPE_TTL_MS;
+}
+
+/**
+ * Resolve a book's root_account_guid with short-TTL memoization.
+ * Returns null when the book does not exist.
+ */
+async function resolveBookRootGuid(bookGuid: string): Promise<string | null> {
+    const cached = bookRootByBookGuid.get(bookGuid);
+    if (cached && isFresh(cached.at)) return cached.rootGuid;
+
+    const book = await prisma.books.findUnique({
+        where: { guid: bookGuid },
+        select: { root_account_guid: true },
+    });
+    if (!book) {
+        bookRootByBookGuid.delete(bookGuid);
+        return null;
+    }
+    bookRootByBookGuid.set(bookGuid, { rootGuid: book.root_account_guid, at: Date.now() });
+    return book.root_account_guid;
+}
 
 /**
  * Returns the active book's root_account_guid from the session.
  * Falls back to the first book if no active book is set.
  * Throws if no books exist at all.
+ *
+ * The session read is per-request (never cached); only the book-guid ->
+ * root-guid DB lookup is memoized (short TTL, keyed by book guid).
  */
 export async function getActiveBookRootGuid(): Promise<string> {
     const session = await getSession();
 
     if (session.activeBookGuid) {
-        const book = await prisma.books.findUnique({
-            where: { guid: session.activeBookGuid },
-            select: { root_account_guid: true },
-        });
-        if (book) return book.root_account_guid;
+        const rootGuid = await resolveBookRootGuid(session.activeBookGuid);
+        if (rootGuid) return rootGuid;
     }
 
-    // Fallback to first book
+    // Fallback to first book (uncached — it mutates the session)
     const firstBook = await prisma.books.findFirst({
         select: { guid: true, root_account_guid: true },
     });
@@ -35,21 +103,22 @@ export async function getActiveBookRootGuid(): Promise<string> {
     // Auto-set session
     session.activeBookGuid = firstBook.guid;
     await session.save();
+    bookRootByBookGuid.set(firstBook.guid, { rootGuid: firstBook.root_account_guid, at: Date.now() });
     return firstBook.root_account_guid;
 }
 
 /**
- * Get the active book's GUID from session
+ * Get the active book's GUID from session.
+ *
+ * The existence check for the session's book shares the memoized book-root
+ * lookup above (a book with a fresh cached root exists by definition).
  */
 export async function getActiveBookGuid(): Promise<string> {
     const session = await getSession();
 
     if (session.activeBookGuid) {
-        const exists = await prisma.books.findUnique({
-            where: { guid: session.activeBookGuid },
-            select: { guid: true },
-        });
-        if (exists) return session.activeBookGuid;
+        const rootGuid = await resolveBookRootGuid(session.activeBookGuid);
+        if (rootGuid) return session.activeBookGuid;
     }
 
     const firstBook = await prisma.books.findFirst({
@@ -64,86 +133,104 @@ export async function getActiveBookGuid(): Promise<string> {
 }
 
 /**
- * Per-request cache for book account GUIDs.
- *
- * Uses React's request-scoped `cache()` so repeated calls within one request
- * hit the recursive CTE only once, while every new request sees a fresh tree.
- * A module-global cache here breaks under the shipped multi-process topology
- * (web + worker): cross-process invalidation is impossible, so newly created
- * accounts silently vanished from balances/reports on the other process.
- * Outside a request scope (workers, scripts) `cache()` degrades to an
- * uncached call — correct, just slower.
- *
- * The generation counter keeps invalidateBookAccountGuidsCache() meaningful
- * WITHIN a request: bumping it changes the memoization key, so import flows
- * that create accounts mid-request and re-read the tree get fresh data.
+ * Fetch (or reuse) the guid list for a root. Concurrent callers within the
+ * TTL window share one in-flight query; rejected queries are evicted.
  */
-let _generation = 0;
+function queryAccountGuidsForRoot(rootGuid: string): Promise<string[]> {
+    const cached = guidCacheByRoot.get(rootGuid);
+    if (cached && isFresh(cached.at)) return cached.promise;
 
-const queryAccountGuidsForRoot = cache(async (rootGuid: string, _gen: number): Promise<string[]> => {
-    const accounts = await prisma.$queryRaw<{ guid: string }[]>`
-        WITH RECURSIVE account_tree AS (
-            SELECT guid FROM accounts WHERE guid = ${rootGuid}
-            UNION ALL
-            SELECT a.guid FROM accounts a
-            JOIN account_tree t ON a.parent_guid = t.guid
-        )
-        SELECT guid FROM account_tree
-    `;
-    return accounts.map(a => a.guid);
-});
+    const entry: GuidCacheEntry = {
+        at: Date.now(),
+        resolved: null,
+        promise: prisma.$queryRaw<{ guid: string }[]>`
+            WITH RECURSIVE account_tree AS (
+                SELECT guid FROM accounts WHERE guid = ${rootGuid}
+                UNION ALL
+                SELECT a.guid FROM accounts a
+                JOIN account_tree t ON a.parent_guid = t.guid
+            )
+            SELECT guid FROM account_tree
+        `.then(rows => {
+            const guids = rows.map(r => r.guid);
+            entry.resolved = guids;
+            return guids;
+        }),
+    };
+    // Never cache a failure — evict so the next caller retries.
+    entry.promise.catch(() => {
+        if (guidCacheByRoot.get(rootGuid) === entry) guidCacheByRoot.delete(rootGuid);
+    });
+    guidCacheByRoot.set(rootGuid, entry);
+    return entry.promise;
+}
 
 /**
  * Returns all account GUIDs under the active book's root.
- * Uses a recursive CTE for efficiency; memoized per request.
+ * Uses a recursive CTE; memoized module-globally with a short TTL
+ * (see the cache notes at the top of this file).
  */
 export async function getBookAccountGuids(): Promise<string[]> {
     const rootGuid = await getActiveBookRootGuid();
-    return queryAccountGuidsForRoot(rootGuid, _generation);
+    return queryAccountGuidsForRoot(rootGuid);
 }
 
 /**
  * Returns all account GUIDs under a specific book (by book guid, not the
  * session's active book). Used for cross-book features like linked-business
- * tax aggregation. Uncached — call sparingly.
+ * tax aggregation, and by book-explicit callers (dashboard routes).
+ * Shares the same short-TTL cache as getBookAccountGuids.
  */
 export async function getAccountGuidsForBook(bookGuid: string): Promise<string[]> {
-    const book = await prisma.books.findUnique({
-        where: { guid: bookGuid },
-        select: { root_account_guid: true },
-    });
-    if (!book) return [];
-
-    const accounts = await prisma.$queryRaw<{ guid: string }[]>`
-        WITH RECURSIVE account_tree AS (
-            SELECT guid FROM accounts WHERE guid = ${book.root_account_guid}
-            UNION ALL
-            SELECT a.guid FROM accounts a
-            JOIN account_tree t ON a.parent_guid = t.guid
-        )
-        SELECT guid FROM account_tree
-    `;
-    return accounts.map(a => a.guid);
+    const rootGuid = await resolveBookRootGuid(bookGuid);
+    if (!rootGuid) return [];
+    return queryAccountGuidsForRoot(rootGuid);
 }
 
 /**
- * Invalidate the book account GUIDs cache.
+ * Invalidate the book-scope caches (account-guid lists + book-root lookups).
  *
- * Best-effort since the cache became per-request (React `cache()`): every
- * new request already sees the fresh tree (cross-process invalidation was
- * never possible anyway). Bumping the generation only matters for callers
- * that create accounts mid-request and re-read the tree in the SAME request
- * (import flows) — it rotates the memoization key so the next read refetches.
+ * Called in-process by account mutation routes/importers, and by the
+ * data-events subscriber whenever any process publishes an 'accounts' or
+ * 'book' data-change event — that is what keeps the module-global cache
+ * correct across the web + worker topology. Clears everything rather than
+ * per-book entries: the maps are tiny and repopulate with one query each.
  */
 export function invalidateBookAccountGuidsCache(): void {
-    _generation++;
+    guidCacheByRoot.clear();
+    bookRootByBookGuid.clear();
 }
 
 /**
  * Check if a specific account belongs to the active book.
- * Returns true if the account is in the book's account tree.
+ *
+ * Fast path: if the active book's guid list is already resolved and fresh in
+ * the TTL cache, membership is a lookup. Otherwise runs a single bounded
+ * upward-walk EXISTS query (same pattern as resolveBookLockGuidForAccount in
+ * book-lock.ts) instead of materializing the whole subtree.
  */
 export async function isAccountInActiveBook(accountGuid: string): Promise<boolean> {
-    const accountGuids = await getBookAccountGuids();
-    return accountGuids.includes(accountGuid);
+    const rootGuid = await getActiveBookRootGuid();
+
+    const cached = guidCacheByRoot.get(rootGuid);
+    if (cached && cached.resolved && isFresh(cached.at)) {
+        return cached.resolved.includes(accountGuid);
+    }
+
+    if (accountGuid === rootGuid) return true;
+
+    // Depth-bounded upward walk (terminates even on an already-cyclic tree).
+    const rows = await prisma.$queryRaw<Array<{ in_book: boolean }>>`
+        WITH RECURSIVE up AS (
+            SELECT guid, parent_guid, 1 AS depth
+            FROM accounts WHERE guid = ${accountGuid}
+            UNION ALL
+            SELECT a.guid, a.parent_guid, up.depth + 1
+            FROM accounts a
+            JOIN up ON a.guid = up.parent_guid
+            WHERE up.depth < 200
+        )
+        SELECT EXISTS(SELECT 1 FROM up WHERE guid = ${rootGuid}) AS in_book
+    `;
+    return rows[0]?.in_book === true;
 }
