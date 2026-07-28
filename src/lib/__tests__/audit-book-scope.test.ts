@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { audit, getActiveBookGuidMock, getCurrentUserMock } = vi.hoisted(() => ({
+const { audit, queryRawMock, getActiveBookGuidMock, getCurrentUserMock } = vi.hoisted(() => ({
     audit: {
         create: vi.fn(),
         findUnique: vi.fn(),
         findMany: vi.fn(),
         count: vi.fn(),
     },
+    // undone_at is read/claimed via raw SQL (column added by db-init DDL,
+    // outside the Prisma model) — default to "nothing undone".
+    queryRawMock: vi.fn(async () => []),
     getActiveBookGuidMock: vi.fn(),
     getCurrentUserMock: vi.fn(),
 }));
@@ -14,6 +17,7 @@ const { audit, getActiveBookGuidMock, getCurrentUserMock } = vi.hoisted(() => ({
 vi.mock('@/lib/prisma', () => ({
     default: {
         gnucash_web_audit: audit,
+        $queryRaw: queryRawMock,
     },
 }));
 vi.mock('@/lib/auth', () => ({
