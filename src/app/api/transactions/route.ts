@@ -188,9 +188,13 @@ export async function GET(request: Request) {
             include: {
                 splits: {
                     include: {
+                        // Narrow to the only relation fields the response uses
+                        // (account_name, commodity_mnemonic) instead of every
+                        // column of accounts + commodities per split.
                         account: {
-                            include: {
-                                commodity: true,
+                            select: {
+                                name: true,
+                                commodity: { select: { mnemonic: true } },
                             },
                         },
                     },

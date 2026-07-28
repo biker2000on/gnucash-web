@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
-import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod } from '@/lib/cost-basis';
+import { traceCostBasis, isTransferIn, createCostBasisCache, preloadLotSplits, type CostBasisMethod } from '@/lib/cost-basis';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
 
@@ -145,28 +145,76 @@ export async function GET(
             const accountCommodityGuid = account?.commodity_guid || '';
 
             if (costBasisCarryOver && accountCommodityGuid) {
-                // Enhanced path: use Prisma queries with account info for transfer detection
+                // Enhanced path: flat batched queries (account splits, sibling
+                // splits by tx, sibling accounts) instead of a 3-level nested
+                // include that dragged every column of every related row.
                 const dateWhere: Prisma.transactionsWhereInput = {};
                 if (startDate) dateWhere.post_date = { ...dateWhere.post_date as object, gte: new Date(startDate) };
                 if (endDate) dateWhere.post_date = { ...dateWhere.post_date as object, lte: new Date(endDate) };
 
-                const allSplitsForAccount = await prisma.splits.findMany({
+                const baseSplits = await prisma.splits.findMany({
                     where: {
                         account_guid: accountGuid,
                         transaction: Object.keys(dateWhere).length > 0 ? dateWhere : undefined,
                     },
-                    include: {
-                        transaction: {
-                            include: {
-                                splits: {
-                                    include: {
-                                        account: { select: { guid: true, commodity_guid: true } },
-                                    },
-                                },
-                            },
-                        },
+                    select: {
+                        guid: true,
+                        tx_guid: true,
+                        account_guid: true,
+                        lot_guid: true,
+                        quantity_num: true,
+                        quantity_denom: true,
+                        value_num: true,
+                        value_denom: true,
+                        transaction: { select: { post_date: true, enter_date: true } },
                     },
                 });
+
+                // One batch: all sibling splits of the involved transactions
+                const investmentTxGuids = [...new Set(baseSplits.map(s => s.tx_guid))];
+                const siblingSplits = investmentTxGuids.length > 0
+                    ? await prisma.splits.findMany({
+                        where: { tx_guid: { in: investmentTxGuids } },
+                        select: {
+                            guid: true,
+                            tx_guid: true,
+                            account_guid: true,
+                            quantity_num: true,
+                            quantity_denom: true,
+                            value_num: true,
+                            value_denom: true,
+                        },
+                    })
+                    : [];
+                // One batch: accounts of those sibling splits (guid +
+                // commodity_guid — same fields the old include selected)
+                const siblingAccountGuids = [...new Set(siblingSplits.map(s => s.account_guid))];
+                const siblingAccounts = siblingAccountGuids.length > 0
+                    ? await prisma.accounts.findMany({
+                        where: { guid: { in: siblingAccountGuids } },
+                        select: { guid: true, commodity_guid: true },
+                    })
+                    : [];
+                const siblingAccountByGuid = new Map(siblingAccounts.map(a => [a.guid, a]));
+
+                type SiblingSplit = (typeof siblingSplits)[number] & {
+                    account: { guid: string; commodity_guid: string | null } | null;
+                };
+                const siblingsByTx = new Map<string, SiblingSplit[]>();
+                for (const s of siblingSplits) {
+                    const arr = siblingsByTx.get(s.tx_guid) ?? [];
+                    arr.push({ ...s, account: siblingAccountByGuid.get(s.account_guid) ?? null });
+                    siblingsByTx.set(s.tx_guid, arr);
+                }
+
+                const allSplitsForAccount = baseSplits.map(s => ({
+                    ...s,
+                    transaction: {
+                        post_date: s.transaction?.post_date ?? null,
+                        enter_date: s.transaction?.enter_date ?? null,
+                        splits: siblingsByTx.get(s.tx_guid) ?? [],
+                    },
+                }));
 
                 // Sort in JS for reliability
                 allSplitsForAccount.sort((a, b) => {
@@ -182,6 +230,16 @@ export async function GET(
                 let runCostBasis = 0;
                 investmentRunningTotals = new Map();
                 const costBasisCache = createCostBasisCache();
+
+                // Preload lot splits for every transfer-in that carries a lot,
+                // in ONE query, so traceCostBasis skips its per-lot lookup
+                const transferLotGuids = allSplitsForAccount
+                    .filter(split =>
+                        Number(split.quantity_num) / Number(split.quantity_denom) > 0 &&
+                        split.lot_guid &&
+                        isTransferIn(split, split.transaction?.splits || [], accountCommodityGuid))
+                    .map(split => split.lot_guid!);
+                await preloadLotSplits(transferLotGuids, costBasisCache);
 
                 for (const split of allSplitsForAccount) {
                     const shares = Number(split.quantity_num) / Number(split.quantity_denom);
@@ -298,9 +356,13 @@ export async function GET(
             include: {
                 splits: {
                     include: {
+                        // Narrow to the only relation fields the response uses
+                        // (account_name, commodity_mnemonic) instead of every
+                        // column of accounts + commodities per split.
                         account: {
-                            include: {
-                                commodity: true,
+                            select: {
+                                name: true,
+                                commodity: { select: { mnemonic: true } },
                             },
                         },
                     },
@@ -343,8 +405,13 @@ export async function GET(
         // 3d. Fetch direct tags for these transactions
         const tagMap = await getTagsForTransactions(txGuids);
 
-        // 4. Build account path map
-        const accountPathMap = await buildAccountPathMap();
+        // 4. Build account path map for only the accounts referenced by this
+        // page's splits (buildAccountPathMap resolves missing ancestors, so
+        // full paths are preserved without loading every account in the DB)
+        const referencedAccountGuids = [...new Set(
+            transactions.flatMap(tx => tx.splits.map(s => s.account_guid)),
+        )];
+        const accountPathMap = await buildAccountPathMap(referencedAccountGuids);
 
         // 5. Build the response with running balance
         let currentRunningBalance = startingBalance;
