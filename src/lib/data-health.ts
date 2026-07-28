@@ -143,6 +143,24 @@ export function cutoffDate(days: number, asOf: Date = new Date()): Date {
     return d;
 }
 
+export type SecurityPositionState = 'owned' | 'closed' | 'negative';
+
+/**
+ * Classify a security balance for valuation checks.
+ *
+ * A negative position is not an owned holding. It usually represents a short
+ * position or an oversold/incorrect transaction and must never create a stale
+ * price warning intended for assets the book currently owns.
+ */
+export function classifySecurityPosition(
+    shares: number,
+    tolerance = 0.0001,
+): SecurityPositionState {
+    if (shares > tolerance) return 'owned';
+    if (shares < -tolerance) return 'negative';
+    return 'closed';
+}
+
 export interface RawSplitForBalance {
     txGuid: string;
     /** Currency/commodity the split's `value` is denominated in. */
@@ -450,7 +468,7 @@ async function loadPriceChecks(
 
     for (const c of commodities) {
         const latest = priceDates.get(c.commodity_guid);
-        const isHeld = Math.abs(c.shares) > 0.0001;
+        const isHeld = classifySecurityPosition(c.shares) === 'owned';
         const label = c.mnemonic + (c.fullname ? ` — ${c.fullname}` : '');
 
         if (!latest) {

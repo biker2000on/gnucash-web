@@ -128,6 +128,7 @@ export async function getReconcileWorkspace(
     const cutoff = statementDateCutoff(statementDate);
     const candidateRows = await prisma.$queryRaw<Array<{
         guid: string;
+        tx_guid: string;
         memo: string | null;
         reconcile_state: string;
         quantity_num: bigint;
@@ -136,7 +137,7 @@ export async function getReconcileWorkspace(
         num: string | null;
         description: string | null;
     }>>`
-        SELECT s.guid, s.memo, s.reconcile_state, s.quantity_num, s.quantity_denom,
+        SELECT s.guid, s.tx_guid, s.memo, s.reconcile_state, s.quantity_num, s.quantity_denom,
                t.post_date, t.num, t.description
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
@@ -174,6 +175,7 @@ export async function getReconcileWorkspace(
         reconciledBalance: reconciledCents / 100,
         candidates: candidateRows.map((r) => ({
             guid: r.guid,
+            transactionGuid: r.tx_guid,
             date: r.post_date ? r.post_date.toISOString() : '',
             num: r.num ?? '',
             description: r.description ?? '',

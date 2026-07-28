@@ -9,6 +9,7 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
+import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { InlineEditRow } from './InlineEditRow';
 import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
@@ -65,6 +66,8 @@ export interface AccountTransaction extends Transaction {
     account_split_guid: string;
     account_split_reconcile_state: string;
     account_splits?: ReconciliationRowSplit[];
+    share_balance?: string;
+    cost_basis?: string;
     reviewed?: boolean;
     source?: string;
     match_type?: string | null;
@@ -132,6 +135,31 @@ export default function AccountLedger({
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
     const sharePrecision = commodityScu ? Math.max(0, Math.round(Math.log10(commodityScu))) : 4;
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
+    const investmentCurrentShares = useMemo(() => {
+        const latestSaved = transactions.find(tx => Boolean(tx.currency_guid));
+        const balance = latestSaved
+            ? Number(latestSaved.share_balance ?? latestSaved.running_balance)
+            : currentBalance;
+        return Number.isFinite(balance) ? balance : 0;
+    }, [transactions, currentBalance]);
+    const investmentCurrencyGuid = useMemo(
+        () => transactions.find(tx => Boolean(tx.currency_guid))?.currency_guid || '',
+        [transactions],
+    );
+    const investmentSymbol = useMemo(
+        () => transactions.find(tx => Boolean(tx.commodity_mnemonic))?.commodity_mnemonic || accountCurrency,
+        [transactions, accountCurrency],
+    );
+    const investmentAvailableSharesFor = useCallback((tx: AccountTransaction) => {
+        const accountSplit = tx.splits?.find(split => split.account_guid === accountGuid);
+        const originalQuantity = accountSplit
+            ? Number(accountSplit.quantity_num) / Number(accountSplit.quantity_denom)
+            : 0;
+        return Math.max(
+            0,
+            investmentCurrentShares + (tx.currency_guid && originalQuantity < 0 ? Math.abs(originalQuantity) : 0),
+        );
+    }, [accountGuid, investmentCurrentShares]);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
@@ -712,6 +740,30 @@ export default function AccountLedger({
 
             const shares = parseFloat(data.shares);
             const total = parseFloat(data.total);
+            const stockQtyDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
+            const isNewTransaction = !tx.currency_guid;
+            const currencyGuid = tx.currency_guid || investmentCurrencyGuid;
+
+            if (!currencyGuid) {
+                throw new Error('Transaction currency is unavailable. Refresh the ledger and try again.');
+            }
+
+            if (!data.isBuy) {
+                const originalStockSplit = tx.splits?.find(split => split.account_guid === accountGuid);
+                const originalQuantity = originalStockSplit
+                    ? Number(originalStockSplit.quantity_num) / Number(originalStockSplit.quantity_denom)
+                    : 0;
+                const editableAvailable = Math.max(
+                    0,
+                    investmentCurrentShares + (!isNewTransaction && originalQuantity < 0 ? Math.abs(originalQuantity) : 0),
+                );
+                if (shares > editableAvailable + (0.5 / stockQtyDenom)) {
+                    throw new Error(
+                        `Cannot sell ${shares.toFixed(sharePrecision)} shares; `
+                        + `${editableAvailable.toFixed(sharePrecision)} are available`,
+                    );
+                }
+            }
 
             // GnuCash sign convention for the stock account split (matches
             // GnuCash desktop). The stock account is debited on a buy and
@@ -726,17 +778,17 @@ export default function AccountLedger({
             const transferValue = -stockValue;
 
             const { num: stockValueNum, denom: stockValueDenom } = toNumDenom(stockValue);
-            const stockQtyDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
             const stockQtyNum = Math.round(stockQuantity * stockQtyDenom);
             const { num: transferValueNum, denom: transferValueDenom } = toNumDenom(transferValue);
 
             const body: Record<string, unknown> = {
-                currency_guid: tx.currency_guid || accountCommodityGuid || '',
+                currency_guid: currencyGuid,
                 post_date: data.post_date,
                 description: data.description,
                 splits: [
                     {
                         account_guid: accountGuid,
+                        action: data.isBuy ? 'Buy' : 'Sell',
                         value_num: stockValueNum,
                         value_denom: stockValueDenom,
                         quantity_num: stockQtyNum,
@@ -753,8 +805,6 @@ export default function AccountLedger({
                     },
                 ],
             };
-
-            const isNewTransaction = !tx.currency_guid;
 
             let res: Response;
             if (isNewTransaction) {
@@ -794,7 +844,17 @@ export default function AccountLedger({
             error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
-    }, [transactions, accountGuid, accountCommodityGuid, commodityScu, fetchTransactions, success, error]);
+    }, [
+        transactions,
+        accountGuid,
+        commodityScu,
+        investmentCurrencyGuid,
+        investmentCurrentShares,
+        sharePrecision,
+        fetchTransactions,
+        success,
+        error,
+    ]);
 
     // Toggle reviewed status
     const toggleReviewed = useCallback(async (transactionGuid: string) => {
@@ -2357,6 +2417,7 @@ export default function AccountLedger({
                                             transaction={tx}
                                             accountGuid={accountGuid}
                                             sharePrecision={sharePrecision}
+                                            availableShares={investmentAvailableSharesFor(tx)}
                                             isActive={index === focusedRowIndex}
                                             showCheckbox={true}
                                             isChecked={editSelectedGuids.has(tx.guid)}
@@ -3075,21 +3136,49 @@ export default function AccountLedger({
                 onDelete={handleDeleteClick}
             />
 
-            <TransactionFormModal
-                isOpen={isEditModalOpen}
-                onClose={() => {
-                    setIsEditModalOpen(false);
-                    setEditingTransaction(null);
-                }}
-                transaction={editingTransaction}
-                defaultAccountGuid={accountGuid}
-                onSuccess={() => {
-                    setIsEditModalOpen(false);
-                    setEditingTransaction(null);
-                    fetchTransactions();
-                }}
-                onRefresh={fetchTransactions}
-            />
+            {isInvestmentAccount && !editingTransaction ? (
+                <Modal
+                    isOpen={isEditModalOpen}
+                    onClose={() => setIsEditModalOpen(false)}
+                    title="New Investment Transaction"
+                    size="2xl"
+                    closeOnBackdrop={false}
+                    closeOnEscape={true}
+                    resetKey="new-investment"
+                >
+                    <div className="px-6 py-4">
+                        <InvestmentTransactionForm
+                            accountGuid={accountGuid}
+                            accountName={`${investmentSymbol} investment account`}
+                            accountCommodityGuid={accountCommodityGuid || ''}
+                            commoditySymbol={investmentSymbol}
+                            commodityFraction={commodityScu}
+                            currentShares={investmentCurrentShares}
+                            onSave={() => {
+                                setIsEditModalOpen(false);
+                                fetchTransactions();
+                            }}
+                            onCancel={() => setIsEditModalOpen(false)}
+                        />
+                    </div>
+                </Modal>
+            ) : (
+                <TransactionFormModal
+                    isOpen={isEditModalOpen}
+                    onClose={() => {
+                        setIsEditModalOpen(false);
+                        setEditingTransaction(null);
+                    }}
+                    transaction={editingTransaction}
+                    defaultAccountGuid={accountGuid}
+                    onSuccess={() => {
+                        setIsEditModalOpen(false);
+                        setEditingTransaction(null);
+                        fetchTransactions();
+                    }}
+                    onRefresh={fetchTransactions}
+                />
+            )}
 
             <ConfirmationDialog
                 isOpen={deleteConfirmOpen}

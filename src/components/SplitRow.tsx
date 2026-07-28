@@ -70,8 +70,10 @@ export function SplitRow({
     }, [fetchDefaultRate, split.account_guid, split.exchange_rate, transactionCurrencyGuid]);
 
     const handleAccountChange = (accountGuid: string, accountName: string) => {
+        setAccountCommodity(null);
         onChange(index, 'account_guid', accountGuid);
         onChange(index, 'account_name', accountName);
+        onChange(index, 'exchange_rate', '');
     };
 
     const handleDebitChange = (value: string) => {

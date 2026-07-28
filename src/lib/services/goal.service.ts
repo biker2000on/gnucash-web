@@ -15,7 +15,10 @@ import { getBaseCurrency } from '@/lib/currency';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
 import { computeDailyRunRates } from '@/lib/forecast';
 import {
+    completedEmergencyExpenseHistoryMonths,
+    computeEmergencyExpenseRunRate,
     computeGoalProgress,
+    emergencyExpenseHistoryWindow,
     type Goal,
     type GoalType,
     type GoalProgress,
@@ -24,8 +27,10 @@ import {
 /** Goal types the API/UI accept. */
 export const GOAL_TYPES: GoalType[] = ['emergency_fund', 'savings_target', 'debt_payoff'];
 
-/** Trailing window (months) used for the monthly expense + contribution run-rate. */
-const RUN_RATE_MONTHS = 3;
+/** Completed calendar months used for the emergency-spending baseline. */
+const EMERGENCY_EXPENSE_LOOKBACK_MONTHS = 12;
+/** Trailing window used only for inferred account contributions/payments. */
+const CONTRIBUTION_RUN_RATE_MONTHS = 3;
 const DAYS_PER_MONTH = 365.25 / 12;
 
 export interface GoalInput {
@@ -309,6 +314,34 @@ async function loadMonthlyRunRates(
     return rates;
 }
 
+async function loadFirstExpenseDate(
+    bookAccountGuids: string[],
+    endExclusive: Date
+): Promise<Date | null> {
+    if (bookAccountGuids.length === 0) return null;
+    const rows = await prisma.$queryRaw<Array<{ first_expense_date: Date | null }>>`
+        SELECT MIN(t.post_date) AS first_expense_date
+        FROM splits s
+        JOIN transactions t ON t.guid = s.tx_guid
+        JOIN accounts a ON a.guid = s.account_guid
+        WHERE s.account_guid IN (${Prisma.join(bookAccountGuids)})
+          AND a.account_type = 'EXPENSE'
+          AND a.hidden = 0
+          AND t.post_date < ${endExclusive}
+    `;
+    return rows[0]?.first_expense_date ?? null;
+}
+
+async function loadAccountPaths(accountGuids: string[]): Promise<Map<string, string>> {
+    if (accountGuids.length === 0) return new Map();
+    const rows = await prisma.$queryRaw<Array<{ guid: string; fullname: string }>>`
+        SELECT guid, fullname
+        FROM account_hierarchy
+        WHERE guid IN (${Prisma.join(accountGuids)})
+    `;
+    return new Map(rows.map(row => [row.guid, row.fullname]));
+}
+
 /**
  * List goals for a book with computed progress + projections.
  * Gathers current savings, the monthly expense run-rate and per-account
@@ -323,25 +356,59 @@ export async function getGoalsWithProgress(
 
     const now = new Date();
     const asOf = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const lookbackDays = Math.round(RUN_RATE_MONTHS * DAYS_PER_MONTH);
-    const lookbackStart = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate() - lookbackDays);
-
-    // Monthly expense run-rate (trailing window) via the shared summary service.
-    const baseCurrency = await getBaseCurrency();
-    const incomeExpense = await FinancialSummaryService.computeIncomeExpenses(
-        bookAccountGuids,
-        lookbackStart,
-        now,
-        baseCurrency
+    const contributionLookbackDays = Math.round(CONTRIBUTION_RUN_RATE_MONTHS * DAYS_PER_MONTH);
+    const contributionLookbackStart = new Date(
+        asOf.getFullYear(),
+        asOf.getMonth(),
+        asOf.getDate() - contributionLookbackDays
     );
-    const monthlyExpense = incomeExpense.totalExpenses / RUN_RATE_MONTHS;
+
+    // Emergency-fund spending uses completed calendar months so the target does
+    // not shrink early in the current month. Use up to a year to smooth
+    // seasonal/one-off spending, but do not divide a newer book by months that
+    // predate its first expense.
+    const baseCurrency = await getBaseCurrency();
+    const maximumExpenseWindow = emergencyExpenseHistoryWindow(
+        asOf,
+        EMERGENCY_EXPENSE_LOOKBACK_MONTHS
+    );
+    const firstExpenseDate = await loadFirstExpenseDate(
+        bookAccountGuids,
+        maximumExpenseWindow.endExclusive
+    );
+    const expenseHistoryMonths = completedEmergencyExpenseHistoryMonths(
+        firstExpenseDate,
+        maximumExpenseWindow.endExclusive,
+        EMERGENCY_EXPENSE_LOOKBACK_MONTHS
+    );
+    let monthlyExpense = 0;
+    if (expenseHistoryMonths > 0) {
+        const expenseWindow = emergencyExpenseHistoryWindow(asOf, expenseHistoryMonths);
+        const incomeExpense = await FinancialSummaryService.computeIncomeExpenses(
+            bookAccountGuids,
+            expenseWindow.start,
+            expenseWindow.end,
+            baseCurrency
+        );
+        const expensePaths = await loadAccountPaths([...incomeExpense.expenseByAccount.keys()]);
+        monthlyExpense = computeEmergencyExpenseRunRate(
+            incomeExpense.expenseByAccount,
+            expensePaths,
+            expenseHistoryMonths
+        ).monthlyExpense;
+    }
 
     const linkedGuids = [
         ...new Set(goals.map(g => g.accountGuid).filter((g): g is string => !!g)),
     ];
     const [balances, monthlyRunRates] = await Promise.all([
         loadAccountBalances(linkedGuids, now),
-        loadMonthlyRunRates(linkedGuids, lookbackStart, now, lookbackDays),
+        loadMonthlyRunRates(
+            linkedGuids,
+            contributionLookbackStart,
+            now,
+            contributionLookbackDays
+        ),
     ]);
 
     return goals.map(goal => {

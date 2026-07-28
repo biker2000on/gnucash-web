@@ -29,6 +29,8 @@ const OTHER_ACCOUNT = 'account0000000000000000000000bbb';
 const SPLIT_1 = 'split000000000000000000000000001';
 const SPLIT_2 = 'split000000000000000000000000002';
 const SPLIT_3 = 'split000000000000000000000000003';
+const TX_1 = 'transaction000000000000000000001';
+const TX_2 = 'transaction000000000000000000002';
 
 const STATEMENT_DATE = new Date('2026-06-30T00:00:00.000Z');
 
@@ -114,6 +116,7 @@ describe('computeDifference / computeDifferenceCents', () => {
 describe('toggleCandidateSelection', () => {
     const candidates = [SPLIT_1, SPLIT_2, SPLIT_3].map((guid, index) => ({
         guid,
+        transactionGuid: `transaction-${index + 1}`,
         date: `2026-06-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
         num: '',
         description: `Candidate ${index + 1}`,
@@ -173,6 +176,7 @@ describe('getReconcileWorkspace', () => {
         mockPrisma.$queryRaw.mockResolvedValue([
             {
                 guid: SPLIT_1,
+                tx_guid: TX_1,
                 memo: 'memo one',
                 reconcile_state: 'c',
                 quantity_num: BigInt(4200),
@@ -183,6 +187,7 @@ describe('getReconcileWorkspace', () => {
             },
             {
                 guid: SPLIT_2,
+                tx_guid: TX_2,
                 memo: null,
                 reconcile_state: 'n',
                 quantity_num: BigInt(-1550),
@@ -206,6 +211,7 @@ describe('getReconcileWorkspace', () => {
         expect(ws.candidates).toEqual([
             {
                 guid: SPLIT_1,
+                transactionGuid: TX_1,
                 date: '2026-06-10T00:00:00.000Z',
                 num: '1042',
                 description: 'Grocery store',
@@ -215,6 +221,7 @@ describe('getReconcileWorkspace', () => {
             },
             {
                 guid: SPLIT_2,
+                transactionGuid: TX_2,
                 date: '2026-06-20T00:00:00.000Z',
                 num: '',
                 description: '',

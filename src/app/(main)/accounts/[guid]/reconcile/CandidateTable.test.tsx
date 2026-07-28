@@ -6,6 +6,7 @@ import type { ReconcileCandidate } from '@/lib/reconcile-shared';
 const candidates: ReconcileCandidate[] = [
     {
         guid: 'one',
+        transactionGuid: 'tx-one',
         date: '2026-07-01T00:00:00.000Z',
         num: '',
         description: 'First item',
@@ -15,6 +16,7 @@ const candidates: ReconcileCandidate[] = [
     },
     {
         guid: 'two',
+        transactionGuid: 'tx-two',
         date: '2026-07-02T00:00:00.000Z',
         num: '',
         description: 'Second item',
@@ -33,6 +35,7 @@ describe('CandidateTable', () => {
                 selected={new Set()}
                 onToggle={onToggle}
                 onSelectAll={vi.fn()}
+                onDelete={vi.fn()}
                 currency="USD"
             />,
         );
@@ -52,11 +55,31 @@ describe('CandidateTable', () => {
                 selected={new Set()}
                 onToggle={vi.fn()}
                 onSelectAll={onSelectAll}
+                onDelete={vi.fn()}
                 currency="USD"
             />,
         );
 
         fireEvent.click(screen.getByLabelText('Select all splits'));
         expect(onSelectAll).toHaveBeenCalledWith(true);
+    });
+
+    it('requests deletion without toggling the row', () => {
+        const onToggle = vi.fn();
+        const onDelete = vi.fn();
+        render(
+            <CandidateTable
+                candidates={candidates}
+                selected={new Set()}
+                onToggle={onToggle}
+                onSelectAll={vi.fn()}
+                onDelete={onDelete}
+                currency="USD"
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Delete First item' }));
+        expect(onDelete).toHaveBeenCalledWith(candidates[0]);
+        expect(onToggle).not.toHaveBeenCalled();
     });
 });

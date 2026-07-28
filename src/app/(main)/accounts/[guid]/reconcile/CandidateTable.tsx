@@ -9,6 +9,7 @@ interface CandidateTableProps {
     onToggle: (index: number, shiftKey: boolean) => void;
     /** Select (true) or deselect (false) every candidate. */
     onSelectAll: (select: boolean) => void;
+    onDelete: (candidate: ReconcileCandidate) => void;
     currency: string;
 }
 
@@ -29,6 +30,7 @@ export function CandidateTable({
     selected,
     onToggle,
     onSelectAll,
+    onDelete,
     currency,
 }: CandidateTableProps) {
     const allSelected =
@@ -63,6 +65,9 @@ export function CandidateTable({
                         <th className="p-3 text-right font-semibold">Funds In</th>
                         <th className="p-3 text-right font-semibold">Funds Out</th>
                         <th className="p-3 text-center font-semibold w-14">State</th>
+                        <th className="p-3 text-center font-semibold w-14">
+                            <span className="sr-only">Actions</span>
+                        </th>
                     </tr>
                 </thead>
                 <tbody>
@@ -132,6 +137,32 @@ export function CandidateTable({
                                     >
                                         {badge.icon}
                                     </span>
+                                </td>
+                                <td className="p-2 text-center">
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            onDelete(c);
+                                        }}
+                                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted hover:bg-negative/10 hover:text-negative transition-colors"
+                                        aria-label={`Delete ${c.description || 'transaction'}`}
+                                        title="Delete transaction"
+                                    >
+                                        <svg
+                                            className="h-4 w-4"
+                                            viewBox="0 0 24 24"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            strokeWidth="2"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M3 6h18" />
+                                            <path d="M8 6V4h8v2" />
+                                            <path d="M19 6l-1 14H6L5 6" />
+                                            <path d="M10 11v5M14 11v5" />
+                                        </svg>
+                                    </button>
                                 </td>
                             </tr>
                         );

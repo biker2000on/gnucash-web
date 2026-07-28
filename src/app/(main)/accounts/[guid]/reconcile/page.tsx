@@ -9,8 +9,11 @@ import {
     computeDifferenceCents,
     toggleCandidateSelection,
     toCents,
+    type ReconcileCandidate,
     type ReconcileWorkspace,
 } from '@/lib/reconcile-shared';
+import { TransactionFormModal } from '@/components/TransactionFormModal';
+import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { ReconcileSummary } from './ReconcileSummary';
 import { CandidateTable } from './CandidateTable';
 
@@ -43,6 +46,9 @@ function ReconcilePageContent() {
     } | null>(null);
     const [submitting, setSubmitting] = useState(false);
     const [finished, setFinished] = useState<{ count: number; date: string } | null>(null);
+    const [newTransactionOpen, setNewTransactionOpen] = useState(false);
+    const [deleteCandidate, setDeleteCandidate] = useState<ReconcileCandidate | null>(null);
+    const [deleting, setDeleting] = useState(false);
     const sessionId = useRef<string | null>(null);
     const sessionStart = useRef<Promise<string | null> | null>(null);
     const pendingInteractions = useRef(0);
@@ -79,6 +85,25 @@ function ReconcilePageContent() {
     useEffect(() => {
         fetchWorkspace();
     }, [fetchWorkspace]);
+
+    useEffect(() => {
+        const handleNewTransactionShortcut = (event: KeyboardEvent) => {
+            if (
+                event.altKey
+                && !event.ctrlKey
+                && !event.metaKey
+                && !event.shiftKey
+                && event.key.toLowerCase() === 'n'
+                && !newTransactionOpen
+                && !deleteCandidate
+            ) {
+                event.preventDefault();
+                setNewTransactionOpen(true);
+            }
+        };
+        window.addEventListener('keydown', handleNewTransactionShortcut);
+        return () => window.removeEventListener('keydown', handleNewTransactionShortcut);
+    }, [newTransactionOpen, deleteCandidate]);
 
     useEffect(() => {
         if (!guid) return;
@@ -268,6 +293,33 @@ function ReconcilePageContent() {
         }
     }, [workspace, endingBalance, differenceCents, guid, statementDate, selected, toast, fetchWorkspace]);
 
+    const handleDelete = useCallback(async () => {
+        if (!deleteCandidate || deleting) return;
+        setDeleting(true);
+        try {
+            const res = await fetch(`/api/transactions/${deleteCandidate.transactionGuid}`, {
+                method: 'DELETE',
+            });
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(body?.error || 'Failed to delete transaction');
+            }
+            recordInteraction();
+            setSelected((prev) => {
+                const next = new Set(prev);
+                next.delete(deleteCandidate.guid);
+                return next;
+            });
+            toast.success('Transaction deleted');
+            setDeleteCandidate(null);
+            await fetchWorkspace();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to delete transaction');
+        } finally {
+            setDeleting(false);
+        }
+    }, [deleteCandidate, deleting, recordInteraction, toast, fetchWorkspace]);
+
     return (
         <div className="space-y-6">
             <header className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
@@ -333,16 +385,18 @@ function ReconcilePageContent() {
                 </div>
             </header>
 
-            {/* Running summary — always visible */}
+            {/* Running summary — pinned below the global application header. */}
             {workspace && (
-                <ReconcileSummary
-                    reconciledBalance={workspace.reconciledBalance}
-                    selectedTotal={selectedTotalCents / 100}
-                    endingBalance={endingBalance}
-                    differenceCents={differenceCents}
-                    currency={currency}
-                    lastReconcileDate={workspace.lastReconcileDate}
-                />
+                <div className="sticky top-[69px] z-20 -mx-1 bg-background/95 px-1 py-2 backdrop-blur-sm">
+                    <ReconcileSummary
+                        reconciledBalance={workspace.reconciledBalance}
+                        selectedTotal={selectedTotalCents / 100}
+                        endingBalance={endingBalance}
+                        differenceCents={differenceCents}
+                        currency={currency}
+                        lastReconcileDate={workspace.lastReconcileDate}
+                    />
+                </div>
             )}
 
             {finished && (
@@ -396,18 +450,29 @@ function ReconcilePageContent() {
                         {selected.size} of {workspace?.candidates.length ?? 0} selected
                     </span>
                 </div>
-                <button
-                    onClick={handleFinish}
-                    disabled={!canFinish}
-                    title={
-                        canFinish
-                            ? 'Mark selected splits reconciled'
-                            : 'Difference must be exactly 0.00 to finish'
-                    }
-                    className="px-4 py-2 text-sm font-medium bg-primary hover:bg-primary-hover text-primary-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {submitting ? 'Finishing...' : 'Finish'}
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setNewTransactionOpen(true)}
+                        className="px-3 py-2 text-sm font-medium border border-border hover:border-border-hover text-foreground-secondary hover:text-foreground rounded-md transition-colors"
+                        title="New transaction (Alt+N)"
+                    >
+                        New Transaction
+                        <kbd className="ml-2 font-mono text-[10px] text-foreground-muted">Alt+N</kbd>
+                    </button>
+                    <button
+                        onClick={handleFinish}
+                        disabled={!canFinish}
+                        title={
+                            canFinish
+                                ? 'Mark selected splits reconciled'
+                                : 'Difference must be exactly 0.00 to finish'
+                        }
+                        className="px-4 py-2 text-sm font-medium bg-primary hover:bg-primary-hover text-primary-foreground rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {submitting ? 'Finishing...' : 'Finish'}
+                    </button>
+                </div>
             </div>
 
             {/* Candidates */}
@@ -430,9 +495,38 @@ function ReconcilePageContent() {
                     selected={selected}
                     onToggle={toggle}
                     onSelectAll={selectAll}
+                    onDelete={setDeleteCandidate}
                     currency={currency}
                 />
             ) : null}
+
+            <TransactionFormModal
+                isOpen={newTransactionOpen}
+                onClose={() => setNewTransactionOpen(false)}
+                defaultAccountGuid={guid}
+                onSuccess={() => {
+                    setNewTransactionOpen(false);
+                    fetchWorkspace();
+                }}
+                onRefresh={fetchWorkspace}
+            />
+
+            <ConfirmationDialog
+                isOpen={deleteCandidate !== null}
+                onConfirm={handleDelete}
+                onCancel={() => {
+                    if (!deleting) setDeleteCandidate(null);
+                }}
+                title="Delete Transaction"
+                message={
+                    deleteCandidate
+                        ? `Delete “${deleteCandidate.description || '(no description)'}” and all of its splits, including any cleared or reconciled splits in other accounts? This cannot be undone.`
+                        : ''
+                }
+                confirmLabel="Delete"
+                confirmVariant="danger"
+                isLoading={deleting}
+            />
         </div>
     );
 }

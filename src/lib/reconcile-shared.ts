@@ -10,6 +10,8 @@
 
 export interface ReconcileCandidate {
     guid: string;
+    /** Owning transaction GUID, used for transaction-level actions. */
+    transactionGuid: string;
     /** Transaction post date (ISO string). */
     date: string;
     /** Transaction num field (check number etc.). */

@@ -133,6 +133,14 @@ Transaction (USD currency):
     quantity: -7500 (USD 7500 paid)
 ```
 
+### Investment-entry invariants
+
+- A Buy increases the security account: share quantity and transaction-currency value are positive; the cash split is negative.
+- A Sell decreases the security account: share quantity and transaction-currency value are negative; the cash split is positive.
+- “Sell all” must use the account commodity's native fraction (SCU), not a currency-rounded balance. For example, a security with fraction `1_000_000` must preserve six decimal places.
+- A security is currently owned only when its net share balance is positive beyond the health-check tolerance. Zero balances and negative oversold/short balances are not held assets and must not create stale-price warnings.
+- A negative residual is a transaction-correctness issue, not display rounding. Correct the overselling transaction or post an explicit correcting transaction; do not mask it by rounding the position to zero.
+
 ### Calculating Investment Holdings
 
 ```typescript
