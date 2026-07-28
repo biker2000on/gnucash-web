@@ -1843,6 +1843,37 @@ export default function AccountLedger({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [debouncedSearch, debouncedFilters]);
 
+    // Cross-user freshness: refetch when another session mutates transactions
+    // in this book (relayed by DataEventsProvider as a `gnucash:data-change`
+    // window CustomEvent). Guarded so a refetch never clobbers an in-progress
+    // inline edit, modal edit, delete, or reconcile session.
+    const dataChangeRef = useRef<{ blocked: boolean; fetch: () => Promise<void> }>({
+        blocked: false,
+        fetch: async () => {},
+    });
+    useEffect(() => {
+        dataChangeRef.current = {
+            blocked:
+                editingGuid !== null ||
+                isEditModalOpen ||
+                editingTransaction !== null ||
+                deleteConfirmOpen ||
+                isDeleting ||
+                isReconciling,
+            fetch: fetchTransactions,
+        };
+    });
+    useEffect(() => {
+        const onDataChange = (e: Event) => {
+            const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
+            if (detail?.entity !== 'transactions') return;
+            if (dataChangeRef.current.blocked) return;
+            void dataChangeRef.current.fetch();
+        };
+        window.addEventListener('gnucash:data-change', onDataChange);
+        return () => window.removeEventListener('gnucash:data-change', onDataChange);
+    }, []);
+
     const toggleExpand = (guid: string) => {
         setExpandedTxs(prev => ({ ...prev, [guid]: !prev[guid] }));
     };

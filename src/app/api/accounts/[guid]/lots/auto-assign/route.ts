@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { autoAssignLots } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
+import { publishDataChange } from '@/lib/data-events';
 
 const VALID_METHODS = ['fifo', 'lifo', 'average'] as const;
 
@@ -32,6 +33,7 @@ export async function POST(
     }
 
     const result = await autoAssignLots(accountGuid, method, bookGuid);
+    void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof BookBusyError) {

@@ -4,6 +4,7 @@ import { toDecimal, fromDecimal, generateGuid } from '@/lib/prisma';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // Schema for creating a new price
 const CreatePriceSchema = z.object({
@@ -167,6 +168,8 @@ export async function POST(request: NextRequest) {
             // Cache invalidation failure should not break the price creation
             console.warn('Cache invalidation failed:', err);
         }
+
+        void publishDataChange(roleResult.bookGuid, 'prices', { guid: price.guid, action: 'update' });
 
         return NextResponse.json({
             guid: price.guid,

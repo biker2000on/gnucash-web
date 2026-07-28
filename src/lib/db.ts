@@ -1,9 +1,13 @@
 import { Pool, PoolConfig } from 'pg';
 
 const poolConfig: PoolConfig = {
-    // GnuCash DB connection details are handled by the MCP server, 
+    // GnuCash DB connection details are handled by the MCP server,
     // but for the app we need standard env vars.
     connectionString: process.env.DATABASE_URL,
+    // Explicit cap so heavy interactive transactions (imports, lot scrubs)
+    // can't silently exhaust Postgres connections across the two pools
+    // (this raw pg pool + Prisma's adapter pool in prisma.ts).
+    max: Number.parseInt(process.env.DB_POOL_MAX ?? '', 10) || 20,
 };
 
 const pool = new Pool(poolConfig);

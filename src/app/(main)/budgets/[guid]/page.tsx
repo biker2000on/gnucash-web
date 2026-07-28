@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, use, useCallback } from 'react';
+import { useState, useEffect, useMemo, use, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
@@ -196,6 +196,38 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             console.error('Error refreshing budget:', err);
         }
     };
+
+    // Cross-user freshness: reload the budget when another session edits it
+    // (relayed by DataEventsProvider as a `gnucash:data-change` window
+    // CustomEvent). Guarded so a reload never clobbers an open cell editor,
+    // batch edit, estimate modal, or in-progress delete.
+    const dataChangeRef = useRef<{ blocked: boolean; refresh: () => Promise<void> }>({
+        blocked: false,
+        refresh: async () => {},
+    });
+    useEffect(() => {
+        dataChangeRef.current = {
+            blocked:
+                activeCell !== null ||
+                batchEditAccount !== null ||
+                estimateAccount !== null ||
+                showAccountPicker ||
+                deleteConfirmOpen ||
+                isDeleting !== null,
+            refresh: refreshBudget,
+        };
+    });
+    useEffect(() => {
+        const onDataChange = (e: Event) => {
+            const detail = (e as CustomEvent).detail as { entity?: string; guid?: string } | undefined;
+            if (detail?.entity !== 'budgets') return;
+            if (detail.guid && detail.guid !== guid) return;
+            if (dataChangeRef.current.blocked) return;
+            void dataChangeRef.current.refresh();
+        };
+        window.addEventListener('gnucash:data-change', onDataChange);
+        return () => window.removeEventListener('gnucash:data-change', onDataChange);
+    }, [guid]);
 
     const handleDeleteAccount = (accountGuid: string) => {
         setDeletingAccountGuid(accountGuid);

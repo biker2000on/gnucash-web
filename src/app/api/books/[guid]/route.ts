@@ -8,6 +8,8 @@ import {
     deleteBookExtensionRows,
     deleteStoredFileKeys,
 } from '@/lib/services/book-cleanup.service';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * GET /api/books/[guid]
@@ -301,6 +303,9 @@ export async function DELETE(
 
         // Post-commit, best-effort file cleanup.
         await deleteStoredFileKeys(storageKeys);
+
+        void cacheInvalidateAllForBook(guid);
+        void publishDataChange(guid, 'book', { guid, action: 'delete' });
 
         return NextResponse.json({ success: true, remainingBooks });
     } catch (error) {

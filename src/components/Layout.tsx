@@ -7,6 +7,7 @@ import { useBooks } from '@/contexts/BookContext';
 import { UserMenu } from './UserMenu';
 import { NotificationBell } from './NotificationBell';
 import { JobProgressStream } from '@/contexts/JobProgressContext';
+import { DataEventsProvider } from '@/components/DataEventsProvider';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
@@ -1054,6 +1055,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                             <ContextualHelpLink />
                             <NotificationBell />
                             <JobProgressStream />
+                            <DataEventsProvider />
                             <UserMenu />
                         </div>
                     </div>

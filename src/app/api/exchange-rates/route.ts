@@ -4,6 +4,8 @@ import { generateGuid, fromDecimal, toDecimal } from '@/lib/prisma';
 import { getAllExchangeRates, getCurrencyByMnemonic } from '@/lib/currency';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // Schema for creating a new exchange rate
 const CreateExchangeRateSchema = z.object({
@@ -124,6 +126,14 @@ export async function POST(request: NextRequest) {
                 type: 'last',
             },
         });
+
+        // Exchange rates feed currency conversion in the dashboard metrics
+        try {
+            await cacheInvalidateFrom(roleResult.bookGuid, price.date);
+        } catch (err) {
+            console.warn('Cache invalidation failed:', err);
+        }
+        void publishDataChange(roleResult.bookGuid, 'prices', { guid: price.guid, action: 'update' });
 
         return NextResponse.json({
             guid: price.guid,

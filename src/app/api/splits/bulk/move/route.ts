@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import {
     withPeriodLockCheck,
     assertNotLocked,
@@ -160,6 +161,8 @@ export async function POST(request: Request) {
             // Cache invalidation failure should not break the move operation
             console.warn('Cache invalidation failed:', err);
         }
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
 
         return NextResponse.json({
             success: true,

@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import {
     withPeriodLockCheck,
     assertNotLocked,
@@ -354,6 +355,8 @@ export async function PATCH(request: Request) {
                 console.warn('Cache invalidation failed:', err);
             }
         }
+
+        if (updated > 0) void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
 
         return NextResponse.json({
             results,

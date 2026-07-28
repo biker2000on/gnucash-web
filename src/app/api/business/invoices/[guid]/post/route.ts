@@ -3,6 +3,8 @@ import { requireRole } from '@/lib/auth';
 import { getActiveBookRootGuid } from '@/lib/book-scope';
 import { postInvoice, unpostInvoice } from '@/lib/business/invoice-engine';
 import { mapInvoiceError } from '@/lib/business/api-errors';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * POST /api/business/invoices/[guid]/post — post the invoice to A/R–A/P.
@@ -31,6 +33,8 @@ export async function POST(
       description: body.description,
       bookRootGuid,
     });
+    void cacheInvalidateAllForBook(roleResult.bookGuid);
+    void publishDataChange(roleResult.bookGuid, 'business', { guid, action: 'update' });
     return NextResponse.json({ result });
   } catch (error) {
     return mapInvoiceError(error);
@@ -51,6 +55,8 @@ export async function DELETE(
 
     const { guid } = await params;
     await unpostInvoice(guid);
+    void cacheInvalidateAllForBook(roleResult.bookGuid);
+    void publishDataChange(roleResult.bookGuid, 'business', { guid, action: 'update' });
     return NextResponse.json({ success: true });
   } catch (error) {
     return mapInvoiceError(error);

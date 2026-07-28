@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { CreateScheduledPanel } from '@/components/scheduled-transactions/CreateScheduledPanel';
@@ -206,6 +206,32 @@ export default function ScheduledTransactionsPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Cross-user freshness: refetch when another session executes, skips,
+  // creates, or edits a scheduled transaction in this book (relayed by
+  // DataEventsProvider as a `gnucash:data-change` window CustomEvent).
+  // Guarded so a refetch never interrupts an open create/edit panel or an
+  // in-flight batch run.
+  const dataChangeRef = useRef<{ blocked: boolean; fetch: () => Promise<void> }>({
+    blocked: false,
+    fetch: async () => {},
+  });
+  useEffect(() => {
+    dataChangeRef.current = {
+      blocked: showCreatePanel || editingTransaction !== null || batchLoading || loading,
+      fetch: fetchData,
+    };
+  });
+  useEffect(() => {
+    const onDataChange = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
+      if (detail?.entity !== 'schedules') return;
+      if (dataChangeRef.current.blocked) return;
+      void dataChangeRef.current.fetch();
+    };
+    window.addEventListener('gnucash:data-change', onDataChange);
+    return () => window.removeEventListener('gnucash:data-change', onDataChange);
+  }, []);
 
   // Check if any splits reference a mortgage-linked account
   const hasMortgageLink = useCallback(

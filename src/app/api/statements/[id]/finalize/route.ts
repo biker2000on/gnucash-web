@@ -7,6 +7,8 @@ import {
 } from '@/lib/statement-reconcile-data';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 import { serializeBigInts } from '@/lib/gnucash';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * POST /api/statements/[id]/finalize
@@ -72,6 +74,10 @@ export async function POST(
     } catch (mapErr) {
       console.warn('Failed to upsert OFX account map after finalize:', mapErr);
     }
+
+    void cacheInvalidateAllForBook(bookGuid);
+    void publishDataChange(bookGuid, 'reconciliation', { action: 'update' });
+    void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
 
     return NextResponse.json(serializeBigInts({ success: true, summary }));
   } catch (error) {

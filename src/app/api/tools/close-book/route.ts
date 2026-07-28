@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { previewCloseBook, executeCloseBook, CloseBookAlreadyClosedError } from '@/lib/close-book';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -52,6 +54,8 @@ export async function POST(request: NextRequest) {
       equityAccountGuid,
       typeof description === 'string' ? description.slice(0, 200) : '',
     );
+    void cacheInvalidateAllForBook(roleResult.bookGuid);
+    void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof CloseBookAlreadyClosedError) {

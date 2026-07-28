@@ -7,6 +7,7 @@ import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.servic
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 import {
     assertNotLocked,
@@ -378,6 +379,8 @@ export async function PUT(
             })),
         };
 
+        void publishDataChange(roleResult.bookGuid, 'transactions', { guid, action: 'update' });
+
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
         if (error instanceof TransactionNotFoundError) {
@@ -513,6 +516,8 @@ export async function DELETE(
             // Cache invalidation failure should not break the transaction operation
             console.warn('Cache invalidation failed:', err);
         }
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { guid, action: 'delete' });
 
         return NextResponse.json({ success: true, deleted: guid });
     } catch (error) {

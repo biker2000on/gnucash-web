@@ -66,7 +66,9 @@ export async function GET(request: NextRequest) {
         const bookGuid = await getActiveBookGuid();
         // groupBy sits before the date range so the cache invalidation index
         // (which parses the trailing ":START-END" date portion) still works.
-        const cacheKey = `cache:${bookGuid}:net-worth:${groupBy}:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
+        // User id is part of the key because the response depends on per-user
+        // display preferences (balance_reversal) — matches the kpis key shape.
+        const cacheKey = `cache:${bookGuid}:user:${roleResult.user.id}:net-worth:${groupBy}:${startDate.toISOString().split('T')[0]}-${endDate.toISOString().split('T')[0]}`;
 
         // Check cache first
         const cached = await cacheGet(cacheKey);

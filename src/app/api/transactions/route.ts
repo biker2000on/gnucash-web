@@ -9,6 +9,7 @@ import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.servic
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 import { parseSearchQuery } from '@/lib/tags';
@@ -463,6 +464,8 @@ export async function POST(request: Request) {
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
             })),
         };
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { guid: txGuid, action: 'create' });
 
         return NextResponse.json(serializeBigInts(result), { status: 201 });
     } catch (error) {

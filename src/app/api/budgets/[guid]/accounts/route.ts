@@ -3,6 +3,8 @@ import prisma from '@/lib/prisma';
 import { BudgetService } from '@/lib/services/budget.service';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // GET - List all accounts for budget tree building
 export async function GET(
@@ -69,6 +71,8 @@ export async function POST(
         }
 
         const amounts = await BudgetService.addAccount(guid, account_guid);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json({ success: true, amounts });
     } catch (error) {
         console.error('Error adding account to budget:', error);

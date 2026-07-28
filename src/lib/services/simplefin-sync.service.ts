@@ -13,6 +13,7 @@ import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
 import { applyRules } from './categorization.service';
 import { createNotification } from '@/lib/notifications';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { scanForAnomalies } from '@/lib/anomaly-detection';
 import { scanBudgetAlerts } from '@/lib/budget-envelope';
 import { scanInventoryReorder } from '@/lib/services/inventory.service';
@@ -572,6 +573,12 @@ async function runSimpleFinSync(
     } catch (err) {
       console.warn('SimpleFin sync cache invalidation failed:', err);
     }
+
+    // Tell connected browsers the book changed. Sync may auto-create accounts
+    // (new bank links), so publish both entities; the sync often runs in the
+    // worker process, where this bus is the only path to web-process viewers.
+    void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
+    void publishDataChange(bookGuid, 'accounts', { action: 'bulk' });
 
     emitProgress({ message: 'Running post-sync scans…', percent: 92 });
 

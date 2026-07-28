@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { clearLotAssignments } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
   request: Request,
@@ -20,6 +21,7 @@ export async function POST(
     }
 
     const result = await clearLotAssignments(accountGuid, bookGuid);
+    void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof BookBusyError) {

@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook, getBookAccountGuids } from '@/lib/book-scope';
+import { publishDataChange } from '@/lib/data-events';
 
 interface ReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
@@ -119,6 +120,8 @@ export async function PATCH(
             account_name: updatedSplit.account.name,
         };
 
+        void publishDataChange(roleResult.bookGuid, 'transactions', { guid: existingSplit.tx_guid, action: 'update' });
+
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
         console.error('Error updating split reconcile state:', error);
@@ -192,6 +195,8 @@ export async function POST(
                 data: { enter_date: new Date() },
             }),
         ]);
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
 
         return NextResponse.json({
             success: true,

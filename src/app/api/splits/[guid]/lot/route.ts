@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { generateGuid } from '@/lib/gnucash';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function PATCH(
   request: Request,
@@ -92,6 +93,8 @@ export async function PATCH(
         data: { enter_date: new Date() },
       });
     });
+
+    void publishDataChange(roleResult.bookGuid, 'transactions', { guid: split.tx_guid, action: 'update' });
 
     return NextResponse.json({
       split_guid: splitGuid,

@@ -5,6 +5,7 @@ import { scrubAllAccounts } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { jobProgressEmitter } from '@/lib/job-progress';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(request: Request) {
   try {
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
         cleared: result.cleared,
         failures: result.failures.length,
       });
+      void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
       return NextResponse.json({ ...result, jobId });
     } catch (error) {
       void emit.failed(error instanceof Error ? error.message : String(error));

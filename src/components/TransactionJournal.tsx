@@ -234,6 +234,31 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         }
     }, [buildUrlParams, debouncedFilter]);
 
+    // Cross-user freshness: refetch when another session mutates transactions
+    // in this book (relayed by DataEventsProvider as a `gnucash:data-change`
+    // window CustomEvent). Guarded so a refetch never interrupts an open
+    // editor or an in-flight load.
+    const dataChangeRef = useRef<{ blocked: boolean; fetch: () => Promise<void> }>({
+        blocked: false,
+        fetch: async () => {},
+    });
+    useEffect(() => {
+        dataChangeRef.current = {
+            blocked: isEditModalOpen || editingTransaction !== null || loading,
+            fetch: fetchTransactions,
+        };
+    });
+    useEffect(() => {
+        const onDataChange = (e: Event) => {
+            const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
+            if (detail?.entity !== 'transactions') return;
+            if (dataChangeRef.current.blocked) return;
+            void dataChangeRef.current.fetch();
+        };
+        window.addEventListener('gnucash:data-change', onDataChange);
+        return () => window.removeEventListener('gnucash:data-change', onDataChange);
+    }, []);
+
     const handleEdit = useCallback((guid: string) => {
         // Find the transaction by guid
         const tx = transactions.find(t => t.guid === guid);

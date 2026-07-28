@@ -5,6 +5,7 @@
  * database queries to a specific book's account hierarchy.
  */
 
+import { cache } from 'react';
 import { getSession } from './auth';
 import prisma from './prisma';
 
@@ -63,26 +64,23 @@ export async function getActiveBookGuid(): Promise<string> {
 }
 
 /**
- * Request-scoped cache for book account GUIDs.
- * We use a WeakRef-like pattern with a simple module-level cache
- * that gets refreshed if the root guid changes.
+ * Per-request cache for book account GUIDs.
+ *
+ * Uses React's request-scoped `cache()` so repeated calls within one request
+ * hit the recursive CTE only once, while every new request sees a fresh tree.
+ * A module-global cache here breaks under the shipped multi-process topology
+ * (web + worker): cross-process invalidation is impossible, so newly created
+ * accounts silently vanished from balances/reports on the other process.
+ * Outside a request scope (workers, scripts) `cache()` degrades to an
+ * uncached call — correct, just slower.
+ *
+ * The generation counter keeps invalidateBookAccountGuidsCache() meaningful
+ * WITHIN a request: bumping it changes the memoization key, so import flows
+ * that create accounts mid-request and re-read the tree get fresh data.
  */
-let _cachedRootGuid: string | null = null;
-let _cachedAccountGuids: string[] | null = null;
+let _generation = 0;
 
-/**
- * Returns all account GUIDs under the active book's root.
- * Uses a recursive CTE for efficiency. Results are cached within
- * the same root guid to avoid repeated queries.
- */
-export async function getBookAccountGuids(): Promise<string[]> {
-    const rootGuid = await getActiveBookRootGuid();
-
-    // Return cached result if root hasn't changed
-    if (_cachedRootGuid === rootGuid && _cachedAccountGuids) {
-        return _cachedAccountGuids;
-    }
-
+const queryAccountGuidsForRoot = cache(async (rootGuid: string, _gen: number): Promise<string[]> => {
     const accounts = await prisma.$queryRaw<{ guid: string }[]>`
         WITH RECURSIVE account_tree AS (
             SELECT guid FROM accounts WHERE guid = ${rootGuid}
@@ -92,12 +90,16 @@ export async function getBookAccountGuids(): Promise<string[]> {
         )
         SELECT guid FROM account_tree
     `;
+    return accounts.map(a => a.guid);
+});
 
-    const guids = accounts.map(a => a.guid);
-    _cachedRootGuid = rootGuid;
-    _cachedAccountGuids = guids;
-
-    return guids;
+/**
+ * Returns all account GUIDs under the active book's root.
+ * Uses a recursive CTE for efficiency; memoized per request.
+ */
+export async function getBookAccountGuids(): Promise<string[]> {
+    const rootGuid = await getActiveBookRootGuid();
+    return queryAccountGuidsForRoot(rootGuid, _generation);
 }
 
 /**
@@ -125,12 +127,16 @@ export async function getAccountGuidsForBook(bookGuid: string): Promise<string[]
 }
 
 /**
- * Invalidate the book account GUIDs cache. Call this after account creation,
- * deletion, or reparenting so subsequent requests see the fresh tree.
+ * Invalidate the book account GUIDs cache.
+ *
+ * Best-effort since the cache became per-request (React `cache()`): every
+ * new request already sees the fresh tree (cross-process invalidation was
+ * never possible anyway). Bumping the generation only matters for callers
+ * that create accounts mid-request and re-read the tree in the SAME request
+ * (import flows) — it rotates the memoization key so the next read refetches.
  */
 export function invalidateBookAccountGuidsCache(): void {
-    _cachedRootGuid = null;
-    _cachedAccountGuids = null;
+    _generation++;
 }
 
 /**

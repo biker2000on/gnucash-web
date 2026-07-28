@@ -50,7 +50,11 @@ export function useAccounts(options?: UseAccountsOptions) {
             if (!res.ok) throw new Error('Failed to fetch account hierarchy');
             return res.json() as Promise<Account[] | AccountWithChildren[]>;
         },
-        staleTime: Infinity, // Never stale - hierarchy is static
+        // The hierarchy is NOT static in multi-user books: other users create,
+        // rename, and move accounts. Kept short so focus refetches pick up
+        // changes; DataEventsProvider invalidates ['accounts'] on 'accounts'
+        // data-change events for near-real-time freshness.
+        staleTime: 1000 * 60, // 1 minute
         gcTime: 1000 * 60 * 60 * 24, // 24 hours
     });
 

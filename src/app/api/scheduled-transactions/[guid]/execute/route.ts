@@ -4,6 +4,7 @@ import { executeOccurrence } from '@/lib/services/scheduled-tx-execute';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import { isScheduledTransactionInBook } from '@/lib/services/scheduled-tx-create';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
   request: NextRequest,
@@ -49,6 +50,9 @@ export async function POST(
       // Cache invalidation failure should not break the execute operation
       console.warn('Cache invalidation failed:', err);
     }
+
+    void publishDataChange(roleResult.bookGuid, 'schedules', { guid, action: 'update' });
+    void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'create' });
 
     return NextResponse.json(result);
   } catch (error) {

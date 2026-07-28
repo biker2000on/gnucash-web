@@ -48,7 +48,11 @@ export interface PeriodLockCheckOptions {
 // Lock-date cache (naive per-process Map, 5s TTL)
 // ---------------------------------------------------------------------------
 
-const LOCK_CACHE_TTL_MS = 5_000;
+// Fast-path only: the authoritative in-transaction checks use bypassCache,
+// so this cache merely spares bulk operations a per-row query. Keep the TTL
+// tiny (1s) — a longer window lets other processes post into a just-locked
+// period via the non-bypassing pre-checks.
+const LOCK_CACHE_TTL_MS = 1_000;
 const lockCache = new Map<string, { lockDate: string | null; expiresAt: number }>();
 
 /** Drop cached lock dates (one book, or all when omitted). */

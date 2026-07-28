@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AccountService } from '@/lib/services/account.service';
 import { z } from 'zod';
 import { isAccountInActiveBook } from '@/lib/book-scope';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 
 const MoveAccountSchema = z.object({
@@ -66,6 +68,8 @@ export async function PUT(
         }
 
         const account = await AccountService.move(guid, parseResult.data.newParentGuid);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'accounts', { guid, action: 'update' });
         return NextResponse.json(account);
     } catch (error) {
         console.error('Error moving account:', error);

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { AccountService, UpdateAccountSchema } from '@/lib/services/account.service';
 import { isAccountInActiveBook, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 
 /**
@@ -138,6 +140,8 @@ export async function PUT(
 
         const account = await AccountService.update(guid, parseResult.data);
         invalidateBookAccountGuidsCache();
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'accounts', { guid, action: 'update' });
         return NextResponse.json(account);
     } catch (error) {
         console.error('Error updating account:', error);
@@ -187,6 +191,8 @@ export async function DELETE(
 
         const result = await AccountService.delete(guid);
         invalidateBookAccountGuidsCache();
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'accounts', { guid, action: 'delete' });
         return NextResponse.json(result);
     } catch (error) {
         console.error('Error deleting account:', error);

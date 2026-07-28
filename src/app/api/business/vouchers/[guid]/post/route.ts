@@ -4,6 +4,8 @@ import { getActiveBookRootGuid } from '@/lib/book-scope';
 import { postVoucher, unpostVoucher } from '@/lib/business/vouchers';
 import { mapInvoiceError } from '@/lib/business/api-errors';
 import { markReimbursementVoucherPosted } from '@/lib/business/reimbursements';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * POST /api/business/vouchers/[guid]/post — post the voucher to A/P
@@ -33,6 +35,8 @@ export async function POST(
       bookRootGuid,
     });
     await markReimbursementVoucherPosted(guid, roleResult.bookGuid);
+    void cacheInvalidateAllForBook(roleResult.bookGuid);
+    void publishDataChange(roleResult.bookGuid, 'business', { guid, action: 'update' });
     return NextResponse.json({ result });
   } catch (error) {
     return mapInvoiceError(error);
@@ -53,6 +57,8 @@ export async function DELETE(
 
     const { guid } = await params;
     await unpostVoucher(guid);
+    void cacheInvalidateAllForBook(roleResult.bookGuid);
+    void publishDataChange(roleResult.bookGuid, 'business', { guid, action: 'update' });
     return NextResponse.json({ success: true });
   } catch (error) {
     return mapInvoiceError(error);

@@ -82,6 +82,16 @@ export async function cacheInvalidateFrom(bookGuid: string, fromDate: Date): Pro
 }
 
 /**
+ * Invalidate every dashboard cache entry for a book, regardless of date.
+ * Use after mutations whose effect isn't tied to a transaction date
+ * (account CRUD, budget writes, reconcile/statement finalize, business-doc
+ * posting, closing a book).
+ */
+export async function cacheInvalidateAllForBook(bookGuid: string): Promise<number> {
+  return cacheInvalidateFrom(bookGuid, new Date(0));
+}
+
+/**
  * Clear all caches.
  */
 export async function cacheClearAll(): Promise<number> {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { skipOccurrence } from '@/lib/services/scheduled-tx-execute';
 import { isScheduledTransactionInBook } from '@/lib/services/scheduled-tx-create';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
   request: NextRequest,
@@ -35,6 +36,8 @@ export async function POST(
         : result.error?.includes('not found') ? 404 : 400;
       return NextResponse.json({ error: result.error, code: result.code }, { status });
     }
+
+    void publishDataChange(roleResult.bookGuid, 'schedules', { guid, action: 'update' });
 
     return NextResponse.json(result);
   } catch (error) {

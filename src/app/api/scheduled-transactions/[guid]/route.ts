@@ -4,6 +4,7 @@ import {
   updateScheduledTransaction,
   type CreateScheduledTxInput,
 } from '@/lib/services/scheduled-tx-create';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * PATCH /api/scheduled-transactions/[guid]
@@ -28,6 +29,8 @@ export async function PATCH(
       const status = result.error === 'Scheduled transaction not found' ? 404 : 400;
       return NextResponse.json({ error: result.error }, { status });
     }
+    void publishDataChange(roleResult.bookGuid, 'schedules', { guid, action: 'update' });
+
     return NextResponse.json(result);
   } catch (error) {
     console.error('Error updating scheduled transaction:', error);

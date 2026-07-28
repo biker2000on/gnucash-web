@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids, isAccountInActiveBook } from '@/lib/book-scope';
 import { revertScrubRun, ScrubRunNotInBookError } from '@/lib/lot-assignment';
 import { BookBusyError } from '@/lib/book-lock';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
   request: Request,
@@ -30,6 +31,7 @@ export async function POST(
     // touched is inside the active book before deleting anything.
     const allowedAccountGuids = await getBookAccountGuids();
     const result = await revertScrubRun(runId, { bookGuid, allowedAccountGuids });
+    void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof BookBusyError) {

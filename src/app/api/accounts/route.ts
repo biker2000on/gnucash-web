@@ -5,6 +5,8 @@ import { Account, AccountWithChildren } from '@/lib/types';
 import { Prisma } from '@prisma/client';
 import { AccountService, CreateAccountSchema } from '@/lib/services/account.service';
 import { getBookAccountGuids, getActiveBookRootGuid, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { buildBookRelativeAccountPaths } from '@/lib/account-path';
@@ -338,6 +340,8 @@ export async function POST(request: NextRequest) {
 
         const account = await AccountService.create(data);
         invalidateBookAccountGuidsCache();
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'accounts', { guid: account.guid, action: 'create' });
         return NextResponse.json(account, { status: 201 });
     } catch (error) {
         console.error('Error creating account:', error);
