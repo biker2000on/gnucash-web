@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { scrubAllAccounts } from '@/lib/lot-assignment';
+import { BookBusyError } from '@/lib/book-lock';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { jobProgressEmitter } from '@/lib/job-progress';
 
@@ -36,14 +37,19 @@ export async function POST(request: Request) {
     const accountGuids = await getBookAccountGuids();
     void emit.running();
     try {
-      const result = await scrubAllAccounts(method, accountGuids, clearFirst, (p) =>
-        void emit.progress(p),
+      const result = await scrubAllAccounts(
+        method,
+        accountGuids,
+        clearFirst,
+        (p) => void emit.progress(p),
+        bookGuid,
       );
       void emit.completed({
         accounts: result.order.length,
         lotsCreated: result.results.reduce((s, r) => s + r.lotsCreated, 0),
         gainsTransactions: result.results.reduce((s, r) => s + r.gainsTransactions, 0),
         cleared: result.cleared,
+        failures: result.failures.length,
       });
       return NextResponse.json({ ...result, jobId });
     } catch (error) {
@@ -51,6 +57,12 @@ export async function POST(request: Request) {
       throw error;
     }
   } catch (error) {
+    if (error instanceof BookBusyError) {
+      return NextResponse.json(
+        { error: 'Another operation on this book is in progress. Try again shortly.' },
+        { status: 409 },
+      );
+    }
     console.error('Error scrubbing all accounts:', error);
     return NextResponse.json({ error: 'Failed to scrub accounts' }, { status: 500 });
   }

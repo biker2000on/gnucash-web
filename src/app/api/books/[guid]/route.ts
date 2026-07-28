@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/auth';
 import { getUserRoleForBook } from '@/lib/services/permission.service';
-import { deleteBookExtensionData } from '@/lib/services/book-cleanup.service';
+import { acquireBookLock } from '@/lib/book-lock';
+import {
+    collectBookStorageKeys,
+    deleteBookExtensionRows,
+    deleteStoredFileKeys,
+} from '@/lib/services/book-cleanup.service';
 
 /**
  * GET /api/books/[guid]
@@ -182,62 +187,102 @@ export async function DELETE(
             return NextResponse.json({ error: 'Book not found' }, { status: 404 });
         }
 
-        // Get all account GUIDs under this book's root
-        const accountTree = await prisma.$queryRaw<{ guid: string }[]>`
-            WITH RECURSIVE account_tree AS (
-                SELECT guid FROM accounts WHERE guid = ${book.root_account_guid}
-                UNION ALL
-                SELECT a.guid FROM accounts a
-                JOIN account_tree t ON a.parent_guid = t.guid
-            )
-            SELECT guid FROM account_tree
-        `;
-
-        const accountGuids = accountTree.map(a => a.guid);
-
-        // Also get template root accounts
-        const templateTree = await prisma.$queryRaw<{ guid: string }[]>`
-            WITH RECURSIVE account_tree AS (
-                SELECT guid FROM accounts WHERE guid = ${book.root_template_guid}
-                UNION ALL
-                SELECT a.guid FROM accounts a
-                JOIN account_tree t ON a.parent_guid = t.guid
-            )
-            SELECT guid FROM account_tree
-        `;
-        const templateGuids = templateTree.map(a => a.guid);
-        const allAccountGuids = [...accountGuids, ...templateGuids];
-
-        // Remove all extension-table rows (gnucash_web_*) and stored files
-        // for this book BEFORE the core deletion: several cleanups derive
-        // their row sets from the book's splits/transactions.
-        await deleteBookExtensionData(guid, allAccountGuids);
-
+        // Everything — tree enumeration, extension-table cleanup, core-row
+        // deletion — happens inside ONE transaction holding the per-book
+        // advisory lock, so a concurrently created account cannot orphan the
+        // tree and a failed core deletion no longer leaves extension data
+        // already destroyed. Stored files (S3/filesystem) cannot be deleted
+        // transactionally: their keys are collected inside the transaction
+        // and the files are removed only after a successful commit.
+        let storageKeys: string[] = [];
         const remainingBooks = await prisma.$transaction(async (tx) => {
+            // Serialize against imports, scrubs, reparenting, and other
+            // deletes of this book (blocking acquire).
+            await acquireBookLock(tx, guid, 'book-delete');
+
+            // Re-read under the lock — a concurrent delete may have won.
+            const lockedBook = await tx.books.findUnique({ where: { guid } });
+            if (!lockedBook) {
+                return null;
+            }
+
+            // Enumerate both account trees INSIDE the transaction, with
+            // depth so children can be deleted before parents.
+            const treeRoots = [...new Set([
+                lockedBook.root_account_guid,
+                lockedBook.root_template_guid,
+            ])].filter((g): g is string => Boolean(g));
+
+            const byGuid = new Map<string, number>();
+            for (const rootGuid of treeRoots) {
+                const tree = await tx.$queryRaw<{ guid: string; depth: number }[]>`
+                    WITH RECURSIVE account_tree AS (
+                        SELECT guid, 0 AS depth FROM accounts WHERE guid = ${rootGuid}
+                        UNION ALL
+                        SELECT a.guid, t.depth + 1 FROM accounts a
+                        JOIN account_tree t ON a.parent_guid = t.guid
+                    )
+                    SELECT guid, depth FROM account_tree
+                `;
+                for (const row of tree) {
+                    byGuid.set(row.guid, Math.max(byGuid.get(row.guid) ?? 0, Number(row.depth)));
+                }
+            }
+            const allAccountGuids = [...byGuid.keys()];
+
+            // Collect stored-file keys while their DB rows still exist;
+            // deletion happens after commit.
+            storageKeys = await collectBookStorageKeys(guid, tx);
+
+            // Remove all extension-table rows (gnucash_web_*) for this book
+            // BEFORE the core deletion: several cleanups derive their row
+            // sets from the book's splits/transactions.
+            await deleteBookExtensionRows(tx, guid, allAccountGuids, {
+                includeLazyTables: true,
+            });
+
             // Delete budget_amounts referencing these accounts
             await tx.budget_amounts.deleteMany({
                 where: { account_guid: { in: allAccountGuids } },
             });
 
-            // Delete splits for these accounts (which cascades to remove refs)
+            // Capture the transactions touched by this book's splits BEFORE
+            // deleting the splits, so the transaction cleanup below can be
+            // scoped to exactly those rows instead of sweeping split-less
+            // transactions from every book.
+            const touchedTxRows = allAccountGuids.length > 0
+                ? await tx.$queryRaw<{ tx_guid: string }[]>`
+                    SELECT DISTINCT tx_guid FROM splits
+                    WHERE account_guid = ANY(${allAccountGuids}::text[])
+                `
+                : [];
+            const touchedTxGuids = touchedTxRows.map(r => r.tx_guid);
+
+            // Delete splits for these accounts
             await tx.splits.deleteMany({
                 where: { account_guid: { in: allAccountGuids } },
             });
 
-            // Delete transactions that now have no splits
-            // (transactions whose splits were all in this book)
-            await tx.$queryRaw`
-                DELETE FROM transactions
-                WHERE guid NOT IN (
-                    SELECT DISTINCT tx_guid FROM splits
-                )
-            `;
+            // Delete exactly the touched transactions that now have no
+            // splits left (a transaction shared with another book — should
+            // not happen, but — keeps its remaining splits and survives).
+            if (touchedTxGuids.length > 0) {
+                await tx.$executeRaw`
+                    DELETE FROM transactions
+                    WHERE guid = ANY(${touchedTxGuids}::text[])
+                      AND NOT EXISTS (
+                        SELECT 1 FROM splits s WHERE s.tx_guid = transactions.guid
+                      )
+                `;
+            }
 
-            // Delete accounts (children first due to parent_guid FK)
-            // Reverse order of depth to delete leaves first
-            for (let i = allAccountGuids.length - 1; i >= 0; i--) {
+            // Delete accounts children-first: batch per depth level,
+            // deepest first (ordering guaranteed by the recursive CTE depth).
+            const depths = [...new Set(byGuid.values())].sort((a, b) => b - a);
+            for (const depth of depths) {
+                const batch = allAccountGuids.filter(g => byGuid.get(g) === depth);
                 await tx.accounts.deleteMany({
-                    where: { guid: allAccountGuids[i] },
+                    where: { guid: { in: batch } },
                 });
             }
 
@@ -248,7 +293,14 @@ export async function DELETE(
 
             // Return remaining book count
             return await tx.books.count();
-        });
+        }, { timeout: 300_000, maxWait: 15_000 });
+
+        if (remainingBooks === null) {
+            return NextResponse.json({ error: 'Book not found' }, { status: 404 });
+        }
+
+        // Post-commit, best-effort file cleanup.
+        await deleteStoredFileKeys(storageKeys);
 
         return NextResponse.json({ success: true, remainingBooks });
     } catch (error) {

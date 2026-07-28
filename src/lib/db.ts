@@ -61,6 +61,60 @@ export async function withDatabaseAdvisoryLock<T>(
 }
 
 /**
+ * Non-blocking variant of {@link withDatabaseAdvisoryLock}: attempts the
+ * session-level advisory lock without waiting. When another process/session
+ * already holds it, returns `{ acquired: false }` immediately so the caller
+ * can surface a "operation already in progress" error instead of queueing.
+ */
+export async function tryWithDatabaseAdvisoryLock<T>(
+    lockName: string,
+    operation: () => Promise<T>,
+): Promise<{ acquired: false } | { acquired: true; result: T }> {
+    const client = await pool.connect();
+    let lockAcquired = false;
+    let operationError: unknown;
+
+    try {
+        const res = await client.query(
+            'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+            [lockName],
+        );
+        lockAcquired = res.rows?.[0]?.locked === true;
+        if (!lockAcquired) {
+            return { acquired: false };
+        }
+        return { acquired: true, result: await operation() };
+    } catch (error) {
+        operationError = error;
+        throw error;
+    } finally {
+        let unlockError: unknown;
+
+        try {
+            if (lockAcquired) {
+                await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
+            }
+        } catch (error) {
+            unlockError = error;
+        } finally {
+            // A connection whose lock could not be released must not return to
+            // the pool, or a later borrower could inherit the advisory lock.
+            client.release(Boolean(unlockError));
+        }
+
+        if (unlockError) {
+            if (operationError) {
+                throw new AggregateError(
+                    [operationError, unlockError],
+                    `Operation and advisory-lock release both failed for "${lockName}"`,
+                );
+            }
+            throw unlockError;
+        }
+    }
+}
+
+/**
  * Converts GnuCash split values (integer + denominator) to a decimal string.
  * @param num The numerator (bigint/number)
  * @param denom The denominator (bigint/number)

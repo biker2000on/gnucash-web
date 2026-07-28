@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook } from '@/lib/book-scope';
 import { autoAssignLots } from '@/lib/lot-assignment';
+import { BookBusyError } from '@/lib/book-lock';
 
 const VALID_METHODS = ['fifo', 'lifo', 'average'] as const;
 
@@ -12,6 +13,7 @@ export async function POST(
   try {
     const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
+    const { bookGuid } = roleResult;
 
     const { guid: accountGuid } = await params;
 
@@ -29,9 +31,15 @@ export async function POST(
       );
     }
 
-    const result = await autoAssignLots(accountGuid, method);
+    const result = await autoAssignLots(accountGuid, method, bookGuid);
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof BookBusyError) {
+      return NextResponse.json(
+        { error: 'Another operation on this book is in progress. Try again shortly.' },
+        { status: 409 }
+      );
+    }
     console.error('Error auto-assigning lots:', error);
     return NextResponse.json(
       { error: 'Failed to auto-assign lots' },

@@ -1,11 +1,24 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { revertScrubRun } from '@/lib/lot-assignment';
+import { getBookAccountGuids, isAccountInActiveBook } from '@/lib/book-scope';
+import { revertScrubRun, ScrubRunNotInBookError } from '@/lib/lot-assignment';
+import { BookBusyError } from '@/lib/book-lock';
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ guid: string }> }
+) {
   try {
     const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
+    const { bookGuid } = roleResult;
+
+    // Book-scope the route like its sibling lot routes: the account in the
+    // URL must belong to the caller's active book.
+    const { guid: accountGuid } = await params;
+    if (!await isAccountInActiveBook(accountGuid)) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    }
 
     const body = await request.json();
     const { runId } = body;
@@ -13,9 +26,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'runId is required' }, { status: 400 });
     }
 
-    const result = await revertScrubRun(runId);
+    // revertScrubRun additionally verifies that every account the run
+    // touched is inside the active book before deleting anything.
+    const allowedAccountGuids = await getBookAccountGuids();
+    const result = await revertScrubRun(runId, { bookGuid, allowedAccountGuids });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof BookBusyError) {
+      return NextResponse.json(
+        { error: 'Another operation on this book is in progress. Try again shortly.' },
+        { status: 409 }
+      );
+    }
+    if (error instanceof ScrubRunNotInBookError) {
+      return NextResponse.json({ error: 'Scrub run not found' }, { status: 404 });
+    }
     console.error('Error reverting scrub run:', error);
     return NextResponse.json({ error: 'Failed to revert scrub run' }, { status: 500 });
   }
