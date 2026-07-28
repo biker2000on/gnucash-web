@@ -29,8 +29,11 @@ export async function POST(
     const result = await skipOccurrence(guid, occurrenceDate);
 
     if (!result.success) {
-      const status = result.error?.includes('not found') ? 404 : 400;
-      return NextResponse.json({ error: result.error }, { status });
+      // 409: someone (or another tab) already recorded/skipped this occurrence.
+      const status = result.code === 'already_executed'
+        ? 409
+        : result.error?.includes('not found') ? 404 : 400;
+      return NextResponse.json({ error: result.error, code: result.code }, { status });
     }
 
     return NextResponse.json(result);

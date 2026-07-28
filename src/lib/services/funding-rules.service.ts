@@ -132,6 +132,16 @@ export function fundingDedupeKey(ruleId: number, triggerTxnGuid: string): string
     return `${DEDUPE_PREFIX}${ruleId}:${triggerTxnGuid}`;
 }
 
+/**
+ * Advisory-lock key serializing sweeps of one (rule, deposit) pair — taken as
+ * `pg_advisory_xact_lock(hashtext(key))` as the FIRST statement of the sweep
+ * transaction so overlapping runs (worker sweep + "Run now") can't both pass
+ * the dedupe check and double-sweep.
+ */
+export function fundingSweepLockKey(ruleId: number, triggerTxnGuid: string): string {
+    return `fundsweep:${ruleId}:${triggerTxnGuid}`;
+}
+
 /** Parse a dedupe key back into its parts (null when not an autofund num). */
 export function parseFundingDedupeKey(num: string | null | undefined): { ruleId: number; triggerTxnGuid: string } | null {
     if (!num || !num.startsWith(DEDUPE_PREFIX)) return null;
@@ -522,6 +532,8 @@ export async function runFundingRules(options: {
                 result.depositsMatched++;
 
                 const dedupeKey = fundingDedupeKey(rule.id, deposit.txGuid);
+                // Cheap pre-check only — the authoritative dedupe re-check runs
+                // inside applySweep's transaction under an advisory lock.
                 const already = await prisma.transactions.findFirst({
                     where: { num: dedupeKey },
                     select: { guid: true },
@@ -538,7 +550,13 @@ export async function runFundingRules(options: {
                     continue;
                 }
 
-                await applySweep(rule, deposit, dedupeKey);
+                const sweptTxnGuid = await applySweep(rule, deposit, dedupeKey);
+                if (sweptTxnGuid === null) {
+                    // A concurrent run swept this deposit between our pre-check
+                    // and the locked re-check.
+                    result.skippedAlreadyApplied++;
+                    continue;
+                }
                 result.applied++;
 
                 if (options.notify !== false) {
@@ -560,8 +578,12 @@ export async function runFundingRules(options: {
     return result;
 }
 
-/** Create the sweep transfer for one (rule, deposit) pair. Returns the txn guid. */
-async function applySweep(rule: FundingRule, deposit: DepositCandidate, dedupeKey: string): Promise<string> {
+/**
+ * Create the sweep transfer for one (rule, deposit) pair. Returns the txn
+ * guid, or null when a concurrent run already applied this pair (detected by
+ * the in-transaction dedupe re-check under the pair's advisory lock).
+ */
+async function applySweep(rule: FundingRule, deposit: DepositCandidate, dedupeKey: string): Promise<string | null> {
     // Re-validate currencies at apply time (accounts may have changed since
     // the rule was saved).
     const allGuids = [rule.triggerAccountGuid!, ...rule.allocations.map(a => a.accountGuid)];
@@ -589,7 +611,20 @@ async function applySweep(rule: FundingRule, deposit: DepositCandidate, dedupeKe
     const currencyGuid = trigger.commodity_guid;
     const { num: totalNum, denom } = fromDecimal(total);
 
-    await prisma.$transaction(async tx => {
+    const applied = await prisma.$transaction(async tx => {
+        // Serialize this (rule, deposit) pair across overlapping runs; the
+        // lock is released automatically at commit/rollback.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${fundingSweepLockKey(rule.id, deposit.txGuid)}))`;
+
+        // Authoritative dedupe re-check AFTER taking the lock: a concurrent
+        // run holding the lock first has already committed its sweep and its
+        // num stamp is now visible.
+        const existing = await tx.transactions.findFirst({
+            where: { num: dedupeKey },
+            select: { guid: true },
+        });
+        if (existing) return false;
+
         await tx.$executeRaw`
             INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
             VALUES (${txnGuid}, ${currencyGuid}, ${dedupeKey}, ${deposit.postDate}, ${enterDate}, ${description})
@@ -616,9 +651,11 @@ async function applySweep(rule: FundingRule, deposit: DepositCandidate, dedupeKe
             where: { id: rule.id },
             data: { last_applied_txn_guid: deposit.txGuid, updated_at: new Date() },
         });
+
+        return true;
     });
 
-    return txnGuid;
+    return applied ? txnGuid : null;
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
-import { previewCloseBook, executeCloseBook } from '@/lib/close-book';
+import { previewCloseBook, executeCloseBook, CloseBookAlreadyClosedError } from '@/lib/close-book';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
 
     const bookAccountGuids = await getBookAccountGuids();
     const result = await executeCloseBook(
+      roleResult.bookGuid,
       bookAccountGuids,
       date,
       equityAccountGuid,
@@ -53,6 +54,12 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof CloseBookAlreadyClosedError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, closedThrough: error.closedThrough },
+        { status: 409 },
+      );
+    }
     console.error('Error executing close book:', error);
     const message = error instanceof Error ? error.message : 'Failed to post closing entries';
     return NextResponse.json({ error: message }, { status: 400 });

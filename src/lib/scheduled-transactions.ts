@@ -1,6 +1,17 @@
 import prisma from '@/lib/prisma';
+import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
 import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
+
+/**
+ * Either the global Prisma client or an interactive-transaction client
+ * (the callback argument of `prisma.$transaction`). Lets query helpers run
+ * INSIDE a caller's transaction instead of escaping it via the global client.
+ */
+export type DbClient = Omit<
+  ExtendedPrismaClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 
 export interface TemplateAccount {
   guid: string;
@@ -39,10 +50,17 @@ export function formatDate(date: Date | null): string | null {
 /**
  * Resolve template splits for a scheduled transaction.
  * GnuCash stores scheduled transaction templates as account hierarchies under a template root.
+ *
+ * Pass `client` to run inside a caller's `$transaction` (e.g. the FOR UPDATE
+ * block in scheduled-tx-execute); defaults to the global client for callers
+ * that don't need transactional consistency.
  */
-export async function resolveTemplateSplits(templateActGuid: string): Promise<ResolvedSplit[]> {
+export async function resolveTemplateSplits(
+  templateActGuid: string,
+  client: DbClient = prisma,
+): Promise<ResolvedSplit[]> {
   // Step 1: Find child accounts of the template root
-  const templateAccounts = await prisma.accounts.findMany({
+  const templateAccounts = await client.accounts.findMany({
     where: { parent_guid: templateActGuid },
     select: { guid: true, name: true },
   });
@@ -52,13 +70,13 @@ export async function resolveTemplateSplits(templateActGuid: string): Promise<Re
   const templateGuids = templateAccounts.map(a => a.guid);
 
   // Step 2: Find splits for transactions referencing template accounts
-  const splits = await prisma.splits.findMany({
+  const splits = await client.splits.findMany({
     where: { account_guid: { in: templateGuids } },
     select: { account_guid: true, value_num: true, value_denom: true },
   });
 
   // Step 3: Resolve real account GUIDs from slots
-  const slots = await prisma.slots.findMany({
+  const slots = await client.slots.findMany({
     where: {
       obj_guid: { in: templateGuids },
       slot_type: 4,
@@ -79,7 +97,7 @@ export async function resolveTemplateSplits(templateActGuid: string): Promise<Re
   const accountNames = new Map<string, string>();
 
   if (realGuids.length > 0) {
-    const accounts = await prisma.accounts.findMany({
+    const accounts = await client.accounts.findMany({
       where: { guid: { in: realGuids } },
       select: { guid: true, name: true },
     });

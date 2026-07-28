@@ -31,4 +31,16 @@ describe('initializeDatabase', () => {
         );
         expect(mocks.query).toHaveBeenCalled();
     });
+
+    it('adds the audit undo claim columns behind an advisory lock', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const ddl = sqls.find((s) => s.includes('gnucash_web_audit_undo_columns'));
+        expect(ddl).toBeDefined();
+        // Claim marker for audit.service's claim-first undo (undone_at CAS).
+        expect(ddl).toContain('ALTER TABLE gnucash_web_audit ADD COLUMN IF NOT EXISTS undone_at TIMESTAMPTZ');
+        expect(ddl).toContain('ADD COLUMN IF NOT EXISTS undone_by INTEGER');
+        expect(ddl).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_audit_undo_columns'))");
+    });
 });

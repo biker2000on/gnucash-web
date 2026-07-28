@@ -1,6 +1,13 @@
 import prisma from '@/lib/prisma';
+import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { generateGuid, fromDecimal } from '@/lib/gnucash';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
+
+/** Global client or an interactive-transaction client. */
+type DbClient = Omit<
+    ExtendedPrismaClient,
+    '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 
 /**
  * Close Book — GnuCash desktop's Tools → Close Book.
@@ -82,10 +89,11 @@ export function buildClosingTransactions(
 export async function previewCloseBook(
     bookAccountGuids: string[],
     closeDate: string,
+    client: DbClient = prisma,
 ): Promise<CloseBookPreview> {
     const end = new Date(`${closeDate}T23:59:59.999Z`);
 
-    const filtered = await prisma.$queryRaw<Array<{
+    const filtered = await client.$queryRaw<Array<{
         guid: string;
         name: string;
         fullname: string;
@@ -140,46 +148,91 @@ export interface CloseBookResult {
     skippedCurrencies: string[];
 }
 
+/**
+ * Thrown when a close for this period has already been posted — routes map it
+ * to HTTP 409. `closedThrough` is the latest closed period end (YYYY-MM-DD).
+ */
+export class CloseBookAlreadyClosedError extends Error {
+    readonly code = 'ALREADY_CLOSED';
+    constructor(readonly closedThrough: string) {
+        super(`Book already closed through ${closedThrough} — closing entries for this period exist`);
+        this.name = 'CloseBookAlreadyClosedError';
+    }
+}
+
+/** Slot (on the book guid) recording the latest closed-through date. */
+export const CLOSED_THROUGH_SLOT_NAME = 'gnucash-web/closed-through';
+
+/**
+ * Pure guard: a close dated on or before the recorded closed-through date is
+ * a re-run of an already-posted close. (ISO dates compare lexically.)
+ */
+export function isPeriodAlreadyClosed(closedThrough: string | null, closeDate: string): boolean {
+    return closedThrough != null && closeDate <= closedThrough;
+}
+
+/**
+ * Post closing entries — idempotent per period. Everything (marker check,
+ * balance recompute, inserts, marker write) runs in ONE transaction under
+ * `pg_advisory_xact_lock(hashtext('close-book:' || bookGuid))`, so two
+ * concurrent runs serialize and the loser sees the winner's marker and gets
+ * CloseBookAlreadyClosedError instead of zeroing income/expense twice.
+ */
 export async function executeCloseBook(
+    bookGuid: string,
     bookAccountGuids: string[],
     closeDate: string,
     equityAccountGuid: string,
     description: string,
 ): Promise<CloseBookResult> {
-    const preview = await previewCloseBook(bookAccountGuids, closeDate);
-    if (preview.accounts.length === 0) {
-        return { transactionGuids: [], splitCount: 0, skippedCurrencies: [] };
-    }
-
-    const equity = await prisma.accounts.findUnique({
-        where: { guid: equityAccountGuid },
-        select: { guid: true, account_type: true, commodity_guid: true },
-    });
-    if (!equity) throw new Error('Equity account not found');
-    if (equity.account_type !== 'EQUITY') throw new Error('Closing target must be an EQUITY account');
-    if (!bookAccountGuids.includes(equity.guid)) throw new Error('Equity account is not in the active book');
-
-    // Period lock: closing entries are dated closeDate, which must be after
-    // the book's lock date (lock AFTER closing the books, not before).
-    await assertAccountNotLocked(equity.guid, [closeDate]);
-
-    // Only currencies matching the equity account can close into it.
-    const closable = preview.accounts.filter(a => a.commodity_guid === equity.commodity_guid);
-    const skippedCurrencies = [...new Set(
-        preview.accounts.filter(a => a.commodity_guid !== equity.commodity_guid).map(a => a.commodity_guid),
-    )];
-
-    const specs = [
-        ...buildClosingTransactions(closable, 'INCOME', description || 'Closing Entries — Income'),
-        ...buildClosingTransactions(closable, 'EXPENSE', description || 'Closing Entries — Expenses'),
-    ];
-
     const postDate = new Date(`${closeDate}T12:00:00Z`);
     const enterDate = new Date();
     const transactionGuids: string[] = [];
     let splitCount = 0;
+    let skippedCurrencies: string[] = [];
 
     await prisma.$transaction(async (tx) => {
+        // Serialize per book; released automatically at commit/rollback.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'close-book:' + bookGuid}))`;
+
+        // Idempotency marker: refuse a second close of an already-closed period.
+        const markerRows = await tx.$queryRaw<Array<{ string_val: string | null }>>`
+            SELECT string_val FROM slots
+            WHERE obj_guid = ${bookGuid} AND name = ${CLOSED_THROUGH_SLOT_NAME}
+        `;
+        const closedThrough = markerRows.length > 0 ? markerRows[0].string_val : null;
+        if (isPeriodAlreadyClosed(closedThrough, closeDate)) {
+            throw new CloseBookAlreadyClosedError(closedThrough!);
+        }
+
+        // Recompute balances INSIDE the transaction so concurrent postings
+        // can't slip between the preview and the closing entries.
+        const preview = await previewCloseBook(bookAccountGuids, closeDate, tx);
+        if (preview.accounts.length === 0) return;
+
+        const equity = await tx.accounts.findUnique({
+            where: { guid: equityAccountGuid },
+            select: { guid: true, account_type: true, commodity_guid: true },
+        });
+        if (!equity) throw new Error('Equity account not found');
+        if (equity.account_type !== 'EQUITY') throw new Error('Closing target must be an EQUITY account');
+        if (!bookAccountGuids.includes(equity.guid)) throw new Error('Equity account is not in the active book');
+
+        // Period lock: closing entries are dated closeDate, which must be after
+        // the book's lock date (lock AFTER closing the books, not before).
+        await assertAccountNotLocked(equity.guid, [closeDate]);
+
+        // Only currencies matching the equity account can close into it.
+        const closable = preview.accounts.filter(a => a.commodity_guid === equity.commodity_guid);
+        skippedCurrencies = [...new Set(
+            preview.accounts.filter(a => a.commodity_guid !== equity.commodity_guid).map(a => a.commodity_guid),
+        )];
+
+        const specs = [
+            ...buildClosingTransactions(closable, 'INCOME', description || 'Closing Entries — Income'),
+            ...buildClosingTransactions(closable, 'EXPENSE', description || 'Closing Entries — Expenses'),
+        ];
+
         for (const spec of specs) {
             const txGuid = generateGuid();
             await tx.$executeRaw`
@@ -202,7 +255,25 @@ export async function executeCloseBook(
             splitCount += 1;
             transactionGuids.push(txGuid);
         }
-    });
+
+        // Record the close (only when entries were actually posted) so a
+        // re-run of the same period is rejected with a clean 409.
+        if (transactionGuids.length > 0) {
+            if (markerRows.length > 0) {
+                await tx.$executeRaw`
+                    UPDATE slots SET string_val = ${closeDate}
+                    WHERE obj_guid = ${bookGuid} AND name = ${CLOSED_THROUGH_SLOT_NAME}
+                `;
+            } else {
+                await tx.$executeRaw`
+                    INSERT INTO slots (obj_guid, name, slot_type, string_val)
+                    VALUES (${bookGuid}, ${CLOSED_THROUGH_SLOT_NAME}, 4, ${closeDate})
+                `;
+            }
+        }
+    // Generous timeout: balance recompute + per-account inserts can exceed
+    // Prisma's 5s interactive-transaction default on large books.
+    }, { timeout: 60_000 });
 
     // Audit each created transaction with a full snapshot (undo-capable)
     const { logAudit, snapshotTransactionByGuid } = await import('@/lib/services/audit.service');

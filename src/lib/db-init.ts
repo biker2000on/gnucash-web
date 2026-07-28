@@ -872,6 +872,21 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Undo idempotency for the audit trail: undone_at is the claim marker for
+    // the claim-first compare-and-swap in audit.service.undoAuditEntry
+    // (UPDATE ... SET undone_at = NOW() WHERE id = ? AND undone_at IS NULL
+    // RETURNING id) so two concurrent undos of the same entry can't both
+    // apply. undone_by records who claimed it. Advisory-locked like the other
+    // ALTERs: app and worker run db-init concurrently at startup.
+    const auditUndoColumnsDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_audit_undo_columns'));
+            ALTER TABLE gnucash_web_audit ADD COLUMN IF NOT EXISTS undone_at TIMESTAMPTZ;
+            ALTER TABLE gnucash_web_audit ADD COLUMN IF NOT EXISTS undone_by INTEGER;
+        END $$;
+    `;
+
     // Book-scope tags: tag names were globally unique, so every book saw
     // every tag. Adds book_guid, attributes each tag to the book(s) it's
     // used in (cloning tags used across multiple books and repointing the
@@ -1814,6 +1829,7 @@ async function createExtensionTables() {
         await query(FAMILY_OFFICE_SCHEMA_SQL);
         await query(membershipTablesDDL);
         await query(auditBookScopeDDL);
+        await query(auditUndoColumnsDDL);
         await query(tagsBookScopeDDL);
         await query(savedReportsBookScopeDDL);
         await query(smbTablesDDL);
