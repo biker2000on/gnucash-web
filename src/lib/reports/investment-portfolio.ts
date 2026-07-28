@@ -6,9 +6,11 @@
  */
 
 import prisma from '@/lib/prisma';
-import { getLatestPrice, calculateShares, calculateCostBasis, calculateMarketValue, calculateGainLoss, calculateGainLossPercent } from '@/lib/commodities';
+import { Prisma } from '@prisma/client';
+import { calculateMarketValue, calculateGainLoss, calculateGainLossPercent } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { ReportType, ReportFilters, InvestmentPortfolioData, PortfolioHolding } from './types';
+import { sumSplitsByAccount, toDecimal } from './utils';
 
 /**
  * Generate Investment Portfolio report data.
@@ -41,64 +43,88 @@ export async function generateInvestmentPortfolio(
         },
     });
 
-    // Process each account in parallel
-    const holdingResults = await Promise.all(
-        accounts.map(async (account): Promise<PortfolioHolding | null> => {
-            // Get all splits up to endDate
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: { lte: endDate },
-                    },
-                },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                    value_num: true,
-                    value_denom: true,
-                },
-            });
-
-            const shares = calculateShares(splits);
-
-            // Skip zero-share accounts unless requested
-            const isZeroShares = Math.abs(shares) < 0.0001;
-            if (isZeroShares && !showZeroShares) {
-                return null;
-            }
-
-            const costBasis = isZeroShares ? 0 : calculateCostBasis(splits);
-            const symbol = account.commodity?.mnemonic || '???';
-
-            // Get latest price up to endDate (in the report currency)
-            const priceData = account.commodity_guid
-                ? await getLatestPrice(account.commodity_guid, baseCurrency?.guid, endDate)
-                : null;
-            const latestPrice = priceData?.value || 0;
-            const priceDate = priceData?.date
-                ? priceData.date.toISOString().split('T')[0]
-                : '';
-
-            const effectiveShares = isZeroShares ? 0 : shares;
-            const marketValue = isZeroShares ? 0 : calculateMarketValue(effectiveShares, latestPrice);
-            const gain = calculateGainLoss(marketValue, costBasis);
-            const gainPercent = calculateGainLossPercent(gain, costBasis);
-
-            return {
-                guid: account.guid,
-                accountName: account.name,
-                symbol,
-                shares: effectiveShares,
-                latestPrice,
-                priceDate,
-                marketValue,
-                costBasis,
-                gain,
-                gainPercent,
-            };
-        })
+    // Batch aggregate: shares (quantity sum) and cost basis (value sum) for
+    // all accounts up to endDate in one GROUP BY query
+    const holdingSums = await sumSplitsByAccount(
+        accounts.map(a => a.guid),
+        { lte: endDate }
     );
+
+    // Batch price lookup: latest price per commodity up to endDate (in the
+    // report currency) via one DISTINCT ON query instead of one per account
+    const commodityGuids = [
+        ...new Set(
+            accounts
+                .map(a => a.commodity_guid)
+                .filter((g): g is string => g !== null)
+        ),
+    ];
+    const priceRows = commodityGuids.length > 0
+        ? await prisma.$queryRaw<Array<{
+            commodity_guid: string;
+            date: Date;
+            value_num: bigint;
+            value_denom: bigint;
+        }>>`
+            SELECT DISTINCT ON (commodity_guid)
+                   commodity_guid, date, value_num, value_denom
+            FROM prices
+            WHERE commodity_guid = ANY(${commodityGuids}::text[])
+              AND date <= ${endDate}
+              -- GnuCash's split register records implied $0 prices for
+              -- zero-value transfer transactions; never value holdings with them
+              AND value_num > 0
+              ${baseCurrency ? Prisma.sql`AND currency_guid = ${baseCurrency.guid}` : Prisma.empty}
+            ORDER BY commodity_guid, date DESC
+        `
+        : [];
+    const priceByCommodity = new Map(
+        priceRows.map(p => [p.commodity_guid, {
+            value: toDecimal(p.value_num, p.value_denom),
+            date: p.date,
+        }])
+    );
+
+    const holdingResults = accounts.map((account): PortfolioHolding | null => {
+        const sums = holdingSums.get(account.guid);
+        const shares = sums?.quantity ?? 0;
+
+        // Skip zero-share accounts unless requested
+        const isZeroShares = Math.abs(shares) < 0.0001;
+        if (isZeroShares && !showZeroShares) {
+            return null;
+        }
+
+        const costBasis = isZeroShares ? 0 : (sums?.value ?? 0);
+        const symbol = account.commodity?.mnemonic || '???';
+
+        // Latest price up to endDate (in the report currency)
+        const priceData = account.commodity_guid
+            ? priceByCommodity.get(account.commodity_guid) ?? null
+            : null;
+        const latestPrice = priceData?.value || 0;
+        const priceDate = priceData?.date
+            ? priceData.date.toISOString().split('T')[0]
+            : '';
+
+        const effectiveShares = isZeroShares ? 0 : shares;
+        const marketValue = isZeroShares ? 0 : calculateMarketValue(effectiveShares, latestPrice);
+        const gain = calculateGainLoss(marketValue, costBasis);
+        const gainPercent = calculateGainLossPercent(gain, costBasis);
+
+        return {
+            guid: account.guid,
+            accountName: account.name,
+            symbol,
+            shares: effectiveShares,
+            latestPrice,
+            priceDate,
+            marketValue,
+            costBasis,
+            gain,
+            gainPercent,
+        };
+    });
 
     // Filter out nulls (zero-share accounts that were skipped)
     const holdings = holdingResults.filter((h): h is PortfolioHolding => h !== null);

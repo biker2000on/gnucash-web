@@ -57,6 +57,9 @@ model transactions {
   // DB-only (created by db-init, prisma can't express partial indexes):
   // uq_transactions_autofund_num — UNIQUE ON transactions(num)
   // WHERE num LIKE 'autofund:%' (funding-sweep dedupe key).
+  // idx_transactions_guid_postdate — (guid) INCLUDE (post_date) covering
+  // index for the splits->transactions post_date join (INCLUDE not
+  // expressible in prisma).
   @@index([post_date], map: "tx_post_date_index")
 }
 
@@ -79,7 +82,13 @@ model splits {
   account     accounts     @relation(fields: [account_guid], references: [guid])
   lot         lots?        @relation(fields: [lot_guid], references: [guid])
 
-  @@index([account_guid], map: "splits_account_guid_index")
+  // splits_account_guid_index (native GnuCash) was dropped by db-init: it is
+  // an exact prefix of idx_splits_account_reconcile (declared below) and of
+  // the covering index idx_splits_account_covering — (account_guid) INCLUDE
+  // (tx_guid, quantity/value fractions), not expressible in prisma.
+  // idx_splits_lot_guid — partial index ON (lot_guid) WHERE lot_guid IS NOT
+  // NULL (db-init only; prisma can't express partial indexes).
+  @@index([account_guid, reconcile_state], map: "idx_splits_account_reconcile")
   @@index([tx_guid], map: "splits_tx_guid_index")
 }
 
@@ -171,6 +180,8 @@ model lots {
   // Relations
   account accounts? @relation(fields: [account_guid], references: [guid])
   splits  splits[]
+
+  @@index([account_guid], map: "idx_lots_account_guid")
 }
 
 // ============================================
@@ -364,7 +375,10 @@ model slots {
   numeric_val_denom BigInt?
   gdate_val         DateTime? @db.Date
 
-  @@index([obj_guid], map: "slots_guid_index")
+  // slots_guid_index (native GnuCash) was dropped by db-init: it is a prefix
+  // of idx_slots_obj_name below.
+  @@index([obj_guid, name], map: "idx_slots_obj_name")
+  @@index([name, obj_guid], map: "idx_slots_name_obj")
 }
 
 model taxtable_entries {

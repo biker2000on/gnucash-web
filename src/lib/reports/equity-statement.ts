@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
-import { toDecimal, buildHierarchy, resolveRootGuid } from './utils';
+import { buildHierarchy, resolveRootGuid, sumSplitsByAccount } from './utils';
 
 /**
  * Generate Equity Statement report
@@ -60,115 +60,69 @@ export async function generateEquityStatement(filters: ReportFilters): Promise<R
         },
     });
 
-    // Calculate opening equity (balance before startDate)
-    const openingEquityBalances = await Promise.all(
-        equityAccounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: { post_date: { lt: startDate } },
-                },
-                select: { quantity_num: true, quantity_denom: true },
-            });
+    // One grouped pass over equity splits computes opening (< startDate),
+    // period (startDate..endDate) and closing (<= endDate) sums per account
+    // via FILTER clauses. The outer WHERE is the union of all three windows.
+    const equityGuids = equityAccounts.map(a => a.guid);
+    const equityRows = equityGuids.length > 0
+        ? await prisma.$queryRaw<Array<{
+            account_guid: string;
+            opening_sum: number;
+            period_sum: number;
+            closing_sum: number;
+        }>>`
+            SELECT s.account_guid,
+                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                       FILTER (WHERE t.post_date < ${startDate}), 0)::float8 AS opening_sum,
+                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                       FILTER (WHERE t.post_date >= ${startDate} AND t.post_date <= ${endDate}), 0)::float8 AS period_sum,
+                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                       FILTER (WHERE t.post_date <= ${endDate}), 0)::float8 AS closing_sum
+            FROM splits s
+            JOIN transactions t ON t.guid = s.tx_guid
+            WHERE s.account_guid = ANY(${equityGuids}::text[])
+              AND (t.post_date < ${startDate} OR t.post_date <= ${endDate})
+            GROUP BY s.account_guid
+        `
+        : [];
+    const equitySumsByGuid = new Map(equityRows.map(r => [r.account_guid, r]));
 
-            const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
+    // Opening equity (balance before startDate)
+    const openingEquityBalances = equityAccounts.map(account => ({
+        ...account,
+        // Negate for display (positive = increase in equity)
+        balance: -(equitySumsByGuid.get(account.guid)?.opening_sum ?? 0),
+    }));
 
-            return {
-                ...account,
-                balance: -balance, // Negate for display (positive = increase in equity)
-            };
-        })
+    // Period income and expense activity in one grouped query
+    const periodSums = await sumSplitsByAccount(
+        [...incomeAccounts, ...expenseAccounts].map(a => a.guid),
+        { gte: startDate, lte: endDate }
     );
 
-    // Calculate period income (negated for display)
-    const periodIncomeBalances = await Promise.all(
-        incomeAccounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: { post_date: { gte: startDate, lte: endDate } },
-                },
-                select: { quantity_num: true, quantity_denom: true },
-            });
+    // Period income (negated for display; income is stored as negative/credits)
+    const periodIncomeBalances = incomeAccounts.map(account => ({
+        ...account,
+        balance: -(periodSums.get(account.guid)?.quantity ?? 0),
+    }));
 
-            const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
+    // Period expenses
+    const periodExpenseBalances = expenseAccounts.map(account => ({
+        ...account,
+        balance: periodSums.get(account.guid)?.quantity ?? 0,
+    }));
 
-            return {
-                ...account,
-                balance: -balance, // Negate income (stored as negative/credits)
-            };
-        })
-    );
+    // Other equity changes (direct equity transactions during period)
+    const otherEquityChangesBalances = equityAccounts.map(account => ({
+        ...account,
+        balance: -(equitySumsByGuid.get(account.guid)?.period_sum ?? 0), // Negate for display
+    }));
 
-    // Calculate period expenses
-    const periodExpenseBalances = await Promise.all(
-        expenseAccounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: { post_date: { gte: startDate, lte: endDate } },
-                },
-                select: { quantity_num: true, quantity_denom: true },
-            });
-
-            const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-
-            return {
-                ...account,
-                balance,
-            };
-        })
-    );
-
-    // Calculate other equity changes (direct equity transactions during period)
-    const otherEquityChangesBalances = await Promise.all(
-        equityAccounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: { post_date: { gte: startDate, lte: endDate } },
-                },
-                select: { quantity_num: true, quantity_denom: true },
-            });
-
-            const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-
-            return {
-                ...account,
-                balance: -balance, // Negate for display
-            };
-        })
-    );
-
-    // Calculate closing equity (balance at endDate)
-    const closingEquityBalances = await Promise.all(
-        equityAccounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: { post_date: { lte: endDate } },
-                },
-                select: { quantity_num: true, quantity_denom: true },
-            });
-
-            const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-
-            return {
-                ...account,
-                balance: -balance, // Negate for display
-            };
-        })
-    );
+    // Closing equity (balance at endDate)
+    const closingEquityBalances = equityAccounts.map(account => ({
+        ...account,
+        balance: -(equitySumsByGuid.get(account.guid)?.closing_sum ?? 0), // Negate for display
+    }));
 
     // Build hierarchies
     const openingItems = buildHierarchy(openingEquityBalances, rootGuid);

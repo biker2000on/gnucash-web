@@ -186,9 +186,11 @@ export async function GET(request: NextRequest) {
                 value_num: true,
                 value_denom: true,
             },
-            orderBy: {
-                date: 'desc',
-            },
+            // Per-commodity descending order is all the priceMap below needs;
+            // sorting by (commodity_guid, date DESC) lets Postgres satisfy the
+            // sort from idx_prices_commodity_date instead of an on-disk sort
+            // over every price row.
+            orderBy: [{ commodity_guid: 'asc' }, { date: 'desc' }],
         });
 
         // Build a map: commodity_guid -> sorted prices (desc by date)
@@ -245,7 +247,9 @@ export async function GET(request: NextRequest) {
                     value_num: true,
                     value_denom: true,
                 },
-                orderBy: { date: 'desc' },
+                // Per-currency descending order (currencyRateMap re-sorts after
+                // merging inverse rates anyway); avoids a global date sort.
+                orderBy: [{ commodity_guid: 'asc' }, { date: 'desc' }],
             })
             : [];
 
@@ -273,7 +277,9 @@ export async function GET(request: NextRequest) {
                     value_num: true,
                     value_denom: true,
                 },
-                orderBy: { date: 'desc' },
+                // Grouped by target currency; consumers re-sort per-currency
+                // arrays after merging, so global date order is unnecessary.
+                orderBy: [{ currency_guid: 'asc' }, { date: 'desc' }],
             })
             : [];
 

@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
-import { toDecimal, buildHierarchy, resolveRootGuid, AccountWithBalance } from './utils';
+import { buildHierarchy, resolveRootGuid, AccountWithBalance } from './utils';
 
 /**
  * Generate Account Summary report
@@ -43,58 +43,48 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
         endDate
     );
 
-    // Get balances for each account
-    const accountBalances: AccountWithBalance[] = await Promise.all(
-        accounts.map(async (account) => {
-            // Get opening balance (before start date)
-            const openingSplits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: { lt: startDate },
-                    },
-                },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                },
-            });
+    // Opening (before startDate) and closing (up to endDate) balances for all
+    // accounts in one GROUP BY pass using FILTER clauses. The outer WHERE is
+    // the union of both windows so opening splits are never lost even if
+    // startDate > endDate.
+    const accountGuids = accounts.map(a => a.guid);
+    const balanceRows = accountGuids.length > 0
+        ? await prisma.$queryRaw<Array<{
+            account_guid: string;
+            opening_sum: number;
+            closing_sum: number;
+        }>>`
+            SELECT s.account_guid,
+                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                       FILTER (WHERE t.post_date < ${startDate}), 0)::float8 AS opening_sum,
+                   COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8)
+                       FILTER (WHERE t.post_date <= ${endDate}), 0)::float8 AS closing_sum
+            FROM splits s
+            JOIN transactions t ON t.guid = s.tx_guid
+            WHERE s.account_guid = ANY(${accountGuids}::text[])
+              AND (t.post_date < ${startDate} OR t.post_date <= ${endDate})
+            GROUP BY s.account_guid
+        `
+        : [];
+    const balancesByGuid = new Map(balanceRows.map(r => [r.account_guid, r]));
 
-            const openingBalance = openingSplits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
+    const accountBalances: AccountWithBalance[] = accounts.map(account => {
+        const sums = balancesByGuid.get(account.guid);
+        const openingBalance = sums?.opening_sum ?? 0;
+        const closingBalance = sums?.closing_sum ?? 0;
 
-            // Get closing balance (up to end date)
-            const closingSplits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: { lte: endDate },
-                    },
-                },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                },
-            });
+        const reportCurrencyMultiplier = valuation.getMultiplier({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        });
 
-            const closingBalance = closingSplits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-
-            const reportCurrencyMultiplier = valuation.getMultiplier({
-                accountType: account.account_type,
-                commodityGuid: account.commodity_guid,
-                commodityNamespace: account.commodity?.namespace,
-            });
-
-            return {
-                ...account,
-                balance: closingBalance * reportCurrencyMultiplier,
-                previousBalance: openingBalance * reportCurrencyMultiplier,
-            };
-        })
-    );
+        return {
+            ...account,
+            balance: closingBalance * reportCurrencyMultiplier,
+            previousBalance: openingBalance * reportCurrencyMultiplier,
+        };
+    });
 
     // Categorize top-level account types
     const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL'];

@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportFilters, GeneralLedgerData, LedgerAccount, LedgerEntry } from './types';
-import { buildAccountPathMap, toDecimal } from './utils';
+import { buildAccountPathMap, sumSplitsByAccount, toDecimal } from './utils';
 
 /** Credit-normal account types where balance = credits - debits */
 const CREDIT_NORMAL_TYPES = new Set(['LIABILITY', 'CREDIT', 'EQUITY', 'INCOME', 'PAYABLE']);
@@ -54,26 +54,12 @@ export async function generateGeneralLedger(filters: ReportFilters): Promise<Gen
     // Build full account path map for display
     const accountPaths = await buildAccountPathMap(filters.bookAccountGuids);
 
-    // Batch query: opening balances (all splits before startDate)
-    const openingSplits = await prisma.splits.findMany({
-        where: {
-            account_guid: { in: accountGuids },
-            transaction: {
-                post_date: { lt: startDate },
-            },
-        },
-        select: {
-            account_guid: true,
-            value_num: true,
-            value_denom: true,
-        },
-    });
-
-    // Sum opening balances by account
+    // Batch aggregate: opening balances (sum of all splits before startDate),
+    // grouped in SQL instead of fetching every historical split into JS
+    const openingSums = await sumSplitsByAccount(accountGuids, { lt: startDate });
     const openingBalances = new Map<string, number>();
-    for (const split of openingSplits) {
-        const current = openingBalances.get(split.account_guid) || 0;
-        openingBalances.set(split.account_guid, current + toDecimal(split.value_num, split.value_denom));
+    for (const [guid, sums] of openingSums) {
+        openingBalances.set(guid, sums.value);
     }
 
     // Batch query: period splits with transaction details

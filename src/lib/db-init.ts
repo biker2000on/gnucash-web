@@ -310,7 +310,10 @@ async function createExtensionTables() {
             confidence VARCHAR(20)
         );
         CREATE INDEX IF NOT EXISTS idx_txn_meta_source ON gnucash_web_transaction_meta(source) WHERE source != 'manual';
-        CREATE INDEX IF NOT EXISTS idx_txn_meta_simplefin_id ON gnucash_web_transaction_meta(simplefin_transaction_id) WHERE simplefin_transaction_id IS NOT NULL;
+        -- simplefin_transaction_id lookups are served by the unique partial
+        -- index created in createUniqueConstraintGuards; the legacy
+        -- non-unique duplicate is dropped by dropRedundantIndexes once the
+        -- unique index exists.
     `;
 
     const userPreferencesTableDDL = `
@@ -1890,12 +1893,18 @@ async function createPerformanceIndexes() {
             ON accounts (commodity_guid)`,
 
         // TRANSACTIONS - Medium: search and sort optimization
+        // (idx_transactions_description was removed: it used varchar_pattern_ops,
+        // which can never serve the app's ILIKE '%...%' searches — see
+        // dropRedundantIndexes below.)
         `CREATE INDEX IF NOT EXISTS idx_transactions_post_date_enter
             ON transactions (post_date DESC, enter_date DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_transactions_description
-            ON transactions USING btree (description varchar_pattern_ops)`,
         `CREATE INDEX IF NOT EXISTS idx_transactions_currency_guid
             ON transactions (currency_guid)`,
+
+        // TRANSACTIONS - High: covering index for the ubiquitous
+        // splits -> transactions join that only needs the post_date filter
+        `CREATE INDEX IF NOT EXISTS idx_transactions_guid_postdate
+            ON transactions (guid) INCLUDE (post_date)`,
 
         // SPLITS - Low: reconciliation workflow optimization
         `CREATE INDEX IF NOT EXISTS idx_splits_account_reconcile
@@ -1907,9 +1916,22 @@ async function createPerformanceIndexes() {
         `CREATE INDEX IF NOT EXISTS idx_splits_tx_account
             ON splits (tx_guid, account_guid)`,
 
+        // SPLITS - High: lot-linked splits (invoice views, cost basis, payment
+        // allocation) — partial index avoids full-table scans on lot_guid
+        `CREATE INDEX IF NOT EXISTS idx_splits_lot_guid
+            ON splits (lot_guid) WHERE lot_guid IS NOT NULL`,
+
+        // LOTS - Medium: per-account lot listing (lot engine, invoices)
+        `CREATE INDEX IF NOT EXISTS idx_lots_account_guid
+            ON lots (account_guid)`,
+
         // SLOTS - Medium: notes/lot metadata lookups filtered by name
         `CREATE INDEX IF NOT EXISTS idx_slots_obj_name
             ON slots (obj_guid, name)`,
+
+        // SLOTS - Medium: name-only lookups (forecast-data, equity-comp history)
+        `CREATE INDEX IF NOT EXISTS idx_slots_name_obj
+            ON slots (name, obj_guid)`,
     ];
 
     try {
@@ -1922,6 +1944,85 @@ async function createPerformanceIndexes() {
     } catch (error) {
         console.error('Error creating performance indexes:', error);
         // Don't throw - indexes are an optimization, not required for functionality
+    }
+}
+
+/**
+ * Drops indexes that live-DB analysis showed to be redundant duplicates or
+ * unserviceable (0 scans). All drops are IF EXISTS and prefix-drops are
+ * guarded on the superseding index actually existing, so this is safe to run
+ * repeatedly and on databases where createPerformanceIndexes has not run yet.
+ *
+ * Note: this app owns its databases (books are not opened by GnuCash
+ * desktop), so recreating GnuCash's native indexes is not a concern.
+ */
+async function dropRedundantIndexes() {
+    const dropDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_drop_redundant_indexes'));
+
+            -- splits_account_guid_index (native GnuCash) is an exact prefix of
+            -- idx_splits_account_reconcile and idx_splits_account_covering;
+            -- only drop once a superseding index exists.
+            IF to_regclass('idx_splits_account_covering') IS NOT NULL
+               OR to_regclass('idx_splits_account_reconcile') IS NOT NULL THEN
+                DROP INDEX IF EXISTS splits_account_guid_index;
+            END IF;
+
+            -- slots_guid_index (native GnuCash) is a prefix of idx_slots_obj_name.
+            IF to_regclass('idx_slots_obj_name') IS NOT NULL THEN
+                DROP INDEX IF EXISTS slots_guid_index;
+            END IF;
+
+            -- idx_txn_meta_simplefin_id is an exact duplicate of the unique
+            -- partial index uq_txn_meta_simplefin_id. The unique guard skips
+            -- creation on dirty data, so keep the non-unique index until the
+            -- unique one exists.
+            IF to_regclass('uq_txn_meta_simplefin_id') IS NOT NULL THEN
+                DROP INDEX IF EXISTS idx_txn_meta_simplefin_id;
+            END IF;
+
+            -- idx_transactions_description used varchar_pattern_ops (prefix
+            -- matching); the app searches with ILIKE '%...%', which this index
+            -- can never serve. Live-DB stats showed 0 scans. Also removed from
+            -- the creation list so it is not recreated.
+            DROP INDEX IF EXISTS idx_transactions_description;
+        END $$;
+    `;
+
+    try {
+        await query(dropDDL);
+        console.log('✓ Redundant indexes dropped/verified successfully');
+    } catch (error) {
+        console.error('Error dropping redundant indexes:', error);
+        // Don't throw - dropping duplicates is an optimization, not required
+    }
+}
+
+/**
+ * Tunes autovacuum for the hot, high-churn core tables. The default
+ * autovacuum_vacuum_scale_factor of 0.2 lets dead tuples pile up on large
+ * tables; 0.05 keeps splits/transactions statistics and visibility maps
+ * fresh (important for the index-only scans the covering indexes enable).
+ * Idempotent: re-applying the same storage parameter is harmless.
+ */
+async function tuneAutovacuum() {
+    const autovacuumDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_autovacuum_tuning'));
+            ALTER TABLE splits SET (autovacuum_vacuum_scale_factor = 0.05);
+            ALTER TABLE transactions SET (autovacuum_vacuum_scale_factor = 0.05);
+        END $$;
+    `;
+
+    try {
+        await query(autovacuumDDL);
+        console.log('✓ Autovacuum tuning applied successfully');
+    } catch (error) {
+        console.error('Error applying autovacuum tuning:', error);
+        // Don't throw - tuning is an optimization, not required
     }
 }
 
@@ -2153,6 +2254,9 @@ export async function initializeDatabase() {
             await createExtensionTables();
             await createUniqueConstraintGuards();
             await createPerformanceIndexes();
+            // After the superseding indexes exist, retire the redundant ones
+            await dropRedundantIndexes();
+            await tuneAutovacuum();
         });
         console.log('✓ Database initialization complete');
     } catch (error) {

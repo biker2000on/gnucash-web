@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ReportType, ReportData, ReportSection, LineItem, ReportFilters } from './types';
-import { buildAccountPathMap, toDecimal } from './utils';
+import { buildAccountPathMap, sumSplitsByAccount } from './utils';
 
 /**
  * Categorize account type for cash flow statement
@@ -60,37 +60,31 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
     const investingAccounts = accounts.filter(a => getCashFlowCategory(a.account_type) === 'investing');
     const financingAccounts = accounts.filter(a => getCashFlowCategory(a.account_type) === 'financing');
 
+    // One grouped query over every categorized account; both quantity and
+    // value sums come back per account and are classified in JS below.
+    const categorizedAccounts = [
+        ...operatingAccounts,
+        ...investingAccounts,
+        ...financingAccounts,
+        ...cashAccounts,
+    ];
+    const periodSums = await sumSplitsByAccount(
+        categorizedAccounts.map(a => a.guid),
+        { gte: startDate, lte: endDate }
+    );
+
     // Calculate cash changes for each category
-    async function getAccountChanges(accountList: typeof accounts) {
+    function getAccountChanges(accountList: typeof accounts) {
         const changes: LineItem[] = [];
 
         for (const account of accountList) {
             // For investment accounts, use value (cost basis / cash impact)
             // For regular accounts, use quantity (account currency amount)
             const isInvestment = investmentTypes.includes(account.account_type);
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: {
-                            gte: startDate,
-                            lte: endDate,
-                        },
-                    },
-                },
-                select: isInvestment
-                    ? { value_num: true, value_denom: true }
-                    : { quantity_num: true, quantity_denom: true },
-            });
-
-            const netChange = splits.reduce((sum, split) => {
-                if (isInvestment) {
-                    const s = split as { value_num: bigint; value_denom: bigint };
-                    return sum + toDecimal(s.value_num, s.value_denom);
-                }
-                const s = split as { quantity_num: bigint; quantity_denom: bigint };
-                return sum + toDecimal(s.quantity_num, s.quantity_denom);
-            }, 0);
+            const sums = periodSums.get(account.guid);
+            const netChange = isInvestment
+                ? (sums?.value ?? 0)
+                : (sums?.quantity ?? 0);
 
             if (netChange !== 0 || filters.showZeroBalances) {
                 changes.push({
@@ -105,10 +99,10 @@ export async function generateCashFlow(filters: ReportFilters): Promise<ReportDa
     }
 
     // Get changes by category
-    const operatingChanges = await getAccountChanges(operatingAccounts);
-    const investingChanges = await getAccountChanges(investingAccounts);
-    const financingChanges = await getAccountChanges(financingAccounts);
-    const cashChanges = await getAccountChanges(cashAccounts);
+    const operatingChanges = getAccountChanges(operatingAccounts);
+    const investingChanges = getAccountChanges(investingAccounts);
+    const financingChanges = getAccountChanges(financingAccounts);
+    const cashChanges = getAccountChanges(cashAccounts);
 
     // Non-cash splits carry the opposite sign of their cash impact (e.g.
     // income that brings cash in is recorded as a negative split). Flip the
