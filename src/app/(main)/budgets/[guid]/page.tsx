@@ -17,6 +17,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { BudgetProgress } from './BudgetProgress';
 import { BudgetYoY } from './BudgetYoY';
 import type { BudgetActualsResponse } from '@/lib/budget-actuals';
+import { suppressNextDataEvent } from '@/components/DataEventsProvider';
 
 interface BudgetAmount {
     id: number;
@@ -219,6 +220,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
     });
     useEffect(() => {
         const onDataChange = (e: Event) => {
+            // Defense-in-depth: DataEventsProvider defers events for hidden
+            // tabs, but any directly-dispatched event should not refetch a
+            // background tab either.
+            if (document.visibilityState !== 'visible') return;
             const detail = (e as CustomEvent).detail as { entity?: string; guid?: string } | undefined;
             if (detail?.entity !== 'budgets') return;
             if (detail.guid && detail.guid !== guid) return;
@@ -243,6 +248,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 method: 'DELETE'
             });
             if (res.ok) {
+                suppressNextDataEvent('budgets');
                 await refreshBudget();
             }
         } catch (err) {
@@ -256,6 +262,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
 
     const handleAmountUpdate = (accountGuid: string, periodNum: number, newValue: number) => {
         if (!budget) return;
+
+        // The cell editor's PATCH just committed on this tab; drop the relayed
+        // echo (the optimistic update below already reflects it).
+        suppressNextDataEvent('budgets');
 
         // Optimistic update (upsert): update the matching row, or synthesize one
         // from a sibling period so newly-created cells reflect immediately.
@@ -295,6 +305,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
             });
             if (res.ok) {
                 toast.success('Account added to budget');
+                suppressNextDataEvent('budgets');
                 await refreshBudget();
             } else {
                 throw new Error('Failed to add account');
@@ -1060,6 +1071,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                                                 amount: 0
                                                                             })
                                                                         });
+                                                                        suppressNextDataEvent('budgets');
                                                                         await refreshBudget();
                                                                         // Open the freshly-created cell for editing.
                                                                         setActiveCell(cellId);
@@ -1241,6 +1253,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                             throw new Error(data.error || 'Failed to add account');
                         }
                         toast.success('Account added to budget');
+                        suppressNextDataEvent('budgets');
                         await refreshBudget();
                     } catch (err) {
                         toast.error(err instanceof Error ? err.message : 'Failed to add account to budget');
@@ -1259,7 +1272,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     accountType={batchEditAccount.type}
                     balanceReversal={balanceReversal}
                     numPeriods={budget.num_periods}
-                    onUpdate={refreshBudget}
+                    onUpdate={() => {
+                        suppressNextDataEvent('budgets');
+                        return refreshBudget();
+                    }}
                 />
             )}
 
@@ -1271,7 +1287,10 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                 account={estimateAccount}
                 periodLabels={Array.from({ length: budget.num_periods }, (_, i) => getPeriodLabel(budget.num_periods, i))}
                 balanceReversal={balanceReversal}
-                onApplied={refreshBudget}
+                onApplied={() => {
+                    suppressNextDataEvent('budgets');
+                    return refreshBudget();
+                }}
             />
 
             {/* Delete Account Confirmation Dialog */}

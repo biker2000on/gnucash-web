@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { CreateScheduledPanel } from '@/components/scheduled-transactions/CreateScheduledPanel';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { suppressNextDataEvent } from '@/components/DataEventsProvider';
 
 // ---------------------------------------------------------------------------
 // Types matching API responses
@@ -224,6 +225,10 @@ export default function ScheduledTransactionsPage() {
   });
   useEffect(() => {
     const onDataChange = (e: Event) => {
+      // Defense-in-depth: DataEventsProvider defers events for hidden tabs,
+      // but any directly-dispatched event should not refetch a background
+      // tab either.
+      if (document.visibilityState !== 'visible') return;
       const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
       if (detail?.entity !== 'schedules') return;
       if (dataChangeRef.current.blocked) return;
@@ -312,6 +317,9 @@ export default function ScheduledTransactionsPage() {
         body: JSON.stringify({ occurrenceDate: date }),
       });
       if (!res.ok) throw new Error('Failed');
+      // Keep the "executed" badge visible: drop this tab's own echo instead
+      // of letting it refetch (which would remove the occurrence row).
+      suppressNextDataEvent('schedules');
       setActionStates(prev => ({ ...prev, [key]: 'executed' }));
     } catch {
       setActionStates(prev => ({ ...prev, [key]: 'error' }));
@@ -329,6 +337,7 @@ export default function ScheduledTransactionsPage() {
         body: JSON.stringify({ occurrenceDate: date }),
       });
       if (!res.ok) throw new Error('Failed');
+      suppressNextDataEvent('schedules');
       setActionStates(prev => ({ ...prev, [key]: 'skipped' }));
     } catch {
       setActionStates(prev => ({ ...prev, [key]: 'error' }));
@@ -374,7 +383,8 @@ export default function ScheduledTransactionsPage() {
         }
       }
       setActionStates(prev => ({ ...prev, ...resultStates }));
-      // Refetch data
+      // Refetch data (and drop this tab's own echo of the batch run)
+      suppressNextDataEvent('schedules');
       await fetchData();
     } catch {
       const errorStates: Record<string, 'error'> = {};
@@ -437,6 +447,7 @@ export default function ScheduledTransactionsPage() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ enabled: newEnabled }),
                     });
+                    if (res.ok) suppressNextDataEvent('schedules');
                     if (!res.ok) {
                       setTransactions(prev => prev.map(t =>
                         t.guid === tx.guid ? { ...t, enabled: !newEnabled } : t
@@ -487,6 +498,7 @@ export default function ScheduledTransactionsPage() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ enabled: newEnabled }),
                     });
+                    if (res.ok) suppressNextDataEvent('schedules');
                     if (!res.ok) {
                       setTransactions(prev => prev.map(t =>
                         t.guid === tx.guid ? { ...t, enabled: !newEnabled } : t
@@ -873,6 +885,7 @@ export default function ScheduledTransactionsPage() {
             setEditingTransaction(null);
             setSourceTransactionGuid(null);
             window.history.replaceState({}, '', '/scheduled-transactions');
+            suppressNextDataEvent('schedules');
             fetchData();
           }}
         />

@@ -7,6 +7,7 @@ import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
+import { suppressNextDataEvent } from './DataEventsProvider';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
@@ -302,6 +303,7 @@ export default function AccountLedger({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lot_guid: lotGuid }),
         });
+        suppressNextDataEvent('transactions');
         refreshLotMap();
     };
 
@@ -311,6 +313,7 @@ export default function AccountLedger({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lot_guid: 'new', title }),
         });
+        suppressNextDataEvent('transactions');
         refreshLotMap();
     };
 
@@ -407,6 +410,9 @@ export default function AccountLedger({
     }, [transactions, selectedSplits]);
 
     const handleReconcileComplete = useCallback(() => {
+        // The reconcile mutation just committed on this tab; drop the relayed
+        // echo (the local state update below already reflects it).
+        suppressNextDataEvent('transactions');
         // Refresh the transactions to show updated reconcile states
         setTransactions(prev => prev.map(tx => {
             const accountSplits = getRowAccountSplits(tx);
@@ -529,6 +535,7 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to delete');
             success('Transaction deleted successfully');
             // Refetch so running_balance column reflects the removed transaction
+            suppressNextDataEvent('transactions');
             fetchTransactions();
         } catch (err) {
             console.error('Delete failed:', err);
@@ -642,6 +649,7 @@ export default function AccountLedger({
             }
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            suppressNextDataEvent('transactions');
             setLastEditedDate(data.post_date);
             if (isEditMode) {
                 if (isNewTransaction || isMultiSplitSave) {
@@ -733,6 +741,7 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to save');
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            suppressNextDataEvent('transactions');
             setLastEditedDate(txData.post_date);
             await fetchTransactions();
             return true;
@@ -845,6 +854,7 @@ export default function AccountLedger({
             }
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            suppressNextDataEvent('transactions');
             setLastEditedDate(data.post_date);
             await fetchTransactions();
         } catch (err) {
@@ -983,6 +993,7 @@ export default function AccountLedger({
             // Refetch so running_balance column reflects the new transaction.
             // In edit mode this also corrects any balance drift from the optimistic
             // insert above.
+            suppressNextDataEvent('transactions');
             fetchTransactions();
         } catch (err) {
             console.error('Duplicate failed:', err);
@@ -1127,6 +1138,7 @@ export default function AccountLedger({
         }
         setEditSelectedGuids(new Set());
         setBulkDeleteConfirmOpen(false);
+        if (deleted > 0) suppressNextDataEvent('transactions');
         await fetchTransactions();
         if (conflicts > 0) {
             error(`${conflicts} transaction${conflicts !== 1 ? 's were' : ' was'} changed by someone else and not deleted — list reloaded`);
@@ -1171,6 +1183,7 @@ export default function AccountLedger({
 
             const data = await res.json();
             setEditSelectedGuids(new Set());
+            suppressNextDataEvent('transactions');
             await fetchTransactions();
             success(`Moved ${data.updated} split${data.updated !== 1 ? 's' : ''} to ${targetAccountName}`);
         } catch (err) {
@@ -1192,6 +1205,7 @@ export default function AccountLedger({
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || `${label} failed`);
             setEditSelectedGuids(new Set());
+            suppressNextDataEvent('transactions');
             await fetchTransactions();
             const skipped: { error?: string }[] = (data.results ?? []).filter((r: { ok: boolean }) => !r.ok);
             if (skipped.length > 0) {
@@ -1865,6 +1879,10 @@ export default function AccountLedger({
     });
     useEffect(() => {
         const onDataChange = (e: Event) => {
+            // Defense-in-depth: DataEventsProvider defers events for hidden
+            // tabs, but any directly-dispatched event should not refetch a
+            // background tab either.
+            if (document.visibilityState !== 'visible') return;
             const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
             if (detail?.entity !== 'transactions') return;
             if (dataChangeRef.current.blocked) return;
@@ -3212,6 +3230,7 @@ export default function AccountLedger({
                             currentShares={investmentCurrentShares}
                             onSave={() => {
                                 setIsEditModalOpen(false);
+                                suppressNextDataEvent('transactions');
                                 fetchTransactions();
                             }}
                             onCancel={() => setIsEditModalOpen(false)}
@@ -3230,9 +3249,13 @@ export default function AccountLedger({
                     onSuccess={() => {
                         setIsEditModalOpen(false);
                         setEditingTransaction(null);
+                        suppressNextDataEvent('transactions');
                         fetchTransactions();
                     }}
-                    onRefresh={fetchTransactions}
+                    onRefresh={() => {
+                        suppressNextDataEvent('transactions');
+                        return fetchTransactions();
+                    }}
                 />
             )}
 

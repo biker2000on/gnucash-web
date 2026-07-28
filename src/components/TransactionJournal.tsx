@@ -20,6 +20,7 @@ import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { suppressNextDataEvent } from './DataEventsProvider';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -250,6 +251,10 @@ export default function TransactionJournal({ initialTransactions, startDate, end
     });
     useEffect(() => {
         const onDataChange = (e: Event) => {
+            // Defense-in-depth: DataEventsProvider defers events for hidden
+            // tabs, but any directly-dispatched event should not refetch a
+            // background tab either.
+            if (document.visibilityState !== 'visible') return;
             const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
             if (detail?.entity !== 'transactions') return;
             if (dataChangeRef.current.blocked) return;
@@ -317,6 +322,8 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 return;
             }
             if (!res.ok) throw new Error('Failed to delete');
+            // Optimistic removal above already reflects the delete; drop the echo.
+            suppressNextDataEvent('transactions');
             success('Transaction deleted successfully');
         } catch (err) {
             console.error('Delete failed:', err);
@@ -397,6 +404,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 throw new Error(msg);
             }
             success('Transaction duplicated');
+            suppressNextDataEvent('transactions');
             fetchTransactions();
         } catch (err) {
             console.error('Duplicate failed:', err);
@@ -894,9 +902,13 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 onSuccess={() => {
                     setIsEditModalOpen(false);
                     setEditingTransaction(null);
+                    suppressNextDataEvent('transactions');
                     fetchTransactions();
                 }}
-                onRefresh={fetchTransactions}
+                onRefresh={() => {
+                    suppressNextDataEvent('transactions');
+                    return fetchTransactions();
+                }}
             />
 
             {/* Reconcile Warning Dialog */}
