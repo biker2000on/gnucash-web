@@ -32,6 +32,12 @@ export async function POST() {
       // No Redis configured, run sync directly
       const { syncSimpleFin } = await import('@/lib/services/simplefin-sync.service');
       const result = await syncSimpleFin(connectionId, bookGuid, { notifyOnSuccess: true, source: 'manual' });
+      if (result.alreadyRunning) {
+        return NextResponse.json(
+          { error: 'A sync for this connection is already running', alreadyRunning: true },
+          { status: 409 },
+        );
+      }
       return NextResponse.json({
         success: true,
         direct: true,

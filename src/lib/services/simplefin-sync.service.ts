@@ -6,6 +6,7 @@
  */
 
 import prisma, { generateGuid } from '@/lib/prisma';
+import { tryWithDatabaseAdvisoryLock } from '@/lib/db';
 import { decryptAccessUrl, fetchAccountsChunked, SimpleFinTransaction, SimpleFinAccessRevokedError, SimpleFinHolding } from './simplefin.service';
 import { toNumDenom } from '@/lib/validation';
 import { buildSymbolSet, parseSymbol } from './simplefin-symbol-parser';
@@ -54,6 +55,12 @@ export interface SyncResult {
   status: 'success' | 'failed' | 'revoked';
   fatal: boolean;
   revoked: boolean;
+  /**
+   * True when this run exited early because another sync for the same
+   * connection was already in progress (advisory-lock guard). Nothing was
+   * imported and connection status was left untouched.
+   */
+  alreadyRunning?: boolean;
   accountsProcessed: number;
   transactionsImported: number;
   transactionsSkipped: number;
@@ -152,9 +159,59 @@ export async function updateSimpleFinConnectionSyncStatus(
 }
 
 /**
+ * True when an error is the unique violation on the SimpleFin transaction id
+ * (uq_txn_meta_simplefin_id, a DB-only partial unique index). Prisma surfaces
+ * it as P2002; raw paths surface Postgres 23505 text. Exported for tests.
+ */
+export function isSimpleFinDuplicateViolation(err: unknown): boolean {
+  if (!err) return false;
+  const anyErr = err as { code?: unknown; meta?: unknown };
+  const text = `${err instanceof Error ? err.message : String(err)} ${JSON.stringify(anyErr.meta ?? {})}`;
+  if (!/simplefin_transaction_id|uq_txn_meta_simplefin_id/i.test(text)) return false;
+  return anyErr.code === 'P2002' || /duplicate key value|unique constraint/i.test(text);
+}
+
+/**
  * Sync all mapped accounts for a given connection.
+ *
+ * Guarded by a per-connection advisory lock: overlapping runs (manual click
+ * during a scheduled run, two workers, etc.) exit early with a clean
+ * `alreadyRunning` result instead of importing the same window twice.
  */
 export async function syncSimpleFin(
+  connectionId: number,
+  bookGuid: string,
+  options: SyncSimpleFinOptions = {},
+): Promise<SyncResult> {
+  const outcome = await tryWithDatabaseAdvisoryLock(
+    `gnucash-web:simplefin-sync:${connectionId}`,
+    () => runSimpleFinSync(connectionId, bookGuid, options),
+  );
+  if (!outcome.acquired) {
+    return {
+      status: 'success',
+      fatal: false,
+      revoked: false,
+      alreadyRunning: true,
+      accountsProcessed: 0,
+      transactionsImported: 0,
+      transactionsSkipped: 0,
+      investmentTransactionsImported: 0,
+      transactionsMatched: {
+        manualReconciliation: 0,
+        transferDedup: 0,
+      },
+      errors: [],
+      warnings: [{
+        account: 'connection',
+        warning: 'A sync for this connection is already running; skipped this run.',
+      }],
+    };
+  }
+  return outcome.result;
+}
+
+async function runSimpleFinSync(
   connectionId: number,
   bookGuid: string,
   options: SyncSimpleFinOptions = {},
@@ -465,6 +522,15 @@ export async function syncSimpleFin(
             earliestImportedPostDate = importedPostDate;
           }
         } catch (err) {
+          if (isSimpleFinDuplicateViolation(err)) {
+            // Unique violation on simplefin_transaction_id: a concurrent
+            // sync already imported this transaction (the whole insert
+            // transaction rolled back, so nothing was half-written). Count
+            // it as a skipped duplicate rather than failing the sync.
+            result.transactionsSkipped++;
+            existingIds.add(sfTxn.id);
+            continue;
+          }
           result.errors.push({
             account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
             error: `Failed to import transaction ${sfTxn.id}: ${err}`,

@@ -94,13 +94,30 @@ export async function POST(request: NextRequest) {
         // Generate GUID and convert value to fraction
         const guid = generateGuid();
         const { num, denom } = fromDecimal(data.rate, toCurrency.fraction);
+        const rateDate = new Date(data.date + 'T12:00:00Z');
 
-        const price = await prisma.prices.create({
-            data: {
+        // Upsert on the (commodity, currency, date) unique key: a same-day
+        // re-entry is an intentional correction, so update the rate in place
+        // instead of racing a duplicate insert.
+        const price = await prisma.prices.upsert({
+            where: {
+                commodity_guid_currency_guid_date: {
+                    commodity_guid: fromCurrency.guid,
+                    currency_guid: toCurrency.guid,
+                    date: rateDate,
+                },
+            },
+            update: {
+                value_num: num,
+                value_denom: denom,
+                source: data.source,
+                type: 'last',
+            },
+            create: {
                 guid,
                 commodity_guid: fromCurrency.guid,
                 currency_guid: toCurrency.guid,
-                date: new Date(data.date + 'T12:00:00Z'),
+                date: rateDate,
                 value_num: num,
                 value_denom: denom,
                 source: data.source,

@@ -108,6 +108,8 @@ export async function recordImpliedPrices(input: {
 
         let created = 0;
         for (const [commodityGuid, fraction] of candidates) {
+            // Calendar-day guard (broader than the unique key, which is per
+            // instant): never clobber an existing Finance::Quote close.
             const existing = await prisma.prices.findFirst({
                 where: {
                     commodity_guid: commodityGuid,
@@ -118,19 +120,26 @@ export async function recordImpliedPrices(input: {
             });
             if (existing) continue;
 
-            await prisma.prices.create({
-                data: {
-                    guid: generateGuid(),
-                    commodity_guid: commodityGuid,
-                    currency_guid: input.currency_guid,
-                    date: input.post_date,
-                    value_num: fraction.num,
-                    value_denom: fraction.denom,
-                    source: 'user:split-register',
-                    type: 'transaction',
-                },
-            });
-            created++;
+            try {
+                await prisma.prices.create({
+                    data: {
+                        guid: generateGuid(),
+                        commodity_guid: commodityGuid,
+                        currency_guid: input.currency_guid,
+                        date: input.post_date,
+                        value_num: fraction.num,
+                        value_denom: fraction.denom,
+                        source: 'user:split-register',
+                        type: 'transaction',
+                    },
+                });
+                created++;
+            } catch (err) {
+                // ON CONFLICT DO NOTHING semantics: a concurrent writer beat
+                // us to the same (commodity, currency, instant) — the price
+                // exists, which is all we wanted (P2002 = unique violation).
+                if ((err as { code?: unknown })?.code !== 'P2002') throw err;
+            }
         }
         return created;
     } catch (error) {

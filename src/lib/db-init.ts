@@ -1926,6 +1926,222 @@ async function createPerformanceIndexes() {
 }
 
 /**
+ * Creates unique indexes that turn silent duplicate races into clean errors
+ * (concurrency audit Phase 3: H3/H4/H5/H6/H7 and the C4 funding sweep).
+ *
+ * db-init runs at startup on live databases, so every guard here must be
+ * duplicate-safe: each block first checks whether existing rows already
+ * violate the candidate key. Where deduping is provably safe (prices,
+ * reconciliation sessions) the block cleans up in place; everywhere else it
+ * RAISEs a WARNING with a count and skips index creation — user data is
+ * never deleted or renamed automatically.
+ *
+ * Deliberately NOT constrained: slots(obj_guid, name). GnuCash KVP list
+ * slots legitimately store repeated (obj_guid, name) rows (a list's elements
+ * all share the list's name), so a global unique index would corrupt
+ * desktop-written books. The invoice/voucher counter race on slots is
+ * already serialized by the Phase 2a advisory lock in invoice-engine.
+ */
+async function createUniqueConstraintGuards() {
+    // H5: duplicate prices. Deduping is safe and desired — two rows for the
+    // same (commodity, currency, instant) are exactly the race this index
+    // stops. Keep the best row per key: user-entered sources beat
+    // 'Finance::Quote'; ties keep the largest guid.
+    const pricesUniqueDDL = `
+        DO $$
+        DECLARE
+            v_removed integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_prices_unique_guard'));
+            IF to_regclass('uq_prices_commodity_currency_date') IS NULL THEN
+                WITH ranked AS (
+                    SELECT guid, ROW_NUMBER() OVER (
+                        PARTITION BY commodity_guid, currency_guid, date
+                        ORDER BY (source IS DISTINCT FROM 'Finance::Quote') DESC, guid DESC
+                    ) AS rn
+                    FROM prices
+                )
+                DELETE FROM prices
+                WHERE guid IN (SELECT guid FROM ranked WHERE rn > 1);
+                GET DIAGNOSTICS v_removed = ROW_COUNT;
+                IF v_removed > 0 THEN
+                    RAISE WARNING 'gnucash-web: removed % duplicate price row(s) before creating uq_prices_commodity_currency_date', v_removed;
+                END IF;
+            END IF;
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_prices_commodity_currency_date
+                ON prices (commodity_guid, currency_guid, date);
+        END $$;
+    `;
+
+    // C5/H4: duplicate commodities. Merging commodities automatically is NOT
+    // safe (accounts/prices/transactions reference them by guid), so a dirty
+    // table skips the index with a warning.
+    const commoditiesUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_commodities_unique_guard'));
+            IF to_regclass('uq_commodities_namespace_mnemonic') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT namespace, mnemonic
+                    FROM commodities
+                    GROUP BY namespace, mnemonic
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on commodities(namespace, mnemonic): % duplicate group(s) exist; merge duplicate commodities manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_commodities_namespace_mnemonic
+                        ON commodities (namespace, mnemonic);
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    // H4/H7: duplicate sibling accounts. parent_guid is NULL for root
+    // accounts (one per book), so the index is scoped to non-root rows.
+    // Merging/renaming accounts automatically is NOT safe — skip+warn.
+    const accountsUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'));
+            IF to_regclass('uq_accounts_parent_name') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT parent_guid, name
+                    FROM accounts
+                    WHERE parent_guid IS NOT NULL
+                    GROUP BY parent_guid, name
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on accounts(parent_guid, name): % duplicate sibling group(s) exist; rename or merge the duplicate accounts manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name
+                        ON accounts (parent_guid, name)
+                        WHERE parent_guid IS NOT NULL;
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    // H3: duplicate SimpleFin imports. Duplicate rows mean transactions were
+    // imported twice — those are real ledger transactions the user must
+    // reconcile manually, so never NULL-out or delete automatically.
+    const simpleFinIdUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_txn_meta_simplefin_unique_guard'));
+            IF to_regclass('uq_txn_meta_simplefin_id') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT simplefin_transaction_id
+                    FROM gnucash_web_transaction_meta
+                    WHERE simplefin_transaction_id IS NOT NULL
+                    GROUP BY simplefin_transaction_id
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on gnucash_web_transaction_meta(simplefin_transaction_id): % duplicated id(s) exist; the duplicate imports are real transactions — reconcile and delete them manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_txn_meta_simplefin_id
+                        ON gnucash_web_transaction_meta (simplefin_transaction_id)
+                        WHERE simplefin_transaction_id IS NOT NULL;
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    // H6: at most one 'started' reconciliation session per account. Deduping
+    // is safe here — mark all but the most recent 'started' session per
+    // account as 'abandoned' ('abandoned' is an existing terminal status,
+    // see reconciliation-coverage.ts / the sessions PATCH route).
+    const reconciliationStartedUniqueDDL = `
+        DO $$
+        DECLARE
+            v_abandoned integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_reconciliation_started_guard'));
+            IF to_regclass('uq_reconciliation_sessions_started') IS NULL THEN
+                WITH ranked AS (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY account_guid
+                        ORDER BY started_at DESC, id DESC
+                    ) AS rn
+                    FROM gnucash_web_reconciliation_sessions
+                    WHERE status = 'started'
+                )
+                UPDATE gnucash_web_reconciliation_sessions s
+                SET status = 'abandoned'
+                FROM ranked r
+                WHERE s.id = r.id AND r.rn > 1;
+                GET DIAGNOSTICS v_abandoned = ROW_COUNT;
+                IF v_abandoned > 0 THEN
+                    RAISE WARNING 'gnucash-web: marked % duplicate started reconciliation session(s) as abandoned before creating uq_reconciliation_sessions_started', v_abandoned;
+                END IF;
+            END IF;
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_reconciliation_sessions_started
+                ON gnucash_web_reconciliation_sessions (account_guid)
+                WHERE status = 'started';
+        END $$;
+    `;
+
+    // C4: funding-sweep dedupe key. funding-rules.service stamps sweep
+    // transactions with num = 'autofund:<ruleId>:<triggerTxnGuid>'
+    // (DEDUPE_PREFIX in src/lib/services/funding-rules.service.ts). Deduping
+    // here is NOT safe — deleting a duplicate would delete a real sweep
+    // transaction (real money movement) — so a dirty table skips with a
+    // warning.
+    const autofundNumUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_transactions_autofund_guard'));
+            IF to_regclass('uq_transactions_autofund_num') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT num
+                    FROM transactions
+                    WHERE num LIKE 'autofund:%'
+                    GROUP BY num
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on transactions(num) for autofund sweeps: % duplicated sweep key(s) exist; the duplicates are real transactions — review and delete the double-sweeps manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_transactions_autofund_num
+                        ON transactions (num)
+                        WHERE num LIKE 'autofund:%';
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    const guards: Array<[string, string]> = [
+        ['prices(commodity_guid, currency_guid, date)', pricesUniqueDDL],
+        ['commodities(namespace, mnemonic)', commoditiesUniqueDDL],
+        ['accounts(parent_guid, name)', accountsUniqueDDL],
+        ['gnucash_web_transaction_meta(simplefin_transaction_id)', simpleFinIdUniqueDDL],
+        ['gnucash_web_reconciliation_sessions(account_guid) started', reconciliationStartedUniqueDDL],
+        ["transactions(num) autofund", autofundNumUniqueDDL],
+    ];
+
+    for (const [label, ddl] of guards) {
+        try {
+            await query(ddl);
+        } catch (error) {
+            // One dirty/failed guard must not block the remaining guards or
+            // app startup; the affected writer keeps its pre-index behavior.
+            console.error(`Error creating unique constraint guard for ${label}:`, error);
+        }
+    }
+    console.log('✓ Unique constraint guards created/verified successfully');
+}
+
+/**
  * Initializes the database schema by creating required views and tables.
  * This should be called once when the application starts.
  */
@@ -1935,6 +2151,7 @@ export async function initializeDatabase() {
         await withDatabaseAdvisoryLock('gnucash-web:database-initialization', async () => {
             await createAccountHierarchyView();
             await createExtensionTables();
+            await createUniqueConstraintGuards();
             await createPerformanceIndexes();
         });
         console.log('✓ Database initialization complete');
