@@ -10,7 +10,7 @@
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, serializeBigInts } from '@/lib/gnucash';
-import { acquireBookLock, resolveBookLockGuidForAccount } from '@/lib/book-lock';
+import { tryAcquireBookLock, resolveBookLockGuidForAccount, BookBusyError } from '@/lib/book-lock';
 
 /**
  * Validate a reparent on the transaction client, while the per-book advisory
@@ -267,7 +267,11 @@ export class AccountService {
     // Reparenting is serialized on the per-book advisory lock, and the
     // cycle check runs INSIDE the transaction while the lock is held —
     // two concurrent moves (X under Y, Y under X) can no longer both pass
-    // validation and commit a cycle.
+    // validation and commit a cycle. The lock is a NON-BLOCKING try-lock:
+    // when another book-wide operation (e.g. a minutes-long scrub-all)
+    // holds it, queueing would just blow Prisma's transaction timeout and
+    // surface as an opaque P2028/500 — throw BookBusyError instead so the
+    // route returns a clean 409 "another operation in progress".
     const isReparent = data.parent_guid !== undefined;
     const bookLockGuid = isReparent
       ? await resolveBookLockGuidForAccount(guid)
@@ -275,7 +279,10 @@ export class AccountService {
 
     const account = await prisma.$transaction(async (tx) => {
       if (isReparent && bookLockGuid) {
-        await acquireBookLock(tx, bookLockGuid, 'account-reparent');
+        const locked = await tryAcquireBookLock(tx, bookLockGuid);
+        if (!locked) {
+          throw new BookBusyError(bookLockGuid, 'account-reparent');
+        }
       }
       if (data.parent_guid !== undefined && data.parent_guid !== null) {
         await assertReparentIsAcyclic(tx, guid, data.parent_guid);
@@ -486,11 +493,16 @@ export class AccountService {
     }
 
     // Validation + update run in ONE transaction holding the per-book
-    // advisory lock so concurrent reparents cannot commit a cycle.
+    // advisory lock so concurrent reparents cannot commit a cycle. Try-lock
+    // (not blocking): when a book-wide operation holds the lock, fail fast
+    // with BookBusyError → 409 instead of timing out with a P2028/500.
     const bookLockGuid = await resolveBookLockGuidForAccount(guid);
 
     const updated = await prisma.$transaction(async (tx) => {
-      await acquireBookLock(tx, bookLockGuid, 'account-move');
+      const locked = await tryAcquireBookLock(tx, bookLockGuid);
+      if (!locked) {
+        throw new BookBusyError(bookLockGuid, 'account-move');
+      }
 
       if (newParentGuid) {
         await assertReparentIsAcyclic(tx, guid, newParentGuid);

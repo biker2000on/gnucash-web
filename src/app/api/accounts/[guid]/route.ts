@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { AccountService, UpdateAccountSchema } from '@/lib/services/account.service';
+import { BookBusyError } from '@/lib/book-lock';
 import { isAccountInActiveBook, invalidateBookAccountGuidsCache } from '@/lib/book-scope';
 import { cacheInvalidateAllForBook } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
@@ -144,6 +145,12 @@ export async function PUT(
         void publishDataChange(roleResult.bookGuid, 'accounts', { guid, action: 'update' });
         return NextResponse.json(account);
     } catch (error) {
+        if (error instanceof BookBusyError) {
+            return NextResponse.json(
+                { error: 'Another operation on this book is in progress. Try again shortly.' },
+                { status: 409 }
+            );
+        }
         console.error('Error updating account:', error);
         if (error instanceof Error) {
             if (error.message.includes('not found')) {

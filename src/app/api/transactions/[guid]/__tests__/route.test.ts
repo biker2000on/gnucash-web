@@ -241,6 +241,9 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
             expect.any(Array),
             { bypassCache: true },
         );
+        // The before-image snapshot ran ON THE TRANSACTION CLIENT (same
+        // connection as the row lock), not on a second pool connection.
+        expect(snapshotTransactionByGuidMock).toHaveBeenNthCalledWith(1, TX_GUID, prismaMock);
     });
 
     it('accepts an explicit null token when the row has no enter_date', async () => {
@@ -300,6 +303,9 @@ describe('DELETE /api/transactions/[guid] optimistic concurrency', () => {
         expect(logAuditMock).toHaveBeenCalledWith(
             'DELETE', 'TRANSACTION', TX_GUID, expect.anything(), null,
         );
+        // The before-image snapshot ran ON THE TRANSACTION CLIENT (same
+        // connection as the row lock), not on a second pool connection.
+        expect(snapshotTransactionByGuidMock).toHaveBeenCalledWith(TX_GUID, prismaMock);
     });
 
     it('still deletes without a token (token is optional on DELETE)', async () => {

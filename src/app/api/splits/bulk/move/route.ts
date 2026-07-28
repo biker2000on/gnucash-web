@@ -131,12 +131,28 @@ export async function POST(request: Request) {
                 { bypassCache: true },
             );
 
+            // Canonical lock order (same as the transaction PUT/DELETE
+            // routes): lock the parent TRANSACTION rows first, ordered by
+            // guid, then write the splits. The enter_date bump below then
+            // updates rows this transaction already holds locks on, so a
+            // concurrent transaction save (which also locks its transactions
+            // row before touching splits) can never ABBA-deadlock with a
+            // bulk move.
+            const parentTxGuids = [...new Set(freshSplits.map(s => s.tx_guid))].sort();
+            if (parentTxGuids.length > 0) {
+                await tx.$queryRaw`
+                    SELECT guid FROM transactions
+                    WHERE guid = ANY(${parentTxGuids}::text[])
+                    ORDER BY guid
+                    FOR UPDATE
+                `;
+            }
+
             const moved = await tx.splits.updateMany({
                 where: { guid: { in: splitGuids } },
                 data: { account_guid: targetAccountGuid },
             });
 
-            const parentTxGuids = [...new Set(freshSplits.map(s => s.tx_guid))];
             if (parentTxGuids.length > 0) {
                 await tx.transactions.updateMany({
                     where: { guid: { in: parentTxGuids } },

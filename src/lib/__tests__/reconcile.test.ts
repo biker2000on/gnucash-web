@@ -34,13 +34,44 @@ const TX_2 = 'transaction000000000000000000002';
 
 const STATEMENT_DATE = new Date('2026-06-30T00:00:00.000Z');
 
-/** A reconciled ('y') split row as returned by splits.findMany. */
-function ySplit(cents: number, reconcileDate: string | null) {
-    return {
-        quantity_num: BigInt(cents),
-        quantity_denom: BigInt(100),
-        reconcile_date: reconcileDate ? new Date(reconcileDate) : null,
-    };
+/** Join a tagged-template SQL call into inspectable text. */
+function sqlText(call: unknown[]): string {
+    return (call[0] as TemplateStringsArray).join('?');
+}
+
+/** Row shape returned by the reconciled-balance SQL aggregate. */
+function reconciledAggregateRow(cents: number | null, lastDate: string | null = null) {
+    return [{
+        reconciled_cents: cents === null ? null : BigInt(cents),
+        last_reconcile_date: lastDate ? new Date(lastDate) : null,
+    }];
+}
+
+/**
+ * Route $queryRaw by SQL shape: advisory lock and FOR UPDATE row locks
+ * return empty, the reconciled-balance aggregate returns the configured
+ * sum/max, and the workspace's candidate/session queries return their rows.
+ */
+function mockQueryRawRouting(options: {
+    reconciledCents?: number | null;
+    lastReconcileDate?: string | null;
+    candidates?: unknown[];
+    sessions?: unknown[];
+} = {}) {
+    mockPrisma.$queryRaw.mockImplementation(async (template: TemplateStringsArray) => {
+        const sql = template.join('?');
+        if (sql.includes('pg_advisory_xact_lock')) return [];
+        if (sql.includes('FOR UPDATE')) return [];
+        if (sql.includes('SUM(')) {
+            return reconciledAggregateRow(
+                options.reconciledCents ?? null,
+                options.lastReconcileDate ?? null,
+            );
+        }
+        if (sql.includes('gnucash_web_reconciliation_sessions')) return options.sessions ?? [];
+        if (sql.includes('JOIN transactions')) return options.candidates ?? [];
+        throw new Error(`Unexpected $queryRaw SQL: ${sql}`);
+    });
 }
 
 /** A selected split row as loaded inside finalizeReconciliation. */
@@ -48,6 +79,7 @@ function selectedSplit(
     guid: string,
     cents: number,
     overrides: Partial<{
+        tx_guid: string;
         account_guid: string;
         reconcile_state: string;
         post_date: Date | null;
@@ -55,6 +87,7 @@ function selectedSplit(
 ) {
     return {
         guid,
+        tx_guid: overrides.tx_guid ?? TX_1,
         account_guid: overrides.account_guid ?? ACCOUNT,
         reconcile_state: overrides.reconcile_state ?? 'n',
         quantity_num: BigInt(cents),
@@ -66,6 +99,20 @@ function selectedSplit(
                     : new Date('2026-06-15T00:00:00.000Z'),
         },
     };
+}
+
+/**
+ * Wire up a finalize run: the selected-splits reads (pre-read for parent tx
+ * guids + validated read) are served from `selected`, and the reconciled
+ * balance comes from the SQL aggregate (`reconciledCents`, null = no 'y'
+ * splits).
+ */
+function mockFinalize(selected: unknown[], reconciledCents: number | null) {
+    mockPrisma.splits.findMany.mockImplementation(async (args: any) => {
+        if (args?.where?.guid?.in) return selected;
+        throw new Error(`Unexpected splits.findMany args: ${JSON.stringify(args)}`);
+    });
+    mockQueryRawRouting({ reconciledCents });
 }
 
 beforeEach(() => {
@@ -161,44 +208,45 @@ describe('getReconcileWorkspace', () => {
         });
     });
 
-    it('computes the reconciled balance and last reconcile date from y splits', async () => {
+    it('computes the reconciled balance and last reconcile date via one SQL aggregate', async () => {
         mockPrisma.accounts.findUnique.mockResolvedValue({
             guid: ACCOUNT,
             name: 'Checking',
             account_type: 'BANK',
             commodity: { mnemonic: 'USD' },
         });
-        mockPrisma.splits.findMany.mockResolvedValue([
-            ySplit(10000, '2026-05-31T00:00:00.000Z'), // 100.00
-            ySplit(2550, '2026-04-30T00:00:00.000Z'), //  25.50
-            ySplit(-1000, '2026-05-31T00:00:00.000Z'), // -10.00
-        ]);
-        mockPrisma.$queryRaw.mockResolvedValue([
-            {
-                guid: SPLIT_1,
-                tx_guid: TX_1,
-                memo: 'memo one',
-                reconcile_state: 'c',
-                quantity_num: BigInt(4200),
-                quantity_denom: BigInt(100),
-                post_date: new Date('2026-06-10T00:00:00.000Z'),
-                enter_date: new Date('2026-06-10T08:00:00.000Z'),
-                num: '1042',
-                description: 'Grocery store',
-            },
-            {
-                guid: SPLIT_2,
-                tx_guid: TX_2,
-                memo: null,
-                reconcile_state: 'n',
-                quantity_num: BigInt(-1550),
-                quantity_denom: BigInt(100),
-                post_date: new Date('2026-06-20T00:00:00.000Z'),
-                enter_date: null,
-                num: null,
-                description: null,
-            },
-        ]);
+        mockQueryRawRouting({
+            // 100.00 + 25.50 − 10.00 summed in the database
+            reconciledCents: 11550,
+            lastReconcileDate: '2026-05-31T00:00:00.000Z',
+            candidates: [
+                {
+                    guid: SPLIT_1,
+                    tx_guid: TX_1,
+                    memo: 'memo one',
+                    reconcile_state: 'c',
+                    quantity_num: BigInt(4200),
+                    quantity_denom: BigInt(100),
+                    post_date: new Date('2026-06-10T00:00:00.000Z'),
+                    enter_date: new Date('2026-06-10T08:00:00.000Z'),
+                    num: '1042',
+                    description: 'Grocery store',
+                },
+                {
+                    guid: SPLIT_2,
+                    tx_guid: TX_2,
+                    memo: null,
+                    reconcile_state: 'n',
+                    quantity_num: BigInt(-1550),
+                    quantity_denom: BigInt(100),
+                    post_date: new Date('2026-06-20T00:00:00.000Z'),
+                    enter_date: null,
+                    num: null,
+                    description: null,
+                },
+            ],
+            sessions: [],
+        });
 
         const ws = await getReconcileWorkspace(ACCOUNT, STATEMENT_DATE);
 
@@ -234,11 +282,14 @@ describe('getReconcileWorkspace', () => {
                 state: 'n',
             },
         ]);
-        // Only 'y' splits feed the reconciled balance.
-        expect(mockPrisma.splits.findMany).toHaveBeenCalledWith({
-            where: { account_guid: ACCOUNT, reconcile_state: 'y' },
-            select: { quantity_num: true, quantity_denom: true, reconcile_date: true },
-        });
+        // The reconciled balance is computed by ONE SQL aggregate over the
+        // 'y' splits — never by loading them all into JS.
+        const aggregateSql = mockPrisma.$queryRaw.mock.calls
+            .map(sqlText)
+            .find((sql: string) => sql.includes('SUM('));
+        expect(aggregateSql).toContain("reconcile_state = 'y'");
+        expect(aggregateSql).toContain('MAX(reconcile_date)');
+        expect(mockPrisma.splits.findMany).not.toHaveBeenCalled();
     });
 
     it('reports null last reconcile date and zero balance for a never-reconciled account', async () => {
@@ -248,8 +299,7 @@ describe('getReconcileWorkspace', () => {
             account_type: 'BANK',
             commodity: null,
         });
-        mockPrisma.splits.findMany.mockResolvedValue([]);
-        mockPrisma.$queryRaw.mockResolvedValue([]);
+        mockQueryRawRouting({ reconciledCents: null, candidates: [], sessions: [] });
 
         const ws = await getReconcileWorkspace(ACCOUNT, STATEMENT_DATE);
         expect(ws.reconciledBalance).toBe(0);
@@ -264,21 +314,9 @@ describe('getReconcileWorkspace', () => {
 /* ------------------------------------------------------------------ */
 
 describe('finalizeReconciliation', () => {
-    /** Route splits.findMany by its where clause: selected lookup vs y-sum. */
-    function mockSplitLookups(selected: unknown[], reconciled: unknown[]) {
-        mockPrisma.splits.findMany.mockImplementation(async (args: any) => {
-            if (args?.where?.guid?.in) return selected;
-            if (args?.where?.reconcile_state === 'y') return reconciled;
-            throw new Error(`Unexpected splits.findMany args: ${JSON.stringify(args)}`);
-        });
-    }
-
     it('rejects with the recomputed difference when it is non-zero', async () => {
         // reconciled 100.00, selected 50.00, ending 175.00 → difference 25.00
-        mockSplitLookups(
-            [selectedSplit(SPLIT_1, 5000)],
-            [ySplit(10000, '2026-05-31T00:00:00.000Z')],
-        );
+        mockFinalize([selectedSplit(SPLIT_1, 5000)], 10000);
 
         await expect(
             finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 175, [SPLIT_1]),
@@ -292,10 +330,7 @@ describe('finalizeReconciliation', () => {
 
     it('never trusts the client: uses DB amounts, not the request', async () => {
         // Ending balance says 150.00 but the DB's recomputed sum is 149.99.
-        mockSplitLookups(
-            [selectedSplit(SPLIT_1, 4999)],
-            [ySplit(10000, null)],
-        );
+        mockFinalize([selectedSplit(SPLIT_1, 4999)], 10000);
         await expect(
             finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 150, [SPLIT_1]),
         ).rejects.toMatchObject({ code: 'not_zero', detail: { differenceCents: 1 } });
@@ -304,9 +339,9 @@ describe('finalizeReconciliation', () => {
 
     it('sets exactly the requested splits to y with the statement date', async () => {
         // reconciled 100.00 + selected (42.00 − 15.50) = 126.50 = ending
-        mockSplitLookups(
-            [selectedSplit(SPLIT_1, 4200), selectedSplit(SPLIT_2, -1550)],
-            [ySplit(10000, '2026-05-31T00:00:00.000Z')],
+        mockFinalize(
+            [selectedSplit(SPLIT_1, 4200), selectedSplit(SPLIT_2, -1550, { tx_guid: TX_2 })],
+            10000,
         );
         mockPrisma.splits.updateMany.mockResolvedValue({ count: 2 });
 
@@ -331,10 +366,7 @@ describe('finalizeReconciliation', () => {
     });
 
     it('deduplicates repeated split guids before validating and writing', async () => {
-        mockSplitLookups(
-            [selectedSplit(SPLIT_1, 2650)],
-            [ySplit(10000, null)],
-        );
+        mockFinalize([selectedSplit(SPLIT_1, 2650)], 10000);
         mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
 
         await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 126.5, [SPLIT_1, SPLIT_1]);
@@ -345,7 +377,7 @@ describe('finalizeReconciliation', () => {
     });
 
     it('rejects splits that do not exist', async () => {
-        mockSplitLookups([selectedSplit(SPLIT_1, 1000)], []);
+        mockFinalize([selectedSplit(SPLIT_1, 1000)], null);
         await expect(
             finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 10, [SPLIT_1, SPLIT_3]),
         ).rejects.toMatchObject({ code: 'not_found', detail: { missing: [SPLIT_3] } });
@@ -353,9 +385,9 @@ describe('finalizeReconciliation', () => {
     });
 
     it('rejects splits belonging to a different account', async () => {
-        mockSplitLookups(
+        mockFinalize(
             [selectedSplit(SPLIT_1, 1000, { account_guid: OTHER_ACCOUNT })],
-            [],
+            null,
         );
         await expect(
             finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 10, [SPLIT_1]),
@@ -364,9 +396,9 @@ describe('finalizeReconciliation', () => {
     });
 
     it('rejects splits that are already reconciled', async () => {
-        mockSplitLookups(
+        mockFinalize(
             [selectedSplit(SPLIT_1, 1000, { reconcile_state: 'y' })],
-            [],
+            null,
         );
         await expect(
             finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 10, [SPLIT_1]),
@@ -375,9 +407,9 @@ describe('finalizeReconciliation', () => {
     });
 
     it('rejects splits posted after the statement date', async () => {
-        mockSplitLookups(
+        mockFinalize(
             [selectedSplit(SPLIT_1, 1000, { post_date: new Date('2026-07-01T00:00:00.000Z') })],
-            [],
+            null,
         );
         await expect(
             finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 10, [SPLIT_1]),
@@ -386,9 +418,9 @@ describe('finalizeReconciliation', () => {
     });
 
     it('allows a split posted on the statement date itself (end of day inclusive)', async () => {
-        mockSplitLookups(
+        mockFinalize(
             [selectedSplit(SPLIT_1, 1000, { post_date: new Date('2026-06-30T10:59:00.000Z') })],
-            [],
+            null,
         );
         mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
         await expect(
@@ -397,14 +429,20 @@ describe('finalizeReconciliation', () => {
     });
 
     it('finalizes with zero selected splits when the difference is already zero', async () => {
-        mockPrisma.splits.findMany.mockResolvedValue([ySplit(10000, null)]);
+        mockQueryRawRouting({ reconciledCents: 10000 });
         const result = await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 100, []);
         expect(result.reconciledSplits).toBe(0);
         expect(mockPrisma.splits.updateMany).not.toHaveBeenCalled();
+        // No splits selected → no split reads and no row locks at all.
+        expect(mockPrisma.splits.findMany).not.toHaveBeenCalled();
+        const forUpdateCalls = mockPrisma.$queryRaw.mock.calls
+            .map(sqlText)
+            .filter((sql: string) => sql.includes('FOR UPDATE'));
+        expect(forUpdateCalls).toEqual([]);
     });
 
     it('records a completed verification and resolves its Action Center item atomically', async () => {
-        mockPrisma.splits.findMany.mockResolvedValue([]);
+        mockQueryRawRouting({ reconciledCents: null });
         mockPrisma.$executeRaw.mockResolvedValue(1);
 
         const result = await finalizeReconciliation(
@@ -424,45 +462,64 @@ describe('finalizeReconciliation', () => {
         expect(result.reconciledSplits).toBe(0);
         expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(2);
         const executedSql = mockPrisma.$executeRaw.mock.calls
-            .map(([template]: [TemplateStringsArray]) => template.join('?'))
+            .map(sqlText)
             .join('\n');
         expect(executedSql).toContain("origin = 'statement_reconciliation'");
         expect(executedSql).toContain("state = 'resolved'");
         expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
-    it('locks the account splits (FOR UPDATE) before any validation reads', async () => {
-        mockSplitLookups(
-            [selectedSplit(SPLIT_1, 2650)],
-            [ySplit(10000, null)],
+    it('serializes on a per-account advisory lock, then locks parent TRANSACTION rows before the split writes', async () => {
+        mockFinalize(
+            [selectedSplit(SPLIT_1, 2650, { tx_guid: TX_2 }), selectedSplit(SPLIT_2, 0, { tx_guid: TX_1 })],
+            10000,
         );
-        mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 2 });
 
-        await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 126.5, [SPLIT_1]);
+        await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 126.5, [SPLIT_1, SPLIT_2]);
 
-        const lockSql = mockPrisma.$queryRaw.mock.calls
-            .map(([template]: [TemplateStringsArray]) => template.join('?'))
-            .join('\n');
-        expect(lockSql).toContain('FOR UPDATE');
-        // The lock must be taken before the validation reads so concurrent
-        // finalizes serialize and re-validate against committed state.
+        const calls = mockPrisma.$queryRaw.mock.calls.map(sqlText);
+
+        // 1) The advisory lock is the FIRST statement of the in-tx work —
+        //    it serializes concurrent finalizes on this account and runs
+        //    before any reads.
+        expect(calls[0]).toContain('pg_advisory_xact_lock');
+        expect(mockPrisma.$queryRaw.mock.calls[0][1]).toBe(`reconcile:${ACCOUNT}`);
         expect(mockPrisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
             mockPrisma.splits.findMany.mock.invocationCallOrder[0],
         );
+
+        // 2) Canonical lock order (matches the transaction PUT/DELETE
+        //    routes): the parent TRANSACTION rows are locked, ordered by
+        //    guid, BEFORE the split write.
+        const lockIdx = calls.findIndex((sql: string) => sql.includes('FOR UPDATE'));
+        expect(lockIdx).toBeGreaterThanOrEqual(0);
+        expect(calls[lockIdx]).toContain('FROM transactions');
+        expect(calls[lockIdx]).toContain('ORDER BY guid');
+        // Distinct parent tx guids, sorted for a deterministic lock order.
+        expect(mockPrisma.$queryRaw.mock.calls[lockIdx][1]).toEqual([TX_1, TX_2]);
+        expect(mockPrisma.$queryRaw.mock.invocationCallOrder[lockIdx]).toBeLessThan(
+            mockPrisma.splits.updateMany.mock.invocationCallOrder[0],
+        );
+
+        // 3) The old whole-account splits lock is gone: nothing FOR UPDATEs
+        //    split rows.
+        for (const sql of calls) {
+            if (sql.includes('FOR UPDATE')) {
+                expect(sql).not.toContain('FROM splits');
+            }
+        }
     });
 
     it("bumps enter_date on the reconciled splits' parent transactions", async () => {
-        mockSplitLookups(
-            [selectedSplit(SPLIT_1, 2650)],
-            [ySplit(10000, null)],
-        );
+        mockFinalize([selectedSplit(SPLIT_1, 2650)], 10000);
         mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
         mockPrisma.$executeRaw.mockResolvedValue(1);
 
         await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 126.5, [SPLIT_1]);
 
         const bumpSql = mockPrisma.$executeRaw.mock.calls
-            .map(([template]: [TemplateStringsArray]) => template.join('?'))
+            .map(sqlText)
             .join('\n');
         expect(bumpSql).toContain('SET enter_date = NOW()');
     });
@@ -472,11 +529,15 @@ describe('finalizeReconciliation', () => {
             splits: {
                 findMany: vi.fn(async (args: any) => {
                     if (args?.where?.guid?.in) return [selectedSplit(SPLIT_1, 2500)];
-                    return [ySplit(10000, null)];
+                    throw new Error('Unexpected splits.findMany args');
                 }),
                 updateMany: vi.fn(async () => ({ count: 1 })),
             },
-            $queryRaw: vi.fn(async () => []),
+            $queryRaw: vi.fn(async (template: TemplateStringsArray) => {
+                const sql = template.join('?');
+                if (sql.includes('SUM(')) return reconciledAggregateRow(10000);
+                return [];
+            }),
             $executeRaw: vi.fn(async () => 0),
         };
 

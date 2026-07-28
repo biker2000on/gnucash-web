@@ -250,7 +250,9 @@ export async function PUT(
             // Full before-image for the audit trail (undo-capable). The row is
             // locked and unmodified at this point, so the committed state the
             // snapshot reads is exactly the state we are about to replace.
-            const beforeImage = await snapshotTransactionByGuid(guid);
+            // Read via the transaction client so it shares this transaction's
+            // connection instead of grabbing a second pool connection.
+            const beforeImage = await snapshotTransactionByGuid(guid, tx);
 
             // Live split state (reconcile/lot preservation must not use a
             // stale pre-transaction snapshot).
@@ -330,7 +332,10 @@ export async function PUT(
             return { transaction: updated, beforeSnapshot: beforeImage };
         }, {
             maxWait: 30_000,
-            timeout: 300_000,
+            // Single-transaction saves never legitimately take minutes; a
+            // long timeout only turns a row-lock wait into a multi-minute
+            // stall for the user.
+            timeout: 30_000,
         });
 
         if (!transaction) {
@@ -464,7 +469,9 @@ export async function DELETE(
 
             // Full before-image for the audit trail (restore-capable). Row is
             // locked and our deletes have not run yet, so this is consistent.
-            const snapshot = await snapshotTransactionByGuid(guid);
+            // Read via the transaction client so it shares this transaction's
+            // connection instead of grabbing a second pool connection.
+            const snapshot = await snapshotTransactionByGuid(guid, tx);
             const splitCount = await tx.splits.count({ where: { tx_guid: guid } });
 
             // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
@@ -500,6 +507,9 @@ export async function DELETE(
                 },
                 deletedPostDate: lockedTx.post_date,
             };
+        }, {
+            maxWait: 30_000,
+            timeout: 30_000,
         });
 
         // Log audit event with the full before-image (restore-capable)

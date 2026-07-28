@@ -24,6 +24,7 @@
 import { randomUUID } from 'node:crypto';
 import prisma, { type ExtendedPrismaClient } from '@/lib/prisma';
 import { toDecimalNumber } from '@/lib/gnucash';
+import { acquireNamedXactLock } from '@/lib/book-lock';
 import {
     toCents,
     type ReconcileWorkspace,
@@ -76,26 +77,38 @@ export function statementDateCutoff(statementDate: Date): Date {
 
 /* ─────────────────────────── workspace ─────────────────────────── */
 
-interface ReconciledSplitRow {
-    quantity_num: bigint;
-    quantity_denom: bigint;
-    reconcile_date: Date | null;
-}
-
-/** Sum 'y' split quantities in cents + max reconcile_date. */
-function summarizeReconciled(rows: ReconciledSplitRow[]): {
-    reconciledCents: number;
-    lastReconcileDate: Date | null;
-} {
-    let reconciledCents = 0;
-    let lastReconcileDate: Date | null = null;
-    for (const row of rows) {
-        reconciledCents += toCents(toDecimalNumber(row.quantity_num, row.quantity_denom));
-        if (row.reconcile_date && (!lastReconcileDate || row.reconcile_date > lastReconcileDate)) {
-            lastReconcileDate = row.reconcile_date;
-        }
-    }
-    return { reconciledCents, lastReconcileDate };
+/**
+ * Sum 'y' split quantities in cents + max reconcile_date, as ONE SQL
+ * aggregate (old accounts carry 10k+ reconciled splits — loading them all
+ * into JS just to sum them was the reconcile page's dominant cost).
+ *
+ * Exactness: the JS version computed per-row
+ * `Math.round(num / denom * 100)` and summed the integers. The SQL
+ * equivalent is per-row `FLOOR(num * 100 / denom + 0.5)` in exact NUMERIC
+ * arithmetic — FLOOR(x + 0.5) is precisely Math.round's round-half-up
+ * (toward +∞) behavior, including for negative halves — summed as a bigint.
+ * For currency splits (denom divides 100) no rounding occurs at all, so
+ * results are bit-identical to the previous implementation.
+ */
+async function summarizeReconciled(
+    db: Pick<ReconcileTx, '$queryRaw'>,
+    accountGuid: string,
+): Promise<{ reconciledCents: number; lastReconcileDate: Date | null }> {
+    const rows = await db.$queryRaw<Array<{
+        reconciled_cents: bigint | null;
+        last_reconcile_date: Date | null;
+    }>>`
+        SELECT
+            SUM(FLOOR(quantity_num * 100::numeric / quantity_denom + 0.5))::bigint AS reconciled_cents,
+            MAX(reconcile_date) AS last_reconcile_date
+        FROM splits
+        WHERE account_guid = ${accountGuid}
+          AND reconcile_state = 'y'
+    `;
+    return {
+        reconciledCents: Number(rows[0]?.reconciled_cents ?? 0n),
+        lastReconcileDate: rows[0]?.last_reconcile_date ?? null,
+    };
 }
 
 /**
@@ -119,11 +132,7 @@ export async function getReconcileWorkspace(
         throw new ManualReconcileError('Account not found', 'not_found');
     }
 
-    const reconciledRows = await prisma.splits.findMany({
-        where: { account_guid: accountGuid, reconcile_state: 'y' },
-        select: { quantity_num: true, quantity_denom: true, reconcile_date: true },
-    });
-    const { reconciledCents, lastReconcileDate } = summarizeReconciled(reconciledRows);
+    const { reconciledCents, lastReconcileDate } = await summarizeReconciled(prisma, accountGuid);
 
     const cutoff = statementDateCutoff(statementDate);
     const candidateRows = await prisma.$queryRaw<Array<{
@@ -215,22 +224,46 @@ export async function finalizeReconciliation(
     const uniqueGuids = [...new Set(splitGuids)];
 
     const run = async (db: ReconcileTx): Promise<FinalizeReconcileResult> => {
-        // Serialize concurrent finalizes on this account: lock every split
-        // row of the account (deadlock-safe consistent ordering) before any
-        // validation reads. A second finalize blocks here until the first
+        // Serialize concurrent finalizes on this account with a
+        // transaction-scoped advisory lock, taken as the FIRST statement of
+        // the in-tx work: a second finalize blocks here until the first
         // commits, then re-reads post-commit state — so its tie-out and
         // already-reconciled checks run against live data instead of a
-        // pre-transaction snapshot.
-        await db.$queryRaw`
-            SELECT guid FROM splits
-            WHERE account_guid = ${accountGuid}
-            ORDER BY guid
-            FOR UPDATE
-        `;
+        // pre-transaction snapshot. (This replaces the previous
+        // FOR UPDATE over EVERY split row of the account, which locked
+        // 10k+ rows on old accounts and blocked all concurrent ledger
+        // edits on the account for the duration of the finalize. The
+        // advisory lock serializes finalizes only; the specific rows we
+        // write are guarded by the canonical parent-transaction row locks
+        // taken below.)
+        await acquireNamedXactLock(db, `reconcile:${accountGuid}`);
 
         // Load and validate the requested splits (re-validated AFTER locking).
         let selectedCents = 0;
         if (uniqueGuids.length > 0) {
+            // Canonical lock order (same as the transaction PUT/DELETE
+            // routes): lock the parent TRANSACTION rows first, ordered by
+            // guid, before reading/writing splits. A concurrent transaction
+            // save locks its transactions row before touching splits, so
+            // taking the same locks in the same order makes an ABBA deadlock
+            // impossible — and the enter_date bump below then updates rows
+            // this transaction already holds locks on.
+            const preRead = await db.splits.findMany({
+                where: { guid: { in: uniqueGuids } },
+                select: { guid: true, tx_guid: true },
+            });
+            const parentTxGuids = [...new Set(preRead.map((s) => s.tx_guid))].sort();
+            if (parentTxGuids.length > 0) {
+                await db.$queryRaw`
+                    SELECT guid FROM transactions
+                    WHERE guid = ANY(${parentTxGuids}::text[])
+                    ORDER BY guid
+                    FOR UPDATE
+                `;
+            }
+
+            // Validated read AFTER the row locks are held, so a concurrent
+            // editor cannot change these splits between validation and write.
             const selected = await db.splits.findMany({
                 where: { guid: { in: uniqueGuids } },
                 select: {
@@ -289,12 +322,8 @@ export async function finalizeReconciliation(
             );
         }
 
-        // Recompute the reconciled balance from the DB.
-        const reconciledRows = await db.splits.findMany({
-            where: { account_guid: accountGuid, reconcile_state: 'y' },
-            select: { quantity_num: true, quantity_denom: true, reconcile_date: true },
-        });
-        const { reconciledCents } = summarizeReconciled(reconciledRows);
+        // Recompute the reconciled balance from the DB (single SQL aggregate).
+        const { reconciledCents } = await summarizeReconciled(db, accountGuid);
 
         const differenceCents = toCents(endingBalance) - (reconciledCents + selectedCents);
         if (differenceCents !== 0) {
@@ -321,7 +350,8 @@ export async function finalizeReconciliation(
             // Bump enter_date on the parent transactions so concurrent
             // editors' optimistic-concurrency tokens invalidate: an edit
             // started before this reconcile will now 409 instead of silently
-            // reverting the reconcile flags.
+            // reverting the reconcile flags. These rows were FOR UPDATE
+            // locked above, so this update never blocks or deadlocks.
             await db.$executeRaw`
                 UPDATE transactions
                 SET enter_date = NOW()
