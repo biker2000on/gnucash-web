@@ -63,6 +63,7 @@ const workspace = {
         guid: 'split-guid',
         transactionGuid: 'transaction-guid',
         date: '2026-07-20T00:00:00.000Z',
+        enterDate: '2026-07-20T08:00:00.000Z',
         num: '',
         description: 'Review me',
         memo: '',
@@ -82,10 +83,14 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
 describe('ReconcilePage transaction actions', () => {
     let workspaceRequests: number;
     let deletedTransactions: string[];
+    let deleteRequestUrls: string[];
+    let deleteStatus: number;
 
     beforeEach(() => {
         workspaceRequests = 0;
         deletedTransactions = [];
+        deleteRequestUrls = [];
+        deleteStatus = 200;
         toastSuccess.mockReset();
         toastError.mockReset();
 
@@ -101,7 +106,14 @@ describe('ReconcilePage transaction actions', () => {
             if (url === '/api/reconciliation/sessions') {
                 return jsonResponse({ id: 'session-guid' });
             }
-            if (url === '/api/transactions/transaction-guid' && init?.method === 'DELETE') {
+            if (url.startsWith('/api/transactions/transaction-guid') && init?.method === 'DELETE') {
+                deleteRequestUrls.push(url);
+                if (deleteStatus !== 200) {
+                    return jsonResponse(
+                        { error: 'Transaction was modified by another user', code: 'conflict' },
+                        { status: deleteStatus },
+                    );
+                }
                 deletedTransactions.push('transaction-guid');
                 return jsonResponse({ success: true });
             }
@@ -137,6 +149,26 @@ describe('ReconcilePage transaction actions', () => {
         await waitFor(() => expect(deletedTransactions).toEqual(['transaction-guid']));
         await waitFor(() => expect(workspaceRequests).toBeGreaterThanOrEqual(2));
         expect(toastSuccess).toHaveBeenCalledWith('Transaction deleted');
+        // Optimistic-lock token: the enter_date loaded with the workspace
+        // must be echoed back so a concurrent edit is detected server-side.
+        expect(deleteRequestUrls[0]).toContain(
+            `original_enter_date=${encodeURIComponent('2026-07-20T08:00:00.000Z')}`,
+        );
+    });
+
+    it('reloads the workspace instead of deleting when the server reports a 409 conflict', async () => {
+        deleteStatus = 409;
+        render(<ReconcilePage />);
+        await screen.findByText('Review me');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete Review me' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion' }));
+
+        await waitFor(() => expect(toastError).toHaveBeenCalledWith(
+            'This transaction was changed by someone else — reloading',
+        ));
+        await waitFor(() => expect(workspaceRequests).toBeGreaterThanOrEqual(2));
+        expect(deletedTransactions).toEqual([]);
+        expect(toastSuccess).not.toHaveBeenCalled();
     });
 
     it('pins the running balances below the global application header', async () => {

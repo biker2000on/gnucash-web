@@ -182,6 +182,7 @@ describe('getReconcileWorkspace', () => {
                 quantity_num: BigInt(4200),
                 quantity_denom: BigInt(100),
                 post_date: new Date('2026-06-10T00:00:00.000Z'),
+                enter_date: new Date('2026-06-10T08:00:00.000Z'),
                 num: '1042',
                 description: 'Grocery store',
             },
@@ -193,6 +194,7 @@ describe('getReconcileWorkspace', () => {
                 quantity_num: BigInt(-1550),
                 quantity_denom: BigInt(100),
                 post_date: new Date('2026-06-20T00:00:00.000Z'),
+                enter_date: null,
                 num: null,
                 description: null,
             },
@@ -213,6 +215,7 @@ describe('getReconcileWorkspace', () => {
                 guid: SPLIT_1,
                 transactionGuid: TX_1,
                 date: '2026-06-10T00:00:00.000Z',
+                enterDate: '2026-06-10T08:00:00.000Z',
                 num: '1042',
                 description: 'Grocery store',
                 memo: 'memo one',
@@ -223,6 +226,7 @@ describe('getReconcileWorkspace', () => {
                 guid: SPLIT_2,
                 transactionGuid: TX_2,
                 date: '2026-06-20T00:00:00.000Z',
+                enterDate: null,
                 num: '',
                 description: '',
                 memo: '',
@@ -427,6 +431,42 @@ describe('finalizeReconciliation', () => {
         expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
+    it('locks the account splits (FOR UPDATE) before any validation reads', async () => {
+        mockSplitLookups(
+            [selectedSplit(SPLIT_1, 2650)],
+            [ySplit(10000, null)],
+        );
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+
+        await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 126.5, [SPLIT_1]);
+
+        const lockSql = mockPrisma.$queryRaw.mock.calls
+            .map(([template]: [TemplateStringsArray]) => template.join('?'))
+            .join('\n');
+        expect(lockSql).toContain('FOR UPDATE');
+        // The lock must be taken before the validation reads so concurrent
+        // finalizes serialize and re-validate against committed state.
+        expect(mockPrisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+            mockPrisma.splits.findMany.mock.invocationCallOrder[0],
+        );
+    });
+
+    it("bumps enter_date on the reconciled splits' parent transactions", async () => {
+        mockSplitLookups(
+            [selectedSplit(SPLIT_1, 2650)],
+            [ySplit(10000, null)],
+        );
+        mockPrisma.splits.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.$executeRaw.mockResolvedValue(1);
+
+        await finalizeReconciliation(ACCOUNT, STATEMENT_DATE, 126.5, [SPLIT_1]);
+
+        const bumpSql = mockPrisma.$executeRaw.mock.calls
+            .map(([template]: [TemplateStringsArray]) => template.join('?'))
+            .join('\n');
+        expect(bumpSql).toContain('SET enter_date = NOW()');
+    });
+
     it('uses an injected transaction client when provided (no new $transaction)', async () => {
         const txClient = {
             splits: {
@@ -436,6 +476,8 @@ describe('finalizeReconciliation', () => {
                 }),
                 updateMany: vi.fn(async () => ({ count: 1 })),
             },
+            $queryRaw: vi.fn(async () => []),
+            $executeRaw: vi.fn(async () => 0),
         };
 
         const result = await finalizeReconciliation(

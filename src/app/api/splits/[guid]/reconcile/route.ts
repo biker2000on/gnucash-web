@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { requireRole } from '@/lib/auth';
+import { isAccountInActiveBook, getBookAccountGuids } from '@/lib/book-scope';
 
 interface ReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
@@ -72,21 +73,34 @@ export async function PATCH(
             return NextResponse.json({ error: 'Split not found' }, { status: 404 });
         }
 
+        // Verify the split's account belongs to the active book
+        if (!await isAccountInActiveBook(existingSplit.account_guid)) {
+            return NextResponse.json({ error: 'Split not found' }, { status: 404 });
+        }
+
         // Update the split
         const reconcileDate = body.reconcile_state === 'y'
             ? new Date(body.reconcile_date || new Date().toISOString())
             : null;
 
-        const updatedSplit = await prisma.splits.update({
-            where: { guid },
-            data: {
-                reconcile_state: body.reconcile_state,
-                reconcile_date: reconcileDate,
-            },
-            include: {
-                account: true,
-            },
-        });
+        // Update the split and bump the parent transaction's enter_date in
+        // one transaction so concurrent editors' optimistic locks invalidate.
+        const [updatedSplit] = await prisma.$transaction([
+            prisma.splits.update({
+                where: { guid },
+                data: {
+                    reconcile_state: body.reconcile_state,
+                    reconcile_date: reconcileDate,
+                },
+                include: {
+                    account: true,
+                },
+            }),
+            prisma.transactions.update({
+                where: { guid: existingSplit.tx_guid },
+                data: { enter_date: new Date() },
+            }),
+        ]);
 
         // Return the updated split
         const result = {
@@ -146,16 +160,38 @@ export async function POST(
             ? new Date(reconcile_date || new Date().toISOString())
             : null;
 
-        // Bulk update
-        const result = await prisma.splits.updateMany({
+        // Scope the update to splits whose accounts belong to the active book
+        const bookAccountGuids = await getBookAccountGuids();
+        const targetSplits = await prisma.splits.findMany({
             where: {
                 guid: { in: splits },
+                account_guid: { in: bookAccountGuids },
             },
-            data: {
-                reconcile_state,
-                reconcile_date: date,
-            },
+            select: { guid: true, tx_guid: true },
         });
+        if (targetSplits.length === 0) {
+            return NextResponse.json({ error: 'Splits not found' }, { status: 404 });
+        }
+        const inBookGuids = targetSplits.map(s => s.guid);
+        const parentTxGuids = [...new Set(targetSplits.map(s => s.tx_guid))];
+
+        // Bulk update; bump each parent transaction's enter_date in the same
+        // transaction so concurrent editors' optimistic locks invalidate.
+        const [result] = await prisma.$transaction([
+            prisma.splits.updateMany({
+                where: {
+                    guid: { in: inBookGuids },
+                },
+                data: {
+                    reconcile_state,
+                    reconcile_date: date,
+                },
+            }),
+            prisma.transactions.updateMany({
+                where: { guid: { in: parentTxGuids } },
+                data: { enter_date: new Date() },
+            }),
+        ]);
 
         return NextResponse.json({
             success: true,

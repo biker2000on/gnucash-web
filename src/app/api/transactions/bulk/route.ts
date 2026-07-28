@@ -3,7 +3,12 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
-import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
+import {
+    withPeriodLockCheck,
+    assertNotLocked,
+    PeriodLockedError,
+    periodLockedResponse,
+} from '@/lib/services/period-lock.service';
 import {
     selectRecategorizeSplit,
     replaceDescription,
@@ -202,10 +207,13 @@ export async function PATCH(request: Request) {
         });
         const txByGuid = new Map(txRows.map(t => [t.guid, t]));
 
-        // Period lock: description edits and recategorizes alter ledger
-        // content, so every targeted transaction must be after the lock date.
-        // Tag-only operations are metadata and stay allowed.
-        if (description !== undefined || replaceOp || recatOp) {
+        // Period lock pre-check: description edits and recategorizes alter
+        // ledger content, so every targeted transaction must be after the
+        // lock date. Tag-only operations are metadata and stay allowed.
+        // (Fast-fail only — the authoritative check runs inside the DB
+        // transaction below with the cache bypassed.)
+        const hasCoreOps = description !== undefined || !!replaceOp || !!recatOp;
+        if (hasCoreOps) {
             const lockError = await withPeriodLockCheck(
                 roleResult.bookGuid,
                 txRows.map(t => t.post_date),
@@ -217,8 +225,24 @@ export async function PATCH(request: Request) {
         let updated = 0;
         let recategorized = false;
         const touchedDates: Date[] = [];
+        const bulkEditTimestamp = new Date();
 
         await prisma.$transaction(async dbTx => {
+            // Period lock (authoritative, in-transaction, cache bypassed):
+            // re-read the targeted transactions' post dates fresh so a
+            // just-locked period cannot be edited through a stale snapshot.
+            if (hasCoreOps) {
+                const freshRows = await dbTx.transactions.findMany({
+                    where: { guid: { in: transactionGuids } },
+                    select: { post_date: true },
+                });
+                await assertNotLocked(
+                    roleResult.bookGuid,
+                    freshRows.map(t => t.post_date),
+                    { bypassCache: true },
+                );
+            }
+
             for (const guid of transactionGuids) {
                 const t = txByGuid.get(guid);
                 if (!t) {
@@ -262,15 +286,25 @@ export async function PATCH(request: Request) {
                 }
 
                 let changed = false;
+                let coreChanged = false;
                 if (typeof description === 'string') {
-                    await dbTx.transactions.update({ where: { guid }, data: { description } });
+                    // enter_date bump invalidates other editors' optimistic locks
+                    await dbTx.transactions.update({
+                        where: { guid },
+                        data: { description, enter_date: bulkEditTimestamp },
+                    });
                     changed = true;
+                    coreChanged = true;
                 } else if (replaceOp) {
                     const current = t.description ?? '';
                     const next = replaceDescription(current, replaceOp.find, replaceOp.replace);
                     if (next !== current) {
-                        await dbTx.transactions.update({ where: { guid }, data: { description: next } });
+                        await dbTx.transactions.update({
+                            where: { guid },
+                            data: { description: next, enter_date: bulkEditTimestamp },
+                        });
                         changed = true;
+                        coreChanged = true;
                     }
                 }
                 if (moveSplit && recatOp) {
@@ -278,6 +312,15 @@ export async function PATCH(request: Request) {
                         where: { guid: moveSplit.guid },
                         data: { account_guid: recatOp.toAccountGuid },
                     });
+                    if (!coreChanged) {
+                        // Split moved but description untouched: still a core
+                        // ledger mutation, so bump the version token.
+                        await dbTx.transactions.update({
+                            where: { guid },
+                            data: { enter_date: bulkEditTimestamp },
+                        });
+                        coreChanged = true;
+                    }
                     changed = true;
                     recategorized = true;
                     if (t.post_date) touchedDates.push(t.post_date);
@@ -318,6 +361,9 @@ export async function PATCH(request: Request) {
             skipped: results.filter(r => !r.ok).length,
         });
     } catch (error) {
+        if (error instanceof PeriodLockedError) {
+            return periodLockedResponse(error);
+        }
         console.error('Failed to bulk edit transactions:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }

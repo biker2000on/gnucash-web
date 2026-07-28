@@ -57,7 +57,7 @@ export class ManualReconcileError extends Error {
 
 /** The subset of the client finalize needs — satisfied by both the singleton
  *  and the interactive-transaction client. */
-export type ReconcileTx = Pick<ExtendedPrismaClient, 'splits' | '$executeRaw'>;
+export type ReconcileTx = Pick<ExtendedPrismaClient, 'splits' | '$executeRaw' | '$queryRaw'>;
 
 export interface ReconciliationCompletion {
     bookGuid: string;
@@ -134,11 +134,12 @@ export async function getReconcileWorkspace(
         quantity_num: bigint;
         quantity_denom: bigint;
         post_date: Date | null;
+        enter_date: Date | null;
         num: string | null;
         description: string | null;
     }>>`
         SELECT s.guid, s.tx_guid, s.memo, s.reconcile_state, s.quantity_num, s.quantity_denom,
-               t.post_date, t.num, t.description
+               t.post_date, t.enter_date, t.num, t.description
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
         WHERE s.account_guid = ${accountGuid}
@@ -177,6 +178,7 @@ export async function getReconcileWorkspace(
             guid: r.guid,
             transactionGuid: r.tx_guid,
             date: r.post_date ? r.post_date.toISOString() : '',
+            enterDate: r.enter_date ? r.enter_date.toISOString() : null,
             num: r.num ?? '',
             description: r.description ?? '',
             memo: r.memo ?? '',
@@ -213,7 +215,20 @@ export async function finalizeReconciliation(
     const uniqueGuids = [...new Set(splitGuids)];
 
     const run = async (db: ReconcileTx): Promise<FinalizeReconcileResult> => {
-        // Load and validate the requested splits.
+        // Serialize concurrent finalizes on this account: lock every split
+        // row of the account (deadlock-safe consistent ordering) before any
+        // validation reads. A second finalize blocks here until the first
+        // commits, then re-reads post-commit state — so its tie-out and
+        // already-reconciled checks run against live data instead of a
+        // pre-transaction snapshot.
+        await db.$queryRaw`
+            SELECT guid FROM splits
+            WHERE account_guid = ${accountGuid}
+            ORDER BY guid
+            FOR UPDATE
+        `;
+
+        // Load and validate the requested splits (re-validated AFTER locking).
         let selectedCents = 0;
         if (uniqueGuids.length > 0) {
             const selected = await db.splits.findMany({
@@ -302,6 +317,19 @@ export async function finalizeReconciliation(
                 data: { reconcile_state: 'y', reconcile_date: statementDate },
             });
             updated = result.count;
+
+            // Bump enter_date on the parent transactions so concurrent
+            // editors' optimistic-concurrency tokens invalidate: an edit
+            // started before this reconcile will now 409 instead of silently
+            // reverting the reconcile flags.
+            await db.$executeRaw`
+                UPDATE transactions
+                SET enter_date = NOW()
+                WHERE guid IN (
+                    SELECT DISTINCT tx_guid FROM splits
+                    WHERE guid = ANY(${uniqueGuids}::text[])
+                )
+            `;
         }
 
         if (completion) {

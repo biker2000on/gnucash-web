@@ -19,7 +19,7 @@ export async function PATCH(
     // Verify split exists
     const split = await prisma.splits.findUnique({
       where: { guid: splitGuid },
-      select: { guid: true, account_guid: true, lot_guid: true },
+      select: { guid: true, account_guid: true, lot_guid: true, tx_guid: true },
     });
     if (!split) {
       return NextResponse.json({ error: 'Split not found' }, { status: 404 });
@@ -31,33 +31,15 @@ export async function PATCH(
     }
 
     let targetLotGuid: string | null = null;
+    let createNewLot = false;
 
     if (lot_guid === null) {
       // Unassign
       targetLotGuid = null;
     } else if (lot_guid === 'new') {
-      // Create new lot
-      const newGuid = generateGuid();
-      await prisma.$transaction(async (tx) => {
-        await tx.lots.create({
-          data: {
-            guid: newGuid,
-            account_guid: split.account_guid,
-            is_closed: 0,
-          },
-        });
-        if (title) {
-          await tx.slots.create({
-            data: {
-              obj_guid: newGuid,
-              name: 'title',
-              slot_type: 4,
-              string_val: title,
-            },
-          });
-        }
-      });
-      targetLotGuid = newGuid;
+      // Create new lot (inside the transaction below)
+      targetLotGuid = generateGuid();
+      createNewLot = true;
     } else {
       // Assign to existing lot — validate lot belongs to same account
       const lot = await prisma.lots.findUnique({
@@ -76,10 +58,39 @@ export async function PATCH(
       targetLotGuid = lot_guid;
     }
 
-    // Update split
-    await prisma.splits.update({
-      where: { guid: splitGuid },
-      data: { lot_guid: targetLotGuid },
+    // Create the lot (if requested), update the split, and bump the parent
+    // transaction's enter_date atomically so concurrent editors' optimistic
+    // locks invalidate.
+    await prisma.$transaction(async (tx) => {
+      if (createNewLot && targetLotGuid) {
+        await tx.lots.create({
+          data: {
+            guid: targetLotGuid,
+            account_guid: split.account_guid,
+            is_closed: 0,
+          },
+        });
+        if (title) {
+          await tx.slots.create({
+            data: {
+              obj_guid: targetLotGuid,
+              name: 'title',
+              slot_type: 4,
+              string_val: title,
+            },
+          });
+        }
+      }
+
+      await tx.splits.update({
+        where: { guid: splitGuid },
+        data: { lot_guid: targetLotGuid },
+      });
+
+      await tx.transactions.update({
+        where: { guid: split.tx_guid },
+        data: { enter_date: new Date() },
+      });
     });
 
     return NextResponse.json({

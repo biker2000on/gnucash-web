@@ -277,9 +277,20 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         setIsDeleting(true);
 
         try {
-            const res = await fetch(`/api/transactions/${guid}`, {
+            // Optimistic-lock token: only delete the version we loaded
+            const tx = prevTransactions.find(t => t.guid === guid);
+            const enterDateToken = tx?.enter_date
+                ? new Date(tx.enter_date as unknown as string).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${guid}${tokenParam}`, {
                 method: 'DELETE',
             });
+            if (res.status === 409) {
+                error('This transaction was changed by someone else — reloading');
+                await fetchTransactions();
+                return;
+            }
             if (!res.ok) throw new Error('Failed to delete');
             success('Transaction deleted successfully');
         } catch (err) {

@@ -8,7 +8,46 @@ import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { requireRole } from '@/lib/auth';
-import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
+import {
+    assertNotLocked,
+    PeriodLockedError,
+    periodLockedResponse,
+} from '@/lib/services/period-lock.service';
+
+/** Thrown inside the DB transaction when the optimistic version check fails. */
+class TransactionConflictError extends Error {
+    constructor() {
+        super('Transaction was modified by another user');
+        this.name = 'TransactionConflictError';
+    }
+}
+
+/** Thrown inside the DB transaction when the row no longer exists. */
+class TransactionNotFoundError extends Error {
+    constructor() {
+        super('Transaction not found');
+        this.name = 'TransactionNotFoundError';
+    }
+}
+
+/**
+ * Parse the client-supplied optimistic-lock token. Returns:
+ * - { ok: true, value: Date | null }  — valid token (null = "row had no enter_date")
+ * - { ok: false }                     — malformed value
+ */
+function parseEnterDateToken(raw: unknown): { ok: true; value: Date | null } | { ok: false } {
+    if (raw === null) return { ok: true, value: null };
+    if (typeof raw !== 'string' || raw.length === 0) return { ok: false };
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return { ok: false };
+    return { ok: true, value: parsed };
+}
+
+/** Compare the locked row's enter_date against the client token. */
+function enterDateMatches(current: Date | null, expected: Date | null): boolean {
+    if (current === null || expected === null) return current === expected;
+    return current.getTime() === expected.getTime();
+}
 
 export async function GET(
     request: Request,
@@ -119,6 +158,24 @@ export async function PUT(
         const { original_enter_date, ...bodyData } = rawBody;
         const body: CreateTransactionRequest = bodyData;
 
+        // Optimistic concurrency is mandatory: the client must echo back the
+        // enter_date it loaded (or null when the row had none). Without it we
+        // cannot detect concurrent edits, so refuse with 428 Precondition
+        // Required.
+        if (!('original_enter_date' in rawBody) || original_enter_date === undefined) {
+            return NextResponse.json({
+                error: 'original_enter_date is required: send the enter_date value you loaded '
+                    + '(or null if it was empty) so concurrent edits can be detected.',
+                code: 'original_enter_date_required',
+            }, { status: 428 });
+        }
+        const enterDateToken = parseEnterDateToken(original_enter_date);
+        if (!enterDateToken.ok) {
+            return NextResponse.json({
+                error: 'original_enter_date must be an ISO date string or null',
+            }, { status: 400 });
+        }
+
         // Validate the transaction
         const validation = validateTransaction(body);
         if (!validation.valid) {
@@ -126,39 +183,6 @@ export async function PUT(
                 error: validation.errors.map(item => item.message).join(' '),
                 errors: validation.errors,
             }, { status: 400 });
-        }
-
-        // Verify transaction exists and capture old values for audit
-        const existingTx = await prisma.transactions.findUnique({
-            where: { guid },
-            include: {
-                splits: true,
-            },
-        });
-        if (!existingTx) {
-            return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
-        }
-
-        // Period lock: both the transaction's current date and its new date
-        // must be after the lock date
-        const lockError = await withPeriodLockCheck(roleResult.bookGuid, [
-            existingTx.post_date,
-            body.post_date,
-        ]);
-        if (lockError) return lockError;
-
-        // Full before-image for the audit trail (undo-capable)
-        const beforeSnapshot = await snapshotTransactionByGuid(guid);
-
-        // Optimistic locking: check enter_date hasn't changed since the client read it
-        if (original_enter_date && existingTx.enter_date) {
-            const currentEnterDate = existingTx.enter_date.toISOString();
-            if (currentEnterDate !== original_enter_date) {
-                return NextResponse.json(
-                    { error: 'Transaction was modified by another user. Please refresh and try again.' },
-                    { status: 409 }
-                );
-            }
         }
 
         // Verify all account GUIDs exist (deduplicate since multiple splits can reference the same account)
@@ -187,10 +211,53 @@ export async function PUT(
             }
         }
 
-        const existingSplitByGuid = new Map(existingTx.splits.map(split => [split.guid, split]));
+        // Update transaction and recreate splits in a transaction. All state
+        // reads (row lock + version check, period-lock check, before-image,
+        // live split snapshot) happen INSIDE the transaction so a concurrent
+        // writer cannot slip in between check and write.
+        const { transaction, beforeSnapshot } = await prisma.$transaction(async (tx) => {
+            // Lock the transaction row so the version check below is
+            // race-proof: concurrent editors serialize here.
+            const lockedRows = await tx.$queryRaw<
+                { guid: string; enter_date: Date | null; post_date: Date | null }[]
+            >`
+                SELECT guid, enter_date, post_date
+                FROM transactions
+                WHERE guid = ${guid}
+                FOR UPDATE
+            `;
+            if (lockedRows.length === 0) {
+                throw new TransactionNotFoundError();
+            }
+            const lockedTx = lockedRows[0];
 
-        // Update transaction and recreate splits in a transaction
-        const transaction = await prisma.$transaction(async (tx) => {
+            // Optimistic concurrency: the row's enter_date must still match
+            // what the client loaded. The row is locked, so this cannot race.
+            if (!enterDateMatches(lockedTx.enter_date, enterDateToken.value)) {
+                throw new TransactionConflictError();
+            }
+
+            // Period lock (authoritative, in-transaction, cache bypassed):
+            // both the transaction's current date and its new date must be
+            // after the lock date.
+            await assertNotLocked(
+                roleResult.bookGuid,
+                [lockedTx.post_date, body.post_date],
+                { bypassCache: true },
+            );
+
+            // Full before-image for the audit trail (undo-capable). The row is
+            // locked and unmodified at this point, so the committed state the
+            // snapshot reads is exactly the state we are about to replace.
+            const beforeImage = await snapshotTransactionByGuid(guid);
+
+            // Live split state (reconcile/lot preservation must not use a
+            // stale pre-transaction snapshot).
+            const existingSplits = await tx.splits.findMany({
+                where: { tx_guid: guid },
+            });
+            const existingSplitByGuid = new Map(existingSplits.map(split => [split.guid, split]));
+
             // Process multi-currency splits and add trading splits if needed
             const multiCurrencyResult = await processMultiCurrencySplits(
                 body.splits,
@@ -198,7 +265,8 @@ export async function PUT(
             );
             const allSplits = multiCurrencyResult.allSplits;
 
-            // Update transaction (enter_date updated for optimistic locking)
+            // Update transaction; enter_date is always bumped to a fresh
+            // timestamp so every sibling writer's optimistic check invalidates.
             await tx.transactions.update({
                 where: { guid },
                 data: {
@@ -241,7 +309,7 @@ export async function PUT(
             }
 
             // Return the updated transaction with splits
-            return await tx.transactions.findUnique({
+            const updated = await tx.transactions.findUnique({
                 where: { guid },
                 include: {
                     splits: {
@@ -258,6 +326,7 @@ export async function PUT(
                     },
                 },
             });
+            return { transaction: updated, beforeSnapshot: beforeImage };
         }, {
             maxWait: 30_000,
             timeout: 300_000,
@@ -311,6 +380,18 @@ export async function PUT(
 
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
+        if (error instanceof TransactionNotFoundError) {
+            return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+        }
+        if (error instanceof TransactionConflictError) {
+            return NextResponse.json(
+                { error: 'Transaction was modified by another user', code: 'conflict' },
+                { status: 409 }
+            );
+        }
+        if (error instanceof PeriodLockedError) {
+            return periodLockedResponse(error);
+        }
         console.error('Error updating transaction:', error);
         return NextResponse.json({ error: 'Failed to update transaction' }, { status: 500 });
     }
@@ -326,41 +407,78 @@ export async function DELETE(
 
         const { guid } = await params;
 
-        // Verify transaction exists and capture values for audit
-        const existingTx = await prisma.transactions.findUnique({
-            where: { guid },
-            include: {
-                splits: true,
-            },
-        });
-        if (!existingTx) {
-            return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+        // Optional optimistic-lock token: query param first, then JSON body.
+        // When present the delete only proceeds if the row's enter_date still
+        // matches what the client loaded.
+        const { searchParams } = new URL(request.url);
+        let rawToken: unknown = searchParams.get('original_enter_date');
+        if (rawToken === null) {
+            const jsonBody = await request.json().catch(() => null);
+            if (jsonBody && typeof jsonBody === 'object' && 'original_enter_date' in jsonBody) {
+                rawToken = (jsonBody as { original_enter_date: unknown }).original_enter_date;
+            } else {
+                rawToken = undefined;
+            }
+        } else if (rawToken === 'null') {
+            // Query-param encoding of an explicit null token
+            rawToken = null;
+        }
+        let enterDateToken: { ok: true; value: Date | null } | { ok: false } | null = null;
+        if (rawToken !== undefined) {
+            enterDateToken = parseEnterDateToken(rawToken);
+            if (!enterDateToken.ok) {
+                return NextResponse.json({
+                    error: 'original_enter_date must be an ISO date string or null',
+                }, { status: 400 });
+            }
         }
 
-        // Period lock: transactions dated in a closed period cannot be deleted
-        const lockError = await withPeriodLockCheck(roleResult.bookGuid, [existingTx.post_date]);
-        if (lockError) return lockError;
+        // Everything — row lock + version check, period-lock check, snapshot,
+        // extension-meta cleanup, and the deletes — runs in one transaction so
+        // a failed delete cannot leave the SimpleFin dedup meta destroyed.
+        const { deleteSnapshot, deletedPostDate } = await prisma.$transaction(async (tx) => {
+            const lockedRows = await tx.$queryRaw<
+                { guid: string; enter_date: Date | null; post_date: Date | null; description: string | null }[]
+            >`
+                SELECT guid, enter_date, post_date, description
+                FROM transactions
+                WHERE guid = ${guid}
+                FOR UPDATE
+            `;
+            if (lockedRows.length === 0) {
+                throw new TransactionNotFoundError();
+            }
+            const lockedTx = lockedRows[0];
 
-        // Full before-image for the audit trail (restore-capable)
-        const deleteSnapshot = await snapshotTransactionByGuid(guid);
+            if (enterDateToken && enterDateToken.ok
+                && !enterDateMatches(lockedTx.enter_date, enterDateToken.value)) {
+                throw new TransactionConflictError();
+            }
 
-        // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
-        await prisma.$executeRaw`
-            UPDATE gnucash_web_transaction_meta
-            SET transaction_guid = NULL, deleted_at = NOW()
-            WHERE transaction_guid = ${guid}
-              AND simplefin_transaction_id IS NOT NULL
-        `;
+            // Period lock (authoritative, in-transaction, cache bypassed):
+            // transactions dated in a closed period cannot be deleted.
+            await assertNotLocked(roleResult.bookGuid, [lockedTx.post_date], { bypassCache: true });
 
-        // Clean up meta rows for non-SimpleFin transactions
-        await prisma.$executeRaw`
-            DELETE FROM gnucash_web_transaction_meta
-            WHERE transaction_guid = ${guid}
-              AND simplefin_transaction_id IS NULL
-        `;
+            // Full before-image for the audit trail (restore-capable). Row is
+            // locked and our deletes have not run yet, so this is consistent.
+            const snapshot = await snapshotTransactionByGuid(guid);
+            const splitCount = await tx.splits.count({ where: { tx_guid: guid } });
 
-        // Delete transaction (splits will be cascade deleted due to onDelete: Cascade in schema)
-        await prisma.$transaction(async (tx) => {
+            // Preserve SimpleFin meta rows for dedup (NULL out transaction_guid, mark deleted)
+            await tx.$executeRaw`
+                UPDATE gnucash_web_transaction_meta
+                SET transaction_guid = NULL, deleted_at = NOW()
+                WHERE transaction_guid = ${guid}
+                  AND simplefin_transaction_id IS NOT NULL
+            `;
+
+            // Clean up meta rows for non-SimpleFin transactions
+            await tx.$executeRaw`
+                DELETE FROM gnucash_web_transaction_meta
+                WHERE transaction_guid = ${guid}
+                  AND simplefin_transaction_id IS NULL
+            `;
+
             // Delete splits first (even though cascade should handle it)
             await tx.splits.deleteMany({
                 where: { tx_guid: guid },
@@ -370,20 +488,25 @@ export async function DELETE(
             await tx.transactions.delete({
                 where: { guid },
             });
+
+            return {
+                deleteSnapshot: snapshot ?? {
+                    description: lockedTx.description,
+                    post_date: lockedTx.post_date,
+                    splits_count: splitCount,
+                },
+                deletedPostDate: lockedTx.post_date,
+            };
         });
 
         // Log audit event with the full before-image (restore-capable)
-        await logAudit('DELETE', 'TRANSACTION', guid, deleteSnapshot ?? {
-            description: existingTx.description,
-            post_date: existingTx.post_date,
-            splits_count: existingTx.splits.length,
-        }, null);
+        await logAudit('DELETE', 'TRANSACTION', guid, deleteSnapshot, null);
 
         // Invalidate caches from the transaction date forward
         try {
             const bookGuid = await getActiveBookGuid();
-            if (existingTx.post_date) {
-                const txDate = new Date(existingTx.post_date);
+            if (deletedPostDate) {
+                const txDate = new Date(deletedPostDate);
                 await cacheInvalidateFrom(bookGuid, txDate);
             }
         } catch (err) {
@@ -393,6 +516,18 @@ export async function DELETE(
 
         return NextResponse.json({ success: true, deleted: guid });
     } catch (error) {
+        if (error instanceof TransactionNotFoundError) {
+            return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+        }
+        if (error instanceof TransactionConflictError) {
+            return NextResponse.json(
+                { error: 'Transaction was modified by another user', code: 'conflict' },
+                { status: 409 }
+            );
+        }
+        if (error instanceof PeriodLockedError) {
+            return periodLockedResponse(error);
+        }
         console.error('Error deleting transaction:', error);
         return NextResponse.json({ error: 'Failed to delete transaction' }, { status: 500 });
     }

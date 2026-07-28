@@ -514,7 +514,18 @@ export default function AccountLedger({
 
         // Fire API call in background
         try {
-            const res = await fetch(`/api/transactions/${deletedGuid}`, { method: 'DELETE' });
+            // Optimistic-lock token: only delete the version we loaded
+            const deletedTx = prevTransactions.find(t => t.guid === deletedGuid);
+            const enterDateToken = deletedTx?.enter_date
+                ? new Date(deletedTx.enter_date as unknown as string).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${deletedGuid}${tokenParam}`, { method: 'DELETE' });
+            if (res.status === 409) {
+                error('This transaction was changed by someone else — reloading');
+                await fetchTransactions();
+                return;
+            }
             if (!res.ok) throw new Error('Failed to delete');
             success('Transaction deleted successfully');
             // Refetch so running_balance column reflects the removed transaction
@@ -536,7 +547,7 @@ export default function AccountLedger({
         accountGuid: string;
         accountName: string;
         amount: string;
-        original_enter_date?: string;
+        original_enter_date?: string | null;
         splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
     }) => {
         try {
@@ -607,10 +618,9 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
             } else {
-                // PUT to update existing transaction
-                if (data.original_enter_date) {
-                    body.original_enter_date = data.original_enter_date;
-                }
+                // PUT to update existing transaction; original_enter_date is
+                // mandatory (null = the row had no enter_date when loaded)
+                body.original_enter_date = data.original_enter_date ?? null;
 
                 res = await fetch(`/api/transactions/${guid}`, {
                     method: 'PUT',
@@ -618,8 +628,8 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
 
-                if (res.status === 409) {
-                    error('Transaction was modified by another user. Refreshing...');
+                if (res.status === 409 || res.status === 428) {
+                    error('This transaction was changed by someone else — reloading');
                     await fetchTransactions();
                     setEditingGuid(null);
                     return;
@@ -707,15 +717,15 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
             } else {
-                body.original_enter_date = tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : undefined;
+                body.original_enter_date = tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : null;
                 res = await fetch(`/api/transactions/${txGuid}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                 });
 
-                if (res.status === 409) {
-                    error('Transaction was modified by another user. Refreshing...');
+                if (res.status === 409 || res.status === 428) {
+                    error('This transaction was changed by someone else — reloading');
                     await fetchTransactions();
                     return false;
                 }
@@ -814,9 +824,7 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
             } else {
-                if (data.original_enter_date) {
-                    body.original_enter_date = data.original_enter_date;
-                }
+                body.original_enter_date = data.original_enter_date ?? null;
 
                 res = await fetch(`/api/transactions/${guid}`, {
                     method: 'PUT',
@@ -824,8 +832,8 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
 
-                if (res.status === 409) {
-                    error('Transaction was modified by another user. Refreshing...');
+                if (res.status === 409 || res.status === 428) {
+                    error('This transaction was changed by someone else — reloading');
                     await fetchTransactions();
                     return;
                 }
@@ -1102,14 +1110,31 @@ export default function AccountLedger({
     // Bulk delete handler
     const handleBulkDelete = useCallback(async () => {
         const guids = Array.from(editSelectedGuids);
+        let deleted = 0;
+        let conflicts = 0;
         for (const guid of guids) {
-            await fetch(`/api/transactions/${guid}`, { method: 'DELETE' });
+            const tx = transactions.find(t => t.guid === guid);
+            const enterDateToken = tx?.enter_date
+                ? new Date(tx.enter_date as unknown as string).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${guid}${tokenParam}`, { method: 'DELETE' });
+            if (res.status === 409) {
+                conflicts++;
+            } else if (res.ok) {
+                deleted++;
+            }
         }
         setEditSelectedGuids(new Set());
         setBulkDeleteConfirmOpen(false);
         await fetchTransactions();
-        success(`Deleted ${guids.length} transaction${guids.length !== 1 ? 's' : ''}`);
-    }, [editSelectedGuids, fetchTransactions, success]);
+        if (conflicts > 0) {
+            error(`${conflicts} transaction${conflicts !== 1 ? 's were' : ' was'} changed by someone else and not deleted — list reloaded`);
+        }
+        if (deleted > 0) {
+            success(`Deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}`);
+        }
+    }, [editSelectedGuids, transactions, fetchTransactions, success, error]);
 
     // Bulk move handler
     const handleBulkMove = useCallback(async (targetAccountGuid: string, targetAccountName: string) => {
