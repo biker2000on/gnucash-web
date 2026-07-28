@@ -15,7 +15,12 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
-import { buildCurrencySplitAmounts, parseExchangeRate } from '@/lib/transaction-currency';
+import {
+    buildCurrencySplitAmounts,
+    deriveRecordedExchangeRate,
+    editableDecimalMagnitude,
+    parseExchangeRate,
+} from '@/lib/transaction-currency';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -146,15 +151,21 @@ export function TransactionForm({
     useEffect(() => {
         if (transaction) {
             const splits: SplitFormData[] = transaction.splits?.map(split => {
-                const value = parseFloat(split.quantity_decimal || '0');
+                const quantityDecimal = split.quantity_decimal || '0';
+                const quantity = parseFloat(quantityDecimal);
+                const magnitude = editableDecimalMagnitude(quantityDecimal);
                 return {
                     id: split.guid,
                     account_guid: split.account_guid,
                     account_name: split.account_name || '',
-                    debit: value > 0 ? value.toFixed(2) : '',
-                    credit: value < 0 ? Math.abs(value).toFixed(2) : '',
+                    debit: quantity > 0 ? magnitude : '',
+                    credit: quantity < 0 ? magnitude : '',
                     memo: split.memo || '',
                     reconcile_state: split.reconcile_state as 'n' | 'c' | 'y' || 'n',
+                    exchange_rate: deriveRecordedExchangeRate(
+                        split.value_decimal,
+                        quantityDecimal,
+                    ),
                 };
             }) || [createEmptySplit(), createEmptySplit()];
 
@@ -516,15 +527,17 @@ export function TransactionForm({
             const accountAmount = debit - credit;
             const exchangeRate = resolveSplitExchangeRate(split);
             if (exchangeRate === null) return null;
+            const accountFraction = accountMap.get(split.account_guid)?.commodity_scu || 100;
 
             const {
                 valueNum,
                 valueDenom,
                 quantityNum,
                 quantityDenom,
-            } = buildCurrencySplitAmounts(accountAmount, exchangeRate);
+            } = buildCurrencySplitAmounts(accountAmount, exchangeRate, accountFraction);
 
             apiSplits.push({
+                guid: /^[0-9a-f]{32}$/.test(split.id) ? split.id : undefined,
                 account_guid: split.account_guid,
                 value_num: valueNum,
                 value_denom: valueDenom,

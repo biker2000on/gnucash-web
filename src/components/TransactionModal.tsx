@@ -180,8 +180,12 @@ export function TransactionModal({
                                         <th className="px-4 py-3 text-left">Account</th>
                                         <th className="px-4 py-3 text-left">Memo</th>
                                         <th className="px-4 py-3 text-center">Status</th>
-                                        <th className="px-4 py-3 text-right">Debit</th>
-                                        <th className="px-4 py-3 text-right">Credit</th>
+                                        <th className="px-4 py-3 text-right">
+                                            Debit ({transaction.currency_mnemonic || 'USD'})
+                                        </th>
+                                        <th className="px-4 py-3 text-right">
+                                            Credit ({transaction.currency_mnemonic || 'USD'})
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border">
@@ -199,7 +203,7 @@ export function TransactionModal({
                                         // multi-currency transfers)
                                         const showQty = qty !== 0 && split.commodity_mnemonic !== txCurrency;
                                         const qtyLine = showQty
-                                            ? `${qty > 0 ? '+' : ''}${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic}`
+                                            ? `Native: ${qty > 0 ? '+' : ''}${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic}`
                                             : null;
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
