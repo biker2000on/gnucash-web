@@ -42,6 +42,7 @@
  * All mutations run in a single prisma.$transaction.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from '@/lib/gnucash';
 import {
@@ -401,49 +402,96 @@ async function getCurrencyFraction(db: PrismaTx, currencyGuid: string): Promise<
 }
 
 /**
- * Next document number. Reads/increments the book's counter slot
- * ('counters/gncInvoice' or 'counters/gncBill'); falls back to
- * max-numeric-id + 1 across same-kind invoices. Zero-padded to 6 digits.
+ * Minimal structural DB surface for the counter logic, so it stays
+ * unit-testable with an in-memory fake. Satisfied by a Prisma interactive
+ * transaction client ($queryRaw is required for the atomic increment and the
+ * bootstrap advisory lock — callers MUST run this inside a $transaction).
  */
-async function nextInvoiceId(
-  db: PrismaTx,
+export interface CounterDb {
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
+  slots: {
+    findFirst(args: {
+      where: Record<string, unknown>;
+    }): Promise<{ id: number; guid_val?: string | null; int64_val?: bigint | null } | null>;
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+  invoices: {
+    findMany(args: {
+      where: Record<string, unknown>;
+      select: Record<string, boolean>;
+    }): Promise<Array<{ id: string }>>;
+  };
+}
+
+/**
+ * Next document number from the book's 'counters/<counterName>' slot.
+ *
+ * Concurrency-safe: the increment is a single atomic
+ * `UPDATE ... SET int64_val = int64_val + 1 ... RETURNING`, so two concurrent
+ * calls serialize on the row and always hand out distinct numbers (the old
+ * read-modify-write handed out duplicates). The bootstrap path (no counter
+ * slot yet) is guarded by pg_advisory_xact_lock keyed on (book, counter) —
+ * the loser re-checks after the lock and increments the winner's slot instead
+ * of creating a duplicate; the max-numeric-id fallback also runs under that
+ * lock. MUST be called inside a $transaction (xact-scoped advisory lock).
+ */
+export async function nextCounterId(
+  db: CounterDb,
   bookGuid: string,
-  kind: InvoiceKind,
+  counterName: string,
+  fallbackOwnerType: number,
 ): Promise<string> {
-  const counterName = kind === 'invoice' ? 'gncInvoice' : 'gncBill';
-
-  // GnuCash frame layout: book -> 'counters' frame -> child on the frame guid
-  const frame = await db.slots.findFirst({
-    where: { obj_guid: bookGuid, name: 'counters', slot_type: SLOT_FRAME },
-  });
-  let counterRow = frame?.guid_val
-    ? await db.slots.findFirst({
-        where: { obj_guid: frame.guid_val, name: `counters/${counterName}` },
-      })
-    : null;
-  if (!counterRow) {
-    // Tolerate flat layouts (obj_guid = book guid, full-path name)
-    counterRow = await db.slots.findFirst({
-      where: { obj_guid: bookGuid, name: `counters/${counterName}` },
+  // GnuCash frame layout: book -> 'counters' frame -> child on the frame
+  // guid; tolerate flat layouts (obj_guid = book guid, full-path name).
+  const findCounter = async () => {
+    const frame = await db.slots.findFirst({
+      where: { obj_guid: bookGuid, name: 'counters', slot_type: SLOT_FRAME },
     });
-  }
+    let counterRow = frame?.guid_val
+      ? await db.slots.findFirst({
+          where: { obj_guid: frame.guid_val, name: `counters/${counterName}` },
+        })
+      : null;
+    if (!counterRow) {
+      counterRow = await db.slots.findFirst({
+        where: { obj_guid: bookGuid, name: `counters/${counterName}` },
+      });
+    }
+    return { frame, counterRow };
+  };
 
-  if (counterRow) {
-    // Stored value is the LAST used number; next = value + 1, persist it.
-    const next = Number(counterRow.int64_val ?? 0n) + 1;
-    await db.slots.update({ where: { id: counterRow.id }, data: { int64_val: BigInt(next) } });
-    return formatInvoiceId(next);
-  }
+  // Stored value is the LAST used number; atomically bump and use the result.
+  const increment = async (slotId: number): Promise<string> => {
+    const rows = await db.$queryRaw<Array<{ int64_val: bigint | number | null }>>`
+      UPDATE slots SET int64_val = COALESCE(int64_val, 0) + 1
+      WHERE id = ${slotId}
+      RETURNING int64_val
+    `;
+    const value = rows[0]?.int64_val;
+    if (value === null || value === undefined) {
+      throw new Error(`Counter slot ${slotId} vanished during increment`);
+    }
+    return formatInvoiceId(Number(value));
+  };
+
+  let { frame, counterRow } = await findCounter();
+  if (counterRow) return increment(counterRow.id);
+
+  // Bootstrap: serialize concurrent bootstraps of this counter, then re-check
+  // existence — the lock loser must increment the winner's slot, not create a
+  // second one.
+  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`gncCounter:${bookGuid}:${counterName}`}::text))`;
+  ({ frame, counterRow } = await findCounter());
+  if (counterRow) return increment(counterRow.id);
 
   // Fallback: max numeric id among same-kind documents (job-owned ignored),
   // then persist a GnuCash-style counter so future numbering is stable and
   // desktop sees the counter.
-  const ownerType = kind === 'invoice' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
   const rows = await db.invoices.findMany({
-    where: { owner_type: ownerType },
+    where: { owner_type: fallbackOwnerType },
     select: { id: true },
   });
-  const next = nextIdFromExisting(rows.map((r: { id: string }) => r.id));
+  const next = nextIdFromExisting(rows.map((r) => r.id));
 
   let frameGuid = frame?.guid_val ?? null;
   if (!frameGuid) {
@@ -462,6 +510,21 @@ async function nextInvoiceId(
   });
 
   return formatInvoiceId(next);
+}
+
+/**
+ * Next document number. Reads/increments the book's counter slot
+ * ('counters/gncInvoice' or 'counters/gncBill'); falls back to
+ * max-numeric-id + 1 across same-kind invoices. Zero-padded to 6 digits.
+ */
+async function nextInvoiceId(
+  db: PrismaTx,
+  bookGuid: string,
+  kind: InvoiceKind,
+): Promise<string> {
+  const counterName = kind === 'invoice' ? 'gncInvoice' : 'gncBill';
+  const ownerType = kind === 'invoice' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
+  return nextCounterId(db as unknown as CounterDb, bookGuid, counterName, ownerType);
 }
 
 /**
@@ -849,6 +912,12 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
   if (lockBookGuid) await assertNotLocked(lockBookGuid, [input.postDate]);
 
   await prisma.$transaction(async (tx) => {
+    // Serialize concurrent posts of the same invoice: without this row lock,
+    // two posts can both pass the already-posted check below and double-book
+    // A/R. The loser blocks here until the winner commits, then re-reads the
+    // row and hits the InvoiceStateError.
+    await tx.$queryRaw`SELECT guid FROM invoices WHERE guid = ${guid} FOR UPDATE`;
+
     const invoice = await tx.invoices.findUnique({ where: { guid } });
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     if (invoice.post_txn) throw new InvoiceStateError('Invoice is already posted');
@@ -978,6 +1047,12 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
 
 export async function unpostInvoice(guid: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    // Mirror of the postInvoice lock: serialize unpost against a concurrent
+    // post/unpost/payment of the same invoice so the state checks below run
+    // against committed state (a double unpost gets 'Invoice is not posted'
+    // instead of a failed delete).
+    await tx.$queryRaw`SELECT guid FROM invoices WHERE guid = ${guid} FOR UPDATE`;
+
     const invoice = await tx.invoices.findUnique({ where: { guid } });
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     if (!invoice.post_txn) throw new InvoiceStateError('Invoice is not posted');
@@ -1048,28 +1123,33 @@ interface OpenDocument {
   amountDue: number;
 }
 
-/** Posted, not fully paid documents for an owner (jobs of the owner included). */
-async function loadOpenDocuments(
+/** Where clause matching all POSTED documents of an owner (jobs included). */
+async function postedOwnerDocsWhere(
   db: PrismaTx,
   endOwnerType: number,
   ownerGuid: string,
-  kind: InvoiceKind,
-): Promise<OpenDocument[]> {
+): Promise<Prisma.invoicesWhereInput> {
   const jobs: Array<{ guid: string }> = await db.jobs.findMany({
     where: { owner_type: endOwnerType, owner_guid: ownerGuid },
     select: { guid: true },
   });
   const jobGuids = jobs.map((j) => j.guid);
+  return {
+    post_txn: { not: null },
+    OR: [
+      { owner_type: endOwnerType, owner_guid: ownerGuid },
+      ...(jobGuids.length > 0 ? [{ owner_type: OWNER_TYPE_JOB, owner_guid: { in: jobGuids } }] : []),
+    ],
+  };
+}
 
-  const invoices = await db.invoices.findMany({
-    where: {
-      post_txn: { not: null },
-      OR: [
-        { owner_type: endOwnerType, owner_guid: ownerGuid },
-        ...(jobGuids.length > 0 ? [{ owner_type: OWNER_TYPE_JOB, owner_guid: { in: jobGuids } }] : []),
-      ],
-    },
-  });
+/** Posted, not fully paid documents for an owner (jobs of the owner included). */
+async function loadOpenDocuments(
+  db: PrismaTx,
+  where: Prisma.invoicesWhereInput,
+  kind: InvoiceKind,
+): Promise<OpenDocument[]> {
+  const invoices = await db.invoices.findMany({ where });
   if (invoices.length === 0) return [];
 
   const lotGuids = invoices.map((i: { post_lot: string | null }) => i.post_lot).filter((g: string | null): g is string => Boolean(g));
@@ -1110,6 +1190,9 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
   }
   const postDate = parseIsoDateNoon(input.date, 'date');
 
+  // Idempotency fast path (e.g. webhook redelivery long after the fact).
+  // This pre-transaction read is NOT race-safe — the authoritative check runs
+  // again inside the $transaction below, after the invoice row locks.
   if (input.transactionGuid) {
     const existing = await prisma.transactions.findUnique({
       where: { guid: input.transactionGuid },
@@ -1135,6 +1218,45 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
     const owner = await resolveOwner(tx, endOwnerType, input.ownerGuid);
     const kind: InvoiceKind = owner.kind;
 
+    // Serialize concurrent payments for this owner: lock every posted
+    // document row (deterministic guid order avoids deadlocks) BEFORE
+    // amountDue is computed from lot splits, so the second payment blocks
+    // here and then re-validates against post-first-payment balances
+    // (over-application then hits the normal validation errors below).
+    const docsWhere = await postedOwnerDocsWhere(tx, endOwnerType, input.ownerGuid);
+    const lockCandidates: Array<{ guid: string }> = await tx.invoices.findMany({
+      where: docsWhere,
+      select: { guid: true },
+    });
+    const lockGuids = lockCandidates.map((c) => c.guid).sort();
+    if (lockGuids.length > 0) {
+      await tx.$queryRaw`
+        SELECT guid FROM invoices
+        WHERE guid IN (${Prisma.join(lockGuids)})
+        ORDER BY guid
+        FOR UPDATE
+      `;
+    }
+
+    // Idempotency (checked INSIDE the transaction, after the row locks): a
+    // concurrent retry carrying the same caller-supplied guid waits on the
+    // locks above and then sees the committed payment here, instead of both
+    // retries passing a pre-transaction check and double-posting.
+    if (input.transactionGuid) {
+      const existing = await tx.transactions.findUnique({
+        where: { guid: input.transactionGuid },
+        select: { guid: true },
+      });
+      if (existing) {
+        result = {
+          transactionGuid: existing.guid,
+          allocations: input.allocations ?? [],
+          fullyPaidInvoiceGuids: [],
+        };
+        return;
+      }
+    }
+
     const transferAccount = await tx.accounts.findUnique({
       where: { guid: input.transferAccountGuid },
       select: { guid: true, placeholder: true },
@@ -1150,7 +1272,7 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
     const amount = roundCurrency(input.amount, fraction);
     const epsilon = 0.5 / fraction;
 
-    const openDocs = await loadOpenDocuments(tx, endOwnerType, input.ownerGuid, kind);
+    const openDocs = await loadOpenDocuments(tx, docsWhere, kind);
     const openByGuid = new Map(openDocs.map((d) => [d.guid, d]));
 
     // Determine allocations
