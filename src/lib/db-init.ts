@@ -310,7 +310,10 @@ async function createExtensionTables() {
             confidence VARCHAR(20)
         );
         CREATE INDEX IF NOT EXISTS idx_txn_meta_source ON gnucash_web_transaction_meta(source) WHERE source != 'manual';
-        CREATE INDEX IF NOT EXISTS idx_txn_meta_simplefin_id ON gnucash_web_transaction_meta(simplefin_transaction_id) WHERE simplefin_transaction_id IS NOT NULL;
+        -- simplefin_transaction_id lookups are served by the unique partial
+        -- index created in createUniqueConstraintGuards; the legacy
+        -- non-unique duplicate is dropped by dropRedundantIndexes once the
+        -- unique index exists.
     `;
 
     const userPreferencesTableDDL = `
@@ -869,6 +872,21 @@ async function createExtensionTables() {
                   AND au.entity_type = 'TRANSACTION'
                   AND au.entity_guid = m.tx_guid;
             END IF;
+        END $$;
+    `;
+
+    // Undo idempotency for the audit trail: undone_at is the claim marker for
+    // the claim-first compare-and-swap in audit.service.undoAuditEntry
+    // (UPDATE ... SET undone_at = NOW() WHERE id = ? AND undone_at IS NULL
+    // RETURNING id) so two concurrent undos of the same entry can't both
+    // apply. undone_by records who claimed it. Advisory-locked like the other
+    // ALTERs: app and worker run db-init concurrently at startup.
+    const auditUndoColumnsDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_audit_undo_columns'));
+            ALTER TABLE gnucash_web_audit ADD COLUMN IF NOT EXISTS undone_at TIMESTAMPTZ;
+            ALTER TABLE gnucash_web_audit ADD COLUMN IF NOT EXISTS undone_by INTEGER;
         END $$;
     `;
 
@@ -1814,6 +1832,7 @@ async function createExtensionTables() {
         await query(FAMILY_OFFICE_SCHEMA_SQL);
         await query(membershipTablesDDL);
         await query(auditBookScopeDDL);
+        await query(auditUndoColumnsDDL);
         await query(tagsBookScopeDDL);
         await query(savedReportsBookScopeDDL);
         await query(smbTablesDDL);
@@ -1874,12 +1893,18 @@ async function createPerformanceIndexes() {
             ON accounts (commodity_guid)`,
 
         // TRANSACTIONS - Medium: search and sort optimization
+        // (idx_transactions_description was removed: it used varchar_pattern_ops,
+        // which can never serve the app's ILIKE '%...%' searches — see
+        // dropRedundantIndexes below.)
         `CREATE INDEX IF NOT EXISTS idx_transactions_post_date_enter
             ON transactions (post_date DESC, enter_date DESC)`,
-        `CREATE INDEX IF NOT EXISTS idx_transactions_description
-            ON transactions USING btree (description varchar_pattern_ops)`,
         `CREATE INDEX IF NOT EXISTS idx_transactions_currency_guid
             ON transactions (currency_guid)`,
+
+        // TRANSACTIONS - High: covering index for the ubiquitous
+        // splits -> transactions join that only needs the post_date filter
+        `CREATE INDEX IF NOT EXISTS idx_transactions_guid_postdate
+            ON transactions (guid) INCLUDE (post_date)`,
 
         // SPLITS - Low: reconciliation workflow optimization
         `CREATE INDEX IF NOT EXISTS idx_splits_account_reconcile
@@ -1891,9 +1916,22 @@ async function createPerformanceIndexes() {
         `CREATE INDEX IF NOT EXISTS idx_splits_tx_account
             ON splits (tx_guid, account_guid)`,
 
+        // SPLITS - High: lot-linked splits (invoice views, cost basis, payment
+        // allocation) — partial index avoids full-table scans on lot_guid
+        `CREATE INDEX IF NOT EXISTS idx_splits_lot_guid
+            ON splits (lot_guid) WHERE lot_guid IS NOT NULL`,
+
+        // LOTS - Medium: per-account lot listing (lot engine, invoices)
+        `CREATE INDEX IF NOT EXISTS idx_lots_account_guid
+            ON lots (account_guid)`,
+
         // SLOTS - Medium: notes/lot metadata lookups filtered by name
         `CREATE INDEX IF NOT EXISTS idx_slots_obj_name
             ON slots (obj_guid, name)`,
+
+        // SLOTS - Medium: name-only lookups (forecast-data, equity-comp history)
+        `CREATE INDEX IF NOT EXISTS idx_slots_name_obj
+            ON slots (name, obj_guid)`,
     ];
 
     try {
@@ -1910,6 +1948,301 @@ async function createPerformanceIndexes() {
 }
 
 /**
+ * Drops indexes that live-DB analysis showed to be redundant duplicates or
+ * unserviceable (0 scans). All drops are IF EXISTS and prefix-drops are
+ * guarded on the superseding index actually existing, so this is safe to run
+ * repeatedly and on databases where createPerformanceIndexes has not run yet.
+ *
+ * Note: this app owns its databases (books are not opened by GnuCash
+ * desktop), so recreating GnuCash's native indexes is not a concern.
+ */
+async function dropRedundantIndexes() {
+    const dropDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_drop_redundant_indexes'));
+
+            -- splits_account_guid_index (native GnuCash) is an exact prefix of
+            -- idx_splits_account_reconcile and idx_splits_account_covering;
+            -- only drop once a superseding index exists.
+            IF to_regclass('idx_splits_account_covering') IS NOT NULL
+               OR to_regclass('idx_splits_account_reconcile') IS NOT NULL THEN
+                DROP INDEX IF EXISTS splits_account_guid_index;
+            END IF;
+
+            -- slots_guid_index (native GnuCash) is a prefix of idx_slots_obj_name.
+            IF to_regclass('idx_slots_obj_name') IS NOT NULL THEN
+                DROP INDEX IF EXISTS slots_guid_index;
+            END IF;
+
+            -- idx_txn_meta_simplefin_id is an exact duplicate of the unique
+            -- partial index uq_txn_meta_simplefin_id. The unique guard skips
+            -- creation on dirty data, so keep the non-unique index until the
+            -- unique one exists.
+            IF to_regclass('uq_txn_meta_simplefin_id') IS NOT NULL THEN
+                DROP INDEX IF EXISTS idx_txn_meta_simplefin_id;
+            END IF;
+
+            -- idx_transactions_description used varchar_pattern_ops (prefix
+            -- matching); the app searches with ILIKE '%...%', which this index
+            -- can never serve. Live-DB stats showed 0 scans. Also removed from
+            -- the creation list so it is not recreated.
+            DROP INDEX IF EXISTS idx_transactions_description;
+        END $$;
+    `;
+
+    try {
+        await query(dropDDL);
+        console.log('✓ Redundant indexes dropped/verified successfully');
+    } catch (error) {
+        console.error('Error dropping redundant indexes:', error);
+        // Don't throw - dropping duplicates is an optimization, not required
+    }
+}
+
+/**
+ * Tunes autovacuum for the hot, high-churn core tables. The default
+ * autovacuum_vacuum_scale_factor of 0.2 lets dead tuples pile up on large
+ * tables; 0.05 keeps splits/transactions statistics and visibility maps
+ * fresh (important for the index-only scans the covering indexes enable).
+ * Idempotent: re-applying the same storage parameter is harmless.
+ */
+async function tuneAutovacuum() {
+    const autovacuumDDL = `
+        DO $$
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_autovacuum_tuning'));
+            ALTER TABLE splits SET (autovacuum_vacuum_scale_factor = 0.05);
+            ALTER TABLE transactions SET (autovacuum_vacuum_scale_factor = 0.05);
+        END $$;
+    `;
+
+    try {
+        await query(autovacuumDDL);
+        console.log('✓ Autovacuum tuning applied successfully');
+    } catch (error) {
+        console.error('Error applying autovacuum tuning:', error);
+        // Don't throw - tuning is an optimization, not required
+    }
+}
+
+/**
+ * Creates unique indexes that turn silent duplicate races into clean errors
+ * (concurrency audit Phase 3: H3/H4/H5/H6/H7 and the C4 funding sweep).
+ *
+ * db-init runs at startup on live databases, so every guard here must be
+ * duplicate-safe: each block first checks whether existing rows already
+ * violate the candidate key. Where deduping is provably safe (prices,
+ * reconciliation sessions) the block cleans up in place; everywhere else it
+ * RAISEs a WARNING with a count and skips index creation — user data is
+ * never deleted or renamed automatically.
+ *
+ * Deliberately NOT constrained: slots(obj_guid, name). GnuCash KVP list
+ * slots legitimately store repeated (obj_guid, name) rows (a list's elements
+ * all share the list's name), so a global unique index would corrupt
+ * desktop-written books. The invoice/voucher counter race on slots is
+ * already serialized by the Phase 2a advisory lock in invoice-engine.
+ */
+async function createUniqueConstraintGuards() {
+    // H5: duplicate prices. Deduping is safe and desired — two rows for the
+    // same (commodity, currency, instant) are exactly the race this index
+    // stops. Keep the best row per key: user-entered sources beat
+    // 'Finance::Quote'; ties keep the largest guid.
+    const pricesUniqueDDL = `
+        DO $$
+        DECLARE
+            v_removed integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_prices_unique_guard'));
+            IF to_regclass('uq_prices_commodity_currency_date') IS NULL THEN
+                WITH ranked AS (
+                    SELECT guid, ROW_NUMBER() OVER (
+                        PARTITION BY commodity_guid, currency_guid, date
+                        ORDER BY (source IS DISTINCT FROM 'Finance::Quote') DESC, guid DESC
+                    ) AS rn
+                    FROM prices
+                )
+                DELETE FROM prices
+                WHERE guid IN (SELECT guid FROM ranked WHERE rn > 1);
+                GET DIAGNOSTICS v_removed = ROW_COUNT;
+                IF v_removed > 0 THEN
+                    RAISE WARNING 'gnucash-web: removed % duplicate price row(s) before creating uq_prices_commodity_currency_date', v_removed;
+                END IF;
+            END IF;
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_prices_commodity_currency_date
+                ON prices (commodity_guid, currency_guid, date);
+        END $$;
+    `;
+
+    // C5/H4: duplicate commodities. Merging commodities automatically is NOT
+    // safe (accounts/prices/transactions reference them by guid), so a dirty
+    // table skips the index with a warning.
+    const commoditiesUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_commodities_unique_guard'));
+            IF to_regclass('uq_commodities_namespace_mnemonic') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT namespace, mnemonic
+                    FROM commodities
+                    GROUP BY namespace, mnemonic
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on commodities(namespace, mnemonic): % duplicate group(s) exist; merge duplicate commodities manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_commodities_namespace_mnemonic
+                        ON commodities (namespace, mnemonic);
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    // H4/H7: duplicate sibling accounts. parent_guid is NULL for root
+    // accounts (one per book), so the index is scoped to non-root rows.
+    // Merging/renaming accounts automatically is NOT safe — skip+warn.
+    const accountsUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_accounts_sibling_name_guard'));
+            IF to_regclass('uq_accounts_parent_name') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT parent_guid, name
+                    FROM accounts
+                    WHERE parent_guid IS NOT NULL
+                    GROUP BY parent_guid, name
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on accounts(parent_guid, name): % duplicate sibling group(s) exist; rename or merge the duplicate accounts manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_accounts_parent_name
+                        ON accounts (parent_guid, name)
+                        WHERE parent_guid IS NOT NULL;
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    // H3: duplicate SimpleFin imports. Duplicate rows mean transactions were
+    // imported twice — those are real ledger transactions the user must
+    // reconcile manually, so never NULL-out or delete automatically.
+    const simpleFinIdUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_txn_meta_simplefin_unique_guard'));
+            IF to_regclass('uq_txn_meta_simplefin_id') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT simplefin_transaction_id
+                    FROM gnucash_web_transaction_meta
+                    WHERE simplefin_transaction_id IS NOT NULL
+                    GROUP BY simplefin_transaction_id
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on gnucash_web_transaction_meta(simplefin_transaction_id): % duplicated id(s) exist; the duplicate imports are real transactions — reconcile and delete them manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_txn_meta_simplefin_id
+                        ON gnucash_web_transaction_meta (simplefin_transaction_id)
+                        WHERE simplefin_transaction_id IS NOT NULL;
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    // H6: at most one 'started' reconciliation session per account. Deduping
+    // is safe here — mark all but the most recent 'started' session per
+    // account as 'abandoned' ('abandoned' is an existing terminal status,
+    // see reconciliation-coverage.ts / the sessions PATCH route).
+    const reconciliationStartedUniqueDDL = `
+        DO $$
+        DECLARE
+            v_abandoned integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_reconciliation_started_guard'));
+            IF to_regclass('uq_reconciliation_sessions_started') IS NULL THEN
+                WITH ranked AS (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY account_guid
+                        ORDER BY started_at DESC, id DESC
+                    ) AS rn
+                    FROM gnucash_web_reconciliation_sessions
+                    WHERE status = 'started'
+                )
+                UPDATE gnucash_web_reconciliation_sessions s
+                SET status = 'abandoned'
+                FROM ranked r
+                WHERE s.id = r.id AND r.rn > 1;
+                GET DIAGNOSTICS v_abandoned = ROW_COUNT;
+                IF v_abandoned > 0 THEN
+                    RAISE WARNING 'gnucash-web: marked % duplicate started reconciliation session(s) as abandoned before creating uq_reconciliation_sessions_started', v_abandoned;
+                END IF;
+            END IF;
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_reconciliation_sessions_started
+                ON gnucash_web_reconciliation_sessions (account_guid)
+                WHERE status = 'started';
+        END $$;
+    `;
+
+    // C4: funding-sweep dedupe key. funding-rules.service stamps sweep
+    // transactions with num = 'autofund:<ruleId>:<triggerTxnGuid>'
+    // (DEDUPE_PREFIX in src/lib/services/funding-rules.service.ts). Deduping
+    // here is NOT safe — deleting a duplicate would delete a real sweep
+    // transaction (real money movement) — so a dirty table skips with a
+    // warning.
+    const autofundNumUniqueDDL = `
+        DO $$
+        DECLARE
+            v_dirty integer;
+        BEGIN
+            PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_transactions_autofund_guard'));
+            IF to_regclass('uq_transactions_autofund_num') IS NULL THEN
+                SELECT COUNT(*) INTO v_dirty FROM (
+                    SELECT num
+                    FROM transactions
+                    WHERE num LIKE 'autofund:%'
+                    GROUP BY num
+                    HAVING COUNT(*) > 1
+                ) dupes;
+                IF v_dirty > 0 THEN
+                    RAISE WARNING 'gnucash-web: skipping unique index on transactions(num) for autofund sweeps: % duplicated sweep key(s) exist; the duplicates are real transactions — review and delete the double-sweeps manually, then restart', v_dirty;
+                ELSE
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_transactions_autofund_num
+                        ON transactions (num)
+                        WHERE num LIKE 'autofund:%';
+                END IF;
+            END IF;
+        END $$;
+    `;
+
+    const guards: Array<[string, string]> = [
+        ['prices(commodity_guid, currency_guid, date)', pricesUniqueDDL],
+        ['commodities(namespace, mnemonic)', commoditiesUniqueDDL],
+        ['accounts(parent_guid, name)', accountsUniqueDDL],
+        ['gnucash_web_transaction_meta(simplefin_transaction_id)', simpleFinIdUniqueDDL],
+        ['gnucash_web_reconciliation_sessions(account_guid) started', reconciliationStartedUniqueDDL],
+        ["transactions(num) autofund", autofundNumUniqueDDL],
+    ];
+
+    for (const [label, ddl] of guards) {
+        try {
+            await query(ddl);
+        } catch (error) {
+            // One dirty/failed guard must not block the remaining guards or
+            // app startup; the affected writer keeps its pre-index behavior.
+            console.error(`Error creating unique constraint guard for ${label}:`, error);
+        }
+    }
+    console.log('✓ Unique constraint guards created/verified successfully');
+}
+
+/**
  * Initializes the database schema by creating required views and tables.
  * This should be called once when the application starts.
  */
@@ -1919,7 +2252,11 @@ export async function initializeDatabase() {
         await withDatabaseAdvisoryLock('gnucash-web:database-initialization', async () => {
             await createAccountHierarchyView();
             await createExtensionTables();
+            await createUniqueConstraintGuards();
             await createPerformanceIndexes();
+            // After the superseding indexes exist, retire the redundant ones
+            await dropRedundantIndexes();
+            await tuneAutovacuum();
         });
         console.log('✓ Database initialization complete');
     } catch (error) {

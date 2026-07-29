@@ -9,9 +9,10 @@
  */
 
 import Link from 'next/link';
+import { product } from '@/lib/product';
 
 export const metadata = {
-    title: 'API Documentation — GnuCash Web',
+    title: `API Documentation — ${product.brand}`,
 };
 
 interface Param {

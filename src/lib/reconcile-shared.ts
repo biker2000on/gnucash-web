@@ -14,6 +14,11 @@ export interface ReconcileCandidate {
     transactionGuid: string;
     /** Transaction post date (ISO string). */
     date: string;
+    /**
+     * Transaction enter_date (ISO string, or null) — the optimistic-lock
+     * token to send as original_enter_date on transaction PUT/DELETE.
+     */
+    enterDate?: string | null;
     /** Transaction num field (check number etc.). */
     num: string;
     description: string;

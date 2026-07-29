@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { enqueueJob } from '@/lib/queue/queues';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { earliestBackfilledDate } from '@/lib/yahoo-price-service';
 
 /**
@@ -88,6 +89,8 @@ export async function POST(request: NextRequest) {
       // Cache invalidation failure should not break the price fetch
       console.warn('Cache invalidation failed:', err);
     }
+
+    void publishDataChange(roleResult.bookGuid, 'prices', { action: 'bulk' });
 
     // Fetch market index prices (S&P 500, DJIA) in the background
     let indexWarning: string | undefined;

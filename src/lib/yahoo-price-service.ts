@@ -202,8 +202,10 @@ async function getCommodityAuditStartDate(commodityGuid: string): Promise<Date> 
 
 /**
  * Get a Set of YYYY-MM-DD date strings for all existing prices in a range.
- * CRITICAL: The prices table has NO unique constraint, so we must deduplicate
- * by checking existing dates before every insert.
+ * The prices table's unique index (uq_prices_commodity_currency_date) is per
+ * exact timestamp, not per calendar day, so we still deduplicate by checking
+ * existing DATES before every insert (and storeFetchedPrice's ON CONFLICT
+ * handles the same-instant race).
  *
  * @param commodityGuid GUID of the commodity
  * @param startDate Start of range (inclusive)
@@ -474,20 +476,21 @@ export async function storeFetchedPrice(
     // int64 for any realistic price) to preserve small values exactly.
     const { num, denom } = fromDecimal(price, PRICE_DENOM);
 
-    await prisma.prices.create({
-      data: {
-        guid,
-        commodity_guid: commodityGuid,
-        currency_guid: usd.guid,
-        date: date,
-        value_num: num,
-        value_denom: denom,
-        source: 'Finance::Quote',
-        type: 'last',
-      },
-    });
+    // Race-safe against the uq_prices_commodity_currency_date unique index:
+    // if a row already exists at this instant, the latest fetch wins ONLY
+    // when the existing row is also a Finance::Quote row — user-entered
+    // prices are never overwritten by a background fetch.
+    const rows = await prisma.$queryRaw<Array<{ guid: string }>>`
+      INSERT INTO prices (guid, commodity_guid, currency_guid, date, source, type, value_num, value_denom)
+      VALUES (${guid}, ${commodityGuid}, ${usd.guid}, ${date}, 'Finance::Quote', 'last', ${num}, ${denom})
+      ON CONFLICT (commodity_guid, currency_guid, date)
+      DO UPDATE SET value_num = EXCLUDED.value_num, value_denom = EXCLUDED.value_denom
+      WHERE prices.source = 'Finance::Quote'
+      RETURNING guid
+    `;
 
-    return guid;
+    // Empty result: the conflicting row is user-entered and was left alone.
+    return rows[0]?.guid ?? null;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error(`Failed to store price for ${symbol}:`, errorMessage);

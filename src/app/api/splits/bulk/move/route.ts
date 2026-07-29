@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
-import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
+import { publishDataChange } from '@/lib/data-events';
+import {
+    withPeriodLockCheck,
+    assertNotLocked,
+    PeriodLockedError,
+    periodLockedResponse,
+} from '@/lib/services/period-lock.service';
 
 /**
  * @openapi
@@ -97,18 +103,64 @@ export async function POST(request: Request) {
             );
         }
 
-        // Period lock: moving a split re-books it to another account, so
-        // every affected transaction must be after the lock date.
+        // Period lock pre-check: moving a split re-books it to another
+        // account, so every affected transaction must be after the lock date.
+        // (Fast-fail only — the authoritative check runs inside the DB
+        // transaction below with the cache bypassed.)
         const lockError = await withPeriodLockCheck(
             roleResult.bookGuid,
             splits.map(s => s.transaction?.post_date),
         );
         if (lockError) return lockError;
 
-        // Perform the bulk update
-        const result = await prisma.splits.updateMany({
-            where: { guid: { in: splitGuids } },
-            data: { account_guid: targetAccountGuid },
+        // Perform the bulk update atomically with the authoritative period
+        // lock check and an enter_date bump on every parent transaction (so
+        // concurrent editors' optimistic locks invalidate).
+        const result = await prisma.$transaction(async (tx) => {
+            const freshSplits = await tx.splits.findMany({
+                where: { guid: { in: splitGuids } },
+                select: {
+                    guid: true,
+                    tx_guid: true,
+                    transaction: { select: { post_date: true } },
+                },
+            });
+            await assertNotLocked(
+                roleResult.bookGuid,
+                freshSplits.map(s => s.transaction?.post_date),
+                { bypassCache: true },
+            );
+
+            // Canonical lock order (same as the transaction PUT/DELETE
+            // routes): lock the parent TRANSACTION rows first, ordered by
+            // guid, then write the splits. The enter_date bump below then
+            // updates rows this transaction already holds locks on, so a
+            // concurrent transaction save (which also locks its transactions
+            // row before touching splits) can never ABBA-deadlock with a
+            // bulk move.
+            const parentTxGuids = [...new Set(freshSplits.map(s => s.tx_guid))].sort();
+            if (parentTxGuids.length > 0) {
+                await tx.$queryRaw`
+                    SELECT guid FROM transactions
+                    WHERE guid = ANY(${parentTxGuids}::text[])
+                    ORDER BY guid
+                    FOR UPDATE
+                `;
+            }
+
+            const moved = await tx.splits.updateMany({
+                where: { guid: { in: splitGuids } },
+                data: { account_guid: targetAccountGuid },
+            });
+
+            if (parentTxGuids.length > 0) {
+                await tx.transactions.updateMany({
+                    where: { guid: { in: parentTxGuids } },
+                    data: { enter_date: new Date() },
+                });
+            }
+
+            return moved;
         });
 
         // Invalidate dashboard metric caches from the earliest affected
@@ -126,11 +178,16 @@ export async function POST(request: Request) {
             console.warn('Cache invalidation failed:', err);
         }
 
+        void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
+
         return NextResponse.json({
             success: true,
             updated: result.count,
         });
     } catch (error) {
+        if (error instanceof PeriodLockedError) {
+            return periodLockedResponse(error);
+        }
         console.error('Failed to bulk move splits:', error);
         return NextResponse.json(
             { error: 'Internal server error' },

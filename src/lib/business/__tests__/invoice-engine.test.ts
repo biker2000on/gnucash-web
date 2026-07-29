@@ -97,7 +97,9 @@ function model(rows: Row[], opts: { autoId?: boolean } = {}) {
 }
 
 interface FakeDb {
-  [table: string]: ReturnType<typeof model>;
+  // Tables (model(...)) plus the raw-SQL surface ($queryRaw / $rawSql log)
+  // the engine's locking and counter paths use on the transaction client.
+  [table: string]: any;
 }
 
 const holder: { db: FakeDb | null } = { db: null };
@@ -111,9 +113,11 @@ vi.mock('@/lib/prisma', () => ({
           return async (fn: (tx: unknown) => Promise<unknown>) => fn(holder.db);
         }
         if (prop === '$queryRaw') {
-          // Raw queries here are the period-lock guard's lookups
-          // (gnucash_web_book_settings / account→book resolution) — return no
-          // rows so engine tests run against an unlocked book.
+          // Raw queries on the GLOBAL client are the period-lock guard's
+          // lookups (gnucash_web_book_settings / account→book resolution) —
+          // return no rows so engine tests run against an unlocked book.
+          // The engine's own raw ops (row locks, counter increments) run on
+          // the transaction client, i.e. holder.db.$queryRaw below.
           return async () => [];
         }
         return holder.db?.[prop];
@@ -124,7 +128,7 @@ vi.mock('@/lib/prisma', () => ({
 
 function seedDb(): FakeDb {
   slotAutoId = 1;
-  return {
+  const db: FakeDb = {
     books: model([{ guid: 'book1', root_account_guid: 'root' }]),
     commodities: model([
       { guid: 'usd', namespace: 'CURRENCY', mnemonic: 'USD', fraction: 100, quote_flag: 0 },
@@ -160,6 +164,27 @@ function seedDb(): FakeDb {
     lots: model([]),
     slots: model([], { autoId: true }),
   };
+
+  // Raw-SQL surface used by the engine on the transaction client:
+  //   - pg_advisory_xact_lock(...)          -> no-op (single-threaded fake)
+  //   - UPDATE slots ... RETURNING int64_val -> atomic counter increment
+  //   - SELECT ... FOR UPDATE                -> row locks are no-ops here
+  // Every statement is logged to $rawSql so tests can assert locks are taken.
+  db.$rawSql = [] as string[];
+  db.$queryRaw = async (strings: TemplateStringsArray, ...values: any[]) => {
+    const sql = strings.join('?');
+    db.$rawSql.push(sql);
+    if (sql.includes('pg_advisory_xact_lock')) return [];
+    if (sql.includes('UPDATE slots')) {
+      const row = db.slots.rows.find((r: Row) => r.id === values[0]);
+      if (!row) return [];
+      row.int64_val = (row.int64_val ?? 0n) + 1n;
+      return [{ int64_val: row.int64_val }];
+    }
+    return [];
+  };
+
+  return db;
 }
 
 import {
@@ -667,6 +692,60 @@ describe('invoice engine (fake prisma)', () => {
     await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
     await expect(updateInvoice(view.guid, { notes: 'x' })).rejects.toBeInstanceOf(InvoiceStateError);
     await expect(deleteInvoice(view.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+  });
+
+  it('postInvoice locks the invoice row and rejects a second post (double-post guard)', async () => {
+    const view = await createInvoice(customerInvoiceInput());
+    await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+
+    // The FOR UPDATE row lock is taken inside the transaction, before the
+    // already-posted check, so concurrent posts serialize on it.
+    expect(
+      holder.db!.$rawSql.some(
+        (sql: string) => sql.includes('FROM invoices') && sql.includes('FOR UPDATE')
+      )
+    ).toBe(true);
+
+    await expect(
+      postInvoice(view.guid, { postDate: '2026-01-06', bookRootGuid: 'root' })
+    ).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(
+      postInvoice(view.guid, { postDate: '2026-01-06', bookRootGuid: 'root' })
+    ).rejects.toThrow('Invoice is already posted');
+
+    // The losing posts booked nothing: still one transaction, one lot,
+    // three splits.
+    expect(holder.db!.transactions.rows).toHaveLength(1);
+    expect(holder.db!.lots.rows).toHaveLength(1);
+    expect(holder.db!.splits.rows).toHaveLength(3);
+  });
+
+  it('unpostInvoice rejects a second unpost (mirror guard)', async () => {
+    const view = await createInvoice(customerInvoiceInput());
+    await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    await unpostInvoice(view.guid);
+    await expect(unpostInvoice(view.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(unpostInvoice(view.guid)).rejects.toThrow('Invoice is not posted');
+  });
+
+  it('applyPayment locks the posted invoice rows before computing amountDue', async () => {
+    const inv = await createInvoice(customerInvoiceInput());
+    await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    holder.db!.$rawSql.length = 0;
+
+    await applyPayment({
+      ownerType: 'customer',
+      ownerGuid: 'cust1',
+      transferAccountGuid: 'bank1',
+      amount: 105,
+      date: '2026-03-01',
+    });
+
+    expect(
+      holder.db!.$rawSql.some(
+        (sql: string) => sql.includes('FROM invoices') && sql.includes('FOR UPDATE')
+      )
+    ).toBe(true);
   });
 
   it('applyPayment allocates oldest-first, assigns lots and closes paid lots', async () => {

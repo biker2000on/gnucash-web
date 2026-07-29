@@ -7,6 +7,8 @@ import {
     getBookAccountGuids,
     invalidateBookAccountGuidsCache,
 } from '@/lib/book-scope';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import { parseQif, type QifDateFormat } from '@/lib/qif/parser';
 import {
@@ -372,6 +374,8 @@ export async function POST(request: NextRequest) {
 
         const result = await executeQifImport(plan);
         invalidateBookAccountGuidsCache();
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'book', { action: 'bulk' });
 
         return NextResponse.json({
             success: true,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { skipOccurrence } from '@/lib/services/scheduled-tx-execute';
 import { isScheduledTransactionInBook } from '@/lib/services/scheduled-tx-create';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
   request: NextRequest,
@@ -29,9 +30,14 @@ export async function POST(
     const result = await skipOccurrence(guid, occurrenceDate);
 
     if (!result.success) {
-      const status = result.error?.includes('not found') ? 404 : 400;
-      return NextResponse.json({ error: result.error }, { status });
+      // 409: someone (or another tab) already recorded/skipped this occurrence.
+      const status = result.code === 'already_executed'
+        ? 409
+        : result.error?.includes('not found') ? 404 : 400;
+      return NextResponse.json({ error: result.error, code: result.code }, { status });
     }
+
+    void publishDataChange(roleResult.bookGuid, 'schedules', { guid, action: 'update' });
 
     return NextResponse.json(result);
   } catch (error) {

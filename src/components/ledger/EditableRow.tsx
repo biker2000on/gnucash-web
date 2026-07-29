@@ -32,7 +32,7 @@ interface EditableRowProps {
         accountGuid: string;
         accountName: string;
         amount: string;
-        original_enter_date?: string;
+        original_enter_date?: string | null;
         splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
     }) => Promise<void>;
     onEditModal: (guid: string) => void;
@@ -100,7 +100,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
 
         const originalEnterDate = transaction.enter_date
             ? new Date(transaction.enter_date).toISOString()
-            : undefined;
+            : null;
 
         // Set when a multi-split suggestion triggers its own save, so the next
         // state-based save() call from the parent (Enter/Tab/Arrow) becomes a no-op

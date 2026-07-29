@@ -145,28 +145,27 @@ export async function GET(request: NextRequest) {
     const allSplits: SplitWithDate[] = [];
     const cashFlowByDate = new Map<string, number>();
 
-    const splitsPerAccount = await Promise.all(
-      filteredAccounts.map(async (account) => {
-        const splits = await prisma.splits.findMany({
-          where: { account_guid: account.guid },
-          select: {
-            quantity_num: true,
-            quantity_denom: true,
-            value_num: true,
-            value_denom: true,
-            transaction: { select: { post_date: true } },
-          },
-        });
-        return { account, splits };
-      })
-    );
+    // One splits query for ALL holding accounts (full history, as before —
+    // point-in-time share counts must accumulate from the beginning)
+    const commodityByAccount = new Map(filteredAccounts.map(a => [a.guid, a.commodity_guid]));
+    if (filteredAccounts.length > 0) {
+      const holdingSplits = await prisma.splits.findMany({
+        where: { account_guid: { in: filteredAccounts.map(a => a.guid) } },
+        select: {
+          account_guid: true,
+          quantity_num: true,
+          quantity_denom: true,
+          value_num: true,
+          value_denom: true,
+          transaction: { select: { post_date: true } },
+        },
+      });
 
-    for (const { account, splits } of splitsPerAccount) {
-      for (const split of splits) {
+      for (const split of holdingSplits) {
         if (!split.transaction.post_date) continue;
         allSplits.push({
-          account_guid: account.guid,
-          commodity_guid: account.commodity_guid!,
+          account_guid: split.account_guid,
+          commodity_guid: commodityByAccount.get(split.account_guid)!,
           quantity: parseFloat(toDecimal(split.quantity_num, split.quantity_denom)),
           postDate: split.transaction.post_date,
         });
@@ -230,29 +229,31 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // Initialize forward-fill with latest prices BEFORE startDate for each commodity
+    // Initialize forward-fill with latest prices BEFORE startDate for each
+    // commodity — one DISTINCT ON query instead of a findFirst per commodity
     const latestPricesByCommodity = new Map<string, number>();
 
-    await Promise.all(
-      commodityGuids.map(async (commodityGuid) => {
-        const latestBefore = await prisma.prices.findFirst({
-          where: {
-            commodity_guid: commodityGuid as string,
-            date: { lt: startDate },
-            value_num: { gt: 0 },
-          },
-          orderBy: { date: 'desc' },
-          select: { value_num: true, value_denom: true },
-        });
+    if (commodityGuids.length > 0) {
+      const latestBeforeRows = await prisma.$queryRaw<Array<{
+        commodity_guid: string;
+        value_num: bigint;
+        value_denom: bigint;
+      }>>`
+        SELECT DISTINCT ON (commodity_guid) commodity_guid, value_num, value_denom
+        FROM prices
+        WHERE commodity_guid = ANY(${commodityGuids as string[]}::text[])
+          AND date < ${startDate}
+          AND value_num > 0
+        ORDER BY commodity_guid, date DESC
+      `;
 
-        if (latestBefore) {
-          latestPricesByCommodity.set(
-            commodityGuid as string,
-            parseFloat(toDecimal(latestBefore.value_num, latestBefore.value_denom))
-          );
-        }
-      })
-    );
+      for (const row of latestBeforeRows) {
+        latestPricesByCommodity.set(
+          row.commodity_guid,
+          parseFloat(toDecimal(row.value_num, row.value_denom))
+        );
+      }
+    }
 
     // Build a map of commodity -> latest price by date
     const pricesByDateByCommodity = new Map<string, Map<string, number>>();

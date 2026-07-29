@@ -43,6 +43,7 @@ import SubscriptionsWidget from '@/components/dashboard/widgets/SubscriptionsWid
 import DataHealthWidget from '@/components/dashboard/widgets/DataHealthWidget';
 import InsightsWidget from '@/components/dashboard/widgets/InsightsWidget';
 import CustomWidget from '@/components/dashboard/widgets/CustomWidget';
+import { product } from '@/lib/product';
 
 // ------------------------------------------------------------------
 // Types matching API responses
@@ -944,7 +945,7 @@ export default function DashboardPage() {
     if (!hasBooks) {
         return (
             <div className="min-h-[60vh] flex flex-col items-center justify-center p-8">
-                <h1 className="text-3xl font-bold text-foreground mb-2">Welcome to GnuCash Web</h1>
+                <h1 className="text-3xl font-bold text-foreground mb-2">Welcome to {product.brand}</h1>
                 <p className="text-foreground-secondary mb-8">Get started by creating a new book or importing an existing one.</p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl w-full">

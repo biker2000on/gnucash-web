@@ -24,7 +24,7 @@ interface InlineEditRowProps {
         accountGuid: string;
         accountName: string;
         amount: string;
-        original_enter_date?: string;
+        original_enter_date?: string | null;
     }) => Promise<void>;
     onCancel: () => void;
 }
@@ -58,10 +58,10 @@ export function InlineEditRow({
 
     const dateRef = useRef<HTMLInputElement>(null);
 
-    // Capture enter_date for optimistic locking
+    // Capture enter_date for optimistic locking (null = row had none)
     const originalEnterDate = transaction.enter_date
         ? new Date(transaction.enter_date).toISOString()
-        : undefined;
+        : null;
 
     // Focus date field on mount
     useEffect(() => {

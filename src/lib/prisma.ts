@@ -19,9 +19,13 @@ export { toDecimal, fromDecimal, generateGuid } from './gnucash';
  * Create the extended Prisma Client with computed decimal fields
  */
 function createPrismaClient() {
-  // Create PostgreSQL connection pool
+  // Create PostgreSQL connection pool.
+  // Prisma 7 uses the pg driver adapter, so this pool's `max` (not the
+  // `connection_limit` URL param) governs Prisma's connection count.
+  // Shares the DB_POOL_MAX env override with the raw pool in db.ts.
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
+    max: Number.parseInt(process.env.DB_POOL_MAX ?? '', 10) || 20,
   });
 
   // Create Prisma adapter

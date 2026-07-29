@@ -1,16 +1,33 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+import { BrandLockup } from '@/components/brand/BrandLockup';
 import { FEATURE_PAGES } from '@/lib/marketing-content';
+import { product } from '@/lib/product';
+
+export const metadata: Metadata = {
+    title: product.brand,
+    description: product.description,
+    openGraph: {
+        title: product.brand,
+        description: product.description,
+        siteName: product.brand,
+        type: 'website',
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: product.brand,
+        description: product.description,
+    },
+};
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
     return (
         <div className="min-h-screen bg-background flex flex-col">
             {/* Header */}
-            <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
-                <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-6">
-                    <Link href="/" className="flex items-center gap-2.5 shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element -- app favicon, plain svg */}
-                        <img src="/icon.svg" alt="" className="w-8 h-8" />
-                        <span className="text-lg font-bold text-foreground tracking-tight">GnuCash Web</span>
+            <header data-testid="marketing-header" className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3 sm:gap-6">
+                    <Link href="/" className="min-w-0 shrink text-base text-foreground">
+                        <BrandLockup size={32} />
                     </Link>
 
                     <nav className="hidden md:flex items-center gap-1">
@@ -37,41 +54,32 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                         </Link>
                     </nav>
 
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                         <Link
                             href="/login"
-                            className="px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors duration-150"
+                            className="hidden sm:block px-4 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors duration-150"
                         >
                             Sign in
                         </Link>
                         <Link
                             href="/login"
-                            className="px-4 py-2 text-sm font-semibold bg-primary hover:bg-primary-hover text-primary-foreground rounded-md transition-colors duration-150"
+                            data-testid="marketing-open-books"
+                            className="px-3 sm:px-4 py-2 text-sm font-semibold whitespace-nowrap bg-primary hover:bg-primary-hover text-primary-foreground rounded-md transition-colors duration-150"
                         >
                             Open your books
                         </Link>
                     </div>
                 </div>
 
-                {/* Mobile feature nav */}
-                <nav className="md:hidden border-t border-border overflow-x-auto">
-                    <div className="flex px-4 py-1.5 gap-1 w-max">
-                        {FEATURE_PAGES.map(page => (
-                            <Link
-                                key={page.slug}
-                                href={`/features/${page.slug}`}
-                                className="px-3 py-1.5 text-xs whitespace-nowrap text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150"
-                            >
-                                {page.navLabel}
-                            </Link>
-                        ))}
-                        <Link href="/features" className="px-3 py-1.5 text-xs whitespace-nowrap text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150">
-                            All features
-                        </Link>
-                        <Link href="/docs" className="px-3 py-1.5 text-xs whitespace-nowrap text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150">
-                            Docs
-                        </Link>
-                    </div>
+                {/* Mobile nav uses the two index routes so every destination
+                    remains reachable without a clipped horizontal scroller. */}
+                <nav className="md:hidden border-t border-border flex items-center gap-1 px-4 py-1.5">
+                    <Link href="/features" className="px-3 py-1.5 text-xs text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150">
+                        Explore features
+                    </Link>
+                    <Link href="/docs" className="px-3 py-1.5 text-xs text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150">
+                        Docs
+                    </Link>
                 </nav>
             </header>
 
@@ -81,13 +89,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
             <footer className="border-t border-border bg-background-secondary">
                 <div className="max-w-7xl mx-auto px-6 py-12 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
-                        <div className="flex items-center gap-2.5 mb-3">
-                            {/* eslint-disable-next-line @next/next/no-img-element -- app favicon, plain svg */}
-                            <img src="/icon.svg" alt="" className="w-7 h-7" />
-                            <span className="font-bold text-foreground">GnuCash Web</span>
+                        <div className="mb-3 text-base text-foreground">
+                            <BrandLockup size={32} />
                         </div>
                         <p className="text-sm text-foreground-muted leading-relaxed">
-                            A self-hosted, GnuCash-compatible finance platform. Your ledger, your database, your rules.
+                            {product.description} Your ledger, your database, your rules.
                         </p>
                     </div>
                     <div>

@@ -4,6 +4,8 @@ import { generateGuid, fromDecimal, toDecimal } from '@/lib/prisma';
 import { getAllExchangeRates, getCurrencyByMnemonic } from '@/lib/currency';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // Schema for creating a new exchange rate
 const CreateExchangeRateSchema = z.object({
@@ -94,19 +96,44 @@ export async function POST(request: NextRequest) {
         // Generate GUID and convert value to fraction
         const guid = generateGuid();
         const { num, denom } = fromDecimal(data.rate, toCurrency.fraction);
+        const rateDate = new Date(data.date + 'T12:00:00Z');
 
-        const price = await prisma.prices.create({
-            data: {
+        // Upsert on the (commodity, currency, date) unique key: a same-day
+        // re-entry is an intentional correction, so update the rate in place
+        // instead of racing a duplicate insert.
+        const price = await prisma.prices.upsert({
+            where: {
+                commodity_guid_currency_guid_date: {
+                    commodity_guid: fromCurrency.guid,
+                    currency_guid: toCurrency.guid,
+                    date: rateDate,
+                },
+            },
+            update: {
+                value_num: num,
+                value_denom: denom,
+                source: data.source,
+                type: 'last',
+            },
+            create: {
                 guid,
                 commodity_guid: fromCurrency.guid,
                 currency_guid: toCurrency.guid,
-                date: new Date(data.date + 'T12:00:00Z'),
+                date: rateDate,
                 value_num: num,
                 value_denom: denom,
                 source: data.source,
                 type: 'last',
             },
         });
+
+        // Exchange rates feed currency conversion in the dashboard metrics
+        try {
+            await cacheInvalidateFrom(roleResult.bookGuid, price.date);
+        } catch (err) {
+            console.warn('Cache invalidation failed:', err);
+        }
+        void publishDataChange(roleResult.bookGuid, 'prices', { guid: price.guid, action: 'update' });
 
         return NextResponse.json({
             guid: price.guid,

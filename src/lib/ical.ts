@@ -18,6 +18,7 @@ import { computeNextOccurrences, type RecurrencePattern } from '@/lib/recurrence
 import { parseGnuCashDate } from '@/lib/scheduled-transactions';
 import { rmdStartAge } from '@/lib/drawdown/rmd';
 import type { UpcomingMaturity, CouponPaymentEstimate } from '@/lib/fixed-income';
+import { product } from '@/lib/product';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -117,13 +118,14 @@ export interface BuildIcsOptions {
  * joined with CRLF; the document ends with a trailing CRLF.
  */
 export function buildIcs(events: IcsEvent[], options: BuildIcsOptions = {}): string {
-    const name = options.calendarName ?? 'GnuCash Web';
+    const name = options.calendarName ?? product.brand;
     const dtstamp = formatIcsDateTime(options.now ?? new Date());
 
+    // Wire value: PRODID:-//Folio for GnuCash//Calendar Feed//EN
     const lines: string[] = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//GnuCash Web//Calendar Feed//EN',
+        `PRODID:-//${product.brand}//Calendar Feed//EN`,
         'CALSCALE:GREGORIAN',
         'METHOD:PUBLISH',
         `X-WR-CALNAME:${escapeIcsText(name)}`,
@@ -529,7 +531,7 @@ export async function buildCalendarFeed(
                         event.cashImpact === null
                             ? null
                             : `Expected cash impact: ${event.cashImpact.toFixed(2)} ${event.currency}`,
-                        event.href ? `Open in GnuCash Web: ${event.href}` : null,
+                        event.href ? `Open in ${product.name}: ${event.href}` : null,
                     ].filter(Boolean).join('\n'),
                 })));
         } catch (err) {

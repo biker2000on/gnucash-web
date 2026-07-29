@@ -20,6 +20,7 @@ import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { suppressNextDataEvent } from './DataEventsProvider';
 
 function getReconcileStatus(splits: Split[] | undefined): {
     hasReconciled: boolean;
@@ -234,6 +235,35 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         }
     }, [buildUrlParams, debouncedFilter]);
 
+    // Cross-user freshness: refetch when another session mutates transactions
+    // in this book (relayed by DataEventsProvider as a `gnucash:data-change`
+    // window CustomEvent). Guarded so a refetch never interrupts an open
+    // editor or an in-flight load.
+    const dataChangeRef = useRef<{ blocked: boolean; fetch: () => Promise<void> }>({
+        blocked: false,
+        fetch: async () => {},
+    });
+    useEffect(() => {
+        dataChangeRef.current = {
+            blocked: isEditModalOpen || editingTransaction !== null || loading,
+            fetch: fetchTransactions,
+        };
+    });
+    useEffect(() => {
+        const onDataChange = (e: Event) => {
+            // Defense-in-depth: DataEventsProvider defers events for hidden
+            // tabs, but any directly-dispatched event should not refetch a
+            // background tab either.
+            if (document.visibilityState !== 'visible') return;
+            const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
+            if (detail?.entity !== 'transactions') return;
+            if (dataChangeRef.current.blocked) return;
+            void dataChangeRef.current.fetch();
+        };
+        window.addEventListener('gnucash:data-change', onDataChange);
+        return () => window.removeEventListener('gnucash:data-change', onDataChange);
+    }, []);
+
     const handleEdit = useCallback((guid: string) => {
         // Find the transaction by guid
         const tx = transactions.find(t => t.guid === guid);
@@ -277,10 +307,23 @@ export default function TransactionJournal({ initialTransactions, startDate, end
         setIsDeleting(true);
 
         try {
-            const res = await fetch(`/api/transactions/${guid}`, {
+            // Optimistic-lock token: only delete the version we loaded
+            const tx = prevTransactions.find(t => t.guid === guid);
+            const enterDateToken = tx?.enter_date
+                ? new Date(tx.enter_date as unknown as string).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${guid}${tokenParam}`, {
                 method: 'DELETE',
             });
+            if (res.status === 409) {
+                error('This transaction was changed by someone else — reloading');
+                await fetchTransactions();
+                return;
+            }
             if (!res.ok) throw new Error('Failed to delete');
+            // Optimistic removal above already reflects the delete; drop the echo.
+            suppressNextDataEvent('transactions');
             success('Transaction deleted successfully');
         } catch (err) {
             console.error('Delete failed:', err);
@@ -361,6 +404,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 throw new Error(msg);
             }
             success('Transaction duplicated');
+            suppressNextDataEvent('transactions');
             fetchTransactions();
         } catch (err) {
             console.error('Duplicate failed:', err);
@@ -858,9 +902,13 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                 onSuccess={() => {
                     setIsEditModalOpen(false);
                     setEditingTransaction(null);
+                    suppressNextDataEvent('transactions');
                     fetchTransactions();
                 }}
-                onRefresh={fetchTransactions}
+                onRefresh={() => {
+                    suppressNextDataEvent('transactions');
+                    return fetchTransactions();
+                }}
             />
 
             {/* Reconcile Warning Dialog */}

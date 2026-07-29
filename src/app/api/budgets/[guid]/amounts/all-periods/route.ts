@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService } from '@/lib/services/budget.service';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // POST - Set all periods of an account: flat `amount` or per-period `amounts[]`
 export async function POST(
@@ -32,6 +34,8 @@ export async function POST(
             account_guid,
             hasArray ? (amountsArray as number[]) : (amount as number)
         );
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json({ success: true, amounts });
     } catch (error) {
         console.error('Error setting all periods:', error);

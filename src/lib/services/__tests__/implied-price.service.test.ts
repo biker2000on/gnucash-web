@@ -123,6 +123,22 @@ describe('recordImpliedPrices', () => {
         expect(mocks.pricesCreate).not.toHaveBeenCalled();
     });
 
+    it('treats a concurrent duplicate insert (P2002) as ON CONFLICT DO NOTHING', async () => {
+        mocks.pricesCreate.mockRejectedValue(Object.assign(
+            new Error('Unique constraint failed on uq_prices_commodity_currency_date'),
+            { code: 'P2002' },
+        ));
+        const created = await recordImpliedPrices({
+            currency_guid: USD_GUID,
+            post_date: new Date('2026-06-12T12:00:00Z'),
+            splits: buySplits,
+        });
+        // The price exists (a concurrent writer inserted it) — not an error,
+        // just nothing new created.
+        expect(created).toBe(0);
+        expect(mocks.pricesCreate).toHaveBeenCalledTimes(1);
+    });
+
     it('records nothing for zero-value transfers (the VOO bug)', async () => {
         const created = await recordImpliedPrices({
             currency_guid: USD_GUID,

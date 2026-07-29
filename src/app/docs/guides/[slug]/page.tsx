@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { DocsArticle } from '@/components/docs/DocsArticle';
 import { GUIDE_PAGES, guideBySlug } from '@/lib/docs-content';
+import { product } from '@/lib/product';
 
 export function generateStaticParams() {
   return GUIDE_PAGES.map((guide) => ({ slug: guide.slug }));
@@ -16,7 +17,7 @@ export async function generateMetadata({
   const guide = guideBySlug(slug);
   if (!guide) return {};
   return {
-    title: `${guide.title} — GnuCash Web Docs`,
+    title: `${guide.title} — ${product.brand} Docs`,
     description: guide.summary,
   };
 }

@@ -15,6 +15,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { applyRules } from '@/lib/services/categorization.service';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
@@ -76,13 +77,19 @@ export interface StatementLineRow {
 export class StatementReconcileError extends Error {
   constructor(
     message: string,
-    readonly code: 'not_found' | 'no_account' | 'not_ties_out' | 'bad_request',
+    readonly code: 'not_found' | 'no_account' | 'not_ties_out' | 'bad_request' | 'already_reconciled',
     readonly detail?: unknown,
   ) {
     super(message);
     this.name = 'StatementReconcileError';
   }
 }
+
+/** Global client or an interactive-transaction client. */
+type DbClient = Omit<
+  ExtendedPrismaClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 
 /* ─────────────────────────── loaders ─────────────────────────── */
 
@@ -115,9 +122,11 @@ export async function getBatch(batchId: number): Promise<StatementBatchRow | nul
   };
 }
 
-export async function getLines(batchId: number): Promise<StatementLineRow[]> {
-  await ensureStatementTables();
-  const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>`
+export async function getLines(batchId: number, client: DbClient = prisma): Promise<StatementLineRow[]> {
+  // Skip the DDL path when running inside a caller's transaction — the
+  // tables necessarily exist by then, and DDL doesn't belong in a data tx.
+  if (client === prisma) await ensureStatementTables();
+  const rows = await client.$queryRaw<Array<Record<string, unknown>>>`
     SELECT id, batch_id, line_date, description, amount, running_balance,
            matched_split_guid, match_state, suggested_account_guid
     FROM gnucash_web_statement_lines
@@ -154,8 +163,9 @@ export async function getCandidateSplits(
   accountGuid: string,
   rangeStart: Date,
   rangeEnd: Date,
+  client: DbClient = prisma,
 ): Promise<CandidateSplit[]> {
-  const rows = await prisma.$queryRaw<Array<Record<string, unknown>>>`
+  const rows = await client.$queryRaw<Array<Record<string, unknown>>>`
     SELECT s.guid AS split_guid, t.post_date, t.description,
            s.value_num, s.value_denom, s.reconcile_state
     FROM splits s
@@ -258,10 +268,13 @@ function computeRange(
  * statements that only carry a closing balance (most CSV/OFX exports) tie out
  * without the user hand-entering an opening balance.
  */
-async function effectiveOpeningBalance(batch: StatementBatchRow): Promise<number | null> {
+async function effectiveOpeningBalance(
+  batch: StatementBatchRow,
+  client: DbClient = prisma,
+): Promise<number | null> {
   if (batch.opening_balance != null) return batch.opening_balance;
   if (!batch.account_guid) return null;
-  const rows = await prisma.splits.findMany({
+  const rows = await client.splits.findMany({
     where: { account_guid: batch.account_guid, reconcile_state: 'y' },
     select: { value_num: true, value_denom: true },
   });
@@ -531,7 +544,14 @@ export interface FinalizeResult {
  *     + chosen counterpart), then mark the statement split reconciled.
  *   • 'matched' lines → mark the matched split reconciled.
  * REQUIRES the tie-out to pass (tiesOut === true) or throws not_ties_out.
- * Everything runs in one DB transaction. On success the batch → 'reconciled'.
+ *
+ * Concurrency (claim-first, recurring-invoices pattern): EVERYTHING — loads,
+ * tie-out, writes — runs in ONE DB transaction whose FIRST write is a
+ * status-guarded conditional UPDATE flipping the batch to 'reconciled'.
+ * A second finalize (double-click, second user) blocks on the row lock, then
+ * sees 0 rows updated and gets `already_reconciled` (→ 409); every added line
+ * is booked exactly once. Any later failure rolls the claim back, so a failed
+ * finalize stays retryable.
  */
 export async function finalizeReconcile(batch: StatementBatchRow): Promise<FinalizeResult> {
   if (!batch.account_guid) {
@@ -539,8 +559,26 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
   }
   const accountGuid = batch.account_guid;
 
+  await ensureStatementTables();
+
+  return prisma.$transaction(async (tx) => {
+  // CLAIM FIRST: status-guarded compare-and-swap. Also takes the batch row
+  // lock, serializing concurrent finalizes of the same batch.
+  const claimed = await tx.$queryRaw<Array<{ id: number }>>`
+    UPDATE gnucash_web_statement_batches
+    SET status = 'reconciled', updated_at = NOW()
+    WHERE id = ${batch.id} AND status NOT IN ('reconciled', 'reconciling')
+    RETURNING id
+  `;
+  if (claimed.length === 0) {
+    throw new StatementReconcileError(
+      'Statement has already been finalized (or a finalize is in progress).',
+      'already_reconciled',
+    );
+  }
+
   // Account currency + precision for the added splits.
-  const account = await prisma.accounts.findUnique({
+  const account = await tx.accounts.findUnique({
     where: { guid: accountGuid },
     select: { commodity_guid: true, commodity_scu: true },
   });
@@ -553,7 +591,7 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
   const currencyGuid = account.commodity_guid;
   const denom = account.commodity_scu || 100;
 
-  const lines = await getLines(batch.id);
+  const lines = await getLines(batch.id, tx);
   const explicitMatched = lines.filter((l) => l.match_state === 'matched' && l.matched_split_guid);
   const addedLines = lines.filter((l) => l.match_state === 'added');
 
@@ -585,7 +623,7 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
   ]);
   const undecided = lines.filter((l) => !decidedIds.has(l.id));
   const { start, end } = computeRange(batch, lines, DEFAULT_MATCH_WINDOW_DAYS);
-  const candidates = await getCandidateSplits(batch.account_guid, start, end);
+  const candidates = await getCandidateSplits(accountGuid, start, end, tx);
   const lockedSplits = new Set(explicitMatched.map((l) => l.matched_split_guid as string));
   const autoPool = candidates.filter((c) => !lockedSplits.has(c.splitGuid));
   const auto = matchStatementLines(
@@ -601,7 +639,7 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
   ];
   let matchedSplitsAmount = 0;
   if (matchedSplitGuids.length > 0) {
-    const splits = await prisma.splits.findMany({
+    const splits = await tx.splits.findMany({
       where: { guid: { in: matchedSplitGuids } },
       select: { value_num: true, value_denom: true },
     });
@@ -612,7 +650,7 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
   }
   const addedLinesAmount = addedLines.reduce((s, l) => s + l.amount, 0);
 
-  const openingBalance = await effectiveOpeningBalance(batch);
+  const openingBalance = await effectiveOpeningBalance(batch, tx);
   const tieOut = computeReconcileTieOut({
     openingBalance,
     closingBalance: batch.closing_balance,
@@ -635,7 +673,7 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
 
   const statementSplitGuids: string[] = [...matchedSplitGuids];
 
-  await prisma.$transaction(async (tx) => {
+  {
     // Persist the engine's auto-matches so the line records reflect what was
     // reconciled (the UI may never have PUT them as explicit confirmations).
     for (const m of autoMatches) {
@@ -722,13 +760,9 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
       });
     }
 
-    // Flip the batch to reconciled.
-    await tx.$executeRaw`
-      UPDATE gnucash_web_statement_batches
-      SET status = 'reconciled', updated_at = NOW()
-      WHERE id = ${batch.id}
-    `;
-  });
+    // Batch status was already flipped to 'reconciled' by the opening claim;
+    // committing here makes it durable, any throw above rolls it back.
+  }
 
   return {
     added: addedLines.length,
@@ -736,4 +770,7 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
     reconciledSplits: statementSplitGuids.length,
     tieOut,
   };
+  // Generous timeout: the loads + per-line inserts can exceed Prisma's 5s
+  // interactive-transaction default on large statements.
+  }, { timeout: 60_000 });
 }

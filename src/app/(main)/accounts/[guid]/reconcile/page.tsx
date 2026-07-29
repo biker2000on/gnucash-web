@@ -297,9 +297,17 @@ function ReconcilePageContent() {
         if (!deleteCandidate || deleting) return;
         setDeleting(true);
         try {
-            const res = await fetch(`/api/transactions/${deleteCandidate.transactionGuid}`, {
+            // Optimistic-lock token: only delete the version we loaded
+            const tokenParam = `?original_enter_date=${encodeURIComponent(deleteCandidate.enterDate ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${deleteCandidate.transactionGuid}${tokenParam}`, {
                 method: 'DELETE',
             });
+            if (res.status === 409) {
+                toast.error('This transaction was changed by someone else — reloading');
+                setDeleteCandidate(null);
+                await fetchWorkspace();
+                return;
+            }
             const body = await res.json().catch(() => null);
             if (!res.ok) {
                 throw new Error(body?.error || 'Failed to delete transaction');

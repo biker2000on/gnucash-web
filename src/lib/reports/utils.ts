@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { LineItem } from './types';
 
 /**
@@ -8,6 +9,53 @@ import { LineItem } from './types';
 export function toDecimal(num: bigint | null, denom: bigint | null): number {
     if (num === null || denom === null || denom === 0n) return 0;
     return Number(num) / Number(denom);
+}
+
+export interface SplitSums {
+    /** SUM(quantity_num / quantity_denom) over the matched splits */
+    quantity: number;
+    /** SUM(value_num / value_denom) over the matched splits */
+    value: number;
+}
+
+/**
+ * Batched per-account split sums via a single GROUP BY query.
+ *
+ * Replaces the one-query-per-account pattern in the report generators.
+ * Sums are computed as float8 per-split quotients (num::float8 / denom::float8),
+ * matching the previous JS behavior of `sum + Number(num) / Number(denom)`.
+ * Accounts with no matching splits are simply absent from the map (callers
+ * default to 0, same as an empty findMany result).
+ *
+ * `dateRange` mirrors the Prisma post_date filters previously used:
+ * `lt`/`gte`/`lte` are combined with AND. Splits whose transaction has a NULL
+ * post_date are excluded, exactly like the previous
+ * `transaction: { post_date: ... }` Prisma filters.
+ */
+export async function sumSplitsByAccount(
+    accountGuids: string[],
+    dateRange: { lt?: Date; gte?: Date; lte?: Date }
+): Promise<Map<string, SplitSums>> {
+    if (accountGuids.length === 0) return new Map();
+
+    const rows = await prisma.$queryRaw<Array<{
+        account_guid: string;
+        quantity_sum: number;
+        value_sum: number;
+    }>>`
+        SELECT s.account_guid,
+               COALESCE(SUM(s.quantity_num::float8 / NULLIF(s.quantity_denom, 0)::float8), 0)::float8 AS quantity_sum,
+               COALESCE(SUM(s.value_num::float8 / NULLIF(s.value_denom, 0)::float8), 0)::float8 AS value_sum
+        FROM splits s
+        JOIN transactions t ON t.guid = s.tx_guid
+        WHERE s.account_guid = ANY(${accountGuids}::text[])
+        ${dateRange.gte ? Prisma.sql`AND t.post_date >= ${dateRange.gte}` : Prisma.empty}
+        ${dateRange.lt ? Prisma.sql`AND t.post_date < ${dateRange.lt}` : Prisma.empty}
+        ${dateRange.lte ? Prisma.sql`AND t.post_date <= ${dateRange.lte}` : Prisma.empty}
+        GROUP BY s.account_guid
+    `;
+
+    return new Map(rows.map(r => [r.account_guid, { quantity: r.quantity_sum, value: r.value_sum }]));
 }
 
 export interface AccountWithBalance {
@@ -86,20 +134,46 @@ export async function resolveRootGuid(bookAccountGuids?: string[]): Promise<stri
 /**
  * Build a map of account GUID to full account path (e.g. "Assets:Current Assets:Checking")
  * Excludes the root account name from the path.
- * If bookAccountGuids is provided, only includes those accounts.
+ * If bookAccountGuids is provided, only includes those accounts. Ancestors of
+ * the provided accounts that are missing from the list are fetched in batches
+ * so paths stay complete even for a partial (e.g. per-page) guid list.
  */
 export async function buildAccountPathMap(bookAccountGuids?: string[]): Promise<Map<string, string>> {
+    const accountSelect = {
+        guid: true,
+        name: true,
+        parent_guid: true,
+        account_type: true,
+    } as const;
     const accounts = await prisma.accounts.findMany({
         where: bookAccountGuids ? { guid: { in: bookAccountGuids } } : undefined,
-        select: {
-            guid: true,
-            name: true,
-            parent_guid: true,
-            account_type: true,
-        },
+        select: accountSelect,
     });
 
     const byGuid = new Map(accounts.map(a => [a.guid, a]));
+
+    // Resolve missing ancestors (no-op when the list already contains them,
+    // e.g. full book account lists)
+    if (bookAccountGuids) {
+        let missingParents = [...new Set(
+            accounts
+                .map(a => a.parent_guid)
+                .filter((g): g is string => Boolean(g) && !byGuid.has(g!)),
+        )];
+        while (missingParents.length > 0) {
+            const parents = await prisma.accounts.findMany({
+                where: { guid: { in: missingParents } },
+                select: accountSelect,
+            });
+            if (parents.length === 0) break;
+            for (const p of parents) byGuid.set(p.guid, p);
+            missingParents = [...new Set(
+                parents
+                    .map(p => p.parent_guid)
+                    .filter((g): g is string => Boolean(g) && !byGuid.has(g!)),
+            )];
+        }
+    }
     const pathCache = new Map<string, string>();
 
     function getPath(guid: string): string {

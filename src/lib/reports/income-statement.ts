@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
-import { toDecimal, buildHierarchy, resolveRootGuid, AccountWithBalance } from './utils';
+import { toDecimal, buildHierarchy, resolveRootGuid, sumSplitsByAccount, AccountWithBalance } from './utils';
 import { allocatePaymentsToAccounts, PaymentLotSplit, PostingSplit } from './cash-basis';
 
 /**
@@ -12,34 +12,16 @@ async function getAccountBalances(
     startDate: Date,
     endDate: Date
 ): Promise<AccountWithBalance[]> {
-    return Promise.all(
-        accounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: {
-                            gte: startDate,
-                            lte: endDate,
-                        },
-                    },
-                },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                },
-            });
-
-            const balance = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-
-            return {
-                ...account,
-                balance,
-            };
-        })
+    // Single GROUP BY query instead of one query per account
+    const sums = await sumSplitsByAccount(
+        accounts.map(a => a.guid),
+        { gte: startDate, lte: endDate }
     );
+
+    return accounts.map(account => ({
+        ...account,
+        balance: sums.get(account.guid)?.quantity ?? 0,
+    }));
 }
 
 /**

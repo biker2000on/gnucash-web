@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { applyPayment, listPayments } from '@/lib/business/invoice-engine';
 import { mapInvoiceError } from '@/lib/business/api-errors';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * GET /api/business/payments?ownerType=customer|vendor|employee&ownerGuid=...
@@ -66,6 +68,9 @@ export async function POST(request: NextRequest) {
       memo: body.memo,
       allocations: body.allocations,
     });
+    void cacheInvalidateAllForBook(roleResult.bookGuid);
+    void publishDataChange(roleResult.bookGuid, 'business', { action: 'create' });
+    void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'create' });
     return NextResponse.json({ result }, { status: 201 });
   } catch (error) {
     return mapInvoiceError(error);

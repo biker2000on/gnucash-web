@@ -10,6 +10,8 @@
 
 import prisma from './prisma';
 import { generateGuid, toDecimalNumber } from './gnucash';
+import { BookBusyError, bookLockKey, tryAcquireBookLock } from './book-lock';
+import { tryWithDatabaseAdvisoryLock } from './db';
 import {
   splitSellAcrossLots,
   splitTransferAcrossSourceLots,
@@ -306,11 +308,40 @@ async function assignAverage(
   return assignFIFO(accountGuid, tx);
 }
 
+/** Thrown when a scrub-run revert targets accounts outside the active book. */
+export class ScrubRunNotInBookError extends Error {
+  readonly code = 'SCRUB_RUN_NOT_IN_BOOK';
+  constructor(public readonly runId: string) {
+    super(`Scrub run ${runId} affects accounts outside the active book`);
+    this.name = 'ScrubRunNotInBookError';
+  }
+}
+
+/**
+ * Serialization guard shared by the single-shot lot operations: when the
+ * caller supplies the book guid, take the per-book advisory lock
+ * non-blockingly and fail fast with BookBusyError (mapped to HTTP 409 by the
+ * routes) if another book-level operation is in flight.
+ */
+async function guardBookLock(
+  tx: PrismaTx,
+  bookGuid: string | undefined,
+  operation: string,
+): Promise<void> {
+  if (!bookGuid) return;
+  const locked = await tryAcquireBookLock(tx, bookGuid);
+  if (!locked) {
+    throw new BookBusyError(bookGuid, operation);
+  }
+}
+
 export async function autoAssignLots(
   accountGuid: string,
-  method: 'fifo' | 'lifo' | 'average'
+  method: 'fifo' | 'lifo' | 'average',
+  bookGuid?: string
 ): Promise<AutoAssignResult> {
   return prisma.$transaction(async (tx) => {
+    await guardBookLock(tx, bookGuid, 'lot auto-assign');
     switch (method) {
       case 'fifo':
         return assignFIFO(accountGuid, tx);
@@ -325,9 +356,11 @@ export async function autoAssignLots(
 }
 
 export async function clearLotAssignments(
-  accountGuid: string
+  accountGuid: string,
+  bookGuid?: string
 ): Promise<{ splitsUnassigned: number; lotsDeleted: number }> {
   return prisma.$transaction(async (tx) => {
+    await guardBookLock(tx, bookGuid, 'clear lot assignments');
     // 1. Find and delete auto-generated sub-splits and gains transactions
 
     // Find splits in this account tagged with gnucash_web_generated
@@ -496,8 +529,27 @@ export async function clearLotAssignments(
   }, { timeout: 120_000, maxWait: 15_000 });
 }
 
-export async function revertScrubRun(runId: string): Promise<{ reverted: number }> {
+export interface RevertScrubRunOptions {
+  /**
+   * When set, the per-book advisory lock is try-acquired first;
+   * a concurrent book operation raises BookBusyError (HTTP 409).
+   */
+  bookGuid?: string;
+  /**
+   * When set, every account touched by the scrub run must be in this list
+   * (the active book's account tree) or the revert aborts with
+   * ScrubRunNotInBookError BEFORE anything is deleted.
+   */
+  allowedAccountGuids?: string[];
+}
+
+export async function revertScrubRun(
+  runId: string,
+  options: RevertScrubRunOptions = {}
+): Promise<{ reverted: number }> {
   return prisma.$transaction(async (tx) => {
+    await guardBookLock(tx, options.bookGuid, 'revert scrub run');
+
     // Find all entities tagged with this runId
     const taggedSlots = await tx.slots.findMany({
       where: { name: 'gnucash_web_generated', string_val: runId },
@@ -506,19 +558,50 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
     const taggedGuids = taggedSlots.map(s => s.obj_guid);
     if (taggedGuids.length === 0) return { reverted: 0 };
 
-    // Delete tagged transactions (and their splits)
+    // ── Enumerate everything the run touched BEFORE deleting anything ──
     const taggedTxs = await tx.transactions.findMany({
       where: { guid: { in: taggedGuids } },
       select: { guid: true },
     });
-    if (taggedTxs.length > 0) {
-      const txGuids = taggedTxs.map(t => t.guid);
+    const txGuids = taggedTxs.map(t => t.guid);
+    const txSplits = txGuids.length > 0
+      ? await tx.splits.findMany({
+          where: { tx_guid: { in: txGuids } },
+          select: { guid: true, account_guid: true },
+        })
+      : [];
+    const taggedSplits = await tx.splits.findMany({
+      where: { guid: { in: taggedGuids } },
+      select: { guid: true, account_guid: true },
+    });
+    const taggedLots = await tx.lots.findMany({
+      where: { guid: { in: taggedGuids } },
+      select: { guid: true, account_guid: true },
+    });
+
+    // Book-scope check: run IDs are returned in API responses, so an editor
+    // of one book must not be able to destroy another book's scrub run by
+    // replaying a runId. Abort before any deletion when the run touches
+    // accounts outside the caller's book.
+    if (options.allowedAccountGuids) {
+      const allowed = new Set(options.allowedAccountGuids);
+      const affectedAccounts = new Set<string>();
+      for (const s of txSplits) affectedAccounts.add(s.account_guid);
+      for (const s of taggedSplits) affectedAccounts.add(s.account_guid);
+      for (const l of taggedLots) {
+        if (l.account_guid) affectedAccounts.add(l.account_guid);
+      }
+      for (const accountGuid of affectedAccounts) {
+        if (!allowed.has(accountGuid)) {
+          throw new ScrubRunNotInBookError(runId);
+        }
+      }
+    }
+
+    // Delete tagged transactions (and their splits)
+    if (txGuids.length > 0) {
       // Also delete the slots attached to those transactions' splits
       // (the generated gains splits are tagged), not just the tx slots.
-      const txSplits = await tx.splits.findMany({
-        where: { tx_guid: { in: txGuids } },
-        select: { guid: true },
-      });
       if (txSplits.length > 0) {
         await tx.slots.deleteMany({ where: { obj_guid: { in: txSplits.map(s => s.guid) } } });
       }
@@ -537,11 +620,9 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
     });
     const modifiedOriginalGuids = new Set(originalQtySlots.map(s => s.obj_guid));
 
-    // Delete tagged sub-splits (excluding the modified originals)
-    const taggedSplits = await tx.splits.findMany({
-      where: { guid: { in: taggedGuids } },
-      select: { guid: true },
-    });
+    // Delete tagged sub-splits (excluding the modified originals). Splits
+    // belonging to the generated gains transactions were already removed
+    // above; deleteMany on their guids is a harmless no-op.
     const subSplitGuids = taggedSplits
       .map(s => s.guid)
       .filter(g => !modifiedOriginalGuids.has(g));
@@ -578,11 +659,7 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
       });
     }
 
-    // Delete tagged lots
-    const taggedLots = await tx.lots.findMany({
-      where: { guid: { in: taggedGuids } },
-      select: { guid: true },
-    });
+    // Delete tagged lots (enumerated up front, before any deletion)
     if (taggedLots.length > 0) {
       const deleteLotGuids = taggedLots.map(l => l.guid);
       await tx.splits.updateMany({ where: { lot_guid: { in: deleteLotGuids } }, data: { lot_guid: null } });
@@ -600,12 +677,54 @@ export async function revertScrubRun(runId: string): Promise<{ reverted: number 
   }, { timeout: 120_000, maxWait: 15_000 });
 }
 
+export interface ScrubAccountFailure {
+  accountGuid: string;
+  accountName: string;
+  phase: 'clear' | 'scrub';
+  error: string;
+}
+
+export interface ScrubAllResult {
+  results: AutoAssignResult[];
+  order: string[];
+  cleared: number;
+  /** Per-account errors. Empty when every account scrubbed cleanly. */
+  failures: ScrubAccountFailure[];
+}
+
 export async function scrubAllAccounts(
   method: 'fifo' | 'lifo' | 'average',
   bookAccountGuids: string[],
   clearFirst: boolean = false,
+  onProgress?: (p: { message: string; current: number; total: number; percent: number }) => void,
+  bookGuid?: string
+): Promise<ScrubAllResult> {
+  // Scrub-all is deliberately NOT one giant transaction: each account is
+  // scrubbed in its own transaction so a long run makes durable per-account
+  // progress. Cross-process serialization instead comes from a SESSION-level
+  // advisory lock on the book key, held on a dedicated connection for the
+  // whole run. It contends with the transaction-level book locks used by
+  // import/delete/reparent/single-account lot ops (same hashtext key), and a
+  // concurrent scrub-all gets an immediate BookBusyError (HTTP 409).
+  if (bookGuid) {
+    const attempt = await tryWithDatabaseAdvisoryLock(
+      bookLockKey(bookGuid),
+      () => runScrubAllAccounts(method, bookAccountGuids, clearFirst, onProgress),
+    );
+    if (!attempt.acquired) {
+      throw new BookBusyError(bookGuid, 'scrub all lots');
+    }
+    return attempt.result;
+  }
+  return runScrubAllAccounts(method, bookAccountGuids, clearFirst, onProgress);
+}
+
+async function runScrubAllAccounts(
+  method: 'fifo' | 'lifo' | 'average',
+  bookAccountGuids: string[],
+  clearFirst: boolean,
   onProgress?: (p: { message: string; current: number; total: number; percent: number }) => void
-): Promise<{ results: AutoAssignResult[]; order: string[]; cleared: number }> {
+): Promise<ScrubAllResult> {
   // 1. Find all STOCK/MUTUAL accounts
   const investmentAccounts = await prisma.accounts.findMany({
     where: { guid: { in: bookAccountGuids }, account_type: { in: ['STOCK', 'MUTUAL'] } },
@@ -674,7 +793,12 @@ export async function scrubAllAccounts(
     if (!order.includes(acct.guid)) order.push(acct.guid);
   }
 
-  // 4. Clear existing assignments if requested
+  const accountNames = new Map(investmentAccounts.map((a) => [a.guid, a.name]));
+  const failures: ScrubAccountFailure[] = [];
+
+  // 4. Clear existing assignments if requested. Per-account failures no
+  // longer vanish into the log — they are collected and returned so the
+  // caller can surface a half-cleared book instead of pretending success.
   let cleared = 0;
   if (clearFirst) {
     for (const accountGuid of order) {
@@ -683,12 +807,17 @@ export async function scrubAllAccounts(
         cleared += clearResult.lotsDeleted;
       } catch (error) {
         console.error(`Error clearing account ${accountGuid}:`, error);
+        failures.push({
+          accountGuid,
+          accountName: accountNames.get(accountGuid) ?? accountGuid,
+          phase: 'clear',
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
 
   // 5. Scrub each account in order
-  const accountNames = new Map(investmentAccounts.map((a) => [a.guid, a.name]));
   const results: AutoAssignResult[] = [];
   let scrubIndex = 0;
   for (const accountGuid of order) {
@@ -708,6 +837,12 @@ export async function scrubAllAccounts(
       results.push(result);
     } catch (error) {
       console.error(`Error scrubbing account ${accountGuid}:`, error);
+      failures.push({
+        accountGuid,
+        accountName: accountNames.get(accountGuid) ?? accountGuid,
+        phase: 'scrub',
+        error: error instanceof Error ? error.message : String(error),
+      });
       results.push({
         lotsCreated: 0, splitsAssigned: 0, splitsCreated: 0,
         gainsTransactions: 0, totalRealizedGain: 0,
@@ -716,7 +851,7 @@ export async function scrubAllAccounts(
     }
   }
 
-  return { results, order, cleared };
+  return { results, order, cleared, failures };
 }
 
 export interface WashSaleResult {

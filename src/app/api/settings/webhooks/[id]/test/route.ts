@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
+import { product } from '@/lib/product';
 import { deliverToWebhook, getWebhook } from '@/lib/webhooks';
 
 /**
@@ -34,7 +35,7 @@ export async function POST(
       bookGuid: webhook.bookGuid ?? roleResult.bookGuid,
       type: 'webhook_test',
       severity: 'info',
-      title: 'Test event from GnuCash Web',
+      title: `Test event from ${product.brand}`,
       message: 'If you can read this, your webhook endpoint and signature verification are working.',
       href: '/settings',
       createdAt: new Date(),

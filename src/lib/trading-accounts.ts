@@ -12,6 +12,7 @@
  */
 
 import prisma, { generateGuid } from '@/lib/prisma';
+import { accountNameLockKey, acquireNamedXactLock } from '@/lib/book-lock';
 
 export interface SplitWithCommodity {
   accountGuid: string;
@@ -118,6 +119,13 @@ export async function getOrCreateTradingAccount(
   // Use provided transaction context or default prisma
   const db = tx || prisma;
 
+  // Each check-then-create below is guarded by a per-(parent, name)
+  // advisory lock with a re-check after acquiring it, so two concurrent
+  // multi-currency saves can no longer create duplicate Trading trees.
+  // NOTE: the transaction-scoped lock only serializes when running inside a
+  // transaction (pass `tx`); on the bare client it degrades to the old
+  // behavior.
+
   // 1. Find root Trading account or create it
   let tradingRoot = await db.accounts.findFirst({
     where: { name: 'Trading', account_type: 'TRADING' },
@@ -133,34 +141,52 @@ export async function getOrCreateTradingAccount(
       throw new Error('No root account found in database');
     }
 
-    // Get template commodity (use USD or first currency available)
-    const templateCommodity = await db.commodities.findFirst({
-      where: { namespace: 'CURRENCY', mnemonic: 'USD' },
-    });
+    const locked = await acquireNamedXactLock(db, accountNameLockKey(rootAccount.guid, 'Trading'));
+    if (locked) {
+      tradingRoot = await db.accounts.findFirst({
+        where: { name: 'Trading', account_type: 'TRADING' },
+      });
+    }
 
-    const fallbackCommodity = templateCommodity || await db.commodities.findFirst({
-      where: { namespace: 'CURRENCY' },
-    });
+    if (!tradingRoot) {
+      // Get template commodity (use USD or first currency available)
+      const templateCommodity = await db.commodities.findFirst({
+        where: { namespace: 'CURRENCY', mnemonic: 'USD' },
+      });
 
-    tradingRoot = await db.accounts.create({
-      data: {
-        guid: generateGuid(),
-        name: 'Trading',
-        account_type: 'TRADING',
-        commodity_guid: fallbackCommodity?.guid || commodityGuid,
-        commodity_scu: 100,
-        non_std_scu: 0,
-        parent_guid: rootAccount.guid,
-        hidden: 0,
-        placeholder: 1,
-      },
-    });
+      const fallbackCommodity = templateCommodity || await db.commodities.findFirst({
+        where: { namespace: 'CURRENCY' },
+      });
+
+      tradingRoot = await db.accounts.create({
+        data: {
+          guid: generateGuid(),
+          name: 'Trading',
+          account_type: 'TRADING',
+          commodity_guid: fallbackCommodity?.guid || commodityGuid,
+          commodity_scu: 100,
+          non_std_scu: 0,
+          parent_guid: rootAccount.guid,
+          hidden: 0,
+          placeholder: 1,
+        },
+      });
+    }
   }
 
   // 2. Find or create namespace group under Trading (CURRENCY, NYSE, NASDAQ, etc.)
   let namespaceGroup = await db.accounts.findFirst({
     where: { name: commodityNamespace, parent_guid: tradingRoot.guid },
   });
+
+  if (!namespaceGroup) {
+    const locked = await acquireNamedXactLock(db, accountNameLockKey(tradingRoot.guid, commodityNamespace));
+    if (locked) {
+      namespaceGroup = await db.accounts.findFirst({
+        where: { name: commodityNamespace, parent_guid: tradingRoot.guid },
+      });
+    }
+  }
 
   if (!namespaceGroup) {
     namespaceGroup = await db.accounts.create({
@@ -182,6 +208,15 @@ export async function getOrCreateTradingAccount(
   let commodityAccount = await db.accounts.findFirst({
     where: { name: commodityMnemonic, parent_guid: namespaceGroup.guid },
   });
+
+  if (!commodityAccount) {
+    const locked = await acquireNamedXactLock(db, accountNameLockKey(namespaceGroup.guid, commodityMnemonic));
+    if (locked) {
+      commodityAccount = await db.accounts.findFirst({
+        where: { name: commodityMnemonic, parent_guid: namespaceGroup.guid },
+      });
+    }
+  }
 
   if (!commodityAccount) {
     commodityAccount = await db.accounts.create({

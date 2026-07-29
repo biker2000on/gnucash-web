@@ -8,6 +8,7 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
+import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
 import type { GnuCashXmlData, ImportSummary } from './types';
 
 /**
@@ -187,6 +188,13 @@ export async function importGnuCashData(
     const xmlBookGuid = data.book?.id;
     let isOverwrite = false;
     if (xmlBookGuid) {
+      // Serialize against other book-level operations (scrub-all, book
+      // delete, reparenting, a second import of the same book). Blocking
+      // acquire: the transaction itself provides atomicity; the lock keeps
+      // other LOCKED operations from interleaving with a long overwrite
+      // import. Must be taken BEFORE the BookAlreadyExistsError check so
+      // two concurrent imports of the same book serialize on it.
+      await acquireBookLock(tx, xmlBookGuid, 'xml-import');
       const existing = await tx.books.findUnique({ where: { guid: xmlBookGuid } });
       if (existing) {
         if (!options.overwrite) {
@@ -209,12 +217,28 @@ export async function importGnuCashData(
       commodityMap.set(`${c.namespace}:${c.mnemonic}`, c.guid);
     }
 
-    // Create missing commodities
+    // Create missing commodities. Commodities are shared across books and
+    // there is (not yet) a unique index on (namespace, mnemonic), so the
+    // check-then-insert is guarded by a per-commodity advisory lock with a
+    // re-check after acquiring it — a concurrent import creating the same
+    // commodity serializes here instead of inserting a duplicate.
     for (const commodity of data.commodities) {
       const key = `${commodity.space}:${commodity.id}`;
       if (commodityMap.has(key)) {
         summary.skipped.push(`Commodity ${key} already exists`);
         continue;
+      }
+
+      const locked = await acquireNamedXactLock(tx, commodityLockKey(commodity.space, commodity.id));
+      if (locked) {
+        const existingNow = await tx.commodities.findFirst({
+          where: { namespace: commodity.space, mnemonic: commodity.id },
+        });
+        if (existingNow) {
+          commodityMap.set(key, existingNow.guid);
+          summary.skipped.push(`Commodity ${key} already exists`);
+          continue;
+        }
       }
 
       const guid = generateGuid();
@@ -248,21 +272,31 @@ export async function importGnuCashData(
       }
     }
     if (!rootCommodityGuid) {
-      // Create a USD commodity as fallback
-      rootCommodityGuid = generateGuid();
-      await tx.commodities.create({
-        data: {
-          guid: rootCommodityGuid,
-          namespace: 'CURRENCY',
-          mnemonic: 'USD',
-          fullname: 'US Dollar',
-          cusip: null,
-          fraction: 100,
-          quote_flag: 1,
-          quote_source: 'currency',
-          quote_tz: null,
-        },
-      });
+      // Create a USD commodity as fallback (same advisory-lock guard as above)
+      const locked = await acquireNamedXactLock(tx, commodityLockKey('CURRENCY', 'USD'));
+      const existingUsd = locked
+        ? await tx.commodities.findFirst({
+            where: { namespace: 'CURRENCY', mnemonic: 'USD' },
+          })
+        : null;
+      if (existingUsd) {
+        rootCommodityGuid = existingUsd.guid;
+      } else {
+        rootCommodityGuid = generateGuid();
+        await tx.commodities.create({
+          data: {
+            guid: rootCommodityGuid,
+            namespace: 'CURRENCY',
+            mnemonic: 'USD',
+            fullname: 'US Dollar',
+            cusip: null,
+            fraction: 100,
+            quote_flag: 1,
+            quote_source: 'currency',
+            quote_tz: null,
+          },
+        });
+      }
       commodityMap.set('CURRENCY:USD', rootCommodityGuid);
     }
 

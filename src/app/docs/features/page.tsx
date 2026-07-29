@@ -2,10 +2,11 @@ import type { Metadata } from 'next';
 import { DocsFeatureIndex } from '@/components/docs/DocsFeatureIndex';
 import { FEATURES } from '@/lib/feature-registry';
 import { featuresByReferenceDomain } from '@/lib/docs-reference';
+import { product } from '@/lib/product';
 
 export const metadata: Metadata = {
-  title: 'Feature reference — GnuCash Web Docs',
-  description: 'Purpose, prerequisites, permissions, operation, and verification guidance for every registered GnuCash Web feature.',
+  title: `Feature reference — ${product.brand} Docs`,
+  description: `Purpose, prerequisites, permissions, operation, and verification guidance for every registered ${product.name} feature.`,
 };
 
 export default function FeatureReferenceIndexPage() {

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import packageJson from '../../../package.json';
+import { BrandLockup } from '@/components/brand/BrandLockup';
 import { DocsSearch } from '@/components/docs/DocsSearch';
 import { GUIDE_PAGES } from '@/lib/docs-content';
 import { allDocsSearchEntries } from '@/lib/docs-reference';
@@ -13,9 +14,10 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-5 px-4 sm:px-6">
           <Link href="/" className="flex shrink-0 items-center gap-2.5">
-            {/* eslint-disable-next-line @next/next/no-img-element -- local application mark */}
-            <img src="/icon.svg" alt="" className="h-8 w-8" />
-            <span className="font-bold tracking-tight text-foreground">GnuCash Web Docs</span>
+            <BrandLockup size={32} />
+            <span className="hidden font-bold tracking-tight text-foreground sm:inline">
+              Docs
+            </span>
           </Link>
           <div className="hidden min-w-0 flex-1 md:block">
             <DocsSearch entries={entries} compact />

@@ -703,6 +703,41 @@ describe('cross-account lot scrubbing', () => {
     );
     expect(leftover).toHaveLength(0);
   });
+
+  it('revertScrubRun: aborts without deleting anything when the run touches accounts outside the allowed book scope', async () => {
+    seedTwoLots(150, 2000);
+
+    const resA = await autoAssignLots(STOCK_A, 'fifo');
+    const txCountAfterScrub = db.t.transactions.length;
+    const splitCountAfterScrub = db.t.splits.length;
+    const lotCountAfterScrub = db.t.lots.length;
+
+    // In production the allowed set is the active book's full account tree
+    // (including gains income accounts auto-created during the scrub).
+    const allBookAccounts = db.t.accounts.map((a: Rec) => a.guid as string);
+
+    // Allowed set deliberately excludes STOCK_A (simulates a caller whose
+    // active book does not contain the accounts this run touched).
+    await expect(
+      revertScrubRun(resA.runId, {
+        allowedAccountGuids: allBookAccounts.filter(g => g !== STOCK_A),
+      }),
+    ).rejects.toThrow(/outside the active book/);
+
+    // Nothing was deleted or restored
+    expect(db.t.transactions).toHaveLength(txCountAfterScrub);
+    expect(db.t.splits).toHaveLength(splitCountAfterScrub);
+    expect(db.t.lots).toHaveLength(lotCountAfterScrub);
+    expect(split('d-out').lot_guid).not.toBeNull();
+
+    // With the correct scope the revert still works
+    const result = await revertScrubRun(resA.runId, {
+      allowedAccountGuids: allBookAccounts,
+    });
+    expect(result.reverted).toBeGreaterThan(0);
+    expect(split('d-out').lot_guid).toBeNull();
+    expect(lotsOf(STOCK_A)).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

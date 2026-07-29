@@ -4,6 +4,7 @@ import { toDecimal, fromDecimal } from '@/lib/prisma';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // Schema for updating a price
 const UpdatePriceSchema = z.object({
@@ -143,6 +144,7 @@ export async function PUT(
             // Cache invalidation failure should not break the price update
             console.warn('Cache invalidation failed:', err);
         }
+        void publishDataChange(roleResult.bookGuid, 'prices', { guid, action: 'update' });
 
         return NextResponse.json({
             guid: updatedPrice.guid,
@@ -195,6 +197,7 @@ export async function DELETE(
             // Cache invalidation failure should not break the price deletion
             console.warn('Cache invalidation failed:', err);
         }
+        void publishDataChange(roleResult.bookGuid, 'prices', { guid, action: 'delete' });
 
         return new NextResponse(null, { status: 204 });
     } catch (error) {

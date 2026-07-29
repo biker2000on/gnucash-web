@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { publishDataChange } from '@/lib/data-events';
 
 interface BulkReconcileBody {
     splits: string[];
@@ -80,6 +81,8 @@ export async function POST(request: Request) {
                 reconcile_date: reconcileDate,
             },
         });
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
 
         return NextResponse.json({
             success: true,

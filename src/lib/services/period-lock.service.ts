@@ -34,11 +34,25 @@ export class PeriodLockedError extends Error {
 
 export type LockableDate = Date | string | null | undefined;
 
+export interface PeriodLockCheckOptions {
+    /**
+     * Skip the in-process cache and read the lock date straight from the
+     * database. Use for the authoritative in-transaction check on write
+     * paths, where a few seconds of cache staleness could let a mutation
+     * slip into a just-locked period.
+     */
+    bypassCache?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Lock-date cache (naive per-process Map, 5s TTL)
 // ---------------------------------------------------------------------------
 
-const LOCK_CACHE_TTL_MS = 5_000;
+// Fast-path only: the authoritative in-transaction checks use bypassCache,
+// so this cache merely spares bulk operations a per-row query. Keep the TTL
+// tiny (1s) — a longer window lets other processes post into a just-locked
+// period via the non-bypassing pre-checks.
+const LOCK_CACHE_TTL_MS = 1_000;
 const lockCache = new Map<string, { lockDate: string | null; expiresAt: number }>();
 
 /** Drop cached lock dates (one book, or all when omitted). */
@@ -54,9 +68,14 @@ export function toIsoDateString(value: Date | string): string {
 }
 
 /** The book's lock date (YYYY-MM-DD, or null), cached for a few seconds. */
-export async function getCachedLockDate(bookGuid: string): Promise<string | null> {
-    const cached = lockCache.get(bookGuid);
-    if (cached && cached.expiresAt > Date.now()) return cached.lockDate;
+export async function getCachedLockDate(
+    bookGuid: string,
+    options: PeriodLockCheckOptions = {},
+): Promise<string | null> {
+    if (!options.bypassCache) {
+        const cached = lockCache.get(bookGuid);
+        if (cached && cached.expiresAt > Date.now()) return cached.lockDate;
+    }
 
     const rows = await prisma.$queryRaw<{ lock_date: Date | string | null }[]>`
         SELECT lock_date FROM gnucash_web_book_settings WHERE book_guid = ${bookGuid}
@@ -92,8 +111,12 @@ export function findLockedDate(lockDate: string | null, dates: LockableDate[]): 
  * lock date. Service-layer guard; pair with `periodLockedResponse` (or a
  * PeriodLockedError branch in the route's error mapper) at the API layer.
  */
-export async function assertNotLocked(bookGuid: string, dates: LockableDate[]): Promise<void> {
-    const lockDate = await getCachedLockDate(bookGuid);
+export async function assertNotLocked(
+    bookGuid: string,
+    dates: LockableDate[],
+    options: PeriodLockCheckOptions = {},
+): Promise<void> {
+    const lockDate = await getCachedLockDate(bookGuid, options);
     if (findLockedDate(lockDate, dates) !== null) {
         throw new PeriodLockedError(lockDate!);
     }
@@ -139,9 +162,10 @@ export function periodLockedResponse(error: PeriodLockedError): NextResponse {
 export async function withPeriodLockCheck(
     bookGuid: string,
     dates: LockableDate[],
+    options: PeriodLockCheckOptions = {},
 ): Promise<NextResponse | null> {
     try {
-        await assertNotLocked(bookGuid, dates);
+        await assertNotLocked(bookGuid, dates, options);
         return null;
     } catch (err) {
         if (err instanceof PeriodLockedError) return periodLockedResponse(err);

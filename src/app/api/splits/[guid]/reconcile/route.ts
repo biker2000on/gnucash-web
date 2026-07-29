@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
 import { requireRole } from '@/lib/auth';
+import { isAccountInActiveBook, getBookAccountGuids } from '@/lib/book-scope';
+import { publishDataChange } from '@/lib/data-events';
 
 interface ReconcileBody {
     reconcile_state: 'n' | 'c' | 'y';
@@ -72,20 +74,44 @@ export async function PATCH(
             return NextResponse.json({ error: 'Split not found' }, { status: 404 });
         }
 
+        // Verify the split's account belongs to the active book
+        if (!await isAccountInActiveBook(existingSplit.account_guid)) {
+            return NextResponse.json({ error: 'Split not found' }, { status: 404 });
+        }
+
         // Update the split
         const reconcileDate = body.reconcile_state === 'y'
             ? new Date(body.reconcile_date || new Date().toISOString())
             : null;
 
-        const updatedSplit = await prisma.splits.update({
-            where: { guid },
-            data: {
-                reconcile_state: body.reconcile_state,
-                reconcile_date: reconcileDate,
-            },
-            include: {
-                account: true,
-            },
+        // Update the split and bump the parent transaction's enter_date in
+        // one transaction so concurrent editors' optimistic locks invalidate.
+        // Canonical lock order (same as the transaction PUT/DELETE routes):
+        // lock the parent TRANSACTION row first, then write the split — the
+        // enter_date bump then updates a row this transaction already holds a
+        // lock on, so a concurrent transaction save can never ABBA-deadlock
+        // with a reconcile-state toggle.
+        const updatedSplit = await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`
+                SELECT guid FROM transactions
+                WHERE guid = ${existingSplit.tx_guid}
+                FOR UPDATE
+            `;
+            const split = await tx.splits.update({
+                where: { guid },
+                data: {
+                    reconcile_state: body.reconcile_state,
+                    reconcile_date: reconcileDate,
+                },
+                include: {
+                    account: true,
+                },
+            });
+            await tx.transactions.update({
+                where: { guid: existingSplit.tx_guid },
+                data: { enter_date: new Date() },
+            });
+            return split;
         });
 
         // Return the updated split
@@ -104,6 +130,8 @@ export async function PATCH(
             lot_guid: updatedSplit.lot_guid,
             account_name: updatedSplit.account.name,
         };
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { guid: existingSplit.tx_guid, action: 'update' });
 
         return NextResponse.json(serializeBigInts(result));
     } catch (error) {
@@ -146,16 +174,52 @@ export async function POST(
             ? new Date(reconcile_date || new Date().toISOString())
             : null;
 
-        // Bulk update
-        const result = await prisma.splits.updateMany({
+        // Scope the update to splits whose accounts belong to the active book
+        const bookAccountGuids = await getBookAccountGuids();
+        const targetSplits = await prisma.splits.findMany({
             where: {
                 guid: { in: splits },
+                account_guid: { in: bookAccountGuids },
             },
-            data: {
-                reconcile_state,
-                reconcile_date: date,
-            },
+            select: { guid: true, tx_guid: true },
         });
+        if (targetSplits.length === 0) {
+            return NextResponse.json({ error: 'Splits not found' }, { status: 404 });
+        }
+        const inBookGuids = targetSplits.map(s => s.guid);
+        const parentTxGuids = [...new Set(targetSplits.map(s => s.tx_guid))].sort();
+
+        // Bulk update; bump each parent transaction's enter_date in the same
+        // transaction so concurrent editors' optimistic locks invalidate.
+        // Canonical lock order (same as the transaction PUT/DELETE routes):
+        // lock the parent TRANSACTION rows first, ordered by guid, then write
+        // the splits — the enter_date bump then updates rows this transaction
+        // already holds locks on, preventing ABBA deadlocks with concurrent
+        // transaction saves.
+        const result = await prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`
+                SELECT guid FROM transactions
+                WHERE guid = ANY(${parentTxGuids}::text[])
+                ORDER BY guid
+                FOR UPDATE
+            `;
+            const updated = await tx.splits.updateMany({
+                where: {
+                    guid: { in: inBookGuids },
+                },
+                data: {
+                    reconcile_state,
+                    reconcile_date: date,
+                },
+            });
+            await tx.transactions.updateMany({
+                where: { guid: { in: parentTxGuids } },
+                data: { enter_date: new Date() },
+            });
+            return updated;
+        });
+
+        void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
 
         return NextResponse.json({
             success: true,

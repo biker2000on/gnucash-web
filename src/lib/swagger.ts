@@ -1,12 +1,13 @@
 import swaggerJsdoc from 'swagger-jsdoc';
+import { product } from '@/lib/product';
 
 const options = {
     definition: {
         openapi: '3.0.0',
         info: {
-            title: 'GnuCash Web API',
+            title: `${product.brand} API`,
             version: '1.0.0',
-            description: 'API for GnuCash Web PWA',
+            description: product.description,
         },
         servers: [
             {

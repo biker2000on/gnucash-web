@@ -3,6 +3,7 @@ import Image from 'next/image';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { FEATURE_PAGES } from '@/lib/marketing-content';
+import { product } from '@/lib/product';
 
 export function generateStaticParams() {
     return FEATURE_PAGES.map(page => ({ slug: page.slug }));
@@ -13,7 +14,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     const page = FEATURE_PAGES.find(p => p.slug === slug);
     if (!page) return {};
     return {
-        title: `${page.navLabel} — GnuCash Web`,
+        title: `${page.navLabel} — ${product.brand}`,
         description: page.tagline,
     };
 }

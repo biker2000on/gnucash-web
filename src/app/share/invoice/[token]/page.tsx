@@ -7,6 +7,7 @@ import {
 } from '@/lib/business/invoice-shares.service';
 import { PrintButton } from './PrintButton';
 import { PublicPortalActions } from './PublicPortalActions';
+import { product } from '@/lib/product';
 
 /**
  * Public customer-facing invoice/estimate page: /share/invoice/<token>
@@ -23,7 +24,7 @@ import { PublicPortalActions } from './PublicPortalActions';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-    title: 'Invoice — GnuCash Web',
+    title: `Invoice — ${product.brand}`,
     robots: { index: false, follow: false },
 };
 

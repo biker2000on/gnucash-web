@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { BrandLockup } from '@/components/brand/BrandLockup';
 
 interface LoginFormProps {
     mode: 'login' | 'register';
@@ -141,8 +142,8 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
             <div className="w-full max-w-md">
                 <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-2xl p-8">
                     <div className="text-center mb-8">
-                        <h1 className="text-2xl font-bold text-primary">
-                            GnuCash Web
+                        <h1 className="flex justify-center text-left text-lg text-foreground">
+                            <BrandLockup size={32} />
                         </h1>
                         <p className="text-foreground-muted mt-2">
                             Two-factor authentication
@@ -229,8 +230,8 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
         <div className="w-full max-w-md">
             <div className="bg-surface/50 backdrop-blur-xl border border-border rounded-2xl p-8">
                 <div className="text-center mb-8">
-                    <h1 className="text-2xl font-bold text-primary">
-                        GnuCash Web
+                    <h1 className="flex justify-center text-left text-lg text-foreground">
+                        <BrandLockup size={32} />
                     </h1>
                     <p className="text-foreground-muted mt-2">
                         {mode === 'login' ? 'Sign in to your account' : 'Create a new account'}

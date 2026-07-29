@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CurrencySelect } from '@/components/CurrencySelect';
 import NewBookForm from '@/components/books/NewBookForm';
+import { product } from '@/lib/product';
 
 interface CreateBookWizardProps {
   onBookCreated: (bookGuid: string) => void;
@@ -75,7 +76,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
       <div>
         {isOnboarding && (
           <div className="text-center mb-10">
-            <h1 className="text-3xl font-bold text-foreground mb-2">Welcome to GnuCash Web</h1>
+            <h1 className="text-3xl font-bold text-foreground mb-2">Welcome to {product.brand}</h1>
             <p className="text-foreground-muted">
               Get started by creating your first book of accounts.
             </p>

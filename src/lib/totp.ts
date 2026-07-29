@@ -10,6 +10,7 @@
  */
 
 import crypto from 'crypto';
+import { product } from '@/lib/product';
 
 // ---------------------------------------------------------------------------
 // Base32 (RFC 4648)
@@ -173,7 +174,7 @@ export function verifyTotp(
 export function otpauthUri(
     secret: string,
     accountName: string,
-    issuer: string = 'GnuCash Web'
+    issuer: string = product.brand
 ): string {
     const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(accountName)}`;
     // Percent-encode manually: URLSearchParams would emit '+' for spaces,

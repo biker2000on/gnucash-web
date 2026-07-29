@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService, UpdateBudgetSchema } from '@/lib/services/budget.service';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * @openapi
@@ -91,6 +93,8 @@ export async function PUT(
         }
 
         const budget = await BudgetService.update(guid, parseResult.data);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json(budget);
     } catch (error) {
         console.error('Error updating budget:', error);
@@ -132,6 +136,8 @@ export async function DELETE(
         const { guid } = await params;
 
         const result = await BudgetService.delete(guid);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'delete' });
         return NextResponse.json(result);
     } catch (error) {
         console.error('Error deleting budget:', error);

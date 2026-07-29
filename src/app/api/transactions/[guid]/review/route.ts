@@ -3,6 +3,10 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 
 // PATCH /api/transactions/{guid}/review -- toggle reviewed status
+//
+// NOTE: this route only writes gnucash_web_transaction_meta (app extension
+// data), never the core transaction or its splits, so it intentionally does
+// NOT bump transactions.enter_date (the optimistic-concurrency token).
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ guid: string }> }

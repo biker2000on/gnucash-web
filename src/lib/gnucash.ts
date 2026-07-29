@@ -140,6 +140,7 @@ export function serializeBigInts<T>(obj: T): T {
 }
 
 import prisma from './prisma';
+import { accountNameLockKey, acquireNamedXactLock } from './book-lock';
 
 /**
  * Find or create a GnuCash account by colon-delimited path.
@@ -159,10 +160,25 @@ export async function findOrCreateAccount(
     const segment = segments[i];
     const isLast = i === segments.length - 1;
 
-    const existing = await db.accounts.findFirst({
+    let existing = await db.accounts.findFirst({
       where: { name: segment, parent_guid: parentGuid },
       select: { guid: true },
     });
+
+    if (!existing) {
+      // Guard the check-then-create: take a per-(parent, name) advisory
+      // lock and re-check, so concurrent callers cannot create duplicate
+      // sibling accounts (no unique index on (parent_guid, name) yet).
+      // Only effective inside a transaction (pass `tx`); test doubles
+      // without $queryRaw skip the lock and keep legacy behavior.
+      const locked = await acquireNamedXactLock(db, accountNameLockKey(parentGuid, segment));
+      if (locked) {
+        existing = await db.accounts.findFirst({
+          where: { name: segment, parent_guid: parentGuid },
+          select: { guid: true },
+        });
+      }
+    }
 
     if (existing) {
       parentGuid = existing.guid;

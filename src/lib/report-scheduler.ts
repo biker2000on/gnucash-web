@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { pickCurrentBudget } from '@/lib/budget-select';
 import { sendEmail, isEmailConfigured } from '@/lib/email';
+import { product } from '@/lib/product';
 import { generateBalanceSheet } from '@/lib/reports/balance-sheet';
 import { generateIncomeStatement } from '@/lib/reports/income-statement';
 import { generateCashFlow } from '@/lib/reports/cash-flow';
@@ -827,7 +828,7 @@ function periodLabel(generated: GeneratedScheduledReport, period: { startDate: s
 export function renderScheduleEmail(input: ScheduleEmailInput): ScheduleEmail {
     const label = periodLabel(input.generated, input.period);
     const title = input.generated.data.title || input.reportName;
-    const subject = `[GnuCash Web] ${input.reportName} — ${label}`;
+    const subject = `[${product.brand}] ${input.reportName} — ${label}`;
 
     let table: string;
     switch (input.generated.kind) {
@@ -848,7 +849,7 @@ export function renderScheduleEmail(input: ScheduleEmailInput): ScheduleEmail {
     <div style="padding:4px 0;background:#2dd4bf;"></div>
     <div style="padding:24px;">
       <div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#7d8bab;margin-bottom:8px;">
-        GnuCash Web · scheduled report · ${escapeHtml(input.cadence)}
+        ${product.brand} · scheduled report · ${escapeHtml(input.cadence)}
       </div>
       <h1 style="margin:0 0 4px;font-size:18px;color:#e8edf7;">${escapeHtml(title)}</h1>
       <p style="margin:0 0 16px;font-size:13px;color:#aeb9d0;">${escapeHtml(input.reportName)} · ${escapeHtml(label)}</p>

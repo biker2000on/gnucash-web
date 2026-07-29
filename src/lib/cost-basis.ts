@@ -44,6 +44,60 @@ export function createCostBasisCache(): CostBasisCache {
   return new Map();
 }
 
+/** Query shape shared by the per-lot lookup in traceCostBasis and the batched preload. */
+const LOT_SPLIT_INCLUDE = {
+  transaction: { select: { post_date: true } },
+  account: { select: { commodity_guid: true } },
+} as const;
+
+type LotSplitRow = Awaited<ReturnType<typeof fetchLotSplitsForLot>>[number];
+
+async function fetchLotSplitsForLot(lotGuid: string) {
+  return prisma.splits.findMany({
+    where: { lot_guid: lotGuid },
+    include: LOT_SPLIT_INCLUDE,
+  });
+}
+
+const lotCacheKey = (lotGuid: string) => `__lot__${lotGuid}`;
+
+/**
+ * Preload the splits of many lots in ONE query, seeding the trace cache so
+ * traceCostBasis skips its per-lot `splits WHERE lot_guid = ?` lookup.
+ * Purely an optimization for list callers — tracing behaves identically
+ * without it.
+ */
+export async function preloadLotSplits(lotGuids: string[], cache: CostBasisCache): Promise<void> {
+  const internalCache = cache as unknown as InternalCache;
+  const unique = [...new Set(lotGuids)].filter((g) => g && !internalCache.has(lotCacheKey(g)));
+  if (unique.length === 0) return;
+
+  const rows = await prisma.splits.findMany({
+    where: { lot_guid: { in: unique } },
+    include: LOT_SPLIT_INCLUDE,
+  });
+
+  const byLot = new Map<string, LotSplitRow[]>();
+  for (const g of unique) byLot.set(g, []);
+  for (const r of rows) {
+    if (r.lot_guid) byLot.get(r.lot_guid)?.push(r);
+  }
+  for (const [g, list] of byLot) {
+    internalCache.set(lotCacheKey(g), { _splits: list } as unknown as CostBasisResult);
+  }
+}
+
+/** Splits of a lot, from the cache when preloaded/previously fetched. */
+async function getLotSplits(lotGuid: string, internalCache: InternalCache): Promise<LotSplitRow[]> {
+  const cached = internalCache.get(lotCacheKey(lotGuid));
+  if (cached && cached !== IN_PROGRESS && Array.isArray((cached as unknown as { _splits?: unknown[] })._splits)) {
+    return (cached as unknown as { _splits: LotSplitRow[] })._splits;
+  }
+  const rows = await fetchLotSplitsForLot(lotGuid);
+  internalCache.set(lotCacheKey(lotGuid), { _splits: rows } as unknown as CostBasisResult);
+  return rows;
+}
+
 /**
  * Determine if a split represents a transfer-in (shares received with no cash exchange).
  * A transfer-in has shares (quantity != 0) but the transaction has another split
@@ -160,18 +214,12 @@ export async function traceCostBasis(
     return result;
   }
 
-  // Step 1: Check for lot-based tracing
+  // Step 1: Check for lot-based tracing (whole-lot rows come from the cache
+  // when preloadLotSplits was called; the transfer split itself is excluded
+  // in JS, matching the old `guid: { not: ... }` query filter)
   if (transferSplit.lot_guid) {
-    const lotSplits = await prisma.splits.findMany({
-      where: {
-        lot_guid: transferSplit.lot_guid,
-        guid: { not: transferInSplitGuid },
-      },
-      include: {
-        transaction: { select: { post_date: true } },
-        account: { select: { commodity_guid: true } },
-      },
-    });
+    const allLotSplits = await getLotSplits(transferSplit.lot_guid, internalCache);
+    const lotSplits = allLotSplits.filter((s) => s.guid !== transferInSplitGuid);
     // Sort in JS since orderBy on nested relations may not work in all Prisma versions
     lotSplits.sort((a, b) => {
       const dateA = a.transaction?.post_date?.getTime() || 0;

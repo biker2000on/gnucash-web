@@ -10,6 +10,46 @@
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, serializeBigInts } from '@/lib/gnucash';
+import { tryAcquireBookLock, resolveBookLockGuidForAccount, BookBusyError } from '@/lib/book-lock';
+
+/**
+ * Validate a reparent on the transaction client, while the per-book advisory
+ * lock is held: parent must exist and must not be a descendant of the moved
+ * account (which would create a cycle that bricks every recursive CTE over
+ * the tree). Serializing all reparents per book makes the classic
+ * A→under→B / B→under→A race impossible.
+ */
+async function assertReparentIsAcyclic(
+    tx: Pick<typeof prisma, 'accounts'>,
+    guid: string,
+    newParentGuid: string,
+): Promise<void> {
+    if (newParentGuid === guid) {
+        throw new Error('Cannot move account to be its own parent');
+    }
+    const newParent = await tx.accounts.findUnique({
+        where: { guid: newParentGuid },
+    });
+    if (!newParent) {
+        throw new Error(`New parent account not found: ${newParentGuid}`);
+    }
+    // Check for circular reference (bounded + cycle-safe even on an
+    // already-corrupted tree)
+    const visited = new Set<string>([newParent.guid]);
+    let ancestor = newParent;
+    while (ancestor.parent_guid) {
+        if (ancestor.parent_guid === guid) {
+            throw new Error('Cannot move account: would create circular reference');
+        }
+        if (visited.has(ancestor.parent_guid)) break;
+        visited.add(ancestor.parent_guid);
+        const nextAncestor = await tx.accounts.findUnique({
+            where: { guid: ancestor.parent_guid },
+        });
+        if (!nextAncestor) break;
+        ancestor = nextAncestor;
+    }
+}
 
 // Valid GnuCash account types
 const ACCOUNT_TYPES = [
@@ -224,34 +264,30 @@ export class AccountService {
       }
     }
 
-    // Handle reparenting if parent_guid is provided
-    if (data.parent_guid !== undefined) {
-      if (data.parent_guid !== null) {
-        if (data.parent_guid === guid) {
-          throw new Error('Cannot move account to be its own parent');
-        }
-        const newParent = await prisma.accounts.findUnique({
-          where: { guid: data.parent_guid },
-        });
-        if (!newParent) {
-          throw new Error(`New parent account not found: ${data.parent_guid}`);
-        }
-        // Check for circular reference
-        let ancestor = newParent;
-        while (ancestor.parent_guid) {
-          if (ancestor.parent_guid === guid) {
-            throw new Error('Cannot move account: would create circular reference');
-          }
-          const nextAncestor = await prisma.accounts.findUnique({
-            where: { guid: ancestor.parent_guid },
-          });
-          if (!nextAncestor) break;
-          ancestor = nextAncestor;
-        }
-      }
-    }
+    // Reparenting is serialized on the per-book advisory lock, and the
+    // cycle check runs INSIDE the transaction while the lock is held —
+    // two concurrent moves (X under Y, Y under X) can no longer both pass
+    // validation and commit a cycle. The lock is a NON-BLOCKING try-lock:
+    // when another book-wide operation (e.g. a minutes-long scrub-all)
+    // holds it, queueing would just blow Prisma's transaction timeout and
+    // surface as an opaque P2028/500 — throw BookBusyError instead so the
+    // route returns a clean 409 "another operation in progress".
+    const isReparent = data.parent_guid !== undefined;
+    const bookLockGuid = isReparent
+      ? await resolveBookLockGuidForAccount(guid)
+      : null;
 
     const account = await prisma.$transaction(async (tx) => {
+      if (isReparent && bookLockGuid) {
+        const locked = await tryAcquireBookLock(tx, bookLockGuid);
+        if (!locked) {
+          throw new BookBusyError(bookLockGuid, 'account-reparent');
+        }
+      }
+      if (data.parent_guid !== undefined && data.parent_guid !== null) {
+        await assertReparentIsAcyclic(tx, guid, data.parent_guid);
+      }
+
       const acct = await tx.accounts.update({
         where: { guid },
         data: {
@@ -456,41 +492,30 @@ export class AccountService {
       throw new Error(`Account not found: ${guid}`);
     }
 
-    // Validate new parent if provided
-    if (newParentGuid) {
-      if (newParentGuid === guid) {
-        throw new Error('Cannot move account to be its own parent');
+    // Validation + update run in ONE transaction holding the per-book
+    // advisory lock so concurrent reparents cannot commit a cycle. Try-lock
+    // (not blocking): when a book-wide operation holds the lock, fail fast
+    // with BookBusyError → 409 instead of timing out with a P2028/500.
+    const bookLockGuid = await resolveBookLockGuidForAccount(guid);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const locked = await tryAcquireBookLock(tx, bookLockGuid);
+      if (!locked) {
+        throw new BookBusyError(bookLockGuid, 'account-move');
       }
 
-      const newParent = await prisma.accounts.findUnique({
-        where: { guid: newParentGuid },
+      if (newParentGuid) {
+        await assertReparentIsAcyclic(tx, guid, newParentGuid);
+      }
+
+      return tx.accounts.update({
+        where: { guid },
+        data: { parent_guid: newParentGuid },
+        include: {
+          commodity: true,
+          parent: true,
+        },
       });
-
-      if (!newParent) {
-        throw new Error(`New parent account not found: ${newParentGuid}`);
-      }
-
-      // Check for circular reference
-      let ancestor = newParent;
-      while (ancestor.parent_guid) {
-        if (ancestor.parent_guid === guid) {
-          throw new Error('Cannot move account: would create circular reference');
-        }
-        const nextAncestor = await prisma.accounts.findUnique({
-          where: { guid: ancestor.parent_guid },
-        });
-        if (!nextAncestor) break;
-        ancestor = nextAncestor;
-      }
-    }
-
-    const updated = await prisma.accounts.update({
-      where: { guid },
-      data: { parent_guid: newParentGuid },
-      include: {
-        commodity: true,
-        parent: true,
-      },
     });
 
     return serializeBigInts(updated);

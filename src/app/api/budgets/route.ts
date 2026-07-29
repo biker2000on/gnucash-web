@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService, CreateBudgetSchema } from '@/lib/services/budget.service';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * @openapi
@@ -69,6 +71,8 @@ export async function POST(request: NextRequest) {
         }
 
         const budget = await BudgetService.create(parseResult.data);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid: budget.guid, action: 'create' });
         return NextResponse.json(budget, { status: 201 });
     } catch (error) {
         console.error('Error creating budget:', error);

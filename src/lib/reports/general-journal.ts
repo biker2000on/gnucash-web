@@ -27,14 +27,23 @@ export async function generateGeneralJournal(filters: ReportFilters): Promise<Ge
                 },
             } : {}),
         },
-        include: {
+        // Narrow selection: the report only needs value/memo and account names.
+        // TODO(perf): add pagination once the route handler and report UI
+        // accept page params; today the UI expects the full journal.
+        select: {
+            guid: true,
+            post_date: true,
+            description: true,
+            num: true,
             splits: {
-                include: {
+                select: {
+                    value_num: true,
+                    value_denom: true,
+                    memo: true,
                     account: {
                         select: {
                             guid: true,
                             name: true,
-                            account_type: true,
                         },
                     },
                 },

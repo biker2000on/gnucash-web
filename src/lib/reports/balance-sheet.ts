@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
-import { toDecimal, buildHierarchy, resolveRootGuid } from './utils';
+import { buildHierarchy, resolveRootGuid, sumSplitsByAccount } from './utils';
 
 /**
  * Generate Balance Sheet report
@@ -44,40 +44,26 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
         endDate
     );
 
-    // Get balances for each account up to end date
-    const accountBalances = await Promise.all(
-        accounts.map(async (account) => {
-            const splits = await prisma.splits.findMany({
-                where: {
-                    account_guid: account.guid,
-                    transaction: {
-                        post_date: {
-                            lte: endDate,
-                        },
-                    },
-                },
-                select: {
-                    quantity_num: true,
-                    quantity_denom: true,
-                },
-            });
-
-            const quantity = splits.reduce((sum, split) => {
-                return sum + toDecimal(split.quantity_num, split.quantity_denom);
-            }, 0);
-
-            const balance = quantity * valuation.getMultiplier({
-                accountType: account.account_type,
-                commodityGuid: account.commodity_guid,
-                commodityNamespace: account.commodity?.namespace,
-            });
-
-            return {
-                ...account,
-                balance,
-            };
-        })
+    // Get balances for all accounts up to end date in a single GROUP BY query
+    const balanceSums = await sumSplitsByAccount(
+        accounts.map(a => a.guid),
+        { lte: endDate }
     );
+
+    const accountBalances = accounts.map(account => {
+        const quantity = balanceSums.get(account.guid)?.quantity ?? 0;
+
+        const balance = quantity * valuation.getMultiplier({
+            accountType: account.account_type,
+            commodityGuid: account.commodity_guid,
+            commodityNamespace: account.commodity?.namespace,
+        });
+
+        return {
+            ...account,
+            balance,
+        };
+    });
 
     // Separate by account type category (RECEIVABLE is an asset, PAYABLE a liability)
     const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE'];

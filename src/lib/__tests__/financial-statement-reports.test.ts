@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockAccountsFindMany = vi.fn();
 const mockAccountsFindFirst = vi.fn();
 const mockSplitsFindMany = vi.fn();
+const mockQueryRaw = vi.fn();
 
 vi.mock('../prisma', () => ({
   default: {
@@ -14,6 +15,7 @@ vi.mock('../prisma', () => ({
     splits: {
       findMany: (...args: unknown[]) => mockSplitsFindMany(...args),
     },
+    $queryRaw: (...args: unknown[]) => mockQueryRaw(...args),
   },
 }));
 
@@ -52,6 +54,7 @@ beforeEach(() => {
   mockAccountsFindMany.mockReset();
   mockAccountsFindFirst.mockReset();
   mockSplitsFindMany.mockReset();
+  mockQueryRaw.mockReset();
 });
 
 // --- buildHierarchy: hidden-parent reattachment ------------------------------
@@ -137,6 +140,16 @@ describe('generateBalanceSheet', () => {
     mockSplitsFindMany.mockImplementation(async (args: { where: { account_guid: string } }) =>
       splitsByAccount[args.where.account_guid] ?? []
     );
+    mockQueryRaw.mockResolvedValue(
+      Object.entries(splitsByAccount).map(([account_guid, splits]) => ({
+        account_guid,
+        quantity_sum: splits.reduce(
+          (sum, split) => sum + Number(split.quantity_num) / Number(split.quantity_denom),
+          0,
+        ),
+        value_sum: 0,
+      })),
+    );
 
     const report = await generateBalanceSheet({ startDate: null, endDate: '2026-06-30' });
 
@@ -194,6 +207,10 @@ describe('generateGeneralLedger', () => {
         ];
       }
     );
+    mockQueryRaw.mockResolvedValue([
+      { account_guid: 'salary', quantity_sum: -500, value_sum: -500 },
+      { account_guid: 'checking', quantity_sum: 250, value_sum: 250 },
+    ]);
 
     const report = await generateGeneralLedger({ startDate: '2026-01-01', endDate: '2026-12-31' });
 
@@ -230,6 +247,16 @@ describe('generateCashFlow', () => {
     };
     mockSplitsFindMany.mockImplementation(async (args: { where: { account_guid: string } }) =>
       splitsByAccount[args.where.account_guid] ?? []
+    );
+    mockQueryRaw.mockResolvedValue(
+      Object.entries(splitsByAccount).map(([account_guid, splits]) => ({
+        account_guid,
+        quantity_sum: splits.reduce(
+          (sum, split) => sum + Number(split.quantity_num) / Number(split.quantity_denom),
+          0,
+        ),
+        value_sum: 0,
+      })),
     );
 
     const report = await generateCashFlow({ startDate: '2026-01-01', endDate: '2026-12-31' });

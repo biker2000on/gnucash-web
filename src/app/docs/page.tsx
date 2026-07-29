@@ -3,10 +3,11 @@ import type { Metadata } from 'next';
 import { DocsSearch } from '@/components/docs/DocsSearch';
 import { GUIDE_PAGES } from '@/lib/docs-content';
 import { allDocsSearchEntries } from '@/lib/docs-reference';
+import { product } from '@/lib/product';
 
 export const metadata: Metadata = {
-  title: 'Documentation — GnuCash Web',
-  description: 'Learn how to set up, operate, and understand every part of GnuCash Web.',
+  title: `Documentation — ${product.brand}`,
+  description: `Learn how to set up, operate, and understand every part of ${product.brand}.`,
 };
 
 const PATHS = [

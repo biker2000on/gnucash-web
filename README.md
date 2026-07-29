@@ -1,6 +1,6 @@
-# GnuCash Web PWA
+# Folio for GnuCash
 
-A Progressive Web App for managing GnuCash financial data. Read and write access to your GnuCash PostgreSQL database from any device. Built with Next.js 16, React 19, and TypeScript.
+A self-hosted, GnuCash-compatible personal finance platform. Read and write access to your GnuCash PostgreSQL database from any device. Built with Next.js 16, React 19, and TypeScript.
 
 ## Features
 

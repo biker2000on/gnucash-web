@@ -8,6 +8,7 @@
 
 import prisma from './prisma';
 import { generateGuid } from './gnucash';
+import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from './book-lock';
 import { getCurrencyName } from './currencies';
 import { getEntityAccountTemplate, type TemplateAccountDef } from './book-templates';
 import type { BusinessActivity, EntityType } from '@/lib/services/entity.service';
@@ -20,29 +21,6 @@ export async function createDefaultBook(
   businessActivity: BusinessActivity = 'general'
 ): Promise<string> {
   const mnemonic = currency.toUpperCase();
-
-  // Ensure the currency commodity exists
-  let currencyCommodity = await prisma.commodities.findFirst({
-    where: { namespace: 'CURRENCY', mnemonic },
-  });
-
-  if (!currencyCommodity) {
-    currencyCommodity = await prisma.commodities.create({
-      data: {
-        guid: generateGuid(),
-        namespace: 'CURRENCY',
-        mnemonic,
-        fullname: getCurrencyName(mnemonic),
-        cusip: '',
-        fraction: 100,
-        quote_flag: 1,
-        quote_source: 'currency',
-        quote_tz: '',
-      },
-    });
-  }
-
-  const commodityScu = Number(currencyCommodity.fraction) || 100;
   const hierarchy = getEntityAccountTemplate(entityType, businessActivity);
 
   const bookGuid = generateGuid();
@@ -50,13 +28,47 @@ export async function createDefaultBook(
   const templateRootGuid = generateGuid();
 
   await prisma.$transaction(async (tx) => {
+    // Ensure the currency commodity exists — inside the transaction, guarded
+    // by a per-commodity advisory lock with a post-lock re-check, so two
+    // concurrent book creations can't both insert the same currency (there
+    // is not yet a unique index on (namespace, mnemonic)).
+    let currencyCommodity = await tx.commodities.findFirst({
+      where: { namespace: 'CURRENCY', mnemonic },
+    });
+
+    if (!currencyCommodity) {
+      const locked = await acquireNamedXactLock(tx, commodityLockKey('CURRENCY', mnemonic));
+      if (locked) {
+        currencyCommodity = await tx.commodities.findFirst({
+          where: { namespace: 'CURRENCY', mnemonic },
+        });
+      }
+      if (!currencyCommodity) {
+        currencyCommodity = await tx.commodities.create({
+          data: {
+            guid: generateGuid(),
+            namespace: 'CURRENCY',
+            mnemonic,
+            fullname: getCurrencyName(mnemonic),
+            cusip: '',
+            fraction: 100,
+            quote_flag: 1,
+            quote_source: 'currency',
+            quote_tz: '',
+          },
+        });
+      }
+    }
+
+    const commodityScu = Number(currencyCommodity.fraction) || 100;
+
     // Create root account
     await tx.accounts.create({
       data: {
         guid: rootGuid,
         name: bookName,
         account_type: 'ROOT',
-        commodity_guid: currencyCommodity!.guid,
+        commodity_guid: currencyCommodity.guid,
         commodity_scu: commodityScu,
         non_std_scu: 0,
         parent_guid: null,
@@ -73,7 +85,7 @@ export async function createDefaultBook(
         guid: templateRootGuid,
         name: 'Template Root',
         account_type: 'ROOT',
-        commodity_guid: currencyCommodity!.guid,
+        commodity_guid: currencyCommodity.guid,
         commodity_scu: commodityScu,
         non_std_scu: 0,
         parent_guid: null,
@@ -96,6 +108,7 @@ export async function createDefaultBook(
     });
 
     // Recursively create accounts
+    const currencyGuid = currencyCommodity.guid;
     async function createAccounts(
       defs: TemplateAccountDef[],
       parentGuid: string
@@ -107,7 +120,7 @@ export async function createDefaultBook(
             guid: accountGuid,
             name: def.name,
             account_type: def.type,
-            commodity_guid: currencyCommodity!.guid,
+            commodity_guid: currencyGuid,
             commodity_scu: commodityScu,
             non_std_scu: 0,
             parent_guid: parentGuid,
@@ -125,6 +138,11 @@ export async function createDefaultBook(
     }
 
     await createAccounts(hierarchy, rootGuid);
+  }, {
+    // Entity templates create up to a few hundred accounts sequentially;
+    // the default 5s interactive timeout is too tight.
+    timeout: 60_000,
+    maxWait: 10_000,
   });
 
   return bookGuid;
@@ -168,6 +186,11 @@ export async function addTemplateAccounts(
   }
 
   return prisma.$transaction(async (tx) => {
+    // Serialize concurrent template grafts (and other book-level operations)
+    // on the per-book advisory lock; the graft is idempotent but its
+    // find-or-create pairs are not otherwise race-safe.
+    await acquireBookLock(tx, bookGuid, 'add-template-accounts');
+
     let created = 0;
     let existing = 0;
 
