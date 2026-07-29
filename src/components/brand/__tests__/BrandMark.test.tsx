@@ -52,16 +52,16 @@ describe('BrandLockup', () => {
   it('labels the mark with the shared brand and shows the full visible lockup', () => {
     render(<BrandLockup size={32} />);
 
-    expect(screen.getByLabelText('Folio for GnuCash')).toBeInTheDocument();
+    expect(screen.getByLabelText('Folio')).toBeInTheDocument();
     expect(screen.getByText('Folio')).toBeInTheDocument();
-    expect(screen.getByText('for GnuCash')).toBeInTheDocument();
+    expect(screen.queryByText(/GnuCash/)).not.toBeInTheDocument();
   });
 
   it('omits the visible descriptor in compact mode', () => {
     render(<BrandLockup size={24} compact />);
 
-    expect(screen.getByLabelText('Folio for GnuCash')).toBeInTheDocument();
+    expect(screen.getByLabelText('Folio')).toBeInTheDocument();
     expect(screen.getByText('Folio')).toBeInTheDocument();
-    expect(screen.queryByText('for GnuCash')).not.toBeInTheDocument();
+    expect(screen.queryByText(/GnuCash/)).not.toBeInTheDocument();
   });
 });

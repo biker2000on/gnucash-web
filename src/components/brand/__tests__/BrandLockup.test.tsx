@@ -13,8 +13,9 @@ describe('BrandLockup', () => {
     render(<BrandLockup size={32} />);
 
     expect(screen.getByText('Folio')).toBeInTheDocument();
-    expect(screen.getByText('for GnuCash')).toBeInTheDocument();
-    expect(screen.getByLabelText('Folio for GnuCash')).toBeInTheDocument();
+    expect(screen.getByLabelText('Folio')).toBeInTheDocument();
+    // The GnuCash descriptor is retired: Folio stands alone.
+    expect(screen.queryByText(/GnuCash/)).not.toBeInTheDocument();
   });
 });
 

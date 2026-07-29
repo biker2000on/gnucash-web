@@ -219,7 +219,7 @@ export const ADMIN_PAGES: ReferenceDocPage[] = [
       {
         heading: 'What must be protected',
         bullets: [
-          'PostgreSQL contains the GnuCash schema plus web extension tables.',
+          'PostgreSQL contains the GnuCash-compatible core ledger plus Folio extension tables.',
           'Filesystem or S3-compatible storage contains source documents and generated artifacts.',
           'Environment and secret configuration is required to reconnect services but should be backed up outside the data archive.',
           'Desktop-readable exports provide portability; they do not replace a complete database and document backup.',

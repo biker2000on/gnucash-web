@@ -37,7 +37,7 @@ export default async function LandingPage() {
                 <div className="absolute inset-0 bg-background/85" aria-hidden />
                 <div className="relative max-w-7xl mx-auto px-6 pt-24 pb-20 lg:pt-32 lg:pb-28">
                     <p className="text-xs uppercase tracking-[0.2em] text-primary font-semibold mb-5">
-                        Self-hosted · GnuCash-compatible · Double-entry
+                        Self-hosted · Double-entry · Your data
                     </p>
                     <h1 className="max-w-3xl text-4xl lg:text-6xl font-bold text-foreground leading-[1.08] tracking-tight">
                         Your entire financial life, on a ledger you own.
@@ -187,8 +187,8 @@ export default async function LandingPage() {
                             </table>
                         </div>
                         <p className="mt-3 text-xs text-foreground-muted leading-relaxed">
-                            Amounts are stored as exact numerator/denominator pairs — GnuCash&rsquo;s own format —
-                            so balances never drift by a cent.
+                            Amounts are stored as exact numerator/denominator pairs — never floating
+                            point — so balances never drift by a cent.
                         </p>
                     </div>
                 </div>

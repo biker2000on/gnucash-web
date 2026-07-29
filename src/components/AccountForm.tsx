@@ -492,7 +492,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                         <option value={1000000}>6</option>
                     </select>
                     <p className="mt-1 text-xs text-foreground-muted">
-                        Number of decimal places for share quantities (GnuCash smallest currency unit).
+                        Number of decimal places for share quantities (smallest currency unit).
                     </p>
                 </div>
             )}

@@ -392,7 +392,7 @@ describe('renderScheduleEmail', () => {
             generated: { kind: 'sections', data: balanceSheetData },
         });
 
-        expect(email.subject).toBe('[Folio for GnuCash] Balance Sheet — as of 2026-06-30');
+        expect(email.subject).toBe('[Folio] Balance Sheet — as of 2026-06-30');
         // Report rows, including nested children
         expect(email.html).toContain('Checking');
         expect(email.html).toContain('Sub Account');

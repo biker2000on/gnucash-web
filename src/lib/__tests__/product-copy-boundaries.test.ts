@@ -21,7 +21,7 @@ vi.mock('@/lib/webhooks', () => ({
 
 describe('Folio product copy boundaries', () => {
   it('uses the Folio brand for user-visible secondary exports and metadata', () => {
-    expect(otpauthUri('secret', 'alice')).toContain('issuer=Folio%20for%20GnuCash');
+    expect(otpauthUri('secret', 'alice')).toContain('issuer=Folio');
 
     expect(renderNotificationEmail({
       title: 'Ready',
@@ -29,25 +29,25 @@ describe('Folio product copy boundaries', () => {
       href: null,
       severity: 'success',
       type: 'report',
-    }).subject).toBe('[Folio for GnuCash] Ready');
+    }).subject).toBe('[Folio] Ready');
 
     const calendar = buildIcs([]);
-    expect(calendar).toContain('PRODID:-//Folio for GnuCash//Calendar Feed//EN');
-    expect(calendar).toContain('X-WR-CALNAME:Folio for GnuCash');
+    expect(calendar).toContain('PRODID:-//Folio//Calendar Feed//EN');
+    expect(calendar).toContain('X-WR-CALNAME:Folio');
 
     expect(buildTxfFile([], { date: new Date(2026, 3, 15) }))
-      .toContain('AFolio for GnuCash\r\n');
+      .toContain('AFolio\r\n');
 
     const apiDocs = getApiDocs() as { info?: { title?: string; description?: string } };
     expect(apiDocs.info).toMatchObject({
-      title: 'Folio for GnuCash API',
-      description: 'A self-hosted, GnuCash-compatible personal finance platform.',
+      title: 'Folio API',
+      description: 'A self-hosted personal and small-business finance platform.',
     });
   });
 
   it('keeps stable GnuCash compatibility identifiers unchanged', () => {
     expect(readFileSync('src/lib/ical.ts', 'utf8'))
-      .toContain('PRODID:-//Folio for GnuCash//Calendar Feed//EN');
+      .toContain('PRODID:-//Folio//Calendar Feed//EN');
     expect(readFileSync('src/lib/business/stripe-webhook.ts', 'utf8'))
       .toContain('gnucash-web/payment-event');
   });
@@ -59,10 +59,10 @@ describe('Folio product copy boundaries', () => {
       membersMetadata.title,
       meetingsMetadata.title,
     ]).toEqual([
-      'Vendors - Folio for GnuCash',
-      'Customers - Folio for GnuCash',
-      'Members - Folio for GnuCash',
-      'Meetings - Folio for GnuCash',
+      'Vendors - Folio',
+      'Customers - Folio',
+      'Members - Folio',
+      'Meetings - Folio',
     ]);
   });
 
@@ -84,7 +84,7 @@ describe('Folio product copy boundaries', () => {
       expect.anything(),
       expect.objectContaining({
         type: 'webhook_test',
-        title: 'Test event from Folio for GnuCash',
+        title: 'Test event from Folio',
       }),
     );
   });

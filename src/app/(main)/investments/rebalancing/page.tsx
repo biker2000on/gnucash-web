@@ -199,7 +199,7 @@ export default function RebalancingPage() {
                 <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
                     <p className="text-foreground-secondary text-lg mb-2">No holdings to rebalance</p>
                     <p className="text-foreground-muted">
-                        Investment holdings (STOCK/MUTUAL accounts) will appear here once present in GnuCash.
+                        Investment holdings (STOCK/MUTUAL accounts) will appear here once present in your book.
                     </p>
                 </div>
             </div>

@@ -346,7 +346,7 @@ export default function SellPlannerPage() {
                                     state ({result.context.stateCode}), so states are assumed to tax ST and LT
                                     gains alike. Baseline income is your year-to-date book data
                                     {result.context.annualized ? ', annualized to a full-year estimate,' : ''} plus
-                                    realized gains so far. Lot basis and holding period come from your GnuCash
+                                    realized gains so far. Lot basis and holding period come from your
                                     lots (transfer-aware acquisition dates); proceeds use the latest stored
                                     price. Wash-sale screening looks back 30 days across all accounts
                                     (including IRAs) — do not repurchase a sold-at-a-loss security within 30

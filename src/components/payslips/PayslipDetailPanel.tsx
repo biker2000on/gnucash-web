@@ -560,7 +560,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
                   <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <span>This payslip has been posted to GnuCash.</span>
+                  <span>This payslip has been posted to the ledger.</span>
                 </div>
               )}
             </>

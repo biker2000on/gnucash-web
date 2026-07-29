@@ -121,7 +121,7 @@ export function buildIcs(events: IcsEvent[], options: BuildIcsOptions = {}): str
     const name = options.calendarName ?? product.brand;
     const dtstamp = formatIcsDateTime(options.now ?? new Date());
 
-    // Wire value: PRODID:-//Folio for GnuCash//Calendar Feed//EN
+    // Wire value: PRODID:-//Folio//Calendar Feed//EN
     const lines: string[] = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
