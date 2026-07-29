@@ -4,6 +4,57 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.23.1.0] - 2026-07-29
+
+Adversarial-review follow-ups to the July 28 multi-user concurrency and
+performance wave.
+
+### Fixed — concurrency and freshness
+- Account moves now verify the new parent belongs to the active book, closing
+  a cross-book reparenting path that bypassed the per-book lock and could
+  recreate the account-cycle corruption (and graft accounts into another
+  book's tree).
+- Every remaining ledger-writing path now invalidates the event-evicted Redis
+  caches and publishes a data-change event: Stripe payment webhooks, inbound
+  transaction webhooks, funding-rule sweeps, recurring-invoice generation,
+  audit undo, payslip posting, ESPP/vest posting, asset valuation and
+  depreciation, inventory movements/assembly/fulfillment/receiving,
+  QuickBooks and settlement import commits, Safe Operator scheduled-command
+  execute/undo, rule apply-to-history, farm account grafts, and transaction
+  review/type/tag metadata edits. Previously these could leave every user
+  seeing day-old balances until an unrelated write evicted the cache.
+- A SimpleFin sync that creates accounts but imports no transactions now
+  refreshes caches and notifies open UIs about the new accounts.
+- Starting a reconciliation now supersedes a stale in-progress session
+  (e.g. after a browser crash) instead of failing forever against the
+  one-started-session-per-account constraint.
+- Statement finalize locks the parent transactions of reconciled splits in
+  canonical order and bumps their optimistic-lock token, so a user holding
+  one of those transactions open in an editor gets a conflict instead of
+  silently reverting the reconciliation on save.
+- Lot auto-assign, clear, and scrub-run revert bump the optimistic-lock token
+  on affected transactions, so concurrent editors can no longer silently
+  strip fresh lot links.
+- The in-transaction period-lock check now runs on the transaction's own
+  connection instead of grabbing a second pool connection (removes a
+  pool-starvation deadlock under load), and statement finalize's check
+  bypasses the TTL cache like every other write path.
+- Fixed two remaining lock-order inversions (single-split lot assignment and
+  bulk recategorize) that could deadlock against concurrent transaction
+  edits.
+
+### Changed — API (breaking)
+- `DELETE /api/transactions/{guid}` now requires the `original_enter_date`
+  optimistic-lock token, matching PUT (missing → 428, stale → 409). All
+  in-app callers already send it; external scripts must be updated — see
+  docs/api-tokens.md.
+
+### Removed — roadmap
+- Dropped Phase 6 (GnuCash desktop `gnclock` coexistence) from the
+  concurrency roadmap: this database is never opened by GnuCash desktop;
+  interop is export-only. A dedicated mechanism may be designed later if
+  needed.
+
 ## [0.23.0.0] - 2026-07-27
 
 ### Added

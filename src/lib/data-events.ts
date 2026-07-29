@@ -16,6 +16,7 @@
  */
 
 import { getRedis } from '@/lib/redis';
+import { cacheInvalidateAllForBook, cacheInvalidateFrom } from '@/lib/cache';
 
 export type DataChangeEntity =
   | 'transactions'
@@ -46,6 +47,34 @@ export function dataChangeChannel(bookGuid: string): string {
  * Publish a data-change event for a book. Never throws, never rejects;
  * resolves false when Redis is unavailable or the publish failed.
  */
+/**
+ * One-call freshness for any path that writes ledger data: invalidates the
+ * book's Redis metric/report caches (which live up to 24h on event-driven
+ * eviction) and publishes a data-change event per entity so open UIs refetch.
+ *
+ * Call it after a successful commit from ANY process — web routes, webhooks,
+ * and worker crons alike. Fire-and-forget by design: it never throws and the
+ * caller must not await it on the request's critical path.
+ *
+ * Pass `fromDate` (earliest affected post date) to keep cached history before
+ * that date warm; omit it to drop everything for the book.
+ */
+export function afterLedgerWrite(
+  bookGuid: string,
+  entities: DataChangeEntity | DataChangeEntity[],
+  opts?: { guid?: string; action?: DataChangeEvent['action']; fromDate?: Date },
+): void {
+  if (!bookGuid) return;
+  const list = Array.isArray(entities) ? entities : [entities];
+  void (opts?.fromDate
+    ? cacheInvalidateFrom(bookGuid, opts.fromDate)
+    : cacheInvalidateAllForBook(bookGuid)
+  ).catch(() => {});
+  for (const entity of list) {
+    void publishDataChange(bookGuid, entity, opts);
+  }
+}
+
 export async function publishDataChange(
   bookGuid: string,
   entity: DataChangeEntity,

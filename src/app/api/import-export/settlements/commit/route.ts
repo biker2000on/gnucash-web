@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { commitSettlementImport } from '@/lib/import/settlement-import.service';
 import { readSettlementUpload, resolveSettlementContext, settlementErrorResponse } from '../shared';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /**
  * POST /api/import-export/settlements/commit
@@ -23,6 +24,7 @@ export async function POST(request: NextRequest) {
 
         const ctx = await resolveSettlementContext(roleResult.bookGuid);
         const result = await commitSettlementImport(user.id, upload.source, upload.input, ctx);
+        afterLedgerWrite(roleResult.bookGuid, ['accounts', 'transactions'], { action: 'bulk' });
         return NextResponse.json({ success: true, ...result });
     } catch (error) {
         return settlementErrorResponse('commit', error);

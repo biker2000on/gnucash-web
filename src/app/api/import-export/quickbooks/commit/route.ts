@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { commitQboImport } from '@/lib/import/qbo-import.service';
+import { afterLedgerWrite } from '@/lib/data-events';
 import { ENTITY_TYPES, type EntityType } from '@/lib/services/entity.service';
 import { readQboUpload } from '../shared';
 
@@ -56,6 +57,12 @@ export async function POST(request: NextRequest) {
             locale: upload.locale,
         });
 
+        // The import created a whole new book (accounts + transactions):
+        // publish against the NEW book's guid so any viewer who switches to
+        // it — and the cross-process book-scope caches — see it fresh.
+        if (result.bookGuid) {
+            afterLedgerWrite(result.bookGuid, ['book', 'accounts', 'transactions'], { action: 'bulk' });
+        }
         return NextResponse.json({ success: true, ...result });
     } catch (error) {
         console.error('QuickBooks import failed:', error);

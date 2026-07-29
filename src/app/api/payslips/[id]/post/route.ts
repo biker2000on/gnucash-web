@@ -4,6 +4,7 @@ import { getPayslip, getMappingsForEmployer } from '@/lib/payslips';
 import { postPayslipTransaction } from '@/lib/services/payslip-post.service';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import type { PayslipLineItem } from '@/lib/types';
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -84,6 +85,9 @@ export async function POST(request: Request, { params }: RouteParams) {
       // Cache invalidation failure should not break the payslip post
       console.warn('Cache invalidation failed:', err);
     }
+    // 'accounts' too: posting can find-or-create mapping accounts.
+    void publishDataChange(bookGuid, 'transactions', { guid: transactionGuid, action: 'create' });
+    void publishDataChange(bookGuid, 'accounts', { action: 'update' });
 
     return NextResponse.json({ transaction_guid: transactionGuid });
   } catch (error) {

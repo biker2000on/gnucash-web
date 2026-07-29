@@ -18,6 +18,7 @@ import { generateGuid } from '@/lib/gnucash';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { logAudit } from '@/lib/services/audit.service';
 import { inboundTransactionSchema, parseInbound, toCents } from '@/lib/inbound-webhooks';
 
@@ -153,6 +154,7 @@ export async function POST(request: Request) {
         } catch (err) {
             console.warn('Inbound webhook: cache invalidation failed:', err);
         }
+        void publishDataChange(bookGuid, 'transactions', { guid: txGuid, action: 'create' });
 
         return NextResponse.json(
             {

@@ -340,6 +340,9 @@ async function runSimpleFinSync(
   // Track the earliest post date of any imported transaction so cached
   // dashboard metrics can be invalidated from that date forward.
   let earliestImportedPostDate: Date | null = null;
+  // Auto-created child/cash accounts must reach other processes' caches even
+  // when the sync imports zero transactions (fully deduped window).
+  const accountsCreated = { count: 0 };
 
   // Period lock: bank transactions dated on or before the book's lock date
   // are skipped (a closed period must not change under a sync).
@@ -373,7 +376,7 @@ async function runSimpleFinSync(
         const holdingsSymbolSet = buildSymbolSet(sfAccount.holdings);
         for (const [symbol, desc] of holdingsSymbolSet) {
           try {
-            await getOrCreateChildAccount(mappedAccount.gnucash_account_guid, symbol, desc);
+            await getOrCreateChildAccount(mappedAccount.gnucash_account_guid, symbol, desc, accountsCreated);
           } catch (err) {
             result.errors.push({
               account: mappedAccount.simplefin_account_name || mappedAccount.simplefin_account_id,
@@ -381,7 +384,7 @@ async function runSimpleFinSync(
             });
           }
         }
-        await getOrCreateCashChild(mappedAccount.gnucash_account_guid);
+        await getOrCreateCashChild(mappedAccount.gnucash_account_guid, accountsCreated);
         result.accountsProcessed++;
       }
       continue;
@@ -441,7 +444,7 @@ async function runSimpleFinSync(
       // Pre-resolve Cash child guid for investment accounts (avoids repeated lookups)
       let cashChildGuid: string | undefined;
       if (mappedAccount.is_investment) {
-        cashChildGuid = await getOrCreateCashChild(mappedAccount.gnucash_account_guid);
+        cashChildGuid = await getOrCreateCashChild(mappedAccount.gnucash_account_guid, accountsCreated);
       }
 
       for (const sfTxn of sfAccount.transactions) {
@@ -486,6 +489,7 @@ async function runSimpleFinSync(
                 mappedAccount.gnucash_account_guid,
                 match.symbol,
                 holdingDesc,
+                accountsCreated,
               );
               isSymbolMatched = true;
             } else {
@@ -608,6 +612,15 @@ async function runSimpleFinSync(
     } catch (err) {
       console.warn('SimpleFin sync inventory reorder scan failed:', err);
     }
+  } else if (accountsCreated.count > 0) {
+    // No transactions landed, but new accounts exist: without this the
+    // event-evicted hierarchy caches would hide them for up to 24h.
+    try {
+      await cacheInvalidateFrom(bookGuid, new Date(0));
+    } catch (err) {
+      console.warn('SimpleFin sync cache invalidation failed:', err);
+    }
+    void publishDataChange(bookGuid, 'accounts', { action: 'bulk' });
   }
 
   // Generate any due recurring invoices/bills. Runs on every sync (not only
@@ -1168,6 +1181,7 @@ async function getOrCreateChildAccount(
   parentGuid: string,
   symbol: string,
   holdingDescription: string,
+  created?: { count: number },
 ): Promise<string> {
   // Look for existing child with a commodity matching this symbol
   const existingChildren = await prisma.$queryRaw<{
@@ -1228,6 +1242,7 @@ async function getOrCreateChildAccount(
     },
   });
 
+  if (created) created.count++;
   return childGuid;
 }
 
@@ -1237,6 +1252,7 @@ async function getOrCreateChildAccount(
  */
 async function getOrCreateCashChild(
   parentGuid: string,
+  created?: { count: number },
 ): Promise<string> {
   const existing = await prisma.accounts.findFirst({
     where: { parent_guid: parentGuid, name: 'Cash' },
@@ -1265,6 +1281,7 @@ async function getOrCreateCashChild(
     },
   });
 
+  if (created) created.count++;
   return childGuid;
 }
 

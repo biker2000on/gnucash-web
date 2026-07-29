@@ -83,14 +83,16 @@ export async function PATCH(
         }
       }
 
-      await tx.splits.update({
-        where: { guid: splitGuid },
-        data: { lot_guid: targetLotGuid },
-      });
-
+      // Canonical lock order: parent transaction row FIRST, then its splits
+      // — matching PUT/DELETE/bulk paths so no ABBA deadlock is possible.
       await tx.transactions.update({
         where: { guid: split.tx_guid },
         data: { enter_date: new Date() },
+      });
+
+      await tx.splits.update({
+        where: { guid: splitGuid },
+        data: { lot_guid: targetLotGuid },
       });
     });
 

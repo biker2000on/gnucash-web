@@ -6,6 +6,7 @@ import { applyPayment, getInvoiceWithStatus } from '@/lib/business/invoice-engin
 import { listStripeConnections, type StripeConnection } from '@/lib/business/payment-connections';
 import { logAudit } from '@/lib/services/audit.service';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 
@@ -347,6 +348,12 @@ export async function processStripeWebhook(
       fee,
       feeTransactionGuid,
     }, { bookGuid: connection.bookGuid, userId: null });
+    // Payment + fee transactions just landed with no user session attached:
+    // without this, the 24h event-evicted caches serve pre-payment balances.
+    afterLedgerWrite(connection.bookGuid, ['transactions', 'business'], {
+      guid: payment.transactionGuid,
+      action: 'create',
+    });
     return { accepted: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Payment posting failed';

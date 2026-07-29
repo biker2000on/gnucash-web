@@ -19,6 +19,7 @@
 
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import type { DbClient } from '@/lib/scheduled-transactions';
 
 export class PeriodLockedError extends Error {
     readonly code = 'PERIOD_LOCKED';
@@ -42,6 +43,14 @@ export interface PeriodLockCheckOptions {
      * slip into a just-locked period.
      */
     bypassCache?: boolean;
+    /**
+     * Run the lock-date query on this client instead of the global pool.
+     * In-transaction callers MUST pass their `tx` client: the global client
+     * grabs a SECOND pool connection mid-transaction, and under load every
+     * connection can end up held by a transaction waiting for one more —
+     * a pool-starvation deadlock.
+     */
+    client?: DbClient;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +86,8 @@ export async function getCachedLockDate(
         if (cached && cached.expiresAt > Date.now()) return cached.lockDate;
     }
 
-    const rows = await prisma.$queryRaw<{ lock_date: Date | string | null }[]>`
+    const db = options.client ?? prisma;
+    const rows = await db.$queryRaw<{ lock_date: Date | string | null }[]>`
         SELECT lock_date FROM gnucash_web_book_settings WHERE book_guid = ${bookGuid}
     `;
     const raw = rows.length > 0 ? rows[0].lock_date : null;

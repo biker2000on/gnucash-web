@@ -240,7 +240,7 @@ export async function PATCH(request: Request) {
                 await assertNotLocked(
                     roleResult.bookGuid,
                     freshRows.map(t => t.post_date),
-                    { bypassCache: true },
+                    { bypassCache: true, client: dbTx },
                 );
             }
 
@@ -309,19 +309,21 @@ export async function PATCH(request: Request) {
                     }
                 }
                 if (moveSplit && recatOp) {
-                    await dbTx.splits.update({
-                        where: { guid: moveSplit.guid },
-                        data: { account_guid: recatOp.toAccountGuid },
-                    });
                     if (!coreChanged) {
-                        // Split moved but description untouched: still a core
-                        // ledger mutation, so bump the version token.
+                        // Canonical lock order: take the parent transaction's
+                        // row lock (and bump the version token) BEFORE
+                        // touching its splits — the PUT/DELETE paths lock in
+                        // that order, so the reverse would be an ABBA deadlock.
                         await dbTx.transactions.update({
                             where: { guid },
                             data: { enter_date: bulkEditTimestamp },
                         });
                         coreChanged = true;
                     }
+                    await dbTx.splits.update({
+                        where: { guid: moveSplit.guid },
+                        data: { account_guid: recatOp.toAccountGuid },
+                    });
                     changed = true;
                     recategorized = true;
                     if (t.post_date) touchedDates.push(t.post_date);

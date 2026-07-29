@@ -335,6 +335,30 @@ async function guardBookLock(
   }
 }
 
+/**
+ * Bump the optimistic-concurrency token (enter_date) on every transaction
+ * holding a split in this account. Lot operations rewrite the account's lot
+ * state wholesale — sub-splitting sells, re-linking lot_guids — invisibly to
+ * the token, so a user who loaded a transaction before the scrub would
+ * otherwise silently revert those changes on save. Rows are locked in
+ * canonical sorted order first, matching every other transaction-write path.
+ */
+async function bumpAccountTransactionTokens(
+  tx: PrismaTx,
+  accountGuid: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT guid FROM transactions
+    WHERE guid IN (SELECT DISTINCT tx_guid FROM splits WHERE account_guid = ${accountGuid})
+    ORDER BY guid
+    FOR UPDATE
+  `;
+  await tx.$executeRaw`
+    UPDATE transactions SET enter_date = NOW()
+    WHERE guid IN (SELECT DISTINCT tx_guid FROM splits WHERE account_guid = ${accountGuid})
+  `;
+}
+
 export async function autoAssignLots(
   accountGuid: string,
   method: 'fifo' | 'lifo' | 'average',
@@ -342,16 +366,22 @@ export async function autoAssignLots(
 ): Promise<AutoAssignResult> {
   return prisma.$transaction(async (tx) => {
     await guardBookLock(tx, bookGuid, 'lot auto-assign');
+    let result: AutoAssignResult;
     switch (method) {
       case 'fifo':
-        return assignFIFO(accountGuid, tx);
+        result = await assignFIFO(accountGuid, tx);
+        break;
       case 'lifo':
-        return assignLIFO(accountGuid, tx);
+        result = await assignLIFO(accountGuid, tx);
+        break;
       case 'average':
-        return assignAverage(accountGuid, tx);
+        result = await assignAverage(accountGuid, tx);
+        break;
       default:
         throw new Error(`Unknown assignment method: ${method}`);
     }
+    await bumpAccountTransactionTokens(tx, accountGuid);
+    return result;
   }, { timeout: 120_000, maxWait: 15_000 });
 }
 
@@ -522,6 +552,8 @@ export async function clearLotAssignments(
       });
     }
 
+    await bumpAccountTransactionTokens(tx, accountGuid);
+
     return {
       splitsUnassigned: updateResult.count,
       lotsDeleted: lotsToDelete.length,
@@ -672,6 +704,18 @@ export async function revertScrubRun(
       where: { guid: { in: taggedGuids }, is_closed: 1 },
       data: { is_closed: 0 },
     });
+
+    // Bump the concurrency token on every account the revert rewrote
+    // (restored sell splits, detached lots) so stale editors 409 instead of
+    // silently re-applying pre-revert state.
+    const revertedAccounts = new Set<string>();
+    for (const s of taggedSplits) revertedAccounts.add(s.account_guid);
+    for (const l of taggedLots) {
+      if (l.account_guid) revertedAccounts.add(l.account_guid);
+    }
+    for (const accountGuid of Array.from(revertedAccounts).sort()) {
+      await bumpAccountTransactionTokens(tx, accountGuid);
+    }
 
     return { reverted: taggedGuids.length };
   }, { timeout: 120_000, maxWait: 15_000 });

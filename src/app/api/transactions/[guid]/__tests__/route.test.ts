@@ -239,7 +239,7 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
         expect(assertNotLockedMock).toHaveBeenCalledWith(
             BOOK_GUID,
             expect.any(Array),
-            { bypassCache: true },
+            { bypassCache: true, client: prismaMock },
         );
         // The before-image snapshot ran ON THE TRANSACTION CLIENT (same
         // connection as the row lock), not on a second pool connection.
@@ -308,9 +308,11 @@ describe('DELETE /api/transactions/[guid] optimistic concurrency', () => {
         expect(snapshotTransactionByGuidMock).toHaveBeenCalledWith(TX_GUID, prismaMock);
     });
 
-    it('still deletes without a token (token is optional on DELETE)', async () => {
+    it('refuses to delete without a token (428, same contract as PUT)', async () => {
         const response = await DELETE(deleteRequest(), routeParams);
-        expect(response.status).toBe(200);
-        expect(prismaMock.transactions.delete).toHaveBeenCalled();
+        const body = await response.json();
+        expect(response.status).toBe(428);
+        expect(body.code).toBe('original_enter_date_required');
+        expect(prismaMock.transactions.delete).not.toHaveBeenCalled();
     });
 });
