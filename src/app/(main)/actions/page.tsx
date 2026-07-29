@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
+import { useBooks } from '@/contexts/BookContext';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import type {
   CalculationTrace,
@@ -139,6 +140,8 @@ function ActionCard({
   onSelect,
   onState,
   onExplain,
+  onOpenOperation,
+  bookName,
 }: {
   action: FinancialAction;
   selected: boolean;
@@ -146,6 +149,8 @@ function ActionCard({
   onSelect: () => void;
   onState: (state: FinancialActionState, snoozedUntil?: string) => void;
   onExplain: () => void;
+  onOpenOperation: (href: string) => void;
+  bookName?: string;
 }) {
   const touchStart = useRef<number | null>(null);
   const primary = action.operations.find(operation => operation.primary && operation.href)
@@ -207,6 +212,11 @@ function ActionCard({
             )}
           </div>
           <h3 className="mt-2 text-sm font-semibold leading-5 text-foreground">{action.title}</h3>
+          {bookName && (
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+              {bookName}
+            </p>
+          )}
           {accountPath && (
             <p className="mt-1 break-words text-[11px] leading-4 text-foreground-muted">
               {accountPath}
@@ -243,12 +253,13 @@ function ActionCard({
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {primary?.href && (
-              <Link
-                href={primary.href}
+              <button
+                type="button"
+                onClick={() => onOpenOperation(primary.href!)}
                 className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-background hover:bg-primary-hover"
               >
                 {primary.label}
-              </Link>
+              </button>
             )}
             {action.lane === 'decide' && action.state !== 'accepted' && (
               <button
@@ -292,6 +303,8 @@ function ActionCard({
 
 export default function FinancialActionCenterPage() {
   const toast = useToast();
+  const router = useRouter();
+  const { activeBookGuid, books, switchBook } = useBooks();
   const searchParams = useSearchParams();
   const familyScope = searchParams.get('scope') === 'family';
   const [data, setData] = useState<FinancialActionList | null>(null);
@@ -559,6 +572,19 @@ export default function FinancialActionCenterPage() {
     });
   };
 
+  const openOperation = useCallback(async (action: FinancialAction, href: string) => {
+    if (familyScope && action.bookGuid !== activeBookGuid) {
+      await switchBook(action.bookGuid, href);
+      return;
+    }
+    router.push(href);
+  }, [activeBookGuid, familyScope, router, switchBook]);
+
+  const bookNameByGuid = useMemo(
+    () => new Map(books.map(book => [book.guid, book.name])),
+    [books],
+  );
+
   return (
     <div className="space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -716,6 +742,8 @@ export default function FinancialActionCenterPage() {
                         onSelect={() => toggleSelected(action.id)}
                         onState={(state, until) => void updateState([action.id], state, until)}
                         onExplain={() => setTrace(action.trace)}
+                        onOpenOperation={href => void openOperation(action, href)}
+                        bookName={familyScope ? bookNameByGuid.get(action.bookGuid) : undefined}
                       />
                     );
                   })}

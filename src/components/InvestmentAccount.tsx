@@ -650,8 +650,8 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             {/* Investment Transaction Modal */}
             {showTransactionModal && commodity && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-background-secondary border border-border rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/50 p-4">
+                    <div className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-auto rounded-lg border border-border bg-surface-elevated p-5">
                         <InvestmentTransactionForm
                             accountGuid={data.account.guid}
                             accountName={data.account.name}
@@ -670,8 +670,8 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
             {/* Add Price Modal */}
             {showPriceModal && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-background-secondary border border-border rounded-2xl p-6 w-full max-w-md mx-4">
+                <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/50 p-4">
+                    <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-auto rounded-lg border border-border bg-surface-elevated p-5">
                         <h3 className="text-lg font-semibold text-foreground mb-4">Add Price</h3>
                         <div className="space-y-4">
                             <div>

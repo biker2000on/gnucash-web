@@ -256,8 +256,8 @@ export function WebhooksSection() {
                 </button>
 
                 {form && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
-                        <div className="bg-surface border border-border rounded-xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/50 p-4" role="dialog" aria-modal="true">
+                        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg space-y-4 overflow-auto rounded-lg border border-border bg-surface-elevated p-5">
                             <h3 className="text-base font-semibold text-foreground">
                                 {form.id === null ? 'Add webhook' : 'Edit webhook'}
                             </h3>

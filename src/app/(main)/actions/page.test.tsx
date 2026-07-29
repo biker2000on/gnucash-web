@@ -3,15 +3,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import FinancialActionCenterPage from './page';
 import type { FinancialAction, FinancialActionList } from '@/lib/financial-actions/types';
 
-const { toastMock } = vi.hoisted(() => ({
+const { toastMock, routerPushMock, switchBookMock, searchParamsMock } = vi.hoisted(() => ({
   toastMock: { success: vi.fn(), error: vi.fn() },
+  routerPushMock: vi.fn(),
+  switchBookMock: vi.fn(),
+  searchParamsMock: { current: new URLSearchParams() },
 }));
 
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: routerPushMock }),
+  useSearchParams: () => searchParamsMock.current,
 }));
 vi.mock('@/contexts/ToastContext', () => ({
   useToast: () => toastMock,
+}));
+vi.mock('@/contexts/BookContext', () => ({
+  useBooks: () => ({
+    activeBookGuid: 'b'.repeat(32),
+    books: [
+      { guid: 'b'.repeat(32), name: 'Household' },
+      { guid: 'c'.repeat(32), name: 'Business' },
+    ],
+    switchBook: switchBookMock,
+  }),
 }));
 vi.mock('@/lib/financial-actions/client-events', () => ({
   subscribeToActionCenterUpdates: () => () => undefined,
@@ -77,6 +91,7 @@ function jsonResponse(body: unknown): Response {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  searchParamsMock.current = new URLSearchParams();
 });
 
 describe('FinancialActionCenterPage mutations', () => {
@@ -392,5 +407,32 @@ describe('FinancialActionCenterPage mutations', () => {
       expect.stringContaining('includeCompleted=true'),
       { cache: 'no-store' },
     );
+  });
+
+  it('switches book context before opening a cross-book family action', async () => {
+    searchParamsMock.current = new URLSearchParams('scope=family');
+    switchBookMock.mockResolvedValue(undefined);
+    const businessAction = {
+      ...action('business-action', 'Review business books'),
+      bookGuid: 'c'.repeat(32),
+      operations: [{
+        id: 'open-business',
+        label: 'Open',
+        kind: 'link' as const,
+        href: '/business/close',
+        primary: true,
+      }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(list([businessAction]))));
+
+    render(<FinancialActionCenterPage />);
+    expect(await screen.findByText('Business')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+
+    await waitFor(() => expect(switchBookMock).toHaveBeenCalledWith(
+      'c'.repeat(32),
+      '/business/close',
+    ));
+    expect(routerPushMock).not.toHaveBeenCalled();
   });
 });

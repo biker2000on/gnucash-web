@@ -212,8 +212,8 @@ export function ShareLinksSection() {
                 </button>
 
                 {showCreate && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
-                        <div className="bg-surface border border-border rounded-xl w-full max-w-md p-5 space-y-4">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/50 p-4" role="dialog" aria-modal="true">
+                        <div className="max-h-[calc(100dvh-2rem)] w-full max-w-md space-y-4 overflow-auto rounded-lg border border-border bg-surface-elevated p-5">
                             {!newUrl ? (
                                 <>
                                     <h3 className="text-base font-semibold text-foreground">Create share link</h3>

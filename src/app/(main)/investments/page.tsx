@@ -1,6 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useInvestmentData } from '@/contexts/InvestmentDataContext';
 import { PortfolioSummaryCards } from '@/components/investments/PortfolioSummaryCards';
 import { AllocationChart } from '@/components/investments/AllocationChart';
@@ -12,10 +14,15 @@ import { calculateMoneyWeightedReturn, calculateTimeWeightedReturn } from '@/lib
 import { ScrubAllButton } from '@/components/investments/ScrubAllButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { RelatedLinks } from '@/components/RelatedLinks';
+import { CashAllocationCard } from '@/components/investments/CashAllocationCard';
+import { BenchmarkPanel } from './benchmark/BenchmarkPanel';
 
 type AllocationTab = 'holdings' | 'cashPct' | 'cashAcct' | 'sector';
+type InvestmentView = 'overview' | 'cash' | 'benchmark';
+type CashSortMode = 'percent' | 'amount';
 
 export default function HoldingsPage() {
+  const searchParams = useSearchParams();
   const {
     portfolio, history, portfolioCashFlows, indices, loading, fetchingPrices,
     apiConfigured, handleFetchAllPrices
@@ -23,6 +30,10 @@ export default function HoldingsPage() {
 
   const [allocationTab, setAllocationTab] = useState<AllocationTab>('holdings');
   const [performanceMetric, setPerformanceMetric] = useState<'twr' | 'mwr'>('twr');
+  const [cashSortMode, setCashSortMode] = useState<CashSortMode>('percent');
+  const requestedView = searchParams.get('view');
+  const view: InvestmentView =
+    requestedView === 'cash' || requestedView === 'benchmark' ? requestedView : 'overview';
 
   const performancePercent = useMemo(() => {
     if (performanceMetric === 'mwr') {
@@ -32,6 +43,70 @@ export default function HoldingsPage() {
     return calculateTimeWeightedReturn(history, portfolioCashFlows);
   }, [history, performanceMetric, portfolioCashFlows]);
   const safePerformancePercent = Number.isFinite(performancePercent) ? performancePercent : 0;
+
+  const pageHeader = (
+    <PageHeader
+      title="Investments"
+      subtitle={
+        view === 'cash'
+          ? 'Cash allocation across investment accounts'
+          : view === 'benchmark'
+            ? 'Portfolio performance against market indices'
+            : 'Portfolio overview and performance'
+      }
+      actions={<ScrubAllButton />}
+      menuActions={[
+        {
+          label: fetchingPrices ? 'Fetching prices...' : 'Refresh All Prices',
+          onSelect: handleFetchAllPrices,
+          disabled: fetchingPrices,
+          icon: (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
+            </svg>
+          ),
+        },
+      ]}
+    />
+  );
+
+  const viewTabs = (
+    <nav aria-label="Investment views" className="flex max-w-full gap-1 overflow-x-auto border-b border-border">
+      {([
+        ['overview', '/investments', 'Overview'],
+        ['cash', '/investments?view=cash', 'Cash'],
+        ['benchmark', '/investments?view=benchmark', 'Benchmark'],
+      ] as const).map(([key, href, label]) => (
+        <Link
+          key={key}
+          href={href}
+          aria-current={view === key ? 'page' : undefined}
+          className={`shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+            view === key
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-foreground-secondary hover:text-foreground'
+          }`}
+        >
+          {label}
+        </Link>
+      ))}
+    </nav>
+  );
+
+  if (view === 'benchmark') {
+    return (
+      <div className="space-y-6">
+        {pageHeader}
+        {viewTabs}
+        <BenchmarkPanel />
+      </div>
+    );
+  }
 
   // Cash as % of total portfolio (2-slice pie: Cash vs Investments)
   const cashPctOfPortfolio = portfolio?.overallCash ? [
@@ -59,7 +134,8 @@ export default function HoldingsPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="h-8 bg-background-tertiary rounded animate-pulse w-48" />
+        {pageHeader}
+        {viewTabs}
         <div className="sm:hidden h-48 bg-background-tertiary rounded-lg animate-pulse" />
         <div className="hidden sm:grid grid-cols-1 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map(i => (
@@ -70,10 +146,60 @@ export default function HoldingsPage() {
     );
   }
 
+  if (view === 'cash') {
+    if (!portfolio?.cashByAccount?.length) {
+      return (
+        <div className="space-y-6">
+          {pageHeader}
+          {viewTabs}
+          <div className="rounded-lg border border-border bg-surface p-8 text-center">
+            <p className="mb-2 text-lg text-foreground-secondary">No cash data available</p>
+            <p className="text-foreground-muted">
+              Cash balances will appear here once detected in your investment accounts.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    const sortedCash = [...portfolio.cashByAccount].sort((a, b) =>
+      cashSortMode === 'percent'
+        ? b.cashPercent - a.cashPercent
+        : b.cashBalance - a.cashBalance
+    );
+
+    return (
+      <div className="space-y-6">
+        {pageHeader}
+        {viewTabs}
+        <div className="flex justify-end gap-1">
+          {([
+            ['percent', 'Sort by %'],
+            ['amount', 'Sort by $'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setCashSortMode(key)}
+              className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                cashSortMode === key
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-background-tertiary text-foreground-secondary hover:bg-surface-hover'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <CashAllocationCard cashByAccount={sortedCash} overallCash={portfolio.overallCash} />
+      </div>
+    );
+  }
+
   if (!portfolio || portfolio.holdings.length === 0) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Investments" subtitle="Portfolio overview and performance" />
+        {pageHeader}
+        {viewTabs}
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
           <p className="text-foreground-secondary text-lg mb-2">No investment accounts found</p>
           <p className="text-foreground-muted">
@@ -101,29 +227,8 @@ export default function HoldingsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <PageHeader
-        title="Investments"
-        subtitle="Portfolio overview and performance"
-        actions={<ScrubAllButton />}
-        menuActions={[
-          {
-            label: fetchingPrices ? 'Fetching prices...' : 'Refresh All Prices',
-            onSelect: handleFetchAllPrices,
-            disabled: fetchingPrices,
-            icon: (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-            ),
-          },
-        ]}
-      />
+      {pageHeader}
+      {viewTabs}
 
       {/* API Not Configured Warning */}
       {!apiConfigured && (

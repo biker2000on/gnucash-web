@@ -552,7 +552,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     // Data-dense pages use the full content width to reduce horizontal scrolling.
     const isFullWidthPage =
-        (pathname?.startsWith('/budgets/') && pathname !== '/budgets/') ||
+        pathname?.startsWith('/budgets') ||
         pathname === '/ledger' ||
         pathname === '/settings/commodities' ||
         (pathname?.startsWith('/accounts/') && pathname !== '/accounts/') ||
