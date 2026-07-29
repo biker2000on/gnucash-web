@@ -5,6 +5,7 @@ import type { ImportProgress } from '@/lib/gnucash-xml/importer';
 import { requireRole } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * Invalidate dashboard metric caches for the imported book. An import can
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
         await grantRole(roleResult.user.id, summary.bookGuid, 'admin', roleResult.user.id);
       }
       await invalidateImportCaches(summary.bookGuid);
+      if (summary.bookGuid) void publishDataChange(summary.bookGuid, 'book', { action: 'bulk' });
       return NextResponse.json({ success: true, summary });
     }
 
@@ -117,6 +119,7 @@ export async function POST(request: NextRequest) {
           }
 
           await invalidateImportCaches(summary.bookGuid);
+          if (summary.bookGuid) void publishDataChange(summary.bookGuid, 'book', { action: 'bulk' });
 
           send('complete', { success: true, summary });
         } catch (error) {

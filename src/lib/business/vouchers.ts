@@ -19,7 +19,6 @@
  */
 
 import prisma from '@/lib/prisma';
-import { generateGuid } from '@/lib/gnucash';
 import {
   createInvoice,
   updateInvoice,
@@ -32,6 +31,8 @@ import {
   getInvoiceWithStatus,
   InvoiceNotFoundError,
   OWNER_TYPE_EMPLOYEE,
+  nextCounterId,
+  type CounterDb,
   type PrismaTx,
   type InvoiceView,
   type InvoiceDetailView,
@@ -41,11 +42,7 @@ import {
   type PaymentResult,
   type PaymentView,
 } from './invoice-engine';
-import { formatInvoiceId, nextIdFromExisting, type InvoiceStatus } from './invoice-totals';
-
-/** GnuCash KVP slot types used by the counter frame. */
-const SLOT_INT64 = 1;
-const SLOT_FRAME = 9;
+import { type InvoiceStatus } from './invoice-totals';
 
 /** Book counter name GnuCash desktop uses for expense vouchers. */
 export const VOUCHER_COUNTER = 'gncExpVoucher';
@@ -61,74 +58,23 @@ function asVoucher<T extends InvoiceView>(view: T): Omit<T, 'type'> & { type: 'v
 /* Numbering — 'counters/gncExpVoucher'                                 */
 /* ------------------------------------------------------------------ */
 
-/** Minimal structural DB surface so the counter logic is unit-testable. */
-export interface VoucherCounterDb {
-  slots: {
-    findFirst(args: {
-      where: Record<string, unknown>;
-    }): Promise<{ id: number; guid_val?: string | null; int64_val?: bigint | null } | null>;
-    create(args: { data: Record<string, unknown> }): Promise<unknown>;
-    update(args: { where: { id: number }; data: Record<string, unknown> }): Promise<unknown>;
-  };
-  invoices: {
-    findMany(args: {
-      where: Record<string, unknown>;
-      select: Record<string, boolean>;
-    }): Promise<Array<{ id: string }>>;
-  };
-}
+/**
+ * Minimal structural DB surface so the counter logic is unit-testable.
+ * $queryRaw is required for the atomic increment and the bootstrap advisory
+ * lock — see nextCounterId in the invoice engine.
+ */
+export type VoucherCounterDb = CounterDb;
 
 /**
- * Next voucher number. Reads/increments the book's 'counters/gncExpVoucher'
- * slot (frame layout: book -> 'counters' frame -> child on the frame guid,
- * tolerating flat layouts); falls back to max-numeric-id + 1 across existing
- * vouchers and bootstraps the counter so desktop sees it. Zero-padded to 6.
+ * Next voucher number. Atomically increments the book's
+ * 'counters/gncExpVoucher' slot (frame layout: book -> 'counters' frame ->
+ * child on the frame guid, tolerating flat layouts); falls back to
+ * max-numeric-id + 1 across existing vouchers and bootstraps the counter so
+ * desktop sees it (bootstrap serialized via advisory lock). Zero-padded to 6.
+ * MUST run inside a $transaction — see createVoucher.
  */
 export async function nextVoucherId(db: VoucherCounterDb, bookGuid: string): Promise<string> {
-  const frame = await db.slots.findFirst({
-    where: { obj_guid: bookGuid, name: 'counters', slot_type: SLOT_FRAME },
-  });
-  let counterRow = frame?.guid_val
-    ? await db.slots.findFirst({
-        where: { obj_guid: frame.guid_val, name: `counters/${VOUCHER_COUNTER}` },
-      })
-    : null;
-  if (!counterRow) {
-    counterRow = await db.slots.findFirst({
-      where: { obj_guid: bookGuid, name: `counters/${VOUCHER_COUNTER}` },
-    });
-  }
-
-  if (counterRow) {
-    // The stored value is the LAST used number; persist and use value + 1.
-    const next = Number(counterRow.int64_val ?? 0n) + 1;
-    await db.slots.update({ where: { id: counterRow.id }, data: { int64_val: BigInt(next) } });
-    return formatInvoiceId(next);
-  }
-
-  const rows = await db.invoices.findMany({
-    where: { owner_type: OWNER_TYPE_EMPLOYEE },
-    select: { id: true },
-  });
-  const next = nextIdFromExisting(rows.map((r) => r.id));
-
-  let frameGuid = frame?.guid_val ?? null;
-  if (!frameGuid) {
-    frameGuid = generateGuid();
-    await db.slots.create({
-      data: { obj_guid: bookGuid, name: 'counters', slot_type: SLOT_FRAME, guid_val: frameGuid },
-    });
-  }
-  await db.slots.create({
-    data: {
-      obj_guid: frameGuid,
-      name: `counters/${VOUCHER_COUNTER}`,
-      slot_type: SLOT_INT64,
-      int64_val: BigInt(next),
-    },
-  });
-
-  return formatInvoiceId(next);
+  return nextCounterId(db, bookGuid, VOUCHER_COUNTER, OWNER_TYPE_EMPLOYEE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,9 +109,14 @@ export interface CreateVoucherInput {
 }
 
 export async function createVoucher(input: CreateVoucherInput): Promise<VoucherDetailView> {
+  // Counter increment + advisory-locked bootstrap need a transaction client
+  // (pg_advisory_xact_lock is transaction-scoped); never run this on the bare
+  // prisma client.
   const id = input.id?.trim()
     ? input.id.trim()
-    : await nextVoucherId(prisma as unknown as VoucherCounterDb, input.bookGuid);
+    : await prisma.$transaction((tx) =>
+        nextVoucherId(tx as unknown as VoucherCounterDb, input.bookGuid),
+      );
   const view = await createInvoice({
     ownerType: 'employee',
     ownerGuid: input.employeeGuid,

@@ -9,9 +9,16 @@
  */
 
 import prisma from '@/lib/prisma';
+import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
+
+/** Global client or an interactive-transaction client. */
+type DbClient = Omit<
+    ExtendedPrismaClient,
+    '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 
 export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE';
 export type EntityType =
@@ -108,8 +115,11 @@ export interface TransactionSnapshot {
 }
 
 /** Full transaction snapshot suitable for exact restoration. */
-export async function snapshotTransactionByGuid(guid: string): Promise<TransactionSnapshot | null> {
-    const tx = await prisma.transactions.findUnique({
+export async function snapshotTransactionByGuid(
+    guid: string,
+    client: DbClient = prisma,
+): Promise<TransactionSnapshot | null> {
+    const tx = await client.transactions.findUnique({
         where: { guid },
         include: { splits: true },
     });
@@ -142,6 +152,31 @@ export function isTransactionSnapshot(value: unknown): value is TransactionSnaps
     if (!value || typeof value !== 'object') return false;
     const v = value as Record<string, unknown>;
     return v.snapshotVersion === 1 && typeof v.guid === 'string' && Array.isArray(v.splits);
+}
+
+/**
+ * Deep equality on the canonical snapshot fields (split order ignored, extra
+ * keys like `undo_of_audit_id` ignored). Used to verify, inside the undo
+ * transaction, that a transaction's CURRENT state still matches the audit
+ * entry's "after" image — if it doesn't, the transaction was edited since and
+ * a revert would silently discard those later edits.
+ */
+export function transactionSnapshotsEqual(a: TransactionSnapshot, b: TransactionSnapshot): boolean {
+    const canonSplit = (s: SplitSnapshot) => [
+        s.guid, s.account_guid, s.memo, s.action, s.reconcile_state,
+        s.reconcile_date ?? '', s.value_num, s.value_denom,
+        s.quantity_num, s.quantity_denom, s.lot_guid ?? '',
+    ].join('|');
+    const canon = (t: TransactionSnapshot) => JSON.stringify({
+        guid: t.guid,
+        currency_guid: t.currency_guid,
+        num: t.num,
+        post_date: t.post_date,
+        enter_date: t.enter_date,
+        description: t.description,
+        splits: t.splits.map(canonSplit).sort(),
+    });
+    return canon(a) === canon(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,50 +222,81 @@ export function buildUndoPlan(entry: AuditEntryLike): { plan: UndoPlan | null; r
     }
 }
 
-async function writeSnapshot(snapshot: TransactionSnapshot, replaceExisting: boolean): Promise<void> {
-    await prisma.$transaction(async (tx) => {
-        if (replaceExisting) {
-            await tx.splits.deleteMany({ where: { tx_guid: snapshot.guid } });
-            await tx.transactions.deleteMany({ where: { guid: snapshot.guid } });
-        } else {
-            const exists = await tx.transactions.findUnique({ where: { guid: snapshot.guid } });
-            if (exists) {
-                throw new Error('Transaction already exists — it may have been restored already');
-            }
+/** Write a snapshot within the caller's transaction (claim-first callers). */
+async function writeSnapshot(tx: DbClient, snapshot: TransactionSnapshot, replaceExisting: boolean): Promise<void> {
+    if (replaceExisting) {
+        await tx.splits.deleteMany({ where: { tx_guid: snapshot.guid } });
+        await tx.transactions.deleteMany({ where: { guid: snapshot.guid } });
+    } else {
+        const exists = await tx.transactions.findUnique({ where: { guid: snapshot.guid } });
+        if (exists) {
+            throw new UndoConflictError('Transaction already exists — it may have been restored already');
         }
-        await tx.transactions.create({
+    }
+    await tx.transactions.create({
+        data: {
+            guid: snapshot.guid,
+            currency_guid: snapshot.currency_guid,
+            num: snapshot.num,
+            post_date: snapshot.post_date ? new Date(snapshot.post_date) : null,
+            enter_date: snapshot.enter_date ? new Date(snapshot.enter_date) : null,
+            description: snapshot.description,
+        },
+    });
+    for (const s of snapshot.splits) {
+        // Lots may have been deleted since the snapshot — drop dangling refs
+        const lotGuid = s.lot_guid
+            ? (await tx.lots.findUnique({ where: { guid: s.lot_guid } })) ? s.lot_guid : null
+            : null;
+        await tx.splits.create({
             data: {
-                guid: snapshot.guid,
-                currency_guid: snapshot.currency_guid,
-                num: snapshot.num,
-                post_date: snapshot.post_date ? new Date(snapshot.post_date) : null,
-                enter_date: snapshot.enter_date ? new Date(snapshot.enter_date) : null,
-                description: snapshot.description,
+                guid: s.guid,
+                tx_guid: snapshot.guid,
+                account_guid: s.account_guid,
+                memo: s.memo,
+                action: s.action,
+                reconcile_state: s.reconcile_state,
+                reconcile_date: s.reconcile_date ? new Date(s.reconcile_date) : null,
+                value_num: BigInt(s.value_num),
+                value_denom: BigInt(s.value_denom),
+                quantity_num: BigInt(s.quantity_num),
+                quantity_denom: BigInt(s.quantity_denom),
+                lot_guid: lotGuid,
             },
         });
-        for (const s of snapshot.splits) {
-            // Lots may have been deleted since the snapshot — drop dangling refs
-            const lotGuid = s.lot_guid
-                ? (await tx.lots.findUnique({ where: { guid: s.lot_guid } })) ? s.lot_guid : null
-                : null;
-            await tx.splits.create({
-                data: {
-                    guid: s.guid,
-                    tx_guid: snapshot.guid,
-                    account_guid: s.account_guid,
-                    memo: s.memo,
-                    action: s.action,
-                    reconcile_state: s.reconcile_state,
-                    reconcile_date: s.reconcile_date ? new Date(s.reconcile_date) : null,
-                    value_num: BigInt(s.value_num),
-                    value_denom: BigInt(s.value_denom),
-                    quantity_num: BigInt(s.quantity_num),
-                    quantity_denom: BigInt(s.quantity_denom),
-                    lot_guid: lotGuid,
-                },
-            });
-        }
-    });
+    }
+}
+
+/** Aborts the undo transaction with a user-facing conflict message (→ 409). */
+class UndoConflictError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'UndoConflictError';
+    }
+}
+
+class AlreadyUndoneError extends UndoConflictError {
+    constructor() {
+        super('This entry has already been undone');
+        this.name = 'AlreadyUndoneError';
+    }
+}
+
+/**
+ * Claim-first idempotency (recurring-invoices pattern): atomically stamp
+ * undone_at as the FIRST write of the undo transaction. Zero rows means a
+ * concurrent (or earlier) undo won the claim — abort so nothing is applied
+ * twice. Rollback of the surrounding transaction releases the claim on
+ * failure, so a failed undo stays retryable.
+ */
+async function claimUndo(tx: DbClient, auditId: number, userId: number | null): Promise<void> {
+    const claimed = await tx.$queryRaw<Array<{ id: number }>>`
+        UPDATE gnucash_web_audit
+        SET undone_at = NOW(), undone_by = ${userId}
+        WHERE id = ${auditId} AND undone_at IS NULL
+        RETURNING id
+    `;
+    if (claimed.length === 0) throw new AlreadyUndoneError();
 }
 
 export interface UndoResult {
@@ -252,44 +318,90 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
         return { ok: false, message: 'Audit entry not found' };
     }
 
+    // Fast pre-check for friendliness; the authoritative guard is the atomic
+    // claim (undone_at CAS) inside the transaction below.
+    const undone = await prisma.$queryRaw<Array<{ id: number }>>`
+        SELECT id FROM gnucash_web_audit WHERE id = ${auditId} AND undone_at IS NOT NULL
+    `;
+    if (undone.length > 0) return { ok: false, message: 'This entry has already been undone' };
+
     const { plan, reason } = buildUndoPlan(entry);
     if (!plan) return { ok: false, message: reason ?? 'Not undoable' };
 
-    switch (plan.kind) {
-        case 'restore_deleted': {
-            // Period lock: restoring re-creates a transaction at its old date
-            await assertNotLocked(activeBookGuid, [plan.snapshot.post_date]);
-            await writeSnapshot(plan.snapshot, false);
-            await logAudit('CREATE', 'TRANSACTION', plan.snapshot.guid, null, {
-                ...plan.snapshot,
-                undo_of_audit_id: auditId,
-            });
-            return { ok: true, message: 'Transaction restored', action: 'CREATE' };
+    let user: Awaited<ReturnType<typeof getCurrentUser>> = null;
+    try {
+        user = await getCurrentUser();
+    } catch {
+        user = null;
+    }
+    const userId = user?.id ?? null;
+
+    try {
+        switch (plan.kind) {
+            case 'restore_deleted': {
+                // Period lock: restoring re-creates a transaction at its old date
+                await assertNotLocked(activeBookGuid, [plan.snapshot.post_date]);
+                await prisma.$transaction(async (tx) => {
+                    await claimUndo(tx, auditId, userId);
+                    await writeSnapshot(tx, plan.snapshot, false);
+                });
+                await logAudit('CREATE', 'TRANSACTION', plan.snapshot.guid, null, {
+                    ...plan.snapshot,
+                    undo_of_audit_id: auditId,
+                });
+                return { ok: true, message: 'Transaction restored', action: 'CREATE' };
+            }
+            case 'revert_update': {
+                const probe = await snapshotTransactionByGuid(plan.snapshot.guid);
+                if (!probe) return { ok: false, message: 'Transaction no longer exists — restore it from its DELETE entry instead' };
+                // Period lock: both the current date and the reverted-to date must be open
+                await assertNotLocked(activeBookGuid, [probe.post_date, plan.snapshot.post_date]);
+                const current = await prisma.$transaction(async (tx) => {
+                    await claimUndo(tx, auditId, userId);
+                    // Re-read INSIDE the transaction: the pre-check above ran on a
+                    // stale snapshot that a concurrent edit may have invalidated.
+                    const live = await snapshotTransactionByGuid(plan.snapshot.guid, tx);
+                    if (!live) {
+                        throw new UndoConflictError('Transaction no longer exists — restore it from its DELETE entry instead');
+                    }
+                    // Refuse when the transaction moved on past this entry's "after"
+                    // image — reverting would silently discard those later edits.
+                    if (isTransactionSnapshot(entry.new_values) && !transactionSnapshotsEqual(live, entry.new_values)) {
+                        throw new UndoConflictError(
+                            'The transaction has been edited since this entry — undoing it now would discard those later changes. Undo the newer entries first.',
+                        );
+                    }
+                    await writeSnapshot(tx, plan.snapshot, true);
+                    return live;
+                });
+                await logAudit('UPDATE', 'TRANSACTION', plan.snapshot.guid, current, {
+                    ...plan.snapshot,
+                    undo_of_audit_id: auditId,
+                });
+                return { ok: true, message: 'Transaction reverted to its previous state', action: 'UPDATE' };
+            }
+            case 'delete_created': {
+                const probe = await snapshotTransactionByGuid(plan.guid);
+                if (!probe) return { ok: false, message: 'Transaction no longer exists' };
+                // Period lock: transactions dated in a closed period cannot be deleted
+                await assertNotLocked(activeBookGuid, [probe.post_date]);
+                const current = await prisma.$transaction(async (tx) => {
+                    await claimUndo(tx, auditId, userId);
+                    const live = await snapshotTransactionByGuid(plan.guid, tx);
+                    if (!live) throw new UndoConflictError('Transaction no longer exists');
+                    await tx.splits.deleteMany({ where: { tx_guid: plan.guid } });
+                    await tx.transactions.delete({ where: { guid: plan.guid } });
+                    return live;
+                });
+                await logAudit('DELETE', 'TRANSACTION', plan.guid, { ...current, undo_of_audit_id: auditId }, null);
+                return { ok: true, message: 'Transaction deleted', action: 'DELETE' };
+            }
         }
-        case 'revert_update': {
-            const current = await snapshotTransactionByGuid(plan.snapshot.guid);
-            if (!current) return { ok: false, message: 'Transaction no longer exists — restore it from its DELETE entry instead' };
-            // Period lock: both the current date and the reverted-to date must be open
-            await assertNotLocked(activeBookGuid, [current.post_date, plan.snapshot.post_date]);
-            await writeSnapshot(plan.snapshot, true);
-            await logAudit('UPDATE', 'TRANSACTION', plan.snapshot.guid, current, {
-                ...plan.snapshot,
-                undo_of_audit_id: auditId,
-            });
-            return { ok: true, message: 'Transaction reverted to its previous state', action: 'UPDATE' };
+    } catch (error) {
+        if (error instanceof UndoConflictError) {
+            return { ok: false, message: error.message };
         }
-        case 'delete_created': {
-            const current = await snapshotTransactionByGuid(plan.guid);
-            if (!current) return { ok: false, message: 'Transaction no longer exists' };
-            // Period lock: transactions dated in a closed period cannot be deleted
-            await assertNotLocked(activeBookGuid, [current.post_date]);
-            await prisma.$transaction(async (tx) => {
-                await tx.splits.deleteMany({ where: { tx_guid: plan.guid } });
-                await tx.transactions.delete({ where: { guid: plan.guid } });
-            });
-            await logAudit('DELETE', 'TRANSACTION', plan.guid, { ...current, undo_of_audit_id: auditId }, null);
-            return { ok: true, message: 'Transaction deleted', action: 'DELETE' };
-        }
+        throw error;
     }
 }
 
@@ -328,6 +440,17 @@ export async function listAuditEntries(filters: AuditListFilters) {
         prisma.gnucash_web_audit.count({ where }),
     ]);
 
+    // undone_at lives outside the Prisma model (added by db-init DDL) — read
+    // it raw for the page so undone entries stop being offered as undoable.
+    const ids = entries.map(e => e.id);
+    const undoneRows = ids.length > 0
+        ? await prisma.$queryRaw<Array<{ id: number; undone_at: Date }>>`
+            SELECT id, undone_at FROM gnucash_web_audit
+            WHERE id = ANY(${ids}::int[]) AND undone_at IS NOT NULL
+        `
+        : [];
+    const undoneById = new Map(undoneRows.map(r => [r.id, r.undone_at]));
+
     return {
         total,
         entries: entries.map(e => ({
@@ -339,7 +462,8 @@ export async function listAuditEntries(filters: AuditListFilters) {
             newValues: e.new_values,
             createdAt: e.created_at.toISOString(),
             user: e.user ? (e.user.display_name || e.user.username) : null,
-            undoable: buildUndoPlan(e).plan !== null,
+            undoneAt: undoneById.get(e.id)?.toISOString() ?? null,
+            undoable: !undoneById.has(e.id) && buildUndoPlan(e).plan !== null,
         })),
     };
 }

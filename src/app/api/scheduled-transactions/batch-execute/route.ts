@@ -5,6 +5,7 @@ import { cacheInvalidateFrom } from '@/lib/cache';
 import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
 import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(request: NextRequest) {
   try {
@@ -61,6 +62,13 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         // Cache invalidation failure should not break the batch operation
         console.warn('Cache invalidation failed:', err);
+      }
+    }
+
+    if (result.results.some(r => r.success)) {
+      void publishDataChange(roleResult.bookGuid, 'schedules', { action: 'bulk' });
+      if (executedDates.length > 0) {
+        void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
       }
     }
 

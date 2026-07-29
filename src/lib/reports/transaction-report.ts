@@ -47,9 +47,20 @@ export async function generateTransactionReport(filters: ReportFilters): Promise
                 },
             } : {}),
         },
-        include: {
+        // Narrow selection: the report only needs value/memo/reconcile state
+        // and account names (account_type feeds the accountTypes filter).
+        // TODO(perf): add pagination once the route handler and report UI
+        // accept page params; today the UI expects the full result set.
+        select: {
+            post_date: true,
+            description: true,
             splits: {
-                include: {
+                select: {
+                    guid: true,
+                    value_num: true,
+                    value_denom: true,
+                    memo: true,
+                    reconcile_state: true,
                     account: {
                         select: {
                             guid: true,

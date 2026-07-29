@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 import { createScheduledTransaction, CreateScheduledTxInput } from '@/lib/services/scheduled-tx-create';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { publishDataChange } from '@/lib/data-events';
 
 
 /**
@@ -54,6 +55,8 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
+
+    void publishDataChange(roleResult.bookGuid, 'schedules', { action: 'create' });
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {

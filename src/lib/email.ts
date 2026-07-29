@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import type { NotificationSeverity } from '@/lib/notifications';
+import { product } from '@/lib/product';
 
 /**
  * SMTP email delivery.
@@ -10,7 +11,7 @@ import type { NotificationSeverity } from '@/lib/notifications';
  *   SMTP_SECURE    'true' for implicit TLS (port 465); default false (STARTTLS)
  *   SMTP_USER      optional auth user
  *   SMTP_PASS      optional auth password
- *   SMTP_FROM      default 'GnuCash Web <gnucash-web@localhost>'
+ *   SMTP_FROM      defaults to the product brand at gnucash-web@localhost
  *   APP_BASE_URL   used to absolutize notification links in email bodies
  */
 
@@ -47,7 +48,7 @@ export async function sendEmail(input: SendEmailInput): Promise<boolean> {
     const transport = getTransporter();
     if (!transport) return false;
     await transport.sendMail({
-        from: process.env.SMTP_FROM || 'GnuCash Web <gnucash-web@localhost>',
+        from: process.env.SMTP_FROM || `${product.brand} <gnucash-web@localhost>`,
         to: input.to,
         subject: input.subject,
         text: input.text,
@@ -128,7 +129,7 @@ export function renderNotificationEmail(input: NotificationEmailInput): { subjec
         ? (input.href.startsWith('http') ? input.href : `${base}${input.href}`)
         : null;
 
-    const subject = `[GnuCash Web] ${input.title}`;
+    const subject = `[${product.brand}] ${input.title}`;
     const textLines = [input.title];
     if (input.message) textLines.push('', input.message);
     if (link) textLines.push('', `Open: ${link}`);
@@ -140,11 +141,11 @@ export function renderNotificationEmail(input: NotificationEmailInput): { subjec
     <div style="padding:4px 0;background:${SEVERITY_COLOR[input.severity]};"></div>
     <div style="padding:24px;">
       <div style="font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#7d8bab;margin-bottom:8px;">
-        GnuCash Web · ${input.type.replace(/_/g, ' ')}
+        ${product.brand} · ${input.type.replace(/_/g, ' ')}
       </div>
       <h1 style="margin:0 0 12px;font-size:18px;color:#e8edf7;">${escapeHtml(input.title)}</h1>
       ${input.message ? `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#aeb9d0;white-space:pre-line;">${escapeHtml(input.message)}</p>` : ''}
-      ${link ? `<a href="${link}" style="display:inline-block;padding:10px 18px;background:#2dd4bf;color:#04211c;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">View in GnuCash Web</a>` : ''}
+      ${link ? `<a href="${link}" style="display:inline-block;padding:10px 18px;background:#2dd4bf;color:#04211c;border-radius:8px;font-size:14px;font-weight:600;text-decoration:none;">View in ${product.name}</a>` : ''}
     </div>
     <div style="padding:12px 24px;border-top:1px solid #24304a;font-size:11px;color:#7d8bab;">
       You are receiving this because email notifications are enabled in Settings.

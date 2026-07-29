@@ -154,28 +154,41 @@ describe('voucher posting split construction', () => {
   });
 });
 
-/** Tiny in-memory slots/invoices fake for the counter logic. */
+/**
+ * Tiny in-memory slots/invoices fake for the counter logic. Counter
+ * increments now go through $queryRaw (atomic UPDATE ... RETURNING in prod);
+ * the fake applies the increment in-memory and treats the bootstrap advisory
+ * lock as a no-op.
+ */
 function fakeCounterDb(seed: {
   slots?: Array<Record<string, any>>;
   voucherIds?: string[];
-}): VoucherCounterDb & { slots_rows: Array<Record<string, any>> } {
-  const slots = (seed.slots ?? []).map((s, i) => ({ id: i + 1, ...s }));
+}): VoucherCounterDb & { slots_rows: Array<Record<string, any>>; raw_sql: string[] } {
+  const slots: Array<Record<string, any>> = (seed.slots ?? []).map((s, i) => ({ id: i + 1, ...s }));
   let nextId = slots.length + 1;
   const match = (row: Record<string, any>, where: Record<string, unknown>) =>
     Object.entries(where).every(([k, v]) => row[k] === v);
+  const raw_sql: string[] = [];
   return {
     slots_rows: slots,
+    raw_sql,
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = strings.join('?');
+      raw_sql.push(sql);
+      if (sql.includes('pg_advisory_xact_lock')) return [] as any;
+      if (sql.includes('UPDATE slots')) {
+        const row = slots.find((r) => r.id === values[0]);
+        if (!row) return [] as any;
+        row.int64_val = (row.int64_val ?? 0n) + 1n;
+        return [{ int64_val: row.int64_val }] as any;
+      }
+      return [] as any;
+    },
     slots: {
-      findFirst: async ({ where }) => slots.find((r) => match(r, where)) ?? null,
+      findFirst: async ({ where }) => (slots.find((r) => match(r, where)) ?? null) as any,
       create: async ({ data }) => {
         const row = { id: nextId++, ...data };
         slots.push(row);
-        return row;
-      },
-      update: async ({ where, data }) => {
-        const row = slots.find((r) => r.id === where.id);
-        if (!row) throw new Error('slot not found');
-        Object.assign(row, data);
         return row;
       },
     },
@@ -210,6 +223,8 @@ describe('nextVoucherId', () => {
     // The counters frame was created on the book
     const frame = db.slots_rows.find((r) => r.name === 'counters' && r.obj_guid === 'book1')!;
     expect(frame.guid_val).toBe(counter.obj_guid);
+    // The bootstrap ran under the per-(book,counter) advisory lock
+    expect(db.raw_sql.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
     // Follow-up numbering uses the freshly-bootstrapped counter
     expect(await nextVoucherId(db, 'book1')).toBe('000014');
   });

@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { requireAuth } from '@/lib/auth';
 import { getUserBooks } from '@/lib/services/permission.service';
+import { publishDataChange } from '@/lib/data-events';
 
 interface BookSummaryRow {
     guid: string;
@@ -204,6 +205,8 @@ export async function POST(request: NextRequest) {
                 });
             }
         });
+
+        void publishDataChange(bookGuid, 'book', { guid: bookGuid, action: 'create' });
 
         return NextResponse.json(
             { guid: bookGuid, name: name.trim(), description: description || null, rootAccountGuid, accountCount: 5 },

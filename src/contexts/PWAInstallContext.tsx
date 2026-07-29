@@ -11,6 +11,7 @@ import {
     useSyncExternalStore,
 } from 'react';
 import { usePathname } from 'next/navigation';
+import { product } from '@/lib/product';
 
 const LOGIN_INSTALL_PENDING_KEY = 'pwa-install-pending-after-login';
 const LOGIN_INSTALL_DISMISSED_KEY = 'pwa-install-auto-prompt-dismissed';
@@ -392,7 +393,7 @@ function LoginInstallPrompt() {
             <div className="rounded-2xl border border-primary/30 bg-surface/95 backdrop-blur-xl shadow-2xl p-5">
                 <div className="flex items-start justify-between gap-4">
                     <div>
-                        <p className="text-sm font-semibold text-foreground">Install GnuCash Web</p>
+                        <p className="text-sm font-semibold text-foreground">Install {product.brand}</p>
                         <p className="mt-1 text-sm text-foreground-muted">
                             {isIos
                                 ? 'Add this app to your home screen for a full-screen mobile experience.'

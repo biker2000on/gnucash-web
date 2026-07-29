@@ -24,7 +24,7 @@ export interface InvestmentSaveData {
     price: string;
     total: string;
     isBuy: boolean;
-    original_enter_date?: string;
+    original_enter_date?: string | null;
 }
 
 interface InvestmentEditRowProps {
@@ -109,7 +109,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
 
         const originalEnterDate = transaction.enter_date
             ? new Date(transaction.enter_date).toISOString()
-            : undefined;
+            : null;
 
         const handleSharesChange = (val: string) => {
             const trimmed = val.trim();

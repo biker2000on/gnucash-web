@@ -15,6 +15,7 @@ import {
     descriptionMatches,
     ruleMatchesDeposit,
     fundingDedupeKey,
+    fundingSweepLockKey,
     parseFundingDedupeKey,
     parseAllocations,
     allocationsTotal,
@@ -104,6 +105,20 @@ describe('funding dedupe key', () => {
         expect(parseFundingDedupeKey('autofund:xyz:abc')).toBeNull();
         expect(parseFundingDedupeKey('autofund:0:abc')).toBeNull();
         expect(parseFundingDedupeKey('autofund:5:')).toBeNull();
+    });
+});
+
+describe('funding sweep advisory-lock key', () => {
+    it('is unique per (rule, deposit) pair and stable', () => {
+        expect(fundingSweepLockKey(42, GUID_A)).toBe(`fundsweep:42:${GUID_A}`);
+        expect(fundingSweepLockKey(1, GUID_A)).not.toBe(fundingSweepLockKey(2, GUID_A));
+        expect(fundingSweepLockKey(1, GUID_A)).not.toBe(fundingSweepLockKey(1, GUID_B));
+        // Same pair → same lock key, so overlapping runs serialize on it.
+        expect(fundingSweepLockKey(7, GUID_B)).toBe(fundingSweepLockKey(7, GUID_B));
+    });
+
+    it('is distinct from the num dedupe key namespace', () => {
+        expect(fundingSweepLockKey(42, GUID_A)).not.toBe(fundingDedupeKey(42, GUID_A));
     });
 });
 

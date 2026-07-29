@@ -9,11 +9,17 @@ import { logAudit, snapshotTransactionByGuid } from '@/lib/services/audit.servic
 import { processMultiCurrencySplits } from '@/lib/trading-accounts';
 import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
 import { buildAccountPathMap } from '@/lib/reports/utils';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
-import { withPeriodLockCheck } from '@/lib/services/period-lock.service';
+import {
+    withPeriodLockCheck,
+    assertNotLocked,
+    PeriodLockedError,
+    periodLockedResponse,
+} from '@/lib/services/period-lock.service';
 
 /**
  * @openapi
@@ -182,9 +188,13 @@ export async function GET(request: Request) {
             include: {
                 splits: {
                     include: {
+                        // Narrow to the only relation fields the response uses
+                        // (account_name, commodity_mnemonic) instead of every
+                        // column of accounts + commodities per split.
                         account: {
-                            include: {
-                                commodity: true,
+                            select: {
+                                name: true,
+                                commodity: { select: { mnemonic: true } },
                             },
                         },
                     },
@@ -311,7 +321,8 @@ export async function POST(request: Request) {
             return NextResponse.json({ errors: validation.errors }, { status: 400 });
         }
 
-        // Period lock: the new transaction's date must be after the lock date
+        // Period lock pre-check (fast-fail; the authoritative check runs
+        // inside the DB transaction below with the cache bypassed)
         const lockError = await withPeriodLockCheck(roleResult.bookGuid, [body.post_date]);
         if (lockError) return lockError;
 
@@ -342,6 +353,10 @@ export async function POST(request: Request) {
 
         // Create transaction with splits in a transaction
         const transaction = await prisma.$transaction(async (tx) => {
+            // Period lock (authoritative, in-transaction, cache bypassed):
+            // the new transaction's date must be after the lock date.
+            await assertNotLocked(roleResult.bookGuid, [body.post_date], { bypassCache: true });
+
             // Process multi-currency splits and add trading splits if needed
             const multiCurrencyResult = await processMultiCurrencySplits(
                 body.splits,
@@ -454,8 +469,13 @@ export async function POST(request: Request) {
             })),
         };
 
+        void publishDataChange(roleResult.bookGuid, 'transactions', { guid: txGuid, action: 'create' });
+
         return NextResponse.json(serializeBigInts(result), { status: 201 });
     } catch (error) {
+        if (error instanceof PeriodLockedError) {
+            return periodLockedResponse(error);
+        }
         console.error('Error creating transaction:', error);
         return NextResponse.json({ error: 'Failed to create transaction' }, { status: 500 });
     }

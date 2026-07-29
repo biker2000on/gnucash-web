@@ -75,17 +75,44 @@ export function TransactionEditModal({
         fetchTransaction();
     }, [isOpen, transactionGuid, mode]);
 
+    /** Reload the latest version after a concurrent-edit conflict. */
+    const refetchAfterConflict = useCallback(async () => {
+        if (!transactionGuid) return;
+        try {
+            const res = await fetch(`/api/transactions/${transactionGuid}`);
+            if (res.ok) setTransaction(await res.json());
+        } catch {
+            // keep the stale copy; the error message still shows
+        }
+    }, [transactionGuid]);
+
     const handleSave = useCallback(async (data: CreateTransactionRequest) => {
         const url = mode === 'create'
             ? '/api/transactions'
             : `/api/transactions/${transactionGuid}`;
         const method = mode === 'create' ? 'POST' : 'PUT';
 
+        // Optimistic-lock token: echo back the enter_date we loaded so the
+        // server can detect concurrent edits (null = row had none).
+        const payload = mode === 'create'
+            ? data
+            : {
+                ...data,
+                original_enter_date: transaction?.enter_date
+                    ? new Date(transaction.enter_date).toISOString()
+                    : null,
+            };
+
         const res = await fetch(url, {
             method,
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
+            body: JSON.stringify(payload),
         });
+
+        if (res.status === 409 || res.status === 428) {
+            await refetchAfterConflict();
+            throw new Error('This transaction was changed by someone else — the latest version has been reloaded. Please review and save again.');
+        }
 
         if (!res.ok) {
             const errorData = await res.json();
@@ -94,16 +121,27 @@ export function TransactionEditModal({
 
         onSaved?.();
         onClose();
-    }, [mode, transactionGuid, onSaved, onClose]);
+    }, [mode, transactionGuid, transaction, refetchAfterConflict, onSaved, onClose]);
 
     const handleDelete = useCallback(async () => {
         if (!transactionGuid) return;
 
         setDeleting(true);
         try {
-            const res = await fetch(`/api/transactions/${transactionGuid}`, {
+            // Optimistic-lock token: only delete the version we loaded
+            const enterDateToken = transaction?.enter_date
+                ? new Date(transaction.enter_date).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${transactionGuid}${tokenParam}`, {
                 method: 'DELETE',
             });
+
+            if (res.status === 409) {
+                await refetchAfterConflict();
+                setError('This transaction was changed by someone else — the latest version has been reloaded.');
+                return;
+            }
 
             if (!res.ok) {
                 throw new Error('Failed to delete transaction');
@@ -116,7 +154,7 @@ export function TransactionEditModal({
         } finally {
             setDeleting(false);
         }
-    }, [transactionGuid, onDeleted, onClose]);
+    }, [transactionGuid, transaction, refetchAfterConflict, onDeleted, onClose]);
 
     const getReconcileLabel = (state: string) => {
         switch (state) {

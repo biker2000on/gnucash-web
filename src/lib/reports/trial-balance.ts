@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportFilters, TrialBalanceData, TrialBalanceEntry } from './types';
-import { toDecimal, buildAccountPathMap } from './utils';
+import { buildAccountPathMap, sumSplitsByAccount } from './utils';
 
 /** Account types with debit-normal balances */
 const DEBIT_NORMAL_TYPES = new Set([
@@ -61,28 +61,16 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
     // Build full account path map
     const pathMap = await buildAccountPathMap(filters.bookAccountGuids);
 
-    // Get balances for each account up to end date
+    // Get balances for all accounts up to end date in a single GROUP BY query
+    const balanceSums = await sumSplitsByAccount(
+        accounts.map(a => a.guid),
+        { lte: endDate }
+    );
+
     const entries: TrialBalanceEntry[] = [];
 
     for (const account of accounts) {
-        const splits = await prisma.splits.findMany({
-            where: {
-                account_guid: account.guid,
-                transaction: {
-                    post_date: {
-                        lte: endDate,
-                    },
-                },
-            },
-            select: {
-                quantity_num: true,
-                quantity_denom: true,
-            },
-        });
-
-        const quantityBalance = splits.reduce((sum, split) => {
-            return sum + toDecimal(split.quantity_num, split.quantity_denom);
-        }, 0);
+        const quantityBalance = balanceSums.get(account.guid)?.quantity ?? 0;
         const reportCurrencyMultiplier = valuation.getMultiplier({
             accountType: account.account_type,
             commodityGuid: account.commodity_guid,

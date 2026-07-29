@@ -1,6 +1,17 @@
 import prisma from '@/lib/prisma';
+import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
 import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
+
+/**
+ * Either the global Prisma client or an interactive-transaction client
+ * (the callback argument of `prisma.$transaction`). Lets query helpers run
+ * INSIDE a caller's transaction instead of escaping it via the global client.
+ */
+export type DbClient = Omit<
+  ExtendedPrismaClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 
 export interface TemplateAccount {
   guid: string;
@@ -39,26 +50,58 @@ export function formatDate(date: Date | null): string | null {
 /**
  * Resolve template splits for a scheduled transaction.
  * GnuCash stores scheduled transaction templates as account hierarchies under a template root.
+ *
+ * Pass `client` to run inside a caller's `$transaction` (e.g. the FOR UPDATE
+ * block in scheduled-tx-execute); defaults to the global client for callers
+ * that don't need transactional consistency.
  */
-export async function resolveTemplateSplits(templateActGuid: string): Promise<ResolvedSplit[]> {
-  // Step 1: Find child accounts of the template root
-  const templateAccounts = await prisma.accounts.findMany({
-    where: { parent_guid: templateActGuid },
-    select: { guid: true, name: true },
+export async function resolveTemplateSplits(
+  templateActGuid: string,
+  client: DbClient = prisma,
+): Promise<ResolvedSplit[]> {
+  const byTemplate = await resolveTemplateSplitsBatch([templateActGuid], client);
+  return byTemplate.get(templateActGuid) ?? [];
+}
+
+/**
+ * Batched variant of resolveTemplateSplits: resolves the template splits for
+ * MANY scheduled transactions in 4 total queries (child template accounts,
+ * their splits, their 'account' slots, the referenced real accounts) instead
+ * of 4 queries PER scheduled transaction. Returns a map keyed by the input
+ * template root guid; every requested guid is present (empty array when the
+ * template has no resolvable splits).
+ */
+export async function resolveTemplateSplitsBatch(
+  templateActGuids: string[],
+  client: DbClient = prisma,
+): Promise<Map<string, ResolvedSplit[]>> {
+  const result = new Map<string, ResolvedSplit[]>();
+  const uniqueRoots = [...new Set(templateActGuids)];
+  for (const g of uniqueRoots) result.set(g, []);
+  if (uniqueRoots.length === 0) return result;
+
+  // Step 1: Find child accounts of every template root
+  const templateAccounts = await client.accounts.findMany({
+    where: { parent_guid: { in: uniqueRoots } },
+    select: { guid: true, name: true, parent_guid: true },
   });
 
-  if (templateAccounts.length === 0) return [];
+  if (templateAccounts.length === 0) return result;
 
   const templateGuids = templateAccounts.map(a => a.guid);
+  const rootByTemplate = new Map<string, string>();
+  for (const a of templateAccounts) {
+    if (a.parent_guid) rootByTemplate.set(a.guid, a.parent_guid);
+  }
 
   // Step 2: Find splits for transactions referencing template accounts
-  const splits = await prisma.splits.findMany({
+  const splits = await client.splits.findMany({
     where: { account_guid: { in: templateGuids } },
     select: { account_guid: true, value_num: true, value_denom: true },
   });
 
   // Step 3: Resolve real account GUIDs from slots
-  const slots = await prisma.slots.findMany({
+  const slots = await client.slots.findMany({
     where: {
       obj_guid: { in: templateGuids },
       slot_type: 4,
@@ -79,7 +122,7 @@ export async function resolveTemplateSplits(templateActGuid: string): Promise<Re
   const accountNames = new Map<string, string>();
 
   if (realGuids.length > 0) {
-    const accounts = await prisma.accounts.findMany({
+    const accounts = await client.accounts.findMany({
       where: { guid: { in: realGuids } },
       select: { guid: true, name: true },
     });
@@ -88,15 +131,15 @@ export async function resolveTemplateSplits(templateActGuid: string): Promise<Re
     }
   }
 
-  // Step 5: Combine results
-  const result: ResolvedSplit[] = [];
-
+  // Step 5: Combine results, grouped by template root
   for (const split of splits) {
     const realGuid = templateToReal.get(split.account_guid);
     if (!realGuid) continue;
+    const rootGuid = rootByTemplate.get(split.account_guid);
+    if (!rootGuid) continue;
 
     const amount = parseFloat(toDecimal(split.value_num, split.value_denom));
-    result.push({
+    result.get(rootGuid)!.push({
       accountGuid: realGuid,
       accountName: accountNames.get(realGuid) || 'Unknown',
       amount,
@@ -150,11 +193,44 @@ export interface ScheduledTransaction {
 
 /**
  * Fetch all scheduled transactions with resolved template data.
+ *
+ * When `bookGuid` is given, the schedxactions query itself is scoped to that
+ * book: GnuCash keeps each book's SX templates under the book's
+ * `root_template_guid`, so only schedules whose template account descends
+ * from that root are fetched (instead of reading every book's schedules and
+ * filtering later in JS).
  */
-export async function fetchScheduledTransactions(enabledOnly?: boolean): Promise<ScheduledTransaction[]> {
+export async function fetchScheduledTransactions(
+  enabledOnly?: boolean,
+  bookGuid?: string,
+): Promise<ScheduledTransaction[]> {
+  // Optional book scoping via the book's template account tree
+  let templateScopeGuids: string[] | null = null;
+  if (bookGuid) {
+    const book = await prisma.books.findUnique({
+      where: { guid: bookGuid },
+      select: { root_template_guid: true },
+    });
+    if (!book) return [];
+    const templateAccounts = await prisma.$queryRaw<{ guid: string }[]>`
+      WITH RECURSIVE template_tree AS (
+        SELECT guid FROM accounts WHERE guid = ${book.root_template_guid}
+        UNION ALL
+        SELECT a.guid FROM accounts a
+        JOIN template_tree t ON a.parent_guid = t.guid
+      )
+      SELECT guid FROM template_tree
+    `;
+    templateScopeGuids = templateAccounts.map(a => a.guid);
+    if (templateScopeGuids.length === 0) return [];
+  }
+
   // Step 1: Fetch scheduled transactions with recurrence patterns
   const sxList = await prisma.schedxactions.findMany({
-    where: enabledOnly ? { enabled: 1 } : undefined,
+    where: {
+      ...(enabledOnly ? { enabled: 1 } : {}),
+      ...(templateScopeGuids ? { template_act_guid: { in: templateScopeGuids } } : {}),
+    },
   });
 
   const sxGuids = sxList.map(s => s.guid);
@@ -189,9 +265,12 @@ export async function fetchScheduledTransactions(enabledOnly?: boolean): Promise
 
   const results: ScheduledTransaction[] = [];
 
+  // Resolve every row's template splits in one batched pass (4 queries total
+  // instead of 4 per scheduled transaction)
+  const splitsByTemplate = await resolveTemplateSplitsBatch(rows.map(r => r.template_act_guid));
+
   for (const row of rows) {
-    // Resolve template splits
-    const splits = await resolveTemplateSplits(row.template_act_guid);
+    const splits = splitsByTemplate.get(row.template_act_guid) ?? [];
 
     // Build recurrence info
     let recurrence: ScheduledTransaction['recurrence'] = null;

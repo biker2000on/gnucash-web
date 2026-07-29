@@ -4,6 +4,8 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import prisma from '@/lib/prisma';
 import { BudgetService } from '@/lib/services/budget.service';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import {
     loadMonthlyActuals,
     generateFromHistory,
@@ -188,6 +190,9 @@ export async function POST(request: NextRequest) {
                 amounts: new Array(input.numPeriods).fill(l.type === 'INCOME' ? -l.amount : l.amount),
             })),
         }) as { guid: string };
+
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid: budget.guid, action: 'create' });
 
         return NextResponse.json(
             {

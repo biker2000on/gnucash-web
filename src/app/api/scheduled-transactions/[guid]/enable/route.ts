@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { isScheduledTransactionInBook } from '@/lib/services/scheduled-tx-create';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function PATCH(
   request: NextRequest,
@@ -30,6 +31,8 @@ export async function PATCH(
     if (affected === 0) {
       return NextResponse.json({ error: 'Scheduled transaction not found' }, { status: 404 });
     }
+
+    void publishDataChange(roleResult.bookGuid, 'schedules', { guid, action: 'update' });
 
     return NextResponse.json({ guid, enabled: body.enabled });
   } catch (error) {

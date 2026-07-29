@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { isAccountInActiveBook } from '@/lib/book-scope';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import {
     getReconcileWorkspace,
     finalizeReconciliation,
@@ -164,6 +166,8 @@ export async function POST(
                 interactionDelta: body.interactionDelta,
             },
         );
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'reconciliation', { guid, action: 'update' });
         return NextResponse.json({ success: true, ...result });
     } catch (error) {
         if (error instanceof ManualReconcileError) return mapReconcileError(error);

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BudgetService } from '@/lib/services/budget.service';
 import { requireRole } from '@/lib/auth';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 // PATCH - Update a single budget amount (inline cell edit)
 export async function PATCH(
@@ -23,6 +25,8 @@ export async function PATCH(
         }
 
         const result = await BudgetService.setAmount(guid, account_guid, period_num, amount);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json(result);
     } catch (error) {
         console.error('Error updating budget amount:', error);
@@ -54,6 +58,8 @@ export async function DELETE(
         }
 
         const deletedCount = await BudgetService.deleteAccountAmounts(guid, accountGuid);
+        void cacheInvalidateAllForBook(roleResult.bookGuid);
+        void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json({ success: true, deleted_count: deletedCount });
     } catch (error) {
         console.error('Error deleting budget amounts:', error);

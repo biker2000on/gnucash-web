@@ -1,5 +1,5 @@
 /**
- * Transaction validation utilities for GnuCash web
+ * Transaction validation utilities for GnuCash data
  */
 
 import { isValidGuid } from './guid';

@@ -118,6 +118,12 @@ export const LAZY_BOOK_GUID_TABLES = [
     'gnucash_web_report_schedules',
 ] as const;
 
+/**
+ * Any client that can run the extension-row deletes: the app's (extended)
+ * Prisma client or one of its interactive-transaction clients.
+ */
+export type BookCleanupClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 /** Collect non-null storage keys from rows. */
 function collectKeys(rows: Array<Record<string, string | null>>): string[] {
     const keys: string[] = [];
@@ -130,32 +136,35 @@ function collectKeys(rows: Array<Record<string, string | null>>): string[] {
 }
 
 /**
- * Best-effort deletion of stored files (S3 or filesystem). Failures are
- * logged and never abort the DB cleanup — a missing file must not leave
- * the book half-deleted.
+ * Enumerate the storage keys (S3/filesystem) belonging to a book. Must run
+ * while the DB rows still exist — inside the deletion transaction is fine
+ * (pass the tx client), so files can be removed AFTER the commit.
+ * Enumeration failures are logged and return an empty list.
  */
-async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
-    let keys: string[] = [];
+export async function collectBookStorageKeys(
+    bookGuid: string,
+    db: BookCleanupClient = prisma,
+): Promise<string[]> {
     try {
         const [receipts, payslips, documents, homePhotos] = await Promise.all([
-            prisma.gnucash_web_receipts.findMany({
+            db.gnucash_web_receipts.findMany({
                 where: { book_guid: bookGuid },
                 select: { storage_key: true, thumbnail_key: true },
             }),
-            prisma.gnucash_web_payslips.findMany({
+            db.gnucash_web_payslips.findMany({
                 where: { book_guid: bookGuid },
                 select: { storage_key: true, thumbnail_key: true },
             }),
-            prisma.gnucash_web_entity_documents.findMany({
+            db.gnucash_web_entity_documents.findMany({
                 where: { book_guid: bookGuid },
                 select: { file_key: true },
             }),
-            prisma.gnucash_web_home_item_photos.findMany({
+            db.gnucash_web_home_item_photos.findMany({
                 where: { book_guid: bookGuid },
                 select: { photo_key: true },
             }),
         ]);
-        keys = [
+        return [
             ...collectKeys(receipts),
             ...collectKeys(payslips),
             ...collectKeys(documents),
@@ -163,9 +172,16 @@ async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
         ];
     } catch (err) {
         console.warn('[book-cleanup] failed to enumerate stored files, skipping file deletion:', err);
-        return;
+        return [];
     }
+}
 
+/**
+ * Best-effort deletion of stored file keys (S3 or filesystem). Failures are
+ * logged and never abort — a missing file must not leave the book
+ * half-deleted.
+ */
+export async function deleteStoredFileKeys(keys: string[]): Promise<void> {
     if (keys.length === 0) return;
 
     let storage;
@@ -183,6 +199,16 @@ async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
             console.warn(`[book-cleanup] failed to delete stored file "${key}":`, err);
         }
     }
+}
+
+/**
+ * Best-effort deletion of stored files (S3 or filesystem). Failures are
+ * logged and never abort the DB cleanup — a missing file must not leave
+ * the book half-deleted.
+ */
+async function deleteStoredFilesBestEffort(bookGuid: string): Promise<void> {
+    const keys = await collectBookStorageKeys(bookGuid);
+    await deleteStoredFileKeys(keys);
 }
 
 /**
@@ -205,16 +231,218 @@ async function deleteLazyTableRows(bookGuid: string): Promise<void> {
 }
 
 /**
- * Delete all extension-table rows and stored files belonging to a book.
+ * Delete rows from lazily-created tables on the caller's transaction client.
+ * Unlike {@link deleteLazyTableRows}, a missing-table error would poison the
+ * surrounding transaction, so each table's existence is checked first via
+ * to_regclass() — transaction-safe on tables that may not exist yet.
+ */
+async function deleteLazyTableRowsTransactional(
+    db: BookCleanupClient,
+    bookGuid: string,
+): Promise<void> {
+    for (const table of LAZY_BOOK_GUID_TABLES) {
+        // Table names come from the compile-time constant list above.
+        const rows = await db.$queryRawUnsafe<Array<{ reg: string | null }>>(
+            `SELECT to_regclass('${table}')::text AS reg`,
+        );
+        if (!rows?.[0]?.reg) continue; // table not created yet
+        await db.$executeRawUnsafe(
+            `DELETE FROM ${table} WHERE book_guid = $1`,
+            bookGuid,
+        );
+    }
+}
+
+/**
+ * Delete every extension-table DB row belonging to a book, on the caller's
+ * client. Pass an interactive-transaction client to make the cleanup atomic
+ * with the core-row deletion (see DELETE /api/books/[guid]) — file/storage
+ * cleanup is NOT done here (collect keys first with collectBookStorageKeys,
+ * delete them after commit with deleteStoredFileKeys).
  *
- * @param bookGuid     GUID of the book being deleted
- * @param accountGuids All account GUIDs under the book's root (and template
- *                     root), used for account/split/transaction-keyed tables
+ * Must run BEFORE the core GnuCash rows (splits, transactions, accounts,
+ * book) are removed: several row sets derive from the book's splits.
+ * Deletes run FK children before parents (explicit even where cascades
+ * exist, since parts of the live DB were created via raw DDL).
+ */
+export async function deleteBookExtensionRows(
+    db: BookCleanupClient,
+    bookGuid: string,
+    accountGuids: string[],
+    options: { includeLazyTables?: boolean } = {},
+): Promise<void> {
+    if (options.includeLazyTables) {
+        await deleteLazyTableRowsTransactional(db, bookGuid);
+    }
+
+    const hasAccounts = accountGuids.length > 0;
+    const ops: Prisma.PrismaPromise<unknown>[] = [
+        // Membership module (attendance → payments → members/types/meetings)
+        db.gnucash_web_meeting_attendance.deleteMany({
+            where: {
+                OR: [
+                    { meeting: { book_guid: bookGuid } },
+                    { member: { book_guid: bookGuid } },
+                ],
+            },
+        }),
+        db.gnucash_web_membership_payments.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_members.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_membership_types.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_meetings.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Packages (redemptions → packages)
+        db.gnucash_web_package_redemptions.deleteMany({
+            where: { package: { book_guid: bookGuid } },
+        }),
+        db.gnucash_web_packages.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Estimates (lines → estimates)
+        db.gnucash_web_estimate_lines.deleteMany({
+            where: { estimate: { book_guid: bookGuid } },
+        }),
+        db.gnucash_web_estimates.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Funds (account_funds junction → funds)
+        db.gnucash_web_account_funds.deleteMany({
+            where: hasAccounts
+                ? {
+                    OR: [
+                        { fund: { book_guid: bookGuid } },
+                        { account_guid: { in: accountGuids } },
+                    ],
+                }
+                : { fund: { book_guid: bookGuid } },
+        }),
+        db.gnucash_web_funds.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Home module (service log → tasks → photos → items → rooms)
+        db.gnucash_web_home_service_log.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_home_tasks.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_home_item_photos.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_home_items.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_home_rooms.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Import history
+        db.gnucash_web_import_batches.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // SimpleFIN (account map → connections)
+        db.gnucash_web_simplefin_account_map.deleteMany({
+            where: { connection: { book_guid: bookGuid } },
+        }),
+        db.gnucash_web_simplefin_connections.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Tags (junctions → tags). Tags are book-scoped; junction rows are
+        // removed both via the book's tags and via the book's accounts.
+        db.gnucash_web_transaction_tags.deleteMany({
+            where: { tag: { book_guid: bookGuid } },
+        }),
+        db.gnucash_web_account_tags.deleteMany({
+            where: hasAccounts
+                ? {
+                    OR: [
+                        { tag: { book_guid: bookGuid } },
+                        { account_guid: { in: accountGuids } },
+                    ],
+                }
+                : { tag: { book_guid: bookGuid } },
+        }),
+        db.gnucash_web_tags.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Documents / receipts / payslips (files already deleted above)
+        db.gnucash_web_receipts.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_payslips.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_payslip_mappings.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_payslip_templates.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_entity_documents.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Access control
+        db.gnucash_web_book_permissions.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_invitations.deleteMany({ where: { book_guid: bookGuid } }),
+
+        // Per-book config and misc
+        db.gnucash_web_tool_config.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_entity_members.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_entity_profiles.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_book_features.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_book_links.deleteMany({
+            where: {
+                OR: [
+                    { business_book_guid: bookGuid },
+                    { household_book_guid: bookGuid },
+                ],
+            },
+        }),
+        db.gnucash_web_compliance_status.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_vendor_tax_info.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_invoice_shares.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_dunning_log.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_dunning_optout.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_dunning_settings.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_time_entries.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_book_settings.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_budget_funding_rules.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_renewals.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_saved_reports.deleteMany({ where: { book_guid: bookGuid } }),
+    ];
+
+    if (hasAccounts) {
+        // Account-keyed tables
+        ops.push(
+            db.gnucash_web_account_preferences.deleteMany({
+                where: { account_guid: { in: accountGuids } },
+            }),
+            db.gnucash_web_tax_mappings.deleteMany({
+                where: { account_guid: { in: accountGuids } },
+            }),
+            db.gnucash_web_depreciation_schedules.deleteMany({
+                where: { account_guid: { in: accountGuids } },
+            }),
+        );
+
+        // Split/transaction-keyed tables — cleaned via the book's splits,
+        // which still exist because this runs before the core deletion.
+        ops.push(
+            db.$executeRaw`
+                DELETE FROM gnucash_web_contribution_tax_year
+                WHERE split_guid IN (
+                    SELECT guid FROM splits WHERE account_guid = ANY(${accountGuids}::text[])
+                )
+            `,
+            db.$executeRaw`
+                DELETE FROM gnucash_web_transaction_types
+                WHERE split_guid IN (
+                    SELECT guid FROM splits WHERE account_guid = ANY(${accountGuids}::text[])
+                )
+            `,
+            db.$executeRaw`
+                DELETE FROM gnucash_web_transaction_meta
+                WHERE transaction_guid IN (
+                    SELECT DISTINCT tx_guid FROM splits WHERE account_guid = ANY(${accountGuids}::text[])
+                )
+            `,
+        );
+    }
+
+    // Execute sequentially on the caller's client. When `db` is an
+    // interactive-transaction client this is atomic with the caller's other
+    // work; when it is the root client each delete commits independently
+    // (legacy behavior of deleteBookExtensionData below wraps this in its
+    // own transaction).
+    for (const op of ops) {
+        await op;
+    }
+}
+
+/**
+ * Legacy all-in-one cleanup: stored files, lazy tables (best-effort, outside
+ * any transaction), then all Prisma-schema extension rows in one
+ * transaction.
  *
- * Must be called BEFORE the core GnuCash rows (splits, transactions,
- * accounts, book) are removed. All Prisma-schema deletes share one
- * sequential transaction; file deletions and lazy-table deletes run
- * best-effort outside it.
+ * Prefer the split building blocks for new callers — collectBookStorageKeys
+ * + deleteBookExtensionRows inside YOUR transaction, deleteStoredFileKeys
+ * after commit — so a failed core deletion cannot leave extension data
+ * already destroyed (see DELETE /api/books/[guid]).
  */
 export async function deleteBookExtensionData(
     bookGuid: string,
@@ -226,157 +454,9 @@ export async function deleteBookExtensionData(
     // 2. Lazy raw-SQL tables (may not exist) — guarded, outside the transaction.
     await deleteLazyTableRows(bookGuid);
 
-    // 3. All Prisma-schema extension rows in one sequential transaction,
-    //    FK children before parents (explicit even where cascades exist,
-    //    since parts of the live DB were created via raw DDL).
-    const hasAccounts = accountGuids.length > 0;
-    const ops: Prisma.PrismaPromise<unknown>[] = [
-        // Membership module (attendance → payments → members/types/meetings)
-        prisma.gnucash_web_meeting_attendance.deleteMany({
-            where: {
-                OR: [
-                    { meeting: { book_guid: bookGuid } },
-                    { member: { book_guid: bookGuid } },
-                ],
-            },
-        }),
-        prisma.gnucash_web_membership_payments.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_members.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_membership_types.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_meetings.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Packages (redemptions → packages)
-        prisma.gnucash_web_package_redemptions.deleteMany({
-            where: { package: { book_guid: bookGuid } },
-        }),
-        prisma.gnucash_web_packages.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Estimates (lines → estimates)
-        prisma.gnucash_web_estimate_lines.deleteMany({
-            where: { estimate: { book_guid: bookGuid } },
-        }),
-        prisma.gnucash_web_estimates.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Funds (account_funds junction → funds)
-        prisma.gnucash_web_account_funds.deleteMany({
-            where: hasAccounts
-                ? {
-                    OR: [
-                        { fund: { book_guid: bookGuid } },
-                        { account_guid: { in: accountGuids } },
-                    ],
-                }
-                : { fund: { book_guid: bookGuid } },
-        }),
-        prisma.gnucash_web_funds.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Home module (service log → tasks → photos → items → rooms)
-        prisma.gnucash_web_home_service_log.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_home_tasks.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_home_item_photos.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_home_items.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_home_rooms.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Import history
-        prisma.gnucash_web_import_batches.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // SimpleFIN (account map → connections)
-        prisma.gnucash_web_simplefin_account_map.deleteMany({
-            where: { connection: { book_guid: bookGuid } },
-        }),
-        prisma.gnucash_web_simplefin_connections.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Tags (junctions → tags). Tags are book-scoped; junction rows are
-        // removed both via the book's tags and via the book's accounts.
-        prisma.gnucash_web_transaction_tags.deleteMany({
-            where: { tag: { book_guid: bookGuid } },
-        }),
-        prisma.gnucash_web_account_tags.deleteMany({
-            where: hasAccounts
-                ? {
-                    OR: [
-                        { tag: { book_guid: bookGuid } },
-                        { account_guid: { in: accountGuids } },
-                    ],
-                }
-                : { tag: { book_guid: bookGuid } },
-        }),
-        prisma.gnucash_web_tags.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Documents / receipts / payslips (files already deleted above)
-        prisma.gnucash_web_receipts.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_payslips.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_payslip_mappings.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_payslip_templates.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_entity_documents.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Access control
-        prisma.gnucash_web_book_permissions.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_invitations.deleteMany({ where: { book_guid: bookGuid } }),
-
-        // Per-book config and misc
-        prisma.gnucash_web_tool_config.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_entity_members.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_entity_profiles.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_book_features.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_book_links.deleteMany({
-            where: {
-                OR: [
-                    { business_book_guid: bookGuid },
-                    { household_book_guid: bookGuid },
-                ],
-            },
-        }),
-        prisma.gnucash_web_compliance_status.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_vendor_tax_info.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_invoice_shares.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_dunning_log.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_dunning_optout.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_dunning_settings.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_time_entries.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_book_settings.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_budget_funding_rules.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_renewals.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_saved_reports.deleteMany({ where: { book_guid: bookGuid } }),
-    ];
-
-    if (hasAccounts) {
-        // Account-keyed tables
-        ops.push(
-            prisma.gnucash_web_account_preferences.deleteMany({
-                where: { account_guid: { in: accountGuids } },
-            }),
-            prisma.gnucash_web_tax_mappings.deleteMany({
-                where: { account_guid: { in: accountGuids } },
-            }),
-            prisma.gnucash_web_depreciation_schedules.deleteMany({
-                where: { account_guid: { in: accountGuids } },
-            }),
-        );
-
-        // Split/transaction-keyed tables — cleaned via the book's splits,
-        // which still exist because this runs before the core deletion.
-        ops.push(
-            prisma.$executeRaw`
-                DELETE FROM gnucash_web_contribution_tax_year
-                WHERE split_guid IN (
-                    SELECT guid FROM splits WHERE account_guid = ANY(${accountGuids}::text[])
-                )
-            `,
-            prisma.$executeRaw`
-                DELETE FROM gnucash_web_transaction_types
-                WHERE split_guid IN (
-                    SELECT guid FROM splits WHERE account_guid = ANY(${accountGuids}::text[])
-                )
-            `,
-            prisma.$executeRaw`
-                DELETE FROM gnucash_web_transaction_meta
-                WHERE transaction_guid IN (
-                    SELECT DISTINCT tx_guid FROM splits WHERE account_guid = ANY(${accountGuids}::text[])
-                )
-            `,
-        );
-    }
-
-    await prisma.$transaction(ops);
+    // 3. All Prisma-schema extension rows in one transaction.
+    await prisma.$transaction(
+        (tx) => deleteBookExtensionRows(tx, bookGuid, accountGuids),
+        { timeout: 120_000, maxWait: 15_000 },
+    );
 }

@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { product } from '@/lib/product';
 
 interface TotpStatus {
     enabled: boolean;
@@ -67,7 +68,7 @@ export function TwoFactorSection() {
 
     const downloadCodes = (codes: string[]) => {
         const content = [
-            'GnuCash Web — two-factor authentication recovery codes',
+            `${product.brand} — two-factor authentication recovery codes`,
             `Generated: ${new Date().toISOString()}`,
             '',
             'Each code can be used once in place of an authenticator code.',

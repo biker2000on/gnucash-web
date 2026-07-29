@@ -7,6 +7,7 @@ import { formatCurrency, applyBalanceReversal } from '@/lib/format';
 import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
+import { suppressNextDataEvent } from './DataEventsProvider';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
@@ -302,6 +303,7 @@ export default function AccountLedger({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lot_guid: lotGuid }),
         });
+        suppressNextDataEvent('transactions');
         refreshLotMap();
     };
 
@@ -311,6 +313,7 @@ export default function AccountLedger({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ lot_guid: 'new', title }),
         });
+        suppressNextDataEvent('transactions');
         refreshLotMap();
     };
 
@@ -407,6 +410,9 @@ export default function AccountLedger({
     }, [transactions, selectedSplits]);
 
     const handleReconcileComplete = useCallback(() => {
+        // The reconcile mutation just committed on this tab; drop the relayed
+        // echo (the local state update below already reflects it).
+        suppressNextDataEvent('transactions');
         // Refresh the transactions to show updated reconcile states
         setTransactions(prev => prev.map(tx => {
             const accountSplits = getRowAccountSplits(tx);
@@ -514,10 +520,22 @@ export default function AccountLedger({
 
         // Fire API call in background
         try {
-            const res = await fetch(`/api/transactions/${deletedGuid}`, { method: 'DELETE' });
+            // Optimistic-lock token: only delete the version we loaded
+            const deletedTx = prevTransactions.find(t => t.guid === deletedGuid);
+            const enterDateToken = deletedTx?.enter_date
+                ? new Date(deletedTx.enter_date as unknown as string).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${deletedGuid}${tokenParam}`, { method: 'DELETE' });
+            if (res.status === 409) {
+                error('This transaction was changed by someone else — reloading');
+                await fetchTransactions();
+                return;
+            }
             if (!res.ok) throw new Error('Failed to delete');
             success('Transaction deleted successfully');
             // Refetch so running_balance column reflects the removed transaction
+            suppressNextDataEvent('transactions');
             fetchTransactions();
         } catch (err) {
             console.error('Delete failed:', err);
@@ -536,7 +554,7 @@ export default function AccountLedger({
         accountGuid: string;
         accountName: string;
         amount: string;
-        original_enter_date?: string;
+        original_enter_date?: string | null;
         splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
     }) => {
         try {
@@ -607,10 +625,9 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
             } else {
-                // PUT to update existing transaction
-                if (data.original_enter_date) {
-                    body.original_enter_date = data.original_enter_date;
-                }
+                // PUT to update existing transaction; original_enter_date is
+                // mandatory (null = the row had no enter_date when loaded)
+                body.original_enter_date = data.original_enter_date ?? null;
 
                 res = await fetch(`/api/transactions/${guid}`, {
                     method: 'PUT',
@@ -618,8 +635,8 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
 
-                if (res.status === 409) {
-                    error('Transaction was modified by another user. Refreshing...');
+                if (res.status === 409 || res.status === 428) {
+                    error('This transaction was changed by someone else — reloading');
                     await fetchTransactions();
                     setEditingGuid(null);
                     return;
@@ -632,6 +649,7 @@ export default function AccountLedger({
             }
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            suppressNextDataEvent('transactions');
             setLastEditedDate(data.post_date);
             if (isEditMode) {
                 if (isNewTransaction || isMultiSplitSave) {
@@ -707,15 +725,15 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
             } else {
-                body.original_enter_date = tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : undefined;
+                body.original_enter_date = tx.enter_date ? new Date(tx.enter_date as unknown as string).toISOString() : null;
                 res = await fetch(`/api/transactions/${txGuid}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                 });
 
-                if (res.status === 409) {
-                    error('Transaction was modified by another user. Refreshing...');
+                if (res.status === 409 || res.status === 428) {
+                    error('This transaction was changed by someone else — reloading');
                     await fetchTransactions();
                     return false;
                 }
@@ -723,6 +741,7 @@ export default function AccountLedger({
             if (!res.ok) throw new Error('Failed to save');
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            suppressNextDataEvent('transactions');
             setLastEditedDate(txData.post_date);
             await fetchTransactions();
             return true;
@@ -814,9 +833,7 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
             } else {
-                if (data.original_enter_date) {
-                    body.original_enter_date = data.original_enter_date;
-                }
+                body.original_enter_date = data.original_enter_date ?? null;
 
                 res = await fetch(`/api/transactions/${guid}`, {
                     method: 'PUT',
@@ -824,8 +841,8 @@ export default function AccountLedger({
                     body: JSON.stringify(body),
                 });
 
-                if (res.status === 409) {
-                    error('Transaction was modified by another user. Refreshing...');
+                if (res.status === 409 || res.status === 428) {
+                    error('This transaction was changed by someone else — reloading');
                     await fetchTransactions();
                     return;
                 }
@@ -837,6 +854,7 @@ export default function AccountLedger({
             }
 
             success(isNewTransaction ? 'Transaction created' : 'Transaction updated');
+            suppressNextDataEvent('transactions');
             setLastEditedDate(data.post_date);
             await fetchTransactions();
         } catch (err) {
@@ -975,6 +993,7 @@ export default function AccountLedger({
             // Refetch so running_balance column reflects the new transaction.
             // In edit mode this also corrects any balance drift from the optimistic
             // insert above.
+            suppressNextDataEvent('transactions');
             fetchTransactions();
         } catch (err) {
             console.error('Duplicate failed:', err);
@@ -1102,14 +1121,32 @@ export default function AccountLedger({
     // Bulk delete handler
     const handleBulkDelete = useCallback(async () => {
         const guids = Array.from(editSelectedGuids);
+        let deleted = 0;
+        let conflicts = 0;
         for (const guid of guids) {
-            await fetch(`/api/transactions/${guid}`, { method: 'DELETE' });
+            const tx = transactions.find(t => t.guid === guid);
+            const enterDateToken = tx?.enter_date
+                ? new Date(tx.enter_date as unknown as string).toISOString()
+                : null;
+            const tokenParam = `?original_enter_date=${encodeURIComponent(enterDateToken ?? 'null')}`;
+            const res = await fetch(`/api/transactions/${guid}${tokenParam}`, { method: 'DELETE' });
+            if (res.status === 409) {
+                conflicts++;
+            } else if (res.ok) {
+                deleted++;
+            }
         }
         setEditSelectedGuids(new Set());
         setBulkDeleteConfirmOpen(false);
+        if (deleted > 0) suppressNextDataEvent('transactions');
         await fetchTransactions();
-        success(`Deleted ${guids.length} transaction${guids.length !== 1 ? 's' : ''}`);
-    }, [editSelectedGuids, fetchTransactions, success]);
+        if (conflicts > 0) {
+            error(`${conflicts} transaction${conflicts !== 1 ? 's were' : ' was'} changed by someone else and not deleted — list reloaded`);
+        }
+        if (deleted > 0) {
+            success(`Deleted ${deleted} transaction${deleted !== 1 ? 's' : ''}`);
+        }
+    }, [editSelectedGuids, transactions, fetchTransactions, success, error]);
 
     // Bulk move handler
     const handleBulkMove = useCallback(async (targetAccountGuid: string, targetAccountName: string) => {
@@ -1146,6 +1183,7 @@ export default function AccountLedger({
 
             const data = await res.json();
             setEditSelectedGuids(new Set());
+            suppressNextDataEvent('transactions');
             await fetchTransactions();
             success(`Moved ${data.updated} split${data.updated !== 1 ? 's' : ''} to ${targetAccountName}`);
         } catch (err) {
@@ -1167,6 +1205,7 @@ export default function AccountLedger({
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || `${label} failed`);
             setEditSelectedGuids(new Set());
+            suppressNextDataEvent('transactions');
             await fetchTransactions();
             const skipped: { error?: string }[] = (data.results ?? []).filter((r: { ok: boolean }) => !r.ok);
             if (skipped.length > 0) {
@@ -1817,6 +1856,41 @@ export default function AccountLedger({
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [debouncedSearch, debouncedFilters]);
+
+    // Cross-user freshness: refetch when another session mutates transactions
+    // in this book (relayed by DataEventsProvider as a `gnucash:data-change`
+    // window CustomEvent). Guarded so a refetch never clobbers an in-progress
+    // inline edit, modal edit, delete, or reconcile session.
+    const dataChangeRef = useRef<{ blocked: boolean; fetch: () => Promise<void> }>({
+        blocked: false,
+        fetch: async () => {},
+    });
+    useEffect(() => {
+        dataChangeRef.current = {
+            blocked:
+                editingGuid !== null ||
+                isEditModalOpen ||
+                editingTransaction !== null ||
+                deleteConfirmOpen ||
+                isDeleting ||
+                isReconciling,
+            fetch: fetchTransactions,
+        };
+    });
+    useEffect(() => {
+        const onDataChange = (e: Event) => {
+            // Defense-in-depth: DataEventsProvider defers events for hidden
+            // tabs, but any directly-dispatched event should not refetch a
+            // background tab either.
+            if (document.visibilityState !== 'visible') return;
+            const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
+            if (detail?.entity !== 'transactions') return;
+            if (dataChangeRef.current.blocked) return;
+            void dataChangeRef.current.fetch();
+        };
+        window.addEventListener('gnucash:data-change', onDataChange);
+        return () => window.removeEventListener('gnucash:data-change', onDataChange);
+    }, []);
 
     const toggleExpand = (guid: string) => {
         setExpandedTxs(prev => ({ ...prev, [guid]: !prev[guid] }));
@@ -3156,6 +3230,7 @@ export default function AccountLedger({
                             currentShares={investmentCurrentShares}
                             onSave={() => {
                                 setIsEditModalOpen(false);
+                                suppressNextDataEvent('transactions');
                                 fetchTransactions();
                             }}
                             onCancel={() => setIsEditModalOpen(false)}
@@ -3174,9 +3249,13 @@ export default function AccountLedger({
                     onSuccess={() => {
                         setIsEditModalOpen(false);
                         setEditingTransaction(null);
+                        suppressNextDataEvent('transactions');
                         fetchTransactions();
                     }}
-                    onRefresh={fetchTransactions}
+                    onRefresh={() => {
+                        suppressNextDataEvent('transactions');
+                        return fetchTransactions();
+                    }}
                 />
             )}
 

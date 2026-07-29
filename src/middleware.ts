@@ -6,6 +6,13 @@ import { SessionData, sessionOptions } from '@/lib/session-config';
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // The generated install manifest must be available before authentication so
+  // browsers can discover the PWA. Keep this an exact pathname: lookalikes
+  // such as /manifest.webmanifest-private remain protected below.
+  if (pathname === '/manifest.webmanifest') {
+    return NextResponse.next();
+  }
+
   // Public auth API routes, tokenized calendar feeds, and tokenized public
   // document endpoints (/api/public/invoice/[token] does its own token-based
   // authorization) -- no session required
@@ -59,7 +66,7 @@ export const config = {
      * - /login (auth page)
      * - /api/auth/* (auth endpoints)
      * - /_next (Next.js internals)
-     * - /icon.svg (favicon)
+     * - /favicon.svg (favicon)
      * - Static files (.ico, .png, .jpg, .svg, etc.)
      *
      * The regex (?!$) ensures the root path "/" (empty capture after

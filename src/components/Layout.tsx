@@ -7,10 +7,12 @@ import { useBooks } from '@/contexts/BookContext';
 import { UserMenu } from './UserMenu';
 import { NotificationBell } from './NotificationBell';
 import { JobProgressStream } from '@/contexts/JobProgressContext';
+import { DataEventsProvider } from '@/components/DataEventsProvider';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
 import { ContextualHelpLink } from './docs/ContextualHelpLink';
+import { BrandLockup } from '@/components/brand/BrandLockup';
 import { FEATURES, featureById, type FeatureDomain } from '@/lib/feature-registry';
 import { isFeatureIdEnabled, type ResolvedBookFeatures } from '@/lib/book-features';
 
@@ -819,8 +821,8 @@ export default function Layout({ children }: { children: ReactNode }) {
                     ${collapsed && hydrated ? 'justify-center px-2 py-4' : 'justify-between px-6 py-4'}`}>
                     {/* Title (hidden when collapsed) */}
                     {!(collapsed && hydrated) && (
-                        <h1 className="text-xl font-bold text-primary truncate">
-                            GnuCash Web
+                        <h1 className="truncate text-primary">
+                            <BrandLockup size={24} compact />
                         </h1>
                     )}
                     <button
@@ -899,8 +901,8 @@ export default function Layout({ children }: { children: ReactNode }) {
             >
                 {/* Mobile header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-sidebar-border">
-                    <h1 className="text-xl font-bold text-primary">
-                        GnuCash Web
+                    <h1 className="text-base text-foreground">
+                        <BrandLockup size={32} />
                     </h1>
                     <button
                         onClick={() => setMobileSidebarState({ open: false, pathname })}
@@ -1034,7 +1036,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             {/* ============================================================= */}
             {/* Main Content                                                   */}
             {/* ============================================================= */}
-            <main className="flex-1 overflow-auto bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-background-secondary via-background to-background min-w-0">
+            <main className="flex-1 overflow-auto bg-background min-w-0">
                 {/* Top Bar */}
                 <div className="border-b border-border bg-input-bg/80 backdrop-blur-sm sticky top-0 z-10">
                     <div className="px-4 md:px-8 py-3 flex items-center justify-between">
@@ -1054,6 +1056,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                             <ContextualHelpLink />
                             <NotificationBell />
                             <JobProgressStream />
+                            <DataEventsProvider />
                             <UserMenu />
                         </div>
                     </div>

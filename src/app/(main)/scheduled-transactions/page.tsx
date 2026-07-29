@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { CreateScheduledPanel } from '@/components/scheduled-transactions/CreateScheduledPanel';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
+import { suppressNextDataEvent } from '@/components/DataEventsProvider';
 
 // ---------------------------------------------------------------------------
 // Types matching API responses
@@ -207,6 +208,36 @@ export default function ScheduledTransactionsPage() {
     fetchData();
   }, [fetchData]);
 
+  // Cross-user freshness: refetch when another session executes, skips,
+  // creates, or edits a scheduled transaction in this book (relayed by
+  // DataEventsProvider as a `gnucash:data-change` window CustomEvent).
+  // Guarded so a refetch never interrupts an open create/edit panel or an
+  // in-flight batch run.
+  const dataChangeRef = useRef<{ blocked: boolean; fetch: () => Promise<void> }>({
+    blocked: false,
+    fetch: async () => {},
+  });
+  useEffect(() => {
+    dataChangeRef.current = {
+      blocked: showCreatePanel || editingTransaction !== null || batchLoading || loading,
+      fetch: fetchData,
+    };
+  });
+  useEffect(() => {
+    const onDataChange = (e: Event) => {
+      // Defense-in-depth: DataEventsProvider defers events for hidden tabs,
+      // but any directly-dispatched event should not refetch a background
+      // tab either.
+      if (document.visibilityState !== 'visible') return;
+      const detail = (e as CustomEvent).detail as { entity?: string } | undefined;
+      if (detail?.entity !== 'schedules') return;
+      if (dataChangeRef.current.blocked) return;
+      void dataChangeRef.current.fetch();
+    };
+    window.addEventListener('gnucash:data-change', onDataChange);
+    return () => window.removeEventListener('gnucash:data-change', onDataChange);
+  }, []);
+
   // Check if any splits reference a mortgage-linked account
   const hasMortgageLink = useCallback(
     (splits: ScheduledTransactionSplit[]) =>
@@ -286,6 +317,9 @@ export default function ScheduledTransactionsPage() {
         body: JSON.stringify({ occurrenceDate: date }),
       });
       if (!res.ok) throw new Error('Failed');
+      // Keep the "executed" badge visible: drop this tab's own echo instead
+      // of letting it refetch (which would remove the occurrence row).
+      suppressNextDataEvent('schedules');
       setActionStates(prev => ({ ...prev, [key]: 'executed' }));
     } catch {
       setActionStates(prev => ({ ...prev, [key]: 'error' }));
@@ -303,6 +337,7 @@ export default function ScheduledTransactionsPage() {
         body: JSON.stringify({ occurrenceDate: date }),
       });
       if (!res.ok) throw new Error('Failed');
+      suppressNextDataEvent('schedules');
       setActionStates(prev => ({ ...prev, [key]: 'skipped' }));
     } catch {
       setActionStates(prev => ({ ...prev, [key]: 'error' }));
@@ -348,7 +383,8 @@ export default function ScheduledTransactionsPage() {
         }
       }
       setActionStates(prev => ({ ...prev, ...resultStates }));
-      // Refetch data
+      // Refetch data (and drop this tab's own echo of the batch run)
+      suppressNextDataEvent('schedules');
       await fetchData();
     } catch {
       const errorStates: Record<string, 'error'> = {};
@@ -411,6 +447,7 @@ export default function ScheduledTransactionsPage() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ enabled: newEnabled }),
                     });
+                    if (res.ok) suppressNextDataEvent('schedules');
                     if (!res.ok) {
                       setTransactions(prev => prev.map(t =>
                         t.guid === tx.guid ? { ...t, enabled: !newEnabled } : t
@@ -461,6 +498,7 @@ export default function ScheduledTransactionsPage() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ enabled: newEnabled }),
                     });
+                    if (res.ok) suppressNextDataEvent('schedules');
                     if (!res.ok) {
                       setTransactions(prev => prev.map(t =>
                         t.guid === tx.guid ? { ...t, enabled: !newEnabled } : t
@@ -847,6 +885,7 @@ export default function ScheduledTransactionsPage() {
             setEditingTransaction(null);
             setSourceTransactionGuid(null);
             window.history.replaceState({}, '', '/scheduled-transactions');
+            suppressNextDataEvent('schedules');
             fetchData();
           }}
         />

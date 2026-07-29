@@ -42,6 +42,7 @@
  * All mutations run in a single prisma.$transaction.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from '@/lib/gnucash';
 import {
@@ -401,49 +402,96 @@ async function getCurrencyFraction(db: PrismaTx, currencyGuid: string): Promise<
 }
 
 /**
- * Next document number. Reads/increments the book's counter slot
- * ('counters/gncInvoice' or 'counters/gncBill'); falls back to
- * max-numeric-id + 1 across same-kind invoices. Zero-padded to 6 digits.
+ * Minimal structural DB surface for the counter logic, so it stays
+ * unit-testable with an in-memory fake. Satisfied by a Prisma interactive
+ * transaction client ($queryRaw is required for the atomic increment and the
+ * bootstrap advisory lock — callers MUST run this inside a $transaction).
  */
-async function nextInvoiceId(
-  db: PrismaTx,
+export interface CounterDb {
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
+  slots: {
+    findFirst(args: {
+      where: Record<string, unknown>;
+    }): Promise<{ id: number; guid_val?: string | null; int64_val?: bigint | null } | null>;
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+  invoices: {
+    findMany(args: {
+      where: Record<string, unknown>;
+      select: Record<string, boolean>;
+    }): Promise<Array<{ id: string }>>;
+  };
+}
+
+/**
+ * Next document number from the book's 'counters/<counterName>' slot.
+ *
+ * Concurrency-safe: the increment is a single atomic
+ * `UPDATE ... SET int64_val = int64_val + 1 ... RETURNING`, so two concurrent
+ * calls serialize on the row and always hand out distinct numbers (the old
+ * read-modify-write handed out duplicates). The bootstrap path (no counter
+ * slot yet) is guarded by pg_advisory_xact_lock keyed on (book, counter) —
+ * the loser re-checks after the lock and increments the winner's slot instead
+ * of creating a duplicate; the max-numeric-id fallback also runs under that
+ * lock. MUST be called inside a $transaction (xact-scoped advisory lock).
+ */
+export async function nextCounterId(
+  db: CounterDb,
   bookGuid: string,
-  kind: InvoiceKind,
+  counterName: string,
+  fallbackOwnerType: number,
 ): Promise<string> {
-  const counterName = kind === 'invoice' ? 'gncInvoice' : 'gncBill';
-
-  // GnuCash frame layout: book -> 'counters' frame -> child on the frame guid
-  const frame = await db.slots.findFirst({
-    where: { obj_guid: bookGuid, name: 'counters', slot_type: SLOT_FRAME },
-  });
-  let counterRow = frame?.guid_val
-    ? await db.slots.findFirst({
-        where: { obj_guid: frame.guid_val, name: `counters/${counterName}` },
-      })
-    : null;
-  if (!counterRow) {
-    // Tolerate flat layouts (obj_guid = book guid, full-path name)
-    counterRow = await db.slots.findFirst({
-      where: { obj_guid: bookGuid, name: `counters/${counterName}` },
+  // GnuCash frame layout: book -> 'counters' frame -> child on the frame
+  // guid; tolerate flat layouts (obj_guid = book guid, full-path name).
+  const findCounter = async () => {
+    const frame = await db.slots.findFirst({
+      where: { obj_guid: bookGuid, name: 'counters', slot_type: SLOT_FRAME },
     });
-  }
+    let counterRow = frame?.guid_val
+      ? await db.slots.findFirst({
+          where: { obj_guid: frame.guid_val, name: `counters/${counterName}` },
+        })
+      : null;
+    if (!counterRow) {
+      counterRow = await db.slots.findFirst({
+        where: { obj_guid: bookGuid, name: `counters/${counterName}` },
+      });
+    }
+    return { frame, counterRow };
+  };
 
-  if (counterRow) {
-    // Stored value is the LAST used number; next = value + 1, persist it.
-    const next = Number(counterRow.int64_val ?? 0n) + 1;
-    await db.slots.update({ where: { id: counterRow.id }, data: { int64_val: BigInt(next) } });
-    return formatInvoiceId(next);
-  }
+  // Stored value is the LAST used number; atomically bump and use the result.
+  const increment = async (slotId: number): Promise<string> => {
+    const rows = await db.$queryRaw<Array<{ int64_val: bigint | number | null }>>`
+      UPDATE slots SET int64_val = COALESCE(int64_val, 0) + 1
+      WHERE id = ${slotId}
+      RETURNING int64_val
+    `;
+    const value = rows[0]?.int64_val;
+    if (value === null || value === undefined) {
+      throw new Error(`Counter slot ${slotId} vanished during increment`);
+    }
+    return formatInvoiceId(Number(value));
+  };
+
+  let { frame, counterRow } = await findCounter();
+  if (counterRow) return increment(counterRow.id);
+
+  // Bootstrap: serialize concurrent bootstraps of this counter, then re-check
+  // existence — the lock loser must increment the winner's slot, not create a
+  // second one.
+  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`gncCounter:${bookGuid}:${counterName}`}::text))`;
+  ({ frame, counterRow } = await findCounter());
+  if (counterRow) return increment(counterRow.id);
 
   // Fallback: max numeric id among same-kind documents (job-owned ignored),
   // then persist a GnuCash-style counter so future numbering is stable and
   // desktop sees the counter.
-  const ownerType = kind === 'invoice' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
   const rows = await db.invoices.findMany({
-    where: { owner_type: ownerType },
+    where: { owner_type: fallbackOwnerType },
     select: { id: true },
   });
-  const next = nextIdFromExisting(rows.map((r: { id: string }) => r.id));
+  const next = nextIdFromExisting(rows.map((r) => r.id));
 
   let frameGuid = frame?.guid_val ?? null;
   if (!frameGuid) {
@@ -462,6 +510,21 @@ async function nextInvoiceId(
   });
 
   return formatInvoiceId(next);
+}
+
+/**
+ * Next document number. Reads/increments the book's counter slot
+ * ('counters/gncInvoice' or 'counters/gncBill'); falls back to
+ * max-numeric-id + 1 across same-kind invoices. Zero-padded to 6 digits.
+ */
+async function nextInvoiceId(
+  db: PrismaTx,
+  bookGuid: string,
+  kind: InvoiceKind,
+): Promise<string> {
+  const counterName = kind === 'invoice' ? 'gncInvoice' : 'gncBill';
+  const ownerType = kind === 'invoice' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
+  return nextCounterId(db as unknown as CounterDb, bookGuid, counterName, ownerType);
 }
 
 /**
@@ -849,6 +912,12 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
   if (lockBookGuid) await assertNotLocked(lockBookGuid, [input.postDate]);
 
   await prisma.$transaction(async (tx) => {
+    // Serialize concurrent posts of the same invoice: without this row lock,
+    // two posts can both pass the already-posted check below and double-book
+    // A/R. The loser blocks here until the winner commits, then re-reads the
+    // row and hits the InvoiceStateError.
+    await tx.$queryRaw`SELECT guid FROM invoices WHERE guid = ${guid} FOR UPDATE`;
+
     const invoice = await tx.invoices.findUnique({ where: { guid } });
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     if (invoice.post_txn) throw new InvoiceStateError('Invoice is already posted');
@@ -978,6 +1047,12 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
 
 export async function unpostInvoice(guid: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    // Mirror of the postInvoice lock: serialize unpost against a concurrent
+    // post/unpost/payment of the same invoice so the state checks below run
+    // against committed state (a double unpost gets 'Invoice is not posted'
+    // instead of a failed delete).
+    await tx.$queryRaw`SELECT guid FROM invoices WHERE guid = ${guid} FOR UPDATE`;
+
     const invoice = await tx.invoices.findUnique({ where: { guid } });
     if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     if (!invoice.post_txn) throw new InvoiceStateError('Invoice is not posted');
@@ -1048,28 +1123,33 @@ interface OpenDocument {
   amountDue: number;
 }
 
-/** Posted, not fully paid documents for an owner (jobs of the owner included). */
-async function loadOpenDocuments(
+/** Where clause matching all POSTED documents of an owner (jobs included). */
+async function postedOwnerDocsWhere(
   db: PrismaTx,
   endOwnerType: number,
   ownerGuid: string,
-  kind: InvoiceKind,
-): Promise<OpenDocument[]> {
+): Promise<Prisma.invoicesWhereInput> {
   const jobs: Array<{ guid: string }> = await db.jobs.findMany({
     where: { owner_type: endOwnerType, owner_guid: ownerGuid },
     select: { guid: true },
   });
   const jobGuids = jobs.map((j) => j.guid);
+  return {
+    post_txn: { not: null },
+    OR: [
+      { owner_type: endOwnerType, owner_guid: ownerGuid },
+      ...(jobGuids.length > 0 ? [{ owner_type: OWNER_TYPE_JOB, owner_guid: { in: jobGuids } }] : []),
+    ],
+  };
+}
 
-  const invoices = await db.invoices.findMany({
-    where: {
-      post_txn: { not: null },
-      OR: [
-        { owner_type: endOwnerType, owner_guid: ownerGuid },
-        ...(jobGuids.length > 0 ? [{ owner_type: OWNER_TYPE_JOB, owner_guid: { in: jobGuids } }] : []),
-      ],
-    },
-  });
+/** Posted, not fully paid documents for an owner (jobs of the owner included). */
+async function loadOpenDocuments(
+  db: PrismaTx,
+  where: Prisma.invoicesWhereInput,
+  kind: InvoiceKind,
+): Promise<OpenDocument[]> {
+  const invoices = await db.invoices.findMany({ where });
   if (invoices.length === 0) return [];
 
   const lotGuids = invoices.map((i: { post_lot: string | null }) => i.post_lot).filter((g: string | null): g is string => Boolean(g));
@@ -1110,6 +1190,9 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
   }
   const postDate = parseIsoDateNoon(input.date, 'date');
 
+  // Idempotency fast path (e.g. webhook redelivery long after the fact).
+  // This pre-transaction read is NOT race-safe — the authoritative check runs
+  // again inside the $transaction below, after the invoice row locks.
   if (input.transactionGuid) {
     const existing = await prisma.transactions.findUnique({
       where: { guid: input.transactionGuid },
@@ -1135,6 +1218,45 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
     const owner = await resolveOwner(tx, endOwnerType, input.ownerGuid);
     const kind: InvoiceKind = owner.kind;
 
+    // Serialize concurrent payments for this owner: lock every posted
+    // document row (deterministic guid order avoids deadlocks) BEFORE
+    // amountDue is computed from lot splits, so the second payment blocks
+    // here and then re-validates against post-first-payment balances
+    // (over-application then hits the normal validation errors below).
+    const docsWhere = await postedOwnerDocsWhere(tx, endOwnerType, input.ownerGuid);
+    const lockCandidates: Array<{ guid: string }> = await tx.invoices.findMany({
+      where: docsWhere,
+      select: { guid: true },
+    });
+    const lockGuids = lockCandidates.map((c) => c.guid).sort();
+    if (lockGuids.length > 0) {
+      await tx.$queryRaw`
+        SELECT guid FROM invoices
+        WHERE guid IN (${Prisma.join(lockGuids)})
+        ORDER BY guid
+        FOR UPDATE
+      `;
+    }
+
+    // Idempotency (checked INSIDE the transaction, after the row locks): a
+    // concurrent retry carrying the same caller-supplied guid waits on the
+    // locks above and then sees the committed payment here, instead of both
+    // retries passing a pre-transaction check and double-posting.
+    if (input.transactionGuid) {
+      const existing = await tx.transactions.findUnique({
+        where: { guid: input.transactionGuid },
+        select: { guid: true },
+      });
+      if (existing) {
+        result = {
+          transactionGuid: existing.guid,
+          allocations: input.allocations ?? [],
+          fullyPaidInvoiceGuids: [],
+        };
+        return;
+      }
+    }
+
     const transferAccount = await tx.accounts.findUnique({
       where: { guid: input.transferAccountGuid },
       select: { guid: true, placeholder: true },
@@ -1150,7 +1272,7 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
     const amount = roundCurrency(input.amount, fraction);
     const epsilon = 0.5 / fraction;
 
-    const openDocs = await loadOpenDocuments(tx, endOwnerType, input.ownerGuid, kind);
+    const openDocs = await loadOpenDocuments(tx, docsWhere, kind);
     const openByGuid = new Map(openDocs.map((d) => [d.guid, d]));
 
     // Determine allocations
@@ -1364,40 +1486,70 @@ export async function listPayments(
 
 type InvoiceRow = NonNullable<Awaited<ReturnType<typeof prisma.invoices.findUnique>>>;
 
+/**
+ * Per-invoice data preloaded by batch callers (listInvoices), so composing a
+ * view issues ZERO queries. When omitted, buildInvoiceView self-loads each
+ * piece exactly as before (single-invoice callers are unaffected).
+ */
+interface InvoiceViewPreload {
+  owner: ResolvedOwner;
+  /** Entry rows for this invoice, ordered by date ascending. */
+  entryRows: EntryRow[];
+  /** Tax tables covering (at least) the guids referenced by entryRows. */
+  taxTables: Map<string, TaxTableSpec>;
+  /** Currency fraction for invoice.currency. */
+  fraction: number;
+  /** Decimal split values on invoice.post_lot (empty when unposted). */
+  lotSplitValues: number[];
+  /** Resolved bill term for invoice.terms (null when none). */
+  billTerm: BillTermSpec | null;
+}
+
 export async function buildInvoiceView(
   db: PrismaTx,
   invoice: InvoiceRow,
   opts: { includeEntries: boolean },
+  preloaded?: InvoiceViewPreload,
 ): Promise<InvoiceDetailView> {
-  const owner = await resolveOwner(db, invoice.owner_type ?? 0, invoice.owner_guid ?? '');
+  const owner = preloaded?.owner
+    ?? await resolveOwner(db, invoice.owner_type ?? 0, invoice.owner_guid ?? '');
   const kind = owner.kind;
 
-  const entryRows: EntryRow[] = await db.entries.findMany({
-    where: kind === 'invoice' ? { invoice: invoice.guid } : { bill: invoice.guid },
-    orderBy: { date: 'asc' },
-  });
-  const taxTableGuids = entryRows
-    .map((r) => (kind === 'invoice' ? r.i_taxtable : r.b_taxtable))
-    .filter((g): g is string => Boolean(g));
-  const taxTables = await loadTaxTables(db, taxTableGuids);
+  let entryRows: EntryRow[];
+  let taxTables: Map<string, TaxTableSpec>;
+  if (preloaded) {
+    entryRows = preloaded.entryRows;
+    taxTables = preloaded.taxTables;
+  } else {
+    entryRows = await db.entries.findMany({
+      where: kind === 'invoice' ? { invoice: invoice.guid } : { bill: invoice.guid },
+      orderBy: { date: 'asc' },
+    });
+    const taxTableGuids = entryRows
+      .map((r) => (kind === 'invoice' ? r.i_taxtable : r.b_taxtable))
+      .filter((g): g is string => Boolean(g));
+    taxTables = await loadTaxTables(db, taxTableGuids);
+  }
   const lines = entryRows.map((r) => entryRowToLine(r, kind, taxTables));
 
-  const fraction = await getCurrencyFraction(db, invoice.currency);
+  const fraction = preloaded?.fraction ?? await getCurrencyFraction(db, invoice.currency);
   const totals = computeInvoiceTotals(lines, fraction);
 
   // Amount due from lot split values
   let amountDue = 0;
   const posted = Boolean(invoice.post_txn);
   if (posted && invoice.post_lot) {
-    const lotSplits: Array<{ value_num: bigint; value_denom: bigint }> = await db.splits.findMany({
-      where: { lot_guid: invoice.post_lot },
-      select: { value_num: true, value_denom: true },
-    });
-    amountDue = amountDueFromLotSplits(
-      kind,
-      lotSplits.map((s) => toDecimalNumber(s.value_num, s.value_denom)),
-      fraction,
-    );
+    let lotValues: number[];
+    if (preloaded) {
+      lotValues = preloaded.lotSplitValues;
+    } else {
+      const lotSplits: Array<{ value_num: bigint; value_denom: bigint }> = await db.splits.findMany({
+        where: { lot_guid: invoice.post_lot },
+        select: { value_num: true, value_denom: true },
+      });
+      lotValues = lotSplits.map((s) => toDecimalNumber(s.value_num, s.value_denom));
+    }
+    amountDue = amountDueFromLotSplits(kind, lotValues, fraction);
   } else if (!posted) {
     amountDue = totals.total;
   }
@@ -1406,7 +1558,9 @@ export async function buildInvoiceView(
   let dueDate: Date | null = null;
   if (posted && invoice.date_posted) {
     let term: BillTermSpec | null = null;
-    if (invoice.terms) {
+    if (preloaded) {
+      term = preloaded.billTerm;
+    } else if (invoice.terms) {
       const t = await db.billterms.findUnique({ where: { guid: invoice.terms } });
       if (t) term = { type: t.type, duedays: t.duedays, cutoff: t.cutoff };
     }
@@ -1487,25 +1641,27 @@ export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<I
     where: filters.ownerGuid ? { owner_guid: filters.ownerGuid } : undefined,
     orderBy: [{ date_opened: 'desc' }],
   });
+  if (invoices.length === 0) return [];
 
   // Classify job-owned documents by resolving the job's owner type
   const jobGuids = invoices
     .filter((i) => i.owner_type === OWNER_TYPE_JOB)
     .map((i) => i.owner_guid)
     .filter((g): g is string => Boolean(g));
-  const jobs = jobGuids.length
-    ? await prisma.jobs.findMany({
-        where: { guid: { in: Array.from(new Set(jobGuids)) } },
-        select: { guid: true, owner_type: true },
-      })
-    : [];
-  const jobOwnerType = new Map(jobs.map((j) => [j.guid, j.owner_type]));
+  const jobs: Array<{ guid: string; owner_type: number | null; owner_guid: string | null }> =
+    jobGuids.length
+      ? await prisma.jobs.findMany({
+          where: { guid: { in: Array.from(new Set(jobGuids)) } },
+          select: { guid: true, owner_type: true, owner_guid: true },
+        })
+      : [];
+  const jobByGuid = new Map(jobs.map((j) => [j.guid, j]));
 
   const kindOf = (inv: (typeof invoices)[number]): InvoiceKind | null => {
     if (inv.owner_type === OWNER_TYPE_CUSTOMER) return 'invoice';
     if (inv.owner_type === OWNER_TYPE_VENDOR) return 'bill';
     if (inv.owner_type === OWNER_TYPE_JOB) {
-      const t = jobOwnerType.get(inv.owner_guid ?? '');
+      const t = jobByGuid.get(inv.owner_guid ?? '')?.owner_type;
       if (t === OWNER_TYPE_CUSTOMER) return 'invoice';
       if (t === OWNER_TYPE_VENDOR) return 'bill';
     }
@@ -1518,23 +1674,179 @@ export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<I
     if (filters.type && kind !== filters.type) return false;
     return true;
   });
+  if (filtered.length === 0) return [];
 
-  const views: InvoiceView[] = [];
+  // -------------------------------------------------------------------------
+  // Batched owner resolution (replaces per-invoice resolveOwner queries).
+  // Invoices whose owner rows are missing are skipped, matching the old
+  // per-invoice try/catch behavior.
+  // -------------------------------------------------------------------------
+  const customerGuids = new Set<string>();
+  const vendorGuids = new Set<string>();
   for (const inv of filtered) {
+    const direct = inv.owner_guid ?? '';
+    if (inv.owner_type === OWNER_TYPE_CUSTOMER) customerGuids.add(direct);
+    else if (inv.owner_type === OWNER_TYPE_VENDOR) vendorGuids.add(direct);
+    else if (inv.owner_type === OWNER_TYPE_JOB) {
+      const job = jobByGuid.get(direct);
+      if (!job?.owner_guid) continue;
+      if (job.owner_type === OWNER_TYPE_CUSTOMER) customerGuids.add(job.owner_guid);
+      else if (job.owner_type === OWNER_TYPE_VENDOR) vendorGuids.add(job.owner_guid);
+    }
+  }
+  const customers: Array<{ guid: string; name: string; currency: string; terms: string | null }> =
+    customerGuids.size
+      ? await prisma.customers.findMany({ where: { guid: { in: [...customerGuids] } } })
+      : [];
+  const vendors: Array<{ guid: string; name: string; currency: string; terms: string | null }> =
+    vendorGuids.size
+      ? await prisma.vendors.findMany({ where: { guid: { in: [...vendorGuids] } } })
+      : [];
+  const customerByGuid = new Map(customers.map((c) => [c.guid, c]));
+  const vendorByGuid = new Map(vendors.map((v) => [v.guid, v]));
+
+  const resolveOwnerFromBatch = (inv: (typeof invoices)[number]): ResolvedOwner | null => {
+    let endType = inv.owner_type ?? 0;
+    let endGuid = inv.owner_guid ?? '';
+    if (inv.owner_type === OWNER_TYPE_JOB) {
+      const job = jobByGuid.get(endGuid);
+      if (!job?.owner_guid) return null;
+      endType = job.owner_type ?? 0;
+      endGuid = job.owner_guid;
+    }
+    if (endType === OWNER_TYPE_CUSTOMER) {
+      const c = customerByGuid.get(endGuid);
+      if (!c) return null;
+      return {
+        endType: OWNER_TYPE_CUSTOMER, endGuid: c.guid,
+        directType: inv.owner_type ?? 0, directGuid: inv.owner_guid ?? '',
+        name: c.name, currencyGuid: c.currency, termsGuid: c.terms ?? null, kind: 'invoice',
+      };
+    }
+    if (endType === OWNER_TYPE_VENDOR) {
+      const v = vendorByGuid.get(endGuid);
+      if (!v) return null;
+      return {
+        endType: OWNER_TYPE_VENDOR, endGuid: v.guid,
+        directType: inv.owner_type ?? 0, directGuid: inv.owner_guid ?? '',
+        name: v.name, currencyGuid: v.currency, termsGuid: v.terms ?? null, kind: 'bill',
+      };
+    }
+    return null;
+  };
+
+  const withOwners = filtered
+    .map((inv) => ({ inv, owner: resolveOwnerFromBatch(inv) }))
+    .filter((x): x is { inv: (typeof invoices)[number]; owner: ResolvedOwner } => x.owner !== null);
+
+  // Currency fractions (batched; a missing currency previously threw per
+  // invoice and the row was skipped — preserve that by filtering here).
+  const currencyGuids = [...new Set(withOwners.map((x) => x.inv.currency))];
+  const commodityRows: Array<{ guid: string; fraction: number | null }> = currencyGuids.length
+    ? await prisma.commodities.findMany({
+        where: { guid: { in: currencyGuids } },
+        select: { guid: true, fraction: true },
+      })
+    : [];
+  const fractionByCurrency = new Map(commodityRows.map((c) => [c.guid, c.fraction || 100]));
+  const resolvable = withOwners.filter((x) => fractionByCurrency.has(x.inv.currency));
+
+  // Pagination: without a status filter the window is fixed here (ordering is
+  // already pushed into SQL), so the heavy per-invoice data below is only
+  // loaded for the requested page. A status filter needs computed
+  // amountDue/dueDate first, so it slices after composing the views.
+  const offset = filters.offset ?? 0;
+  const limit = filters.limit ?? 100;
+  const page = filters.status ? resolvable : resolvable.slice(offset, offset + limit);
+  if (page.length === 0) return [];
+
+  // -------------------------------------------------------------------------
+  // Batched per-page loads: entries, tax tables, lot splits, bill terms —
+  // one query per table for the whole page instead of ~6 per invoice.
+  // -------------------------------------------------------------------------
+  const invoiceKindGuids = page.filter((x) => x.owner.kind === 'invoice').map((x) => x.inv.guid);
+  const billKindGuids = page.filter((x) => x.owner.kind === 'bill').map((x) => x.inv.guid);
+  const entryRows: EntryRow[] = await prisma.entries.findMany({
+    where: {
+      OR: [
+        ...(invoiceKindGuids.length ? [{ invoice: { in: invoiceKindGuids } }] : []),
+        ...(billKindGuids.length ? [{ bill: { in: billKindGuids } }] : []),
+      ],
+    },
+    orderBy: { date: 'asc' },
+  });
+  const entriesByDoc = new Map<string, EntryRow[]>();
+  for (const r of entryRows) {
+    if (r.invoice) {
+      const arr = entriesByDoc.get(`i:${r.invoice}`) ?? [];
+      arr.push(r);
+      entriesByDoc.set(`i:${r.invoice}`, arr);
+    }
+    if (r.bill) {
+      const arr = entriesByDoc.get(`b:${r.bill}`) ?? [];
+      arr.push(r);
+      entriesByDoc.set(`b:${r.bill}`, arr);
+    }
+  }
+
+  const taxTableGuids: string[] = [];
+  for (const { inv, owner } of page) {
+    const rows = entriesByDoc.get(`${owner.kind === 'invoice' ? 'i' : 'b'}:${inv.guid}`) ?? [];
+    for (const r of rows) {
+      const g = owner.kind === 'invoice' ? r.i_taxtable : r.b_taxtable;
+      if (g) taxTableGuids.push(g);
+    }
+  }
+  const taxTables = await loadTaxTables(prisma as unknown as PrismaTx, taxTableGuids);
+
+  const lotGuids = page
+    .map(({ inv }) => inv.post_lot)
+    .filter((g): g is string => Boolean(g));
+  const lotSplits: Array<{ lot_guid: string | null; value_num: bigint; value_denom: bigint }> =
+    lotGuids.length
+      ? await prisma.splits.findMany({
+          where: { lot_guid: { in: lotGuids } },
+          select: { lot_guid: true, value_num: true, value_denom: true },
+        })
+      : [];
+  const valuesByLot = new Map<string, number[]>();
+  for (const s of lotSplits) {
+    if (!s.lot_guid) continue;
+    const arr = valuesByLot.get(s.lot_guid) ?? [];
+    arr.push(toDecimalNumber(s.value_num, s.value_denom));
+    valuesByLot.set(s.lot_guid, arr);
+  }
+
+  const termGuids = [...new Set(page.map(({ inv }) => inv.terms).filter((g): g is string => Boolean(g)))];
+  const termRows: Array<{ guid: string; type: string; duedays: number | null; cutoff: number | null }> =
+    termGuids.length
+      ? await prisma.billterms.findMany({ where: { guid: { in: termGuids } } })
+      : [];
+  const termByGuid = new Map<string, BillTermSpec>(
+    termRows.map((t) => [t.guid, { type: t.type, duedays: t.duedays, cutoff: t.cutoff }]),
+  );
+
+  // Compose views in memory (zero queries per invoice)
+  const views: InvoiceView[] = [];
+  for (const { inv, owner } of page) {
     try {
-      const view = await buildInvoiceView(prisma as unknown as PrismaTx, inv, { includeEntries: false });
+      const view = await buildInvoiceView(prisma as unknown as PrismaTx, inv, { includeEntries: false }, {
+        owner,
+        entryRows: entriesByDoc.get(`${owner.kind === 'invoice' ? 'i' : 'b'}:${inv.guid}`) ?? [],
+        taxTables,
+        fraction: fractionByCurrency.get(inv.currency)!,
+        lotSplitValues: inv.post_lot ? (valuesByLot.get(inv.post_lot) ?? []) : [],
+        billTerm: inv.terms ? (termByGuid.get(inv.terms) ?? null) : null,
+      });
       views.push(view);
     } catch {
-      // Skip documents whose owner rows are missing (orphaned data)
+      // Skip documents with inconsistent rows (matches old behavior)
       continue;
     }
   }
 
-  let result = views;
   if (filters.status) {
-    result = result.filter((v) => v.status === filters.status);
+    return views.filter((v) => v.status === filters.status).slice(offset, offset + limit);
   }
-  const offset = filters.offset ?? 0;
-  const limit = filters.limit ?? 100;
-  return result.slice(offset, offset + limit);
+  return views;
 }

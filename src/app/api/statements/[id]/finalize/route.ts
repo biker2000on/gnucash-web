@@ -7,6 +7,8 @@ import {
 } from '@/lib/statement-reconcile-data';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 import { serializeBigInts } from '@/lib/gnucash';
+import { cacheInvalidateAllForBook } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * POST /api/statements/[id]/finalize
@@ -26,7 +28,9 @@ import { serializeBigInts } from '@/lib/gnucash';
  *   summary: { added, matched, reconciledSplits,
  *              tieOut: { expectedChange, actualChange, difference, tiesOut } } }
  * 409 { error, tieOut } — tie-out failed (difference reported) OR unverifiable
- *                          (opening/closing balance missing).
+ *                          (opening/closing balance missing) OR the batch was
+ *                          already finalized (claim-first CAS lost — a second
+ *                          finalize can never double-book added lines).
  * 400 { error, detail } — batch/account misconfigured (no account, no currency,
  *                          an 'add' line without a counterpart account).
  * 403 { error } — batch belongs to another book.
@@ -71,11 +75,18 @@ export async function POST(
       console.warn('Failed to upsert OFX account map after finalize:', mapErr);
     }
 
+    void cacheInvalidateAllForBook(bookGuid);
+    void publishDataChange(bookGuid, 'reconciliation', { action: 'update' });
+    void publishDataChange(bookGuid, 'transactions', { action: 'bulk' });
+
     return NextResponse.json(serializeBigInts({ success: true, summary }));
   } catch (error) {
     if (error instanceof PeriodLockedError) return periodLockedResponse(error);
     if (error instanceof StatementReconcileError) {
-      const status = error.code === 'not_ties_out' ? 409 : error.code === 'not_found' ? 404 : 400;
+      const status =
+        error.code === 'not_ties_out' || error.code === 'already_reconciled'
+          ? 409
+          : error.code === 'not_found' ? 404 : 400;
       return NextResponse.json(
         { error: error.message, tieOut: error.code === 'not_ties_out' ? error.detail : undefined, detail: error.detail },
         { status },

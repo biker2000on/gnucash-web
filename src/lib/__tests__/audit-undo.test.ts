@@ -7,7 +7,12 @@ vi.mock('@/lib/auth', () => ({
     getCurrentUser: vi.fn().mockResolvedValue(null),
 }));
 
-import { buildUndoPlan, isTransactionSnapshot, type TransactionSnapshot } from '../services/audit.service';
+import {
+    buildUndoPlan,
+    isTransactionSnapshot,
+    transactionSnapshotsEqual,
+    type TransactionSnapshot,
+} from '../services/audit.service';
 
 const snapshot: TransactionSnapshot = {
     snapshotVersion: 1,
@@ -97,5 +102,52 @@ describe('buildUndoPlan', () => {
         });
         expect(plan).toBeNull();
         expect(reason).toMatch(/transaction/i);
+    });
+});
+
+describe('transactionSnapshotsEqual (revert_update conflict detection)', () => {
+    it('equal snapshots match, regardless of split order and extra keys', () => {
+        const reordered: TransactionSnapshot = {
+            ...snapshot,
+            splits: [snapshot.splits[1], snapshot.splits[0]],
+        };
+        expect(transactionSnapshotsEqual(snapshot, reordered)).toBe(true);
+        // Undo bookkeeping keys (e.g. undo_of_audit_id) don't break equality.
+        const withExtra = { ...snapshot, undo_of_audit_id: 42 } as unknown as TransactionSnapshot;
+        expect(transactionSnapshotsEqual(snapshot, withExtra)).toBe(true);
+    });
+
+    it('detects a changed description (transaction edited since the entry)', () => {
+        expect(transactionSnapshotsEqual(snapshot, { ...snapshot, description: 'Edited later' })).toBe(false);
+    });
+
+    it('detects changed split amounts and reconcile state', () => {
+        const amountChanged: TransactionSnapshot = {
+            ...snapshot,
+            splits: [
+                { ...snapshot.splits[0], value_num: '-9999' },
+                snapshot.splits[1],
+            ],
+        };
+        expect(transactionSnapshotsEqual(snapshot, amountChanged)).toBe(false);
+
+        const reconciled: TransactionSnapshot = {
+            ...snapshot,
+            splits: [
+                { ...snapshot.splits[0], reconcile_state: 'y', reconcile_date: '2026-06-01T00:00:00.000Z' },
+                snapshot.splits[1],
+            ],
+        };
+        expect(transactionSnapshotsEqual(snapshot, reconciled)).toBe(false);
+    });
+
+    it('detects added or removed splits', () => {
+        const fewer: TransactionSnapshot = { ...snapshot, splits: [snapshot.splits[0]] };
+        expect(transactionSnapshotsEqual(snapshot, fewer)).toBe(false);
+    });
+
+    it('detects a changed post_date / enter_date (version drift)', () => {
+        expect(transactionSnapshotsEqual(snapshot, { ...snapshot, post_date: '2026-05-02T00:00:00.000Z' })).toBe(false);
+        expect(transactionSnapshotsEqual(snapshot, { ...snapshot, enter_date: '2026-05-02T12:00:00.000Z' })).toBe(false);
     });
 });

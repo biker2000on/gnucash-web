@@ -42,9 +42,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch all enabled scheduled transactions
+    // Fetch enabled scheduled transactions, scoped to the active book at the
+    // query level (template accounts descend from the book's template root).
+    // The split-account filter below stays as defense in depth.
     const scopedAccounts = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
-    const scheduledTransactions = (await fetchScheduledTransactions(true))
+    const scheduledTransactions = (await fetchScheduledTransactions(true, roleResult.bookGuid))
       .filter(transaction =>
         transaction.splits.length > 0 &&
         transaction.splits.every(split => scopedAccounts.has(split.accountGuid)));

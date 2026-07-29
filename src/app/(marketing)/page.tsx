@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth';
 import { getPreference } from '@/lib/user-preferences';
 import { PILLARS, LANDING_STATS } from '@/lib/marketing-content';
+import { product } from '@/lib/product';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -42,7 +43,7 @@ export default async function LandingPage() {
                         Your entire financial life, on a ledger you own.
                     </h1>
                     <p className="max-w-2xl mt-6 text-lg text-foreground-secondary leading-relaxed">
-                        GnuCash Web turns your ledger into an evidence-backed financial operating system:
+                        {product.name} turns your ledger into an evidence-backed financial operating system:
                         daily accounting, decisions, long-range planning, family-office consolidation,
                         investments, taxes, and business operations—running on infrastructure you control.
                     </p>
@@ -92,7 +93,7 @@ export default async function LandingPage() {
                             From “what needs attention?” to “why does this number exist?”
                         </h2>
                         <p className="mt-4 text-foreground-secondary leading-relaxed">
-                            Most finance software stops at dashboards. GnuCash Web connects action, planning,
+                            Most finance software stops at dashboards. {product.name} connects action, planning,
                             authorization, and evidence so the answer remains inspectable all the way back to the ledger.
                         </p>
                     </div>

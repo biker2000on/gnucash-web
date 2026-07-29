@@ -29,6 +29,8 @@
  *     explicit $0.00 record as a real entry).
  */
 
+import { product } from '@/lib/product';
+
 export interface TxfExportAccount {
   /** Colon-separated full account path; leaf segment is used as the payer. */
   path: string;
@@ -88,7 +90,7 @@ function record(lines: string[]): string {
  * Pure: same inputs (+ fixed date) always produce byte-identical output.
  */
 export function buildTxfFile(items: readonly TxfExportItem[], options: TxfFileOptions = {}): string {
-  const software = options.software ?? 'GnuCash Web';
+  const software = options.software ?? product.brand;
   const date = options.date ?? new Date();
 
   let out = record([`V042`, `A${software}`, `D${formatTxfDate(date)}`]);

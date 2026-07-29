@@ -71,13 +71,38 @@ export function TransactionFormModal({
 
             const method = isEditMode ? 'PUT' : 'POST';
 
+            // Optimistic-lock token: echo back the enter_date we loaded so
+            // the server can detect concurrent edits (null = row had none).
+            const loadedEnterDate = fullTransaction?.enter_date ?? transaction?.enter_date ?? null;
+            const payload = isEditMode
+                ? {
+                    ...data,
+                    original_enter_date: loadedEnterDate
+                        ? new Date(loadedEnterDate).toISOString()
+                        : null,
+                }
+                : data;
+
             const response = await fetch(url, {
                 method,
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(data),
+                body: JSON.stringify(payload),
             });
+
+            if (response.status === 409 || response.status === 428) {
+                // Reload the latest version so the user can redo their edit
+                if (isEditMode && transaction) {
+                    try {
+                        const fresh = await fetch(`/api/transactions/${transaction.guid}`);
+                        if (fresh.ok) setFullTransaction(await fresh.json());
+                    } catch {
+                        // keep the stale copy; the error message still shows
+                    }
+                }
+                throw new Error('This transaction was changed by someone else — the latest version has been reloaded. Please review and save again.');
+            }
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));

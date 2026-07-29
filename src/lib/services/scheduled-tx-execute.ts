@@ -23,7 +23,26 @@ export interface SkipResult {
 export interface ErrorResult {
   success: false;
   error: string;
+  /** Machine-readable reason; routes map 'already_executed' to HTTP 409. */
+  code?: 'already_executed';
 }
+
+/**
+ * Occurrence idempotency guard (call INSIDE the FOR UPDATE block so the check
+ * is serialized): an occurrence on or before last_occur has already been
+ * executed or skipped — a second Record/Skip must not double-book it.
+ */
+export function alreadyProcessed(lastOccur: Date | string | null, occurrenceDate: string): boolean {
+  if (!lastOccur) return false;
+  const lastDay = (lastOccur instanceof Date ? lastOccur.toISOString() : String(lastOccur)).slice(0, 10);
+  return occurrenceDate <= lastDay;
+}
+
+const ALREADY_EXECUTED_ERROR: ErrorResult = {
+  success: false,
+  error: 'This occurrence has already been recorded or skipped',
+  code: 'already_executed',
+};
 
 export interface BatchItem {
   guid: string;
@@ -38,6 +57,8 @@ export interface BatchResultItem {
   success: boolean;
   transactionGuid?: string;
   error?: string;
+  /** 'already_executed' when the occurrence was processed by someone else — the batch continues past it. */
+  code?: 'already_executed';
 }
 
 export interface BatchResult {
@@ -77,13 +98,21 @@ export async function executeOccurrence(
 
       const sx = rows[0];
 
+      // Idempotency: reject an occurrence already executed/skipped. Checked
+      // inside the FOR UPDATE block so two concurrent Records serialize and
+      // the loser deterministically sees the winner's last_occur.
+      if (alreadyProcessed(sx.last_occur, occurrenceDate)) {
+        return ALREADY_EXECUTED_ERROR;
+      }
+
       // Check rem_occur
       if (sx.rem_occur === 0) {
         return { success: false as const, error: 'Scheduled transaction has no remaining occurrences' };
       }
 
-      // Resolve template splits
-      const templateSplits = await resolveTemplateSplits(sx.template_act_guid);
+      // Resolve template splits INSIDE the transaction so the reads share the
+      // FOR UPDATE lock's snapshot instead of escaping to the global client.
+      const templateSplits = await resolveTemplateSplits(sx.template_act_guid, tx);
       if (templateSplits.length === 0) {
         return { success: false as const, error: 'No template splits found for scheduled transaction' };
       }
@@ -173,6 +202,12 @@ export async function skipOccurrence(
 
       const sx = rows[0];
 
+      // Idempotency: an occurrence already executed/skipped cannot be skipped
+      // again (see executeOccurrence).
+      if (alreadyProcessed(sx.last_occur, occurrenceDate)) {
+        return ALREADY_EXECUTED_ERROR;
+      }
+
       // Check rem_occur
       if (sx.rem_occur === 0) {
         return { success: false as const, error: 'Scheduled transaction has no remaining occurrences' };
@@ -216,6 +251,7 @@ export async function batchExecuteSkip(items: BatchItem[]): Promise<BatchResult>
         success: result.success,
         transactionGuid: result.success ? result.transactionGuid : undefined,
         error: !result.success ? result.error : undefined,
+        code: !result.success ? result.code : undefined,
       });
     } else {
       const result = await skipOccurrence(item.guid, item.occurrenceDate);
@@ -225,6 +261,7 @@ export async function batchExecuteSkip(items: BatchItem[]): Promise<BatchResult>
         action: item.action,
         success: result.success,
         error: !result.success ? result.error : undefined,
+        code: !result.success ? result.code : undefined,
       });
     }
   }

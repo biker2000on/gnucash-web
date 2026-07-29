@@ -3,7 +3,7 @@
  *
  * Validation for the convenience endpoints under /api/webhooks/inbound/*,
  * designed for automation tools (n8n, Home Assistant, shell scripts) that
- * want to push events into GnuCash Web with a minimal JSON body instead of
+ * want to push events into the app with a minimal JSON body instead of
  * the full GnuCash split model.
  *
  * Authentication happens in the routes via the same Bearer `gcw_...`
