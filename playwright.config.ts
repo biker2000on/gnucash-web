@@ -9,13 +9,13 @@ export default defineConfig({
         timeout: 10000,
     },
     use: {
-        baseURL: 'http://127.0.0.1:3000',
+        baseURL: 'http://127.0.0.1:3010',
         trace: 'on-first-retry',
         screenshot: 'only-on-failure',
     },
     webServer: {
-        command: 'npm run dev -- --hostname 127.0.0.1',
-        url: 'http://127.0.0.1:3000/favicon.svg',
+        command: 'npm run start -- -p 3010 --hostname 127.0.0.1',
+        url: 'http://127.0.0.1:3010/favicon.svg',
         reuseExistingServer: false,
         timeout: 120000,
     },
