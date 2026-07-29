@@ -289,6 +289,6 @@ describe('Folio service-worker cache lifecycle', () => {
     expect(await (await staticAsset.response())?.text()).toBe('icon bytes');
 
     const cache = await worker.cacheStorage.open('folio-pwa-v2');
-    expect(await (await cache.match(iconRequest))?.text()).toBe('icon bytes');
+    expect(await (await cache.match(iconRequest.url))?.text()).toBe('icon bytes');
   });
 });
