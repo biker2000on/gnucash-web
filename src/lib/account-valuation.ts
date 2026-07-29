@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { toDecimal as toDecimalString } from '@/lib/gnucash';
-import { getBaseCurrency } from '@/lib/currency';
+import { getBaseCurrency, type Currency } from '@/lib/currency';
 
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
 const TRIANGULATION_MNEMONICS = ['USD', 'EUR'];
@@ -112,9 +112,12 @@ function getCurrencyRate(
  */
 export async function buildAccountValuationContext(
   accounts: AccountValuationInput[],
-  asOfDate?: Date
+  asOfDate?: Date,
+  reportCurrencyOverride?: Currency | null,
 ): Promise<AccountValuationContext> {
-  const reportCurrency = await getBaseCurrency();
+  const reportCurrency = reportCurrencyOverride === undefined
+    ? await getBaseCurrency()
+    : reportCurrencyOverride;
   const reportCurrencyGuid = reportCurrency?.guid ?? null;
   const asOf = asOfDate ?? new Date();
   const multiplierCache = new Map<string, number>();

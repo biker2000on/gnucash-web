@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { findExchangeRate, getBaseCurrencyForBook, type Currency } from '@/lib/currency';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { getUserBooks, roleAtLeast } from '@/lib/services/permission.service';
 import { FinancialSummaryService, type FinancialSummary } from '@/lib/services/financial-summary.service';
 import { getMoneyTimeline } from '@/lib/money-timeline/service';
@@ -56,20 +57,58 @@ export interface FamilyOfficeSummary {
   warnings: string[];
 }
 
-async function loadBookLiquidity(bookGuid: string, asOf: Date): Promise<number> {
+async function loadBookLiquidity(
+  bookGuid: string,
+  asOf: Date,
+  reportCurrency: Currency,
+): Promise<number> {
   const accountGuids = await getAccountGuidsForBook(bookGuid);
   if (accountGuids.length === 0) return 0;
-  const rows = await prisma.$queryRaw<Array<{ balance: unknown }>>`
-    SELECT COALESCE(SUM(CAST(s.quantity_num AS numeric) / NULLIF(s.quantity_denom, 0)), 0) AS balance
+  const accounts = await prisma.accounts.findMany({
+    where: {
+      guid: { in: accountGuids },
+      account_type: { in: ['BANK', 'CASH'] },
+    },
+    select: {
+      guid: true,
+      account_type: true,
+      commodity_guid: true,
+      commodity: { select: { namespace: true } },
+    },
+  });
+  if (accounts.length === 0) return 0;
+
+  const [valuation, rows] = await Promise.all([
+    buildAccountValuationContext(
+      accounts.map(account => ({
+        accountType: account.account_type,
+        commodityGuid: account.commodity_guid,
+        commodityNamespace: account.commodity?.namespace,
+      })),
+      asOf,
+      reportCurrency,
+    ),
+    prisma.$queryRaw<Array<{ account_guid: string; balance: unknown }>>`
+    SELECT s.account_guid,
+           COALESCE(SUM(CAST(s.quantity_num AS numeric) / NULLIF(s.quantity_denom, 0)), 0) AS balance
     FROM splits s
-    JOIN accounts a ON a.guid = s.account_guid
     JOIN transactions t ON t.guid = s.tx_guid
-    WHERE s.account_guid IN (${Prisma.join(accountGuids)})
-      AND a.account_type IN ('BANK', 'CASH')
+    WHERE s.account_guid IN (${Prisma.join(accounts.map(account => account.guid))})
       AND t.post_date <= ${asOf}
-  `;
-  const amount = Number(rows[0]?.balance ?? 0);
-  return Number.isFinite(amount) ? amount : 0;
+    GROUP BY s.account_guid
+  `,
+  ]);
+  const accountByGuid = new Map(accounts.map(account => [account.guid, account]));
+  return rows.reduce((total, row) => {
+    const account = accountByGuid.get(row.account_guid);
+    const quantity = Number(row.balance);
+    if (!account || !Number.isFinite(quantity)) return total;
+    return total + quantity * valuation.getMultiplier({
+      accountType: account.account_type,
+      commodityGuid: account.commodity_guid,
+      commodityNamespace: account.commodity?.namespace,
+    });
+  }, 0);
 }
 
 export interface FamilyLinkInput {
@@ -320,7 +359,9 @@ export async function getFamilyOfficeSummary(
     );
     const rate = exchange?.rate ?? 1;
     const summary = scaleSummary(sourceSummary, rate * 100);
-    const liquidity = round2((await loadBookLiquidity(entity.bookGuid, now)) * rate);
+    const liquidity = round2(
+      (await loadBookLiquidity(entity.bookGuid, now, sourceCurrency)) * rate,
+    );
     rows.push({
       entity,
       ownershipPercent: entityOwnership,
