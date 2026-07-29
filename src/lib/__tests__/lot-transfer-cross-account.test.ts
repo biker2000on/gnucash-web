@@ -308,6 +308,11 @@ class FakePrisma {
     },
   };
 
+  // Raw SQL entry points: the lot engine uses these only for row locking and
+  // the enter_date token bump — both irrelevant to this fake's assertions.
+  $queryRaw = async () => [];
+  $executeRaw = async () => 0;
+
   $transaction = async (fn: any) => {
     return fn(this);
   };

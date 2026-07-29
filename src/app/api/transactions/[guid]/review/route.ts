@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { publishDataChange } from '@/lib/data-events';
 
 // PATCH /api/transactions/{guid}/review -- toggle reviewed status
 //
@@ -26,20 +27,25 @@ export async function PATCH(
       select: { reviewed: true },
     });
 
+    let reviewed: boolean;
     if (existing) {
       const updated = await prisma.gnucash_web_transaction_meta.update({
         where: { transaction_guid: guid },
         data: { reviewed: !existing.reviewed },
         select: { reviewed: true },
       });
-      return NextResponse.json({ reviewed: updated.reviewed });
+      reviewed = updated.reviewed;
     } else {
       // No meta row -- create one as reviewed (since manual transactions default to reviewed)
       await prisma.gnucash_web_transaction_meta.create({
         data: { transaction_guid: guid, source: 'manual', reviewed: true },
       });
-      return NextResponse.json({ reviewed: true });
+      reviewed = true;
     }
+    // Event only (no cache invalidation): review state feeds the to-review
+    // badges and journal display other users have open, not the dashboards.
+    void publishDataChange(roleResult.bookGuid, 'transactions', { guid, action: 'update' });
+    return NextResponse.json({ reviewed });
   } catch (error) {
     console.error('Error toggling reviewed status:', error);
     return NextResponse.json({ error: 'Failed to toggle reviewed status' }, { status: 500 });

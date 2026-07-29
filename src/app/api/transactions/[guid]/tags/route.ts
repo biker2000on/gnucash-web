@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getTransactionTags, setTransactionTags } from '@/lib/services/tag.service';
+import { publishDataChange } from '@/lib/data-events';
 
 /**
  * GET /api/transactions/{guid}/tags
@@ -54,6 +55,7 @@ export async function PUT(
 
         try {
             const tags = await setTransactionTags(guid, body.tags);
+            void publishDataChange(roleResult.bookGuid, 'transactions', { guid, action: 'update' });
             return NextResponse.json(tags);
         } catch (err) {
             if (err instanceof Error && err.message.startsWith('Invalid tag name')) {

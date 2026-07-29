@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import {
     getRule,
     planHistoricalApplication,
@@ -118,6 +119,7 @@ export async function POST(request: Request) {
             } catch (err) {
                 console.warn('Cache invalidation failed:', err);
             }
+            void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'bulk' });
         }
 
         return NextResponse.json({

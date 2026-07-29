@@ -193,13 +193,37 @@ export async function startReconciliationSession(input: {
   const accountGuids = await getAccountGuidsForBook(input.bookGuid);
   if (!accountGuids.includes(input.accountGuid)) throw new Error('Account is outside the active book');
   const id = randomUUID();
-  await query(
-    `INSERT INTO gnucash_web_reconciliation_sessions
-       (id, book_guid, account_guid, user_id, statement_date)
-     VALUES ($1,$2,$3,$4,$5::date)`,
-    [id, input.bookGuid, input.accountGuid, input.userId, input.statementDate],
-  );
-  return id;
+  // uq_reconciliation_sessions_started allows one 'started' session per
+  // account — but a crashed browser never PATCHes its session closed, and
+  // nothing sweeps stale rows, so a bare INSERT would wedge this account's
+  // reconciliation forever. Starting anew supersedes any lingering session
+  // (sessions are telemetry; the finalize advisory lock guards the money).
+  for (let attempt = 0; ; attempt++) {
+    await query(
+      `UPDATE gnucash_web_reconciliation_sessions
+          SET status = 'abandoned'
+        WHERE account_guid = $1 AND status = 'started'`,
+      [input.accountGuid],
+    );
+    try {
+      await query(
+        `INSERT INTO gnucash_web_reconciliation_sessions
+           (id, book_guid, account_guid, user_id, statement_date)
+         VALUES ($1,$2,$3,$4,$5::date)`,
+        [id, input.bookGuid, input.accountGuid, input.userId, input.statementDate],
+      );
+      return id;
+    } catch (error) {
+      // 23505 = a concurrent start won the race between our UPDATE and
+      // INSERT; abandon-and-retry once, then give a human-readable error.
+      if ((error as { code?: string })?.code !== '23505' || attempt >= 1) {
+        if ((error as { code?: string })?.code === '23505') {
+          throw new Error('Another reconciliation for this account just started — reload the page to join or retry.');
+        }
+        throw error;
+      }
+    }
+  }
 }
 
 export async function updateReconciliationSession(input: {

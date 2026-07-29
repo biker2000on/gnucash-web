@@ -36,6 +36,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal } from '@/lib/gnucash';
 import { getCachedLockDate, findLockedDate, toIsoDateString } from '@/lib/services/period-lock.service';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -523,6 +524,7 @@ export async function runFundingRules(options: {
     const rules = rows.map(r => mapRule(r as unknown as RuleRow));
     result.rulesScanned = rules.length;
 
+    const sweptBooks = new Set<string>();
     for (const rule of rules) {
         if (!rule.triggerAccountGuid || rule.allocations.length === 0) continue;
         try {
@@ -551,6 +553,7 @@ export async function runFundingRules(options: {
                 }
 
                 const sweptTxnGuid = await applySweep(rule, deposit, dedupeKey);
+                if (sweptTxnGuid !== null) sweptBooks.add(rule.bookGuid);
                 if (sweptTxnGuid === null) {
                     // A concurrent run swept this deposit between our pre-check
                     // and the locked re-check.
@@ -573,6 +576,12 @@ export async function runFundingRules(options: {
             const msg = error instanceof Error ? error.message : String(error);
             result.errors.push(`Rule "${rule.name}" (#${rule.id}): ${msg}`);
         }
+    }
+
+    // Sweeps create real transactions; without this, the 24h event-evicted
+    // dashboard/hierarchy caches would serve pre-sweep balances all day.
+    for (const bookGuid of sweptBooks) {
+        afterLedgerWrite(bookGuid, ['transactions', 'budgets'], { action: 'bulk' });
     }
 
     return result;

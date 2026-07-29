@@ -355,7 +355,7 @@ export async function POST(request: Request) {
         const transaction = await prisma.$transaction(async (tx) => {
             // Period lock (authoritative, in-transaction, cache bypassed):
             // the new transaction's date must be after the lock date.
-            await assertNotLocked(roleResult.bookGuid, [body.post_date], { bypassCache: true });
+            await assertNotLocked(roleResult.bookGuid, [body.post_date], { bypassCache: true, client: tx });
 
             // Process multi-currency splits and add trading splits if needed
             const multiCurrencyResult = await processMultiCurrencySplits(

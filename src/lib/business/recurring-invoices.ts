@@ -25,6 +25,7 @@
 import prisma from '@/lib/prisma';
 import { computeNextOccurrences, type RecurrencePattern } from '@/lib/recurrence';
 import { createNotification, ensureNotificationsTable } from '@/lib/notifications';
+import { afterLedgerWrite } from '@/lib/data-events';
 import {
   createInvoice,
   postInvoice,
@@ -619,6 +620,12 @@ export async function runDueRecurringInvoices(
         /* notification failure must never fail the run */
       }
     }
+  }
+
+  // Posted occurrences created A/R transactions + business docs; refresh the
+  // 24h event-evicted caches and any open UIs.
+  if (generated > 0) {
+    afterLedgerWrite(bookGuid, ['transactions', 'business'], { action: 'bulk' });
   }
 
   return { generated, results };

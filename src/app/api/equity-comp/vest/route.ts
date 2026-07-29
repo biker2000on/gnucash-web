@@ -6,6 +6,7 @@ import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { isValidGuid } from '@/lib/guid';
 import { logAudit } from '@/lib/services/audit.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
+import { publishDataChange } from '@/lib/data-events';
 import {
     postVestEvent,
     validateVestInput,
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
         try {
             const bookGuid = await getActiveBookGuid();
             await cacheInvalidateFrom(bookGuid, new Date(result.postDate));
+            void publishDataChange(bookGuid, 'transactions', { action: 'create' });
         } catch (err) {
             console.warn('Cache invalidation failed:', err);
         }

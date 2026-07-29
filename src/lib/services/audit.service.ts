@@ -13,6 +13,7 @@ import type { ExtendedPrismaClient } from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
 import { getActiveBookGuid } from '@/lib/book-scope';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /** Global client or an interactive-transaction client. */
 type DbClient = Omit<
@@ -349,6 +350,7 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     ...plan.snapshot,
                     undo_of_audit_id: auditId,
                 });
+                afterLedgerWrite(activeBookGuid, 'transactions', { guid: plan.snapshot.guid, action: 'create' });
                 return { ok: true, message: 'Transaction restored', action: 'CREATE' };
             }
             case 'revert_update': {
@@ -378,6 +380,7 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     ...plan.snapshot,
                     undo_of_audit_id: auditId,
                 });
+                afterLedgerWrite(activeBookGuid, 'transactions', { guid: plan.snapshot.guid, action: 'update' });
                 return { ok: true, message: 'Transaction reverted to its previous state', action: 'UPDATE' };
             }
             case 'delete_created': {
@@ -394,6 +397,7 @@ export async function undoAuditEntry(auditId: number, activeBookGuid: string): P
                     return live;
                 });
                 await logAudit('DELETE', 'TRANSACTION', plan.guid, { ...current, undo_of_audit_id: auditId }, null);
+                afterLedgerWrite(activeBookGuid, 'transactions', { guid: plan.guid, action: 'delete' });
                 return { ok: true, message: 'Transaction deleted', action: 'DELETE' };
             }
         }

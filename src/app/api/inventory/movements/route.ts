@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { listMovements, type MovementType } from '@/lib/services/inventory.service';
 import { receiveStock, shipStock, adjustStock, transferStock } from '@/lib/inventory-engine';
 import { mapInventoryError } from '@/lib/inventory-api-errors';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /**
  * GET /api/inventory/movements
@@ -88,6 +89,7 @@ export async function POST(request: NextRequest) {
         post: body.post,
         offsetAccountGuid: body.offsetAccountGuid,
       });
+      afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
       return NextResponse.json(result, { status: 201 });
     }
     if (action === 'ship') {
@@ -100,6 +102,7 @@ export async function POST(request: NextRequest) {
         reference: body.reference,
         post: body.post,
       });
+      afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
       return NextResponse.json(result, { status: 201 });
     }
     if (action === 'adjust') {
@@ -112,6 +115,7 @@ export async function POST(request: NextRequest) {
         date: body.date,
         reference: body.reference,
       });
+      afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
       return NextResponse.json(result, { status: 201 });
     }
     if (action === 'transfer') {
@@ -124,6 +128,7 @@ export async function POST(request: NextRequest) {
         date: body.date,
         reference: body.reference,
       });
+      afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
       return NextResponse.json(result, { status: 201 });
     }
 

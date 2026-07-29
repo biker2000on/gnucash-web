@@ -6,6 +6,7 @@ import {
   getInvoiceFulfillment,
 } from '@/lib/inventory-engine';
 import { mapInventoryError } from '@/lib/inventory-api-errors';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /**
  * GET /api/inventory/invoices/[guid]/fulfillment
@@ -74,6 +75,7 @@ export async function POST(
     const result = mode === 'return'
       ? await returnToStock(input)
       : await fulfillInvoiceLines(input);
+    afterLedgerWrite(roleResult.bookGuid, 'transactions', { action: 'create' });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return mapInventoryError(error);

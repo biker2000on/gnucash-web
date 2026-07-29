@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { receiveFromBill, getBillReceiving } from '@/lib/inventory-engine';
 import { mapInventoryError } from '@/lib/inventory-api-errors';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /**
  * GET /api/inventory/bills/[guid]/receiving
@@ -57,6 +58,7 @@ export async function POST(
       allocations: body.allocations,
       date: body.date,
     });
+    afterLedgerWrite(roleResult.bookGuid, 'transactions', { action: 'create' });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return mapInventoryError(error);
