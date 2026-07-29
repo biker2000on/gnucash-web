@@ -11,4 +11,10 @@ describe('product identity', () => {
       description: 'A self-hosted, GnuCash-compatible personal finance platform.',
     });
   });
+
+  it('prevents runtime mutation of the shared identity', () => {
+    expect(Object.isFrozen(product)).toBe(true);
+    expect(Reflect.set(product, 'name', 'Not Folio')).toBe(false);
+    expect(product.name).toBe('Folio');
+  });
 });
