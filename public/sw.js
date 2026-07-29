@@ -55,7 +55,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request)
         .then(async (response) => {
-          if (response.ok) {
+          if (
+            response.ok &&
+            url.origin === self.location.origin &&
+            url.pathname === '/'
+          ) {
             const cache = await caches.open(CACHE_NAME);
             await cache.put('/', response.clone());
           }

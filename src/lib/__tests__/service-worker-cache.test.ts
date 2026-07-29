@@ -212,14 +212,14 @@ describe('Folio service-worker cache lifecycle', () => {
     expect(worker.claim).toHaveBeenCalledOnce();
   });
 
-  it('stores only a successful navigation response as the root shell', async () => {
+  it('updates the root shell only from a successful public root navigation', async () => {
     const worker = createWorkerHarness(['folio-pwa-v2']);
     worker.fetchMock.mockResolvedValue(
       new Response('fresh Folio shell', { status: 200 })
     );
 
     const navigation = worker.dispatch('fetch', {
-      request: navigationRequest(),
+      request: navigationRequest('/'),
     });
     const response = await navigation.response();
 
@@ -238,6 +238,26 @@ describe('Folio service-worker cache lifecycle', () => {
     expect((await failedNavigation.response())?.status).toBe(503);
     expect(await (await cache.match('/'))?.text()).toBe('known-good shell');
   });
+
+  it.each(['/accounts', '/share/public-token'])(
+    'never replaces the root shell with a successful %s navigation',
+    async (path) => {
+      const worker = createWorkerHarness(['folio-pwa-v2']);
+      const cache = await worker.cacheStorage.open('folio-pwa-v2');
+      await cache.put('/', new Response('known-good shell', { status: 200 }));
+      worker.fetchMock.mockResolvedValue(
+        new Response(`page response for ${path}`, { status: 200 })
+      );
+
+      const navigation = worker.dispatch('fetch', {
+        request: navigationRequest(path),
+      });
+      expect(await (await navigation.response())?.text()).toBe(
+        `page response for ${path}`
+      );
+      expect(await (await cache.match('/'))?.text()).toBe('known-good shell');
+    }
+  );
 
   it('serves the upgraded root shell when navigation fetch rejects offline', async () => {
     const worker = createWorkerHarness([

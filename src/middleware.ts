@@ -66,7 +66,7 @@ export const config = {
      * - /login (auth page)
      * - /api/auth/* (auth endpoints)
      * - /_next (Next.js internals)
-     * - /icon.svg (favicon)
+     * - /favicon.svg (favicon)
      * - Static files (.ico, .png, .jpg, .svg, etc.)
      *
      * The regex (?!$) ensures the root path "/" (empty capture after
