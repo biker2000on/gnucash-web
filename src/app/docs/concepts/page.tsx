@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { CONCEPT_PAGES } from '@/lib/docs-reference';
+import { product } from '@/lib/product';
 
 export const metadata: Metadata = {
-  title: 'Financial concepts — GnuCash Web Docs',
-  description: 'The accounting, trust, investment, provenance, and multi-book concepts behind GnuCash Web.',
+  title: `Financial concepts — ${product.brand} Docs`,
+  description: `The accounting, trust, investment, provenance, and multi-book concepts behind ${product.brand}.`,
 };
 
 export default function ConceptsIndexPage() {

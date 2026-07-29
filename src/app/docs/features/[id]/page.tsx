@@ -4,6 +4,7 @@ import type { Metadata } from 'next';
 import { DocsArticle } from '@/components/docs/DocsArticle';
 import { FEATURES, featureById } from '@/lib/feature-registry';
 import { featureReferencePage } from '@/lib/docs-reference';
+import { product } from '@/lib/product';
 
 export function generateStaticParams() {
   return FEATURES.map((feature) => ({ id: feature.id }));
@@ -18,7 +19,7 @@ export async function generateMetadata({
   const feature = featureById(id);
   if (!feature) return {};
   return {
-    title: `${feature.title} — GnuCash Web Docs`,
+    title: `${feature.title} — ${product.brand} Docs`,
     description: feature.description,
   };
 }

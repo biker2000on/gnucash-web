@@ -1,4 +1,5 @@
 import type { ScheduleCReport } from '@/lib/business/business-reports';
+import { product } from '@/lib/product';
 import type { ContributionSummaryData } from '@/lib/reports/types';
 import type { WithholdingCheckupPayload } from '@/lib/withholding';
 import type { CharitableGivingReport } from './charitable-giving';
@@ -117,7 +118,7 @@ export interface TaxPackageManifestInput {
 
 export function buildManifest(input: TaxPackageManifestInput): string {
     const lines: string[] = [
-        `GnuCash Web — Year-End Tax Package for ${input.year}`,
+        `${product.brand} — Year-End Tax Package for ${input.year}`,
         `Generated: ${input.generatedAt}`,
         '',
         'Contents:',

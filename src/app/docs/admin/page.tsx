@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { ADMIN_PAGES } from '@/lib/docs-reference';
+import { product } from '@/lib/product';
 
 export const metadata: Metadata = {
-  title: 'Administration — GnuCash Web Docs',
-  description: 'Install, secure, back up, connect, automate, upgrade, and recover GnuCash Web.',
+  title: `Administration — ${product.brand} Docs`,
+  description: `Install, secure, back up, connect, automate, upgrade, and recover ${product.brand}.`,
 };
 
 export default function AdministrationIndexPage() {

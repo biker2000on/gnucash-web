@@ -1,7 +1,8 @@
 import { ContactManager } from '@/components/business/ContactManager';
+import { product } from '@/lib/product';
 
 export const metadata = {
-    title: 'Vendors - GnuCash Web',
+    title: `Vendors - ${product.brand}`,
 };
 
 export default function VendorsPage() {

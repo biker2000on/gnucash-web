@@ -4,6 +4,7 @@ import packageJson from '../../../package.json';
 import { DocsSearch } from '@/components/docs/DocsSearch';
 import { GUIDE_PAGES } from '@/lib/docs-content';
 import { allDocsSearchEntries } from '@/lib/docs-reference';
+import { product } from '@/lib/product';
 
 export default function DocsLayout({ children }: { children: ReactNode }) {
   const entries = allDocsSearchEntries();
@@ -15,7 +16,7 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
           <Link href="/" className="flex shrink-0 items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element -- local application mark */}
             <img src="/icon.svg" alt="" className="h-8 w-8" />
-            <span className="font-bold tracking-tight text-foreground">GnuCash Web Docs</span>
+            <span className="font-bold tracking-tight text-foreground">{product.brand} Docs</span>
           </Link>
           <div className="hidden min-w-0 flex-1 md:block">
             <DocsSearch entries={entries} compact />

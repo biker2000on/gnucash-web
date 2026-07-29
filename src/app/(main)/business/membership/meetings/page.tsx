@@ -1,7 +1,8 @@
 import { MeetingsManager } from '@/components/membership/MeetingsManager';
+import { product } from '@/lib/product';
 
 export const metadata = {
-    title: 'Meetings - GnuCash Web',
+    title: `Meetings - ${product.brand}`,
 };
 
 export default function MeetingsPage() {

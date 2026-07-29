@@ -183,7 +183,7 @@ describe('buildManifest', () => {
             files: [{ name: 'a.csv', description: 'the a file' }],
             notes: ['note one'],
         });
-        expect(text).toContain('Tax Package for 2025');
+        expect(text.split('\r\n')[0]).toBe('Folio for GnuCash — Year-End Tax Package for 2025');
         expect(text).toContain('a.csv: the a file');
         expect(text).toContain('* note one');
         expect(text).toContain('Verify against official forms');

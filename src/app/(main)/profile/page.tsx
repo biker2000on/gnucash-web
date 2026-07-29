@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { usePWAInstall } from '@/contexts/PWAInstallContext';
+import { product } from '@/lib/product';
 
 interface User {
     id: number;
@@ -300,7 +301,7 @@ export default function ProfilePage() {
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Account Security</h3>
                 <p className="text-sm text-foreground-muted mb-4">
-                    Manage how you sign in to GnuCash Web.
+                    Manage how you sign in to {product.brand}.
                 </p>
 
                 {oidcMessage && (
@@ -487,7 +488,7 @@ export default function ProfilePage() {
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Install App</h3>
                 <p className="text-sm text-foreground-muted mb-6">
-                    Install GnuCash Web on your phone or computer for a faster app-like experience. Updates are applied automatically through the service worker.
+                    Install {product.brand} on your phone or computer for a faster app-like experience. Updates are applied automatically through the service worker.
                 </p>
 
                 {installMessage && (

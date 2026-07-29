@@ -237,9 +237,9 @@ describe('otpauthUri', () => {
     it('builds a spec-shaped otpauth URI with the default issuer', () => {
         const uri = otpauthUri('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ', 'justin');
         expect(uri).toBe(
-            'otpauth://totp/GnuCash%20Web:justin' +
+            'otpauth://totp/Folio%20for%20GnuCash:justin' +
             '?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' +
-            '&issuer=GnuCash%20Web&algorithm=SHA1&digits=6&period=30'
+            '&issuer=Folio%20for%20GnuCash&algorithm=SHA1&digits=6&period=30'
         );
     });
 
