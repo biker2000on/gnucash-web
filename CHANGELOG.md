@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## [0.23.2.0] - 2026-07-29
+
+### Changed — Folio branding completion
+- The product is now simply **Folio** — the "for GnuCash" descriptor is
+  retired from the brand lockup, PWA manifest, page titles, calendar-feed
+  PRODID, and docs header.
+- Marketing pages, README, and the docs site no longer describe the product
+  as a GnuCash companion. GnuCash appears only where compatibility genuinely
+  applies: XML import/export, desktop round-trip backups, the
+  GnuCash-compatible core schema note in the admin docs, and the TXF format
+  reference. The footer trademark disclaimer remains.
+- In-app copy (account/investment empty states, settings descriptions,
+  report footnotes, payslip/HSA/family-banking labels) refers to "your book"
+  or "the ledger" instead of GnuCash.
+
 ## [0.23.1.0] - 2026-07-29
 
 Adversarial-review follow-ups to the July 28 multi-user concurrency and

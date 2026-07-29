@@ -51,14 +51,14 @@ export default function manifest(): MetadataRoute.Manifest {
         sizes: '1080x1920',
         type: 'image/png',
         form_factor: 'narrow',
-        label: 'Folio for GnuCash on mobile',
+        label: 'Folio on mobile',
       },
       {
         src: '/screenshots/folio-desktop.png',
         sizes: '1920x1080',
         type: 'image/png',
         form_factor: 'wide',
-        label: 'Folio for GnuCash on desktop',
+        label: 'Folio on desktop',
       },
     ],
   };

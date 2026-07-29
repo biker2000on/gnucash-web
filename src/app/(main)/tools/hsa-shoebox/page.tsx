@@ -402,7 +402,7 @@ export default function HsaShoeboxPage() {
                 <div>
                   <h2 className="text-base font-semibold text-foreground">Reimburse selected receipts</h2>
                   <p className="text-xs text-foreground-muted mt-0.5">
-                    Creates one GnuCash transaction: money into your bank account, out of the HSA.
+                    Creates one transaction: money into your bank account, out of the HSA.
                     Each receipt is stamped with the transaction so it can&apos;t be reimbursed twice.
                   </p>
                 </div>

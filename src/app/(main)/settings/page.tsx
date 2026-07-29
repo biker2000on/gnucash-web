@@ -156,7 +156,7 @@ const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; descrip
   {
     value: 'none',
     label: 'None (Raw Values)',
-    description: 'Show raw GnuCash accounting values. Income and liabilities appear negative.',
+    description: 'Show raw ledger values. Income and liabilities appear negative.',
   },
   {
     value: 'credit',
@@ -1078,7 +1078,7 @@ export default function SettingsPage() {
           </summary>
           <div className="mt-2 text-sm text-foreground-muted space-y-2">
             <p>
-              In double-entry accounting, some accounts naturally have credit balances (shown as negative in GnuCash):
+              In double-entry accounting, some accounts naturally have credit balances (stored as negative):
             </p>
             <ul className="list-disc list-inside space-y-1">
               <li><strong className="text-foreground-secondary">Income</strong> - Money you earn appears negative</li>

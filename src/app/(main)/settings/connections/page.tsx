@@ -555,7 +555,7 @@ export default function ConnectionsPage() {
                   <thead>
                     <tr className="text-[10px] uppercase tracking-[0.2em] text-foreground-muted font-bold">
                       <th className="px-4 py-2">Bank Account</th>
-                      <th className="px-4 py-2">GnuCash Account</th>
+                      <th className="px-4 py-2">Book Account</th>
                       <th className="px-4 py-2 w-20">Status</th>
                     </tr>
                   </thead>

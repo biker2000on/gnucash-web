@@ -405,7 +405,7 @@ export default function AssetsPage() {
             The selected source did not include any non-placeholder ASSET accounts.
           </p>
           <p className="text-foreground-muted text-sm mt-2">
-            Check that the accounts are of type ASSET and are not marked as placeholders in GnuCash.
+            Check that the accounts are of type ASSET and are not marked as placeholders.
           </p>
         </div>
       )}

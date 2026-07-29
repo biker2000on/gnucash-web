@@ -132,7 +132,7 @@ export default function CapitalGainsPage() {
       </div>
 
       <div className="bg-warning/5 border border-warning/20 rounded-lg p-3 text-xs text-foreground-secondary">
-        Broker-reported basis is not tracked in GnuCash, so every lot defaults to
+        Broker-reported basis is not tracked in the ledger, so every lot defaults to
         <span className="text-foreground"> Box C</span> (short-term) or
         <span className="text-foreground"> Box F</span> (long-term) — &ldquo;not reported to the IRS&rdquo;.
         Use the 1099-B reconciliation below to confirm basis; matched rows are upgraded to Box A / Box D.

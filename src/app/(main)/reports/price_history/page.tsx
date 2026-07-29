@@ -196,7 +196,7 @@ export default function PriceHistoryPage() {
         <div className="space-y-6">
             <ReportViewer
                 title="Price History"
-                description="Commodity price history from the GnuCash price database"
+                description="Commodity price history from the price database"
                 filters={filters}
                 onFilterChange={setFilters}
                 isLoading={isLoading}

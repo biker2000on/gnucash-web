@@ -110,7 +110,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                 <div className="text-4xl mb-3">&#128230;</div>
                 <h3 className="text-lg font-semibold mb-1">No Lots</h3>
                 <p className="text-sm">
-                    This account has no lot-tracked transactions. Lots are created when GnuCash assigns splits to lots for cost basis tracking.
+                    This account has no lot-tracked transactions. Lots are created when splits are assigned to lots for cost basis tracking.
                 </p>
             </div>
         );

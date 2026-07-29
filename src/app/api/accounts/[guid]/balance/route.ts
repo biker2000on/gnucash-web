@@ -69,7 +69,7 @@ export async function GET(
             evidence: [{
                 kind: 'account',
                 id: guid,
-                label: 'GnuCash account splits',
+                label: 'Account splits',
                 source: 'system',
                 href: `/accounts/${guid}`,
                 observedAt: new Date().toISOString(),

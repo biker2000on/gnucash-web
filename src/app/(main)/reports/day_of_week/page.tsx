@@ -234,7 +234,7 @@ export default function DayOfWeekPage() {
                         </table>
                         <p className="px-4 py-3 text-xs text-foreground-muted border-t border-border/50">
                             Note: the weekday of each transaction is taken from its post date interpreted in UTC,
-                            matching how GnuCash stores post dates. Transactions near midnight in your local
+                            matching how post dates are stored. Transactions near midnight in your local
                             timezone may fall on the adjacent weekday.
                         </p>
                     </div>

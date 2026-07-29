@@ -16,11 +16,11 @@ describe('DocsLayout', () => {
     );
 
     const homeLink = screen.getByRole('link', {
-      name: /Folio for GnuCash/i,
+      name: /Folio/i,
     });
 
     expect(homeLink).toHaveAttribute('href', '/');
     expect(screen.getByTestId('folio-stack-mark')).toBeInTheDocument();
-    expect(screen.getByText('for GnuCash')).toBeInTheDocument();
+    expect(screen.queryByText(/GnuCash/)).not.toBeInTheDocument();
   });
 });

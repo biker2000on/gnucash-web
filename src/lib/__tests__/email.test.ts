@@ -70,7 +70,7 @@ describe('renderNotificationEmail', () => {
             severity: 'warning',
             type: 'budget_alert',
         });
-        expect(subject).toBe('[Folio for GnuCash] Budget overspend: Dining');
+        expect(subject).toBe('[Folio] Budget overspend: Dining');
         expect(text).toContain('Dining is 120% of budget');
         expect(text).toContain('https://money.example.com/budgets/abc');
         expect(html).toContain('Budget overspend: Dining');
