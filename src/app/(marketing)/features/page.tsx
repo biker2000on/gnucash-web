@@ -4,7 +4,7 @@ import { FEATURES } from '@/lib/feature-registry';
 import { product } from '@/lib/product';
 
 export const metadata: Metadata = {
-  title: `All Features — ${product.name}`,
+  title: `All Features — ${product.brand}`,
   description: `Every registered ${product.name} page, report, tool, and workflow in one searchable catalog.`,
 };
 

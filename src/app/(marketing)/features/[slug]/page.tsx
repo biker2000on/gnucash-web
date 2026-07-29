@@ -14,7 +14,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     const page = FEATURE_PAGES.find(p => p.slug === slug);
     if (!page) return {};
     return {
-        title: `${page.navLabel} — ${product.name}`,
+        title: `${page.navLabel} — ${product.brand}`,
         description: page.tagline,
     };
 }

@@ -25,7 +25,7 @@ import { product } from '@/lib/product';
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-    title: `Shared Report — ${product.name}`,
+    title: `Shared Report — ${product.brand}`,
     robots: { index: false, follow: false },
 };
 
