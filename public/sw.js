@@ -1,7 +1,24 @@
-const CACHE_NAME = 'gnucash-web-v1';
+const CACHE_NAME = 'folio-pwa-v2';
+const PRECACHE_URLS = [
+  '/',
+  '/manifest.webmanifest',
+  '/favicon.svg',
+  '/favicon.ico',
+  '/icons/folio-stack-192.png',
+  '/icons/folio-stack-512.png',
+  '/icons/folio-stack-maskable-512.png',
+  '/icons/folio-apple-touch-icon-180.png',
+];
+const isRetiredAppCache = (name) =>
+  /^(gnucash-web-|folio-pwa-)/.test(name) && name !== CACHE_NAME;
 
-self.addEventListener('install', () => {
-  self.skipWaiting();
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('message', (event) => {
@@ -17,7 +34,7 @@ self.addEventListener('activate', (event) => {
       caches.keys().then((cacheNames) =>
         Promise.all(
           cacheNames
-            .filter((name) => name !== CACHE_NAME)
+            .filter(isRetiredAppCache)
             .map((name) => caches.delete(name))
         )
       ),
@@ -36,7 +53,15 @@ self.addEventListener('fetch', (event) => {
   // Network-first for navigation requests
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(event.request)
+        .then(async (response) => {
+          if (response.ok) {
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put('/', response.clone());
+          }
+          return response;
+        })
+        .catch(() => caches.match('/'))
     );
     return;
   }
@@ -49,9 +74,9 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(CACHE_NAME).then((cache) =>
         cache.match(event.request).then((cached) => {
-          const networkFetch = fetch(event.request).then((response) => {
+          const networkFetch = fetch(event.request).then(async (response) => {
             if (response.ok) {
-              cache.put(event.request, response.clone());
+              await cache.put(event.request, response.clone());
             }
             return response;
           });
@@ -68,12 +93,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname === '/manifest.json') {
+  if (url.pathname === '/manifest.webmanifest') {
     event.respondWith(
       fetch(event.request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        .then(async (response) => {
+          if (response.ok) {
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put(event.request, response.clone());
+          }
           return response;
         })
         .catch(() => caches.match(event.request))
@@ -84,9 +111,10 @@ self.addEventListener('fetch', (event) => {
   if (url.origin === self.location.origin) {
     event.respondWith(
       fetch(event.request)
-        .then((response) => {
+        .then(async (response) => {
           if (response.ok && response.type === 'basic') {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+            const cache = await caches.open(CACHE_NAME);
+            await cache.put(event.request, response.clone());
           }
           return response;
         })
