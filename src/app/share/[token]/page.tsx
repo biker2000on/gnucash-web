@@ -8,6 +8,7 @@ import {
 } from '@/lib/share-links';
 import { generateScheduledReport, type GeneratedScheduledReport } from '@/lib/report-scheduler';
 import type { LineItem, ReportData, ChartReportData, ReportFilters } from '@/lib/reports/types';
+import { product } from '@/lib/product';
 
 /**
  * Public accountant share page: /share/<secret>
@@ -24,7 +25,7 @@ import type { LineItem, ReportData, ChartReportData, ReportFilters } from '@/lib
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-    title: 'Shared Report — GnuCash Web',
+    title: `Shared Report — ${product.name}`,
     robots: { index: false, follow: false },
 };
 
@@ -207,7 +208,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         <main className="mx-auto max-w-3xl p-6 sm:p-10 print:p-0">
             <header className="border-b border-border pb-4">
                 <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">
-                    GnuCash Web · shared read-only report
+                    {product.brand} · shared read-only report
                 </p>
                 <h1 className="mt-1 text-2xl font-bold text-foreground">{book.name}</h1>
                 <p className="mt-1 text-sm text-foreground-secondary">{link.label}</p>

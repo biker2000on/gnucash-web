@@ -1,5 +1,24 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+import { BrandLockup } from '@/components/brand/BrandLockup';
 import { FEATURE_PAGES } from '@/lib/marketing-content';
+import { product } from '@/lib/product';
+
+export const metadata: Metadata = {
+    title: product.brand,
+    description: product.description,
+    openGraph: {
+        title: product.brand,
+        description: product.description,
+        siteName: product.brand,
+        type: 'website',
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: product.brand,
+        description: product.description,
+    },
+};
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
     return (
@@ -7,10 +26,8 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
             {/* Header */}
             <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur-md">
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-6">
-                    <Link href="/" className="flex items-center gap-2.5 shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element -- app favicon, plain svg */}
-                        <img src="/icon.svg" alt="" className="w-8 h-8" />
-                        <span className="text-lg font-bold text-foreground tracking-tight">GnuCash Web</span>
+                    <Link href="/" className="shrink-0 text-base text-foreground">
+                        <BrandLockup size={32} />
                     </Link>
 
                     <nav className="hidden md:flex items-center gap-1">
@@ -81,13 +98,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
             <footer className="border-t border-border bg-background-secondary">
                 <div className="max-w-7xl mx-auto px-6 py-12 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
-                        <div className="flex items-center gap-2.5 mb-3">
-                            {/* eslint-disable-next-line @next/next/no-img-element -- app favicon, plain svg */}
-                            <img src="/icon.svg" alt="" className="w-7 h-7" />
-                            <span className="font-bold text-foreground">GnuCash Web</span>
+                        <div className="mb-3 text-base text-foreground">
+                            <BrandLockup size={32} />
                         </div>
                         <p className="text-sm text-foreground-muted leading-relaxed">
-                            A self-hosted, GnuCash-compatible finance platform. Your ledger, your database, your rules.
+                            {product.description} Your ledger, your database, your rules.
                         </p>
                     </div>
                     <div>

@@ -1,10 +1,11 @@
 import type { Metadata } from 'next';
 import { PublicFeatureCatalog } from '@/components/marketing/PublicFeatureCatalog';
 import { FEATURES } from '@/lib/feature-registry';
+import { product } from '@/lib/product';
 
 export const metadata: Metadata = {
-  title: 'All Features — GnuCash Web',
-  description: 'Every registered GnuCash Web page, report, tool, and workflow in one searchable catalog.',
+  title: `All Features — ${product.name}`,
+  description: `Every registered ${product.name} page, report, tool, and workflow in one searchable catalog.`,
 };
 
 export default function AllFeaturesPage() {
