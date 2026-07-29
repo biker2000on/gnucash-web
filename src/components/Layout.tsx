@@ -10,6 +10,7 @@ import { JobProgressStream } from '@/contexts/JobProgressContext';
 import BookSwitcher from './BookSwitcher';
 import { KeyboardShortcutHelp } from './KeyboardShortcutHelp';
 import { GlobalShortcuts } from './GlobalShortcuts';
+import { ContextualHelpLink } from './docs/ContextualHelpLink';
 import { FEATURES, featureById, type FeatureDomain } from '@/lib/feature-registry';
 import { isFeatureIdEnabled, type ResolvedBookFeatures } from '@/lib/book-features';
 
@@ -340,12 +341,22 @@ const navItems: NavItem[] = [
         icon: 'LayoutDashboard',
         children: [
             { name: 'Overview', href: '/dashboard' },
+            { name: 'Action Center', href: '/actions' },
+            { name: 'Family Office', href: '/family-office' },
             { name: 'Ask Your Books', href: '/tools/ask' },
             { name: 'Feature Catalog', href: '/catalog' },
         ],
     },
     { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle', mobileOnly: true },
-    { name: 'Money', href: '/money', icon: 'BookOpen', children: registryNavChildren('money') },
+    {
+        name: 'Money',
+        href: '/money',
+        icon: 'BookOpen',
+        children: [
+            { name: 'Money Timeline', href: '/money/timeline' },
+            ...registryNavChildren('money'),
+        ],
+    },
     {
         name: 'Budgets & Goals',
         href: '/budgets',
@@ -357,7 +368,15 @@ const navItems: NavItem[] = [
     },
     { name: 'Investments', href: '/investments', icon: 'TrendingUp', children: registryNavChildren('investments') },
     { name: 'Taxes', href: '/taxes', icon: 'Percent', children: registryNavChildren('taxes') },
-    { name: 'Planning', href: '/planning', icon: 'Wrench', children: registryNavChildren('planning') },
+    {
+        name: 'Planning',
+        href: '/planning',
+        icon: 'Wrench',
+        children: [
+            { name: 'Living Plan', href: '/planning/plan' },
+            ...registryNavChildren('planning'),
+        ],
+    },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
     { name: 'Settings', href: '/settings', icon: 'Settings', children: registryNavChildren('settings') },
 ];
@@ -533,7 +552,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
     // Data-dense pages use the full content width to reduce horizontal scrolling.
     const isFullWidthPage =
-        (pathname?.startsWith('/budgets/') && pathname !== '/budgets/') ||
+        pathname?.startsWith('/budgets') ||
         pathname === '/ledger' ||
         pathname === '/settings/commodities' ||
         (pathname?.startsWith('/accounts/') && pathname !== '/accounts/') ||
@@ -1032,6 +1051,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                         <div className="hidden md:block" />
 
                         <div className="flex items-center gap-2">
+                            <ContextualHelpLink />
                             <NotificationBell />
                             <JobProgressStream />
                             <UserMenu />

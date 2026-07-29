@@ -9,7 +9,22 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 import { formatAccountPath } from '@/lib/account-utils';
 
-type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
+export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
+
+export interface InvestmentSplitInput {
+    action: InvestmentAction;
+    accountGuid: string;
+    commodityFraction: number;
+    shares: number;
+    total: number;
+    amount: number;
+    commission: number;
+    cashAccountGuid: string;
+    incomeAccountGuid: string;
+    expenseAccountGuid: string;
+    memo: string;
+    commoditySymbol: string;
+}
 
 interface InvestmentTransactionFormProps {
     accountGuid: string;
@@ -17,6 +32,7 @@ interface InvestmentTransactionFormProps {
     accountCommodityGuid: string;
     commoditySymbol: string;
     commodityFraction?: number;
+    currentShares?: number;
     onSave: () => void;
     onCancel: () => void;
 }
@@ -65,11 +81,180 @@ const ACTION_OPTIONS: { value: InvestmentAction; label: string; description: str
     { value: 'Split', label: 'Stock Split', description: 'Add shares from split' },
 ];
 
+/**
+ * Build GnuCash-compatible investment splits.
+ *
+ * Value signs follow double-entry accounting independently from quantity:
+ * buying increases the security asset and decreases cash; selling decreases
+ * the security asset and increases cash.
+ */
+export function buildInvestmentSplits(input: InvestmentSplitInput): CreateTransactionRequest['splits'] {
+    const {
+        action,
+        accountGuid,
+        commodityFraction,
+        shares,
+        total,
+        amount,
+        commission,
+        cashAccountGuid,
+        incomeAccountGuid,
+        expenseAccountGuid,
+        memo,
+        commoditySymbol,
+    } = input;
+    const splits: CreateTransactionRequest['splits'] = [];
+
+    switch (action) {
+        case 'Buy': {
+            const totalWithCommission = total + commission;
+            const { num: valueNum, denom: valueDenom } = toNumDenom(total);
+            splits.push({
+                account_guid: accountGuid,
+                action: 'Buy',
+                quantity_num: Math.round(shares * commodityFraction),
+                quantity_denom: commodityFraction,
+                value_num: valueNum,
+                value_denom: valueDenom,
+                memo: memo || undefined,
+            });
+
+            const { num: cashNum, denom: cashDenom } = toNumDenom(totalWithCommission);
+            splits.push({
+                account_guid: cashAccountGuid,
+                action: '',
+                quantity_num: -cashNum,
+                quantity_denom: cashDenom,
+                value_num: -cashNum,
+                value_denom: cashDenom,
+            });
+
+            if (commission > 0 && expenseAccountGuid) {
+                const { num: commNum, denom: commDenom } = toNumDenom(commission);
+                splits.push({
+                    account_guid: expenseAccountGuid,
+                    action: '',
+                    quantity_num: commNum,
+                    quantity_denom: commDenom,
+                    value_num: commNum,
+                    value_denom: commDenom,
+                });
+            }
+            break;
+        }
+
+        case 'Sell': {
+            const netProceeds = total - commission;
+            const { num: valueNum, denom: valueDenom } = toNumDenom(total);
+            splits.push({
+                account_guid: accountGuid,
+                action: 'Sell',
+                quantity_num: -Math.round(shares * commodityFraction),
+                quantity_denom: commodityFraction,
+                value_num: -valueNum,
+                value_denom: valueDenom,
+                memo: memo || undefined,
+            });
+
+            const { num: cashNum, denom: cashDenom } = toNumDenom(netProceeds);
+            splits.push({
+                account_guid: cashAccountGuid,
+                action: '',
+                quantity_num: cashNum,
+                quantity_denom: cashDenom,
+                value_num: cashNum,
+                value_denom: cashDenom,
+            });
+
+            if (commission > 0 && expenseAccountGuid) {
+                const { num: commNum, denom: commDenom } = toNumDenom(commission);
+                splits.push({
+                    account_guid: expenseAccountGuid,
+                    action: '',
+                    quantity_num: commNum,
+                    quantity_denom: commDenom,
+                    value_num: commNum,
+                    value_denom: commDenom,
+                });
+            }
+            break;
+        }
+
+        case 'Dividend': {
+            const { num: amtNum, denom: amtDenom } = toNumDenom(amount);
+            splits.push({
+                account_guid: cashAccountGuid,
+                action: '',
+                quantity_num: amtNum,
+                quantity_denom: amtDenom,
+                value_num: amtNum,
+                value_denom: amtDenom,
+            });
+            splits.push({
+                account_guid: incomeAccountGuid,
+                action: '',
+                quantity_num: -amtNum,
+                quantity_denom: amtDenom,
+                value_num: -amtNum,
+                value_denom: amtDenom,
+                memo: `Dividend: ${commoditySymbol}`,
+            });
+            break;
+        }
+
+        case 'ReturnOfCapital': {
+            const { num: amtNum, denom: amtDenom } = toNumDenom(amount);
+            splits.push({
+                account_guid: accountGuid,
+                action: 'Return of Capital',
+                quantity_num: 0,
+                quantity_denom: 1,
+                value_num: -amtNum,
+                value_denom: amtDenom,
+                memo: memo || 'Return of Capital',
+            });
+            splits.push({
+                account_guid: cashAccountGuid,
+                action: '',
+                quantity_num: amtNum,
+                quantity_denom: amtDenom,
+                value_num: amtNum,
+                value_denom: amtDenom,
+            });
+            break;
+        }
+
+        case 'Split': {
+            splits.push({
+                account_guid: accountGuid,
+                action: 'Split',
+                quantity_num: Math.round(shares * commodityFraction),
+                quantity_denom: commodityFraction,
+                value_num: 0,
+                value_denom: 100,
+                memo: memo || `Stock split: +${shares} shares`,
+            });
+            splits.push({
+                account_guid: accountGuid,
+                action: '',
+                quantity_num: 0,
+                quantity_denom: 1,
+                value_num: 0,
+                value_denom: 100,
+            });
+            break;
+        }
+    }
+
+    return splits;
+}
+
 export function InvestmentTransactionForm({
     accountGuid,
     accountName,
     commoditySymbol,
     commodityFraction = 10000,
+    currentShares = 0,
     onSave,
     onCancel,
 }: InvestmentTransactionFormProps) {
@@ -269,7 +454,8 @@ export function InvestmentTransactionForm({
         switch (form.action) {
             case 'Buy':
             case 'Sell': {
-                if (!form.shares || parseFloat(form.shares) <= 0) {
+                const shares = parseFloat(form.shares);
+                if (!form.shares || shares <= 0) {
                     errs.push('Shares must be a positive number');
                 }
                 if (!form.pricePerShare || parseFloat(form.pricePerShare) <= 0) {
@@ -281,6 +467,18 @@ export function InvestmentTransactionForm({
                 }
                 if (!form.cashAccountGuid) {
                     errs.push('Cash account is required');
+                }
+                if ((parseFloat(form.commission) || 0) > 0 && !form.expenseAccountGuid) {
+                    errs.push('An expense account is required when commission or fees are entered');
+                }
+                if (
+                    form.action === 'Sell'
+                    && shares > Math.max(0, currentShares) + (0.5 / commodityFraction)
+                ) {
+                    errs.push(
+                        `Cannot sell ${shares.toFixed(sharePrecision)} shares; `
+                        + `${Math.max(0, currentShares).toFixed(sharePrecision)} are available`,
+                    );
                 }
                 break;
             }
@@ -316,185 +514,20 @@ export function InvestmentTransactionForm({
         return errs;
     };
 
-    const buildSplits = (): CreateTransactionRequest['splits'] => {
-        const splits: CreateTransactionRequest['splits'] = [];
-
-        switch (form.action) {
-            case 'Buy': {
-                const shares = parseFloat(form.shares);
-                const total = parseFloat(form.total);
-                const commission = parseFloat(form.commission) || 0;
-                const totalWithCommission = total + commission;
-
-                // Investment account: +shares, -value (cost basis as negative)
-                const { num: valueNum, denom: valueDenom } = toNumDenom(total);
-                splits.push({
-                    account_guid: accountGuid,
-                    action: 'Buy',
-                    // Shares stored at the commodity's native fraction precision
-                    quantity_num: Math.round(shares * commodityFraction),
-                    quantity_denom: commodityFraction,
-                    value_num: -valueNum, // Negative because money flows out
-                    value_denom: valueDenom,
-                    memo: form.memo || undefined,
-                });
-
-                // Cash account: -(total + commission)
-                const { num: cashNum, denom: cashDenom } = toNumDenom(totalWithCommission);
-                splits.push({
-                    account_guid: form.cashAccountGuid,
-                    action: '',
-                    quantity_num: -cashNum,
-                    quantity_denom: cashDenom,
-                    value_num: -cashNum,
-                    value_denom: cashDenom,
-                });
-
-                // Commission expense if applicable
-                if (commission > 0 && form.expenseAccountGuid) {
-                    const { num: commNum, denom: commDenom } = toNumDenom(commission);
-                    splits.push({
-                        account_guid: form.expenseAccountGuid,
-                        action: '',
-                        quantity_num: commNum,
-                        quantity_denom: commDenom,
-                        value_num: commNum,
-                        value_denom: commDenom,
-                    });
-                }
-                break;
-            }
-
-            case 'Sell': {
-                const shares = parseFloat(form.shares);
-                const total = parseFloat(form.total);
-                const commission = parseFloat(form.commission) || 0;
-                const netProceeds = total - commission;
-
-                // Investment account: -shares, +value (proceeds as positive)
-                const { num: valueNum, denom: valueDenom } = toNumDenom(total);
-                splits.push({
-                    account_guid: accountGuid,
-                    action: 'Sell',
-                    quantity_num: -Math.round(shares * commodityFraction), // Negative for selling
-                    quantity_denom: commodityFraction,
-                    value_num: valueNum, // Positive because money flows in
-                    value_denom: valueDenom,
-                    memo: form.memo || undefined,
-                });
-
-                // Cash account: +(total - commission)
-                const { num: cashNum, denom: cashDenom } = toNumDenom(netProceeds);
-                splits.push({
-                    account_guid: form.cashAccountGuid,
-                    action: '',
-                    quantity_num: cashNum,
-                    quantity_denom: cashDenom,
-                    value_num: cashNum,
-                    value_denom: cashDenom,
-                });
-
-                // Commission expense if applicable
-                if (commission > 0 && form.expenseAccountGuid) {
-                    const { num: commNum, denom: commDenom } = toNumDenom(commission);
-                    splits.push({
-                        account_guid: form.expenseAccountGuid,
-                        action: '',
-                        quantity_num: commNum,
-                        quantity_denom: commDenom,
-                        value_num: commNum,
-                        value_denom: commDenom,
-                    });
-                }
-                break;
-            }
-
-            case 'Dividend': {
-                const amount = parseFloat(form.amount);
-                const { num: amtNum, denom: amtDenom } = toNumDenom(amount);
-
-                // Cash account: +amount
-                splits.push({
-                    account_guid: form.cashAccountGuid,
-                    action: '',
-                    quantity_num: amtNum,
-                    quantity_denom: amtDenom,
-                    value_num: amtNum,
-                    value_denom: amtDenom,
-                });
-
-                // Income account: -amount (credit to income)
-                splits.push({
-                    account_guid: form.incomeAccountGuid,
-                    action: '',
-                    quantity_num: -amtNum,
-                    quantity_denom: amtDenom,
-                    value_num: -amtNum,
-                    value_denom: amtDenom,
-                    memo: `Dividend: ${commoditySymbol}`,
-                });
-                break;
-            }
-
-            case 'ReturnOfCapital': {
-                const amount = parseFloat(form.amount);
-                const { num: amtNum, denom: amtDenom } = toNumDenom(amount);
-
-                // Investment account: reduce basis (negative value, zero quantity)
-                splits.push({
-                    account_guid: accountGuid,
-                    action: 'Return of Capital',
-                    quantity_num: 0,
-                    quantity_denom: 1,
-                    value_num: amtNum, // Positive to reduce basis
-                    value_denom: amtDenom,
-                    memo: form.memo || 'Return of Capital',
-                });
-
-                // Cash account: +amount
-                splits.push({
-                    account_guid: form.cashAccountGuid,
-                    action: '',
-                    quantity_num: amtNum,
-                    quantity_denom: amtDenom,
-                    value_num: amtNum,
-                    value_denom: amtDenom,
-                });
-                break;
-            }
-
-            case 'Split': {
-                const newShares = parseFloat(form.shares);
-
-                // Investment account: +shares, zero value
-                splits.push({
-                    account_guid: accountGuid,
-                    action: 'Split',
-                    quantity_num: Math.round(newShares * commodityFraction),
-                    quantity_denom: commodityFraction,
-                    value_num: 0,
-                    value_denom: 100,
-                    memo: form.memo || `Stock split: +${newShares} shares`,
-                });
-
-                // Need a balancing split with zero value for GnuCash
-                // This is typically handled differently, but we need balanced transaction
-                // For stock splits, GnuCash uses a special handling
-                // We'll add a zero-value split to the same account
-                splits.push({
-                    account_guid: accountGuid,
-                    action: '',
-                    quantity_num: 0,
-                    quantity_denom: 1,
-                    value_num: 0,
-                    value_denom: 100,
-                });
-                break;
-            }
-        }
-
-        return splits;
-    };
+    const buildSplits = (): CreateTransactionRequest['splits'] => buildInvestmentSplits({
+        action: form.action,
+        accountGuid,
+        commodityFraction,
+        shares: parseFloat(form.shares) || 0,
+        total: parseFloat(form.total) || 0,
+        amount: parseFloat(form.amount) || 0,
+        commission: parseFloat(form.commission) || 0,
+        cashAccountGuid: form.cashAccountGuid,
+        incomeAccountGuid: form.incomeAccountGuid,
+        expenseAccountGuid: form.expenseAccountGuid,
+        memo: form.memo,
+        commoditySymbol,
+    });
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -603,7 +636,20 @@ export function InvestmentTransactionForm({
                     <h3 className="text-lg font-semibold text-foreground">Investment Transaction</h3>
                     <p className="text-sm text-foreground-muted">{accountName} ({commoditySymbol})</p>
                 </div>
+                <div className="text-right">
+                    <p className="text-[10px] uppercase tracking-wider text-foreground-muted">Current position</p>
+                    <p className={`font-mono text-sm tabular-nums ${currentShares < 0 ? 'text-negative' : 'text-foreground'}`}>
+                        {currentShares.toFixed(sharePrecision)} shares
+                    </p>
+                </div>
             </div>
+
+            {currentShares < -(0.5 / commodityFraction) && (
+                <div className="border border-negative/30 bg-negative/10 rounded-lg p-3 text-sm text-negative">
+                    This account has a negative share position. Record a correcting Buy or revise the
+                    overselling transaction before entering another Sell.
+                </div>
+            )}
 
             {/* Error Messages */}
             {errors.length > 0 && (
@@ -676,19 +722,34 @@ export function InvestmentTransactionForm({
                             }`}>
                                 Shares {getCalculatedField() === 'shares' && '(auto)'}
                             </label>
-                            <input
-                                type="number"
-                                step="any"
-                                min="0"
-                                value={form.shares}
-                                onChange={(e) => handleNumericFieldChange('shares', e.target.value)}
-                                placeholder="0"
-                                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
-                                    getCalculatedField() === 'shares'
-                                        ? 'bg-primary/10 border-primary/30 text-primary'
-                                        : 'bg-input-bg border-border text-foreground'
-                                } focus:border-primary/50`}
-                            />
+                            <div className="flex gap-2">
+                                <input
+                                    type="number"
+                                    step={1 / commodityFraction}
+                                    min="0"
+                                    value={form.shares}
+                                    onChange={(e) => handleNumericFieldChange('shares', e.target.value)}
+                                    placeholder="0"
+                                    className={`min-w-0 flex-1 border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none ${
+                                        getCalculatedField() === 'shares'
+                                            ? 'bg-primary/10 border-primary/30 text-primary'
+                                            : 'bg-input-bg border-border text-foreground'
+                                    } focus:border-primary/50`}
+                                />
+                                {form.action === 'Sell' && currentShares > (0.5 / commodityFraction) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleNumericFieldChange(
+                                            'shares',
+                                            currentShares.toFixed(sharePrecision),
+                                        )}
+                                        className="shrink-0 rounded-lg border border-border px-3 py-2 text-xs text-foreground-secondary hover:border-border-hover hover:text-foreground transition-colors"
+                                        title={`Sell all ${currentShares.toFixed(sharePrecision)} shares`}
+                                    >
+                                        Sell all
+                                    </button>
+                                )}
+                            </div>
                         </div>
                         <div>
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${

@@ -9,6 +9,7 @@
 
 import prisma from '@/lib/prisma';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
+import { sumFarmSplitsInBookCurrency } from './farm-currency';
 
 /** Tool-config type shared by the analyzer route and the Schedule F report. */
 export const FARM_ANALYZER_TOOL_TYPE = 'farm_analyzer';
@@ -23,11 +24,11 @@ export interface FarmAccountRoots {
  * Single source for both the analyzer GET and the Schedule F report route.
  */
 export async function loadPinnedFarmRoots(
-  userId: number,
+  _userId: number,
   bookGuid: string,
 ): Promise<FarmAccountRoots> {
-  const configs = await ToolConfigService.listByUser(userId, bookGuid, FARM_ANALYZER_TOOL_TYPE);
-  const config = configs[0]?.config;
+  const shared = await ToolConfigService.getBookSingleton(bookGuid, FARM_ANALYZER_TOOL_TYPE);
+  const config = shared?.config;
   const c = config && typeof config === 'object' ? (config as Record<string, unknown>) : {};
   const guids = (v: unknown): string[] =>
     Array.isArray(v)
@@ -60,6 +61,10 @@ export interface FarmBookData {
   taxMappedFarmGuids: string[];
   /** Fraction of the tax year elapsed as of now (1 for past years). */
   elapsedYearFraction: number;
+  /** Book report currency. */
+  currencyCode: string;
+  /** Foreign transaction currencies converted into the report currency. */
+  convertedCurrencies: string[];
 }
 
 interface AccountRow {
@@ -99,6 +104,7 @@ export function expandGuidsToDescendants(
  * Uses the same value-only-gains-offset exclusion as the tax aggregator.
  */
 export async function aggregateFarmBookData(
+  bookGuid: string,
   bookAccountGuids: string[],
   incomeRootGuids: string[],
   expenseRootGuids: string[],
@@ -135,23 +141,18 @@ export async function aggregateFarmBookData(
     expenseGuids,
     taxMappedFarmGuids: [],
     elapsedYearFraction: Math.round(elapsedYearFraction * 10000) / 10000,
+    currencyCode: '',
+    convertedCurrencies: [],
   };
   if (allGuids.length === 0) return empty;
 
-  const splitSums = await prisma.$queryRaw<
-    Array<{ account_guid: string; total: number | null }>
-  >`
-    SELECT s.account_guid,
-           (SUM(s.value_num::numeric / NULLIF(s.value_denom, 0)::numeric))::float8 as total
-    FROM splits s
-    JOIN transactions t ON s.tx_guid = t.guid
-    WHERE s.account_guid = ANY(${allGuids})
-      AND t.post_date >= ${startDate}
-      AND t.post_date <= ${endDate}
-      -- Exclude value-only capital-gains offset splits (see book-income.ts).
-      AND NOT (s.quantity_num = 0 AND s.value_num <> 0)
-    GROUP BY s.account_guid
-  `;
+  const currencySums = await sumFarmSplitsInBookCurrency(
+    bookGuid,
+    allGuids,
+    startDate,
+    endDate,
+  );
+  const splitSums = currencySums.totals;
 
   const incomeSet = new Set(incomeGuids);
   const expenseSet = new Set(expenseGuids);
@@ -161,19 +162,18 @@ export async function aggregateFarmBookData(
   let expenses = 0;
 
   for (const row of splitSums) {
-    if (row.total === null) continue;
-    const info = infoMap.get(row.account_guid);
+    const info = infoMap.get(row.accountGuid);
     // Classify by the account's actual type, gated on which selection it came
     // from — a stale/crafted config pinning an EXPENSE account under income
     // roots (or vice versa) must not flip signs or sides.
-    const isIncome = incomeSet.has(row.account_guid) && info?.account_type === 'INCOME';
-    const isExpense = expenseSet.has(row.account_guid) && info?.account_type === 'EXPENSE';
+    const isIncome = incomeSet.has(row.accountGuid) && info?.account_type === 'INCOME';
+    const isExpense = expenseSet.has(row.accountGuid) && info?.account_type === 'EXPENSE';
     if (!isIncome && !isExpense) continue;
     // GnuCash sign convention: income accounts carry credits (negative).
     const amount = isIncome ? -row.total : row.total;
     if (Math.abs(amount) < 0.005) continue;
     const detail: FarmAccountAmount = {
-      accountGuid: row.account_guid,
+      accountGuid: row.accountGuid,
       accountName: info?.name ?? 'Unknown',
       accountPath: info?.fullname ?? 'Unknown',
       amount: Math.round(amount * 100) / 100,
@@ -208,5 +208,7 @@ export async function aggregateFarmBookData(
     incomeAccounts,
     expenseAccounts,
     taxMappedFarmGuids,
+    currencyCode: currencySums.currencyCode,
+    convertedCurrencies: currencySums.convertedCurrencies,
   };
 }

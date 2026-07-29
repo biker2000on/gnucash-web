@@ -7,7 +7,6 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 
 interface ReconciliationPanelProps {
-    accountGuid: string;
     accountCurrency: string;
     isInvestment?: boolean;
     sharePrecision?: number;
@@ -15,7 +14,6 @@ interface ReconciliationPanelProps {
     selectedBalance: number;
     onReconcileComplete?: () => void;
     selectedSplits: Set<string>;
-    onToggleSplit: (splitGuid: string) => void;
     onSelectAll: () => void;
     onClearSelection: () => void;
     isReconciling: boolean;
@@ -49,13 +47,34 @@ export function ReconciliationPanel({
     );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const statementBalanceTouched = useRef(false);
+    const simpleFinDefaultApplied = useRef(false);
+    const wasReconciling = useRef(false);
 
-    // Auto-fill statement balance from SimpleFin when reconciliation starts
+    // Each reconciliation gets one SimpleFin default. Once the user edits the
+    // field (including clearing it), later renders or balance refreshes must
+    // not overwrite their intended statement balance.
     useEffect(() => {
-        if (isReconciling && simpleFinBalance && !statementBalance && !isInvestment) {
-            setStatementBalance(simpleFinBalance.balance.toFixed(2));
+        if (isReconciling && !wasReconciling.current) {
+            statementBalanceTouched.current = false;
+            simpleFinDefaultApplied.current = false;
+            setStatementBalance('');
         }
-    }, [isReconciling, simpleFinBalance, statementBalance, isInvestment]);
+        wasReconciling.current = isReconciling;
+    }, [isReconciling]);
+
+    useEffect(() => {
+        if (
+            isReconciling &&
+            simpleFinBalance &&
+            !statementBalanceTouched.current &&
+            !simpleFinDefaultApplied.current &&
+            !isInvestment
+        ) {
+            setStatementBalance(simpleFinBalance.balance.toFixed(2));
+            simpleFinDefaultApplied.current = true;
+        }
+    }, [isReconciling, simpleFinBalance, isInvestment]);
 
     const handleFinish = useCallback(async () => {
         if (selectedSplits.size === 0) {
@@ -210,7 +229,10 @@ export function ReconciliationPanel({
                         type="number"
                         step={isInvestment ? String(Math.pow(10, -sharePrecision)) : '0.01'}
                         value={statementBalance}
-                        onChange={(e) => setStatementBalance(e.target.value)}
+                        onChange={(e) => {
+                            statementBalanceTouched.current = true;
+                            setStatementBalance(e.target.value);
+                        }}
                         placeholder={isInvestment ? (0).toFixed(sharePrecision) : '0.00'}
                         className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />

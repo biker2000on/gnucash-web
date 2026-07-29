@@ -116,6 +116,18 @@ describe('analyzeFarmScenarios — scenario math', () => {
     expect(none.scenarios.schedule_f.salesTaxSavings).toBe(0);
   });
 
+  it('qualifies through the three-preceding-year average when the latest year is below $10k', () => {
+    const result = analyzeFarmScenarios(baseInput({
+      priorYearFarmIncome: 8_000,
+      priorThreeYearFarmIncome: [8_000, 11_000, 13_000],
+    }));
+
+    expect(result.priorThreeYearAverage).toBeCloseTo(10_666.67, 2);
+    expect(result.qualifiesForSalesTaxExemption).toBe(true);
+    expect(result.salesTaxSavingsBasis).toBe('qualifying');
+    expect(result.warnings.some((warning) => warning.includes('average test qualifies'))).toBe(true);
+  });
+
   it('clamps §179 to total business income (farm + wages) and flags it', () => {
     // With no wages or other SE income, the limit is farm profit ($7k).
     const clamped = analyzeFarmScenarios(

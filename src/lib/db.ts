@@ -12,6 +12,55 @@ export const query = (text: string, params?: readonly unknown[]) =>
     params ? pool.query(text, [...params]) : pool.query(text);
 
 /**
+ * Runs an operation while holding a PostgreSQL session-level advisory lock.
+ *
+ * The lock connection stays checked out for the full operation, even when the
+ * operation itself uses the shared pool. This lets independent app processes
+ * serialize work such as schema initialization without a separate lock table.
+ */
+export async function withDatabaseAdvisoryLock<T>(
+    lockName: string,
+    operation: () => Promise<T>,
+): Promise<T> {
+    const client = await pool.connect();
+    let lockAcquired = false;
+    let operationError: unknown;
+
+    try {
+        await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockName]);
+        lockAcquired = true;
+        return await operation();
+    } catch (error) {
+        operationError = error;
+        throw error;
+    } finally {
+        let unlockError: unknown;
+
+        try {
+            if (lockAcquired) {
+                await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockName]);
+            }
+        } catch (error) {
+            unlockError = error;
+        } finally {
+            // A connection whose lock could not be released must not return to
+            // the pool, or a later borrower could inherit the advisory lock.
+            client.release(Boolean(unlockError));
+        }
+
+        if (unlockError) {
+            if (operationError) {
+                throw new AggregateError(
+                    [operationError, unlockError],
+                    `Operation and advisory-lock release both failed for "${lockName}"`,
+                );
+            }
+            throw unlockError;
+        }
+    }
+}
+
+/**
  * Converts GnuCash split values (integer + denominator) to a decimal string.
  * @param num The numerator (bigint/number)
  * @param denom The denominator (bigint/number)

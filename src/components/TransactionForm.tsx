@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { SplitFormData, TransactionFormData, CreateTransactionRequest, Transaction, Account } from '@/lib/types';
 import { SplitRow } from './SplitRow';
-import { toNumDenom } from '@/lib/validation';
 import { AccountSelector } from './ui/AccountSelector';
 import { DescriptionAutocomplete } from './ui/DescriptionAutocomplete';
 import { TransactionSuggestion } from '@/app/api/transactions/descriptions/route';
@@ -16,6 +15,12 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { toLocalDateString } from '@/lib/datePresets';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
+import {
+    buildCurrencySplitAmounts,
+    deriveRecordedExchangeRate,
+    editableDecimalMagnitude,
+    parseExchangeRate,
+} from '@/lib/transaction-currency';
 
 interface TransactionFormProps {
     transaction?: Transaction | null;
@@ -146,15 +151,21 @@ export function TransactionForm({
     useEffect(() => {
         if (transaction) {
             const splits: SplitFormData[] = transaction.splits?.map(split => {
-                const value = parseFloat(split.quantity_decimal || '0');
+                const quantityDecimal = split.quantity_decimal || '0';
+                const quantity = parseFloat(quantityDecimal);
+                const magnitude = editableDecimalMagnitude(quantityDecimal);
                 return {
                     id: split.guid,
                     account_guid: split.account_guid,
                     account_name: split.account_name || '',
-                    debit: value > 0 ? value.toFixed(2) : '',
-                    credit: value < 0 ? Math.abs(value).toFixed(2) : '',
+                    debit: quantity > 0 ? magnitude : '',
+                    credit: quantity < 0 ? magnitude : '',
                     memo: split.memo || '',
                     reconcile_state: split.reconcile_state as 'n' | 'c' | 'y' || 'n',
+                    exchange_rate: deriveRecordedExchangeRate(
+                        split.value_decimal,
+                        quantityDecimal,
+                    ),
                 };
             }) || [createEmptySplit(), createEmptySplit()];
 
@@ -254,12 +265,32 @@ export function TransactionForm({
         }));
     };
 
+    const resolveSplitExchangeRate = (split: SplitFormData): number | null => {
+        const account = accountMap.get(split.account_guid);
+
+        // Once account metadata is available, it is authoritative. This also
+        // prevents a stale rate from a previously-selected account being used.
+        if (account?.commodity_guid && formData.currency_guid) {
+            if (account.commodity_guid === formData.currency_guid) return 1;
+            return parseExchangeRate(split.exchange_rate);
+        }
+
+        // While account metadata is loading, an already-populated rate remains
+        // useful; otherwise treat the split as same-currency for display only.
+        return parseExchangeRate(split.exchange_rate) ?? 1;
+    };
+
     const calculateBalance = () => {
         let totalDebit = 0;
         let totalCredit = 0;
         formData.splits.forEach(split => {
-            totalDebit += parseFloat(split.debit) || 0;
-            totalCredit += parseFloat(split.credit) || 0;
+            const rate = resolveSplitExchangeRate(split);
+            if (rate === null) return;
+
+            // Inputs are in the account's commodity, but balance is determined
+            // by split values in the transaction currency.
+            totalDebit += (parseFloat(split.debit) || 0) * rate;
+            totalCredit += (parseFloat(split.credit) || 0) * rate;
         });
         return { totalDebit, totalCredit, difference: totalDebit - totalCredit };
     };
@@ -272,19 +303,22 @@ export function TransactionForm({
             const newSplits = [...prev.splits];
             const lastIndex = newSplits.length - 1;
             const lastSplit = newSplits[lastIndex];
+            const rate = resolveSplitExchangeRate(lastSplit);
+            if (rate === null) return prev;
+            const nativeDifference = Math.abs(difference) / rate;
 
             if (difference > 0) {
                 // Need more credit
                 newSplits[lastIndex] = {
                     ...lastSplit,
-                    credit: (parseFloat(lastSplit.credit) || 0 + difference).toFixed(2),
+                    credit: ((parseFloat(lastSplit.credit) || 0) + nativeDifference).toFixed(2),
                     debit: '',
                 };
             } else {
                 // Need more debit
                 newSplits[lastIndex] = {
                     ...lastSplit,
-                    debit: (parseFloat(lastSplit.debit) || 0 + Math.abs(difference)).toFixed(2),
+                    debit: ((parseFloat(lastSplit.debit) || 0) + nativeDifference).toFixed(2),
                     credit: '',
                 };
             }
@@ -410,6 +444,22 @@ export function TransactionForm({
                 fieldErrors.fromAccount = 'Must differ';
                 fieldErrors.toAccount = 'Must differ';
             }
+
+            const simpleAccounts = [
+                accountMap.get(simpleData.fromAccountGuid),
+                accountMap.get(simpleData.toAccountGuid),
+            ].filter((account): account is Account => Boolean(account));
+            const needsExchangeRate = simpleAccounts.some(account =>
+                Boolean(
+                    formData.currency_guid
+                    && account.commodity_guid
+                    && account.commodity_guid !== formData.currency_guid,
+                )
+            );
+            if (needsExchangeRate) {
+                errors.push('Foreign-currency transactions require Advanced mode so each account amount and exchange rate can be entered.');
+                fieldErrors.splits = 'Use Advanced mode';
+            }
         } else {
             // Advanced mode validation
             if (formData.splits.filter(s => s.account_guid).length < 2) {
@@ -417,8 +467,20 @@ export function TransactionForm({
                 fieldErrors.splits = 'Need 2+ accounts';
             }
 
+            const missingRateAccounts = formData.splits
+                .filter(split => split.account_guid && resolveSplitExchangeRate(split) === null)
+                .map(split => accountMap.get(split.account_guid)?.fullname
+                    || accountMap.get(split.account_guid)?.name
+                    || split.account_name
+                    || 'selected account');
+
+            if (missingRateAccounts.length > 0) {
+                errors.push(`Enter a valid account-to-transaction exchange rate for: ${missingRateAccounts.join(', ')}.`);
+                fieldErrors.splits = 'Exchange rate required';
+            }
+
             const { difference } = calculateBalance();
-            if (Math.abs(difference) > 0.01) {
+            if (missingRateAccounts.length === 0 && Math.abs(difference) > 0.01) {
                 errors.push(`Transaction is unbalanced by ${difference.toFixed(2)}. Debits must equal credits.`);
                 fieldErrors.splits = 'Unbalanced';
             }
@@ -458,45 +520,41 @@ export function TransactionForm({
             submissionSplits = formData.splits;
         }
 
+        const apiSplits: CreateTransactionRequest['splits'] = [];
+        for (const split of submissionSplits.filter(candidate => candidate.account_guid)) {
+            const debit = parseFloat(split.debit) || 0;
+            const credit = parseFloat(split.credit) || 0;
+            const accountAmount = debit - credit;
+            const exchangeRate = resolveSplitExchangeRate(split);
+            if (exchangeRate === null) return null;
+            const accountFraction = accountMap.get(split.account_guid)?.commodity_scu || 100;
+
+            const {
+                valueNum,
+                valueDenom,
+                quantityNum,
+                quantityDenom,
+            } = buildCurrencySplitAmounts(accountAmount, exchangeRate, accountFraction);
+
+            apiSplits.push({
+                guid: /^[0-9a-f]{32}$/.test(split.id) ? split.id : undefined,
+                account_guid: split.account_guid,
+                value_num: valueNum,
+                value_denom: valueDenom,
+                quantity_num: quantityNum,
+                quantity_denom: quantityDenom,
+                memo: split.memo || undefined,
+                reconcile_state: split.reconcile_state,
+            });
+        }
+
         // Convert form data to API format
         return {
             currency_guid: formData.currency_guid,
             num: formData.num || undefined,
             post_date: formData.post_date,
             description: formData.description,
-            splits: submissionSplits
-                .filter(split => split.account_guid)
-                .map(split => {
-                    const debit = parseFloat(split.debit) || 0;
-                    const credit = parseFloat(split.credit) || 0;
-                    const netValue = debit - credit;
-                    const { num: valueNum, denom: valueDenom } = toNumDenom(netValue);
-
-                    // Calculate quantity if exchange rate is provided
-                    let quantityNum = valueNum;
-                    let quantityDenom = valueDenom;
-
-                    if (split.exchange_rate) {
-                        const rate = parseFloat(split.exchange_rate);
-                        if (!isNaN(rate) && rate > 0) {
-                            // quantity = value × exchange_rate (for account commodity)
-                            const quantityValue = netValue * rate;
-                            const { num: qNum, denom: qDenom } = toNumDenom(quantityValue);
-                            quantityNum = qNum;
-                            quantityDenom = qDenom;
-                        }
-                    }
-
-                    return {
-                        account_guid: split.account_guid,
-                        value_num: valueNum,
-                        value_denom: valueDenom,
-                        quantity_num: quantityNum,
-                        quantity_denom: quantityDenom,
-                        memo: split.memo || undefined,
-                        reconcile_state: split.reconcile_state,
-                    };
-                }),
+            splits: apiSplits,
         };
     };
 

@@ -93,6 +93,8 @@ export async function listReceipts(params: {
   endDate?: string;
   /** When true, only receipts marked HSA-eligible. */
   hsaEligible?: boolean;
+  /** Restrict to the uploader (used by employee self-service workflows). */
+  createdBy?: number;
 }): Promise<{ receipts: ReceiptWithTransaction[]; total: number }> {
   const conditions: string[] = ['r.book_guid = $1'];
   const values: unknown[] = [params.bookGuid];
@@ -114,6 +116,12 @@ export async function listReceipts(params: {
 
   if (params.hsaEligible) {
     conditions.push('r.hsa_eligible = TRUE');
+  }
+
+  if (params.createdBy != null) {
+    conditions.push(`r.created_by = $${paramIdx}`);
+    values.push(params.createdBy);
+    paramIdx++;
   }
 
   if (params.startDate) {

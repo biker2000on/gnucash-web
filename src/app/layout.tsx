@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider, ThemeScript } from "@/contexts/ThemeContext";
 import { UserPreferencesProvider } from "@/contexts/UserPreferencesContext";
 import { PWAInstallProvider } from "@/contexts/PWAInstallContext";
+import { product } from "@/lib/product";
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -19,17 +20,17 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#0d9488',
+  themeColor: '#0c1322',
 };
 
 export const metadata: Metadata = {
-  title: "GnuCash Web PWA",
-  description: "Modern web interface for GnuCash",
-  manifest: '/manifest.json',
+  title: product.brand,
+  description: product.description,
+  manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'GnuCash Web',
+    title: product.brand,
   },
 };
 
@@ -42,7 +43,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <ThemeScript />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+        <link rel="apple-touch-icon" href="/icons/folio-apple-touch-icon-180.png" />
       </head>
       <body className={`${dmSans.variable} ${jetBrainsMono.variable} antialiased`}>
         <ThemeProvider>

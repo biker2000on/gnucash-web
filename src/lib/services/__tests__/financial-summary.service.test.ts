@@ -27,8 +27,13 @@ vi.mock('@/lib/currency', () => ({
   findExchangeRate: vi.fn(),
 }));
 
+vi.mock('@/lib/account-valuation', () => ({
+  buildAccountValuationContext: vi.fn(),
+}));
+
 import prisma from '@/lib/prisma';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
+import { buildAccountValuationContext } from '@/lib/account-valuation';
 
 const mockPrisma = prisma as unknown as {
   accounts: { findMany: Mock };
@@ -37,6 +42,7 @@ const mockPrisma = prisma as unknown as {
 };
 const mockGetBaseCurrency = vi.mocked(getBaseCurrency);
 const mockFindExchangeRate = vi.mocked(findExchangeRate);
+const mockBuildAccountValuationContext = vi.mocked(buildAccountValuationContext);
 
 const USD_CURRENCY = {
   guid: 'usd-guid',
@@ -49,6 +55,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetBaseCurrency.mockResolvedValue(USD_CURRENCY);
   mockFindExchangeRate.mockResolvedValue(null);
+  mockBuildAccountValuationContext.mockResolvedValue({
+    reportCurrencyGuid: USD_CURRENCY.guid,
+    reportCurrencyMnemonic: USD_CURRENCY.mnemonic,
+    getMultiplier: () => 1,
+  });
 });
 
 describe('FinancialSummaryService.computeSavingsRate', () => {
@@ -173,6 +184,59 @@ describe('FinancialSummaryService.computeNetWorthSummary', () => {
     expect(result.end.netWorth).toBeCloseTo(1500);
     expect(result.change).toBeCloseTo(500);
     expect(result.changePercent).toBeCloseTo(50);
+  });
+
+  it('uses the shared valuation context for foreign cash and investments', async () => {
+    mockPrisma.accounts.findMany.mockResolvedValue([
+      { guid: 'cash-guid', account_type: 'CASH', commodity_guid: 'vnd-guid', commodity: { namespace: 'CURRENCY' } },
+      { guid: 'stock-guid', account_type: 'STOCK', commodity_guid: 'voo-guid', commodity: { namespace: 'NYSE' } },
+    ] as never);
+    mockPrisma.splits.findMany.mockResolvedValue([
+      {
+        account_guid: 'cash-guid',
+        quantity_num: BigInt(1000000),
+        quantity_denom: BigInt(1),
+        transaction: { post_date: new Date('2024-12-15') },
+      },
+      {
+        account_guid: 'stock-guid',
+        quantity_num: BigInt(2),
+        quantity_denom: BigInt(1),
+        transaction: { post_date: new Date('2024-12-15') },
+      },
+    ] as never);
+    mockBuildAccountValuationContext
+      .mockResolvedValueOnce({
+        reportCurrencyGuid: 'usd-guid',
+        reportCurrencyMnemonic: 'USD',
+        getMultiplier: account => account.commodityGuid === 'vnd-guid' ? 0.00004 : 100,
+      })
+      .mockResolvedValueOnce({
+        reportCurrencyGuid: 'usd-guid',
+        reportCurrencyMnemonic: 'USD',
+        getMultiplier: account => account.commodityGuid === 'vnd-guid' ? 0.00005 : 110,
+      });
+
+    const result = await FinancialSummaryService.computeNetWorthSummary(
+      bookGuids, startDate, endDate, USD_CURRENCY
+    );
+
+    expect(result.start).toMatchObject({
+      assets: 40,
+      investmentValue: 200,
+      netWorth: 240,
+    });
+    expect(result.end).toMatchObject({
+      assets: 50,
+      investmentValue: 220,
+      netWorth: 270,
+    });
+    expect(mockBuildAccountValuationContext).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Array),
+      startDate,
+      USD_CURRENCY,
+    );
   });
 });
 
@@ -344,7 +408,7 @@ describe('FinancialSummaryService.computeFullSummary', () => {
 
     mockPrisma.accounts.findMany = accountsFindMany;
 
-    // Splits mock: first two calls for net worth (cash + investment), third for I/E
+    // Splits mock: first call for net worth, second for I/E
     const splitsFindMany = vi.fn();
     splitsFindMany.mockResolvedValueOnce([
       {
@@ -354,7 +418,6 @@ describe('FinancialSummaryService.computeFullSummary', () => {
         transaction: { post_date: new Date('2025-06-15') },
       },
     ]);
-    splitsFindMany.mockResolvedValueOnce([]); // investment splits
     splitsFindMany.mockResolvedValueOnce([
       {
         account_guid: 'salary-guid',

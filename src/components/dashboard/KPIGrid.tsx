@@ -1,5 +1,13 @@
 'use client';
 
+import { useState } from 'react';
+import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
+
+interface TraceReference {
+    traceId: string;
+    href: string;
+}
+
 interface KPIData {
     netWorth: number;
     netWorthChange: number;
@@ -10,6 +18,7 @@ interface KPIData {
     topExpenseCategory: string;
     topExpenseAmount: number;
     investmentValue: number;
+    traces?: Partial<Record<'netWorth' | 'totalIncome' | 'totalExpenses' | 'savingsRate' | 'investmentValue', TraceReference>>;
 }
 
 interface KPIGridProps {
@@ -70,9 +79,31 @@ interface KPICardProps {
     value: string;
     change?: React.ReactNode;
     sublabel?: string;
+    traceId?: string;
+    onExplain?: (traceId: string) => void;
 }
 
-function KPICard({ icon, label, value, change, sublabel }: KPICardProps) {
+function ExplainButton({
+    traceId,
+    onExplain,
+}: {
+    traceId?: string;
+    onExplain?: (traceId: string) => void;
+}) {
+    if (!traceId || !onExplain) return null;
+    return (
+        <button
+            type="button"
+            onClick={() => onExplain(traceId)}
+            className="text-[11px] font-medium text-primary hover:text-primary-hover"
+            aria-label="Explain this number"
+        >
+            Explain
+        </button>
+    );
+}
+
+function KPICard({ icon, label, value, change, sublabel, traceId, onExplain }: KPICardProps) {
     return (
         <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 transition-all hover:border-primary/30">
             <div className="flex items-center gap-3 sm:mb-4">
@@ -91,7 +122,10 @@ function KPICard({ icon, label, value, change, sublabel }: KPICardProps) {
                         </div>
                     )}
                 </div>
-                <span className="hidden sm:inline text-sm text-foreground-secondary font-medium">{label}</span>
+                <span className="hidden sm:inline text-sm text-foreground-secondary font-medium flex-1">{label}</span>
+                <span className="hidden sm:inline">
+                    <ExplainButton traceId={traceId} onExplain={onExplain} />
+                </span>
             </div>
             <div className="hidden sm:block text-2xl font-bold text-foreground mb-1">{value}</div>
             {change && <div className="hidden sm:block">{change}</div>}
@@ -148,6 +182,7 @@ function IconInvestment() {
 }
 
 export default function KPIGrid({ data, loading }: KPIGridProps) {
+    const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
     if (loading) {
         return (
             <>
@@ -199,17 +234,23 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                     </span>
                 </div>
             ),
+            traceId: data.traces?.netWorth?.traceId,
+            onExplain: setSelectedTraceId,
         },
         {
             icon: <IconIncome />,
             label: 'Total Income',
             value: formatCurrency(data.totalIncome),
+            traceId: data.traces?.totalIncome?.traceId,
+            onExplain: setSelectedTraceId,
         },
         {
             icon: <IconExpense />,
             label: 'Total Expenses',
             value: formatCurrency(data.totalExpenses),
             sublabel: data.topExpenseCategory ? `Top: ${data.topExpenseCategory}` : undefined,
+            traceId: data.traces?.totalExpenses?.traceId,
+            onExplain: setSelectedTraceId,
         },
         {
             icon: <IconSavings />,
@@ -220,11 +261,15 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                     {data.savingsRate >= 20 ? 'Healthy' : data.savingsRate >= 0 ? 'Low' : 'Negative'}
                 </span>
             ),
+            traceId: data.traces?.savingsRate?.traceId,
+            onExplain: setSelectedTraceId,
         },
         {
             icon: <IconInvestment />,
             label: 'Investment Value',
             value: formatCurrency(data.investmentValue),
+            traceId: data.traces?.investmentValue?.traceId,
+            onExplain: setSelectedTraceId,
         },
     ];
 
@@ -252,6 +297,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                                     )}
                                 </div>
                             )}
+                            <ExplainButton traceId={card.traceId} onExplain={card.onExplain} />
                         </div>
                     </div>
                 ))}
@@ -263,6 +309,11 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
                     <KPICard key={card.label} {...card} />
                 ))}
             </div>
+            <ProvenanceModal
+                traceId={selectedTraceId}
+                isOpen={selectedTraceId !== null}
+                onClose={() => setSelectedTraceId(null)}
+            />
         </>
     );
 }

@@ -14,6 +14,8 @@ const TYPE_GROUPS: Array<{ type: string; label: string }> = [
     { type: 'insurance', label: 'Insurance' },
     { type: 'license', label: 'Licenses' },
     { type: 'agreement', label: 'Agreements' },
+    { type: 'farm_certificate_qf', label: 'E-595QF Certificates' },
+    { type: 'farm_certificate_cf', label: 'E-595CF Certificates' },
     { type: 'other', label: 'Other' },
 ];
 
@@ -60,6 +62,8 @@ interface EditState {
     title: string;
     docType: string;
     expiresOn: string;
+    issuedOn: string;
+    returnCopyDueOn: string;
     notes: string;
 }
 
@@ -78,6 +82,8 @@ export default function EntityDocumentsPage() {
     const [uploadTitle, setUploadTitle] = useState('');
     const [uploadType, setUploadType] = useState('other');
     const [uploadExpires, setUploadExpires] = useState('');
+    const [uploadIssued, setUploadIssued] = useState('');
+    const [uploadReturnCopyDue, setUploadReturnCopyDue] = useState('');
     const [uploadNotes, setUploadNotes] = useState('');
     const [uploading, setUploading] = useState(false);
     const [dragging, setDragging] = useState(false);
@@ -137,6 +143,8 @@ export default function EntityDocumentsPage() {
             formData.append('title', uploadTitle.trim() || file.name);
             formData.append('doc_type', uploadType);
             if (uploadExpires) formData.append('expires_on', uploadExpires);
+            if (uploadIssued) formData.append('issued_on', uploadIssued);
+            if (uploadReturnCopyDue) formData.append('return_copy_due_on', uploadReturnCopyDue);
             if (uploadNotes.trim()) formData.append('notes', uploadNotes.trim());
 
             const res = await fetch('/api/business/documents', { method: 'POST', body: formData });
@@ -149,6 +157,8 @@ export default function EntityDocumentsPage() {
             setUploadTitle('');
             setUploadType('other');
             setUploadExpires('');
+            setUploadIssued('');
+            setUploadReturnCopyDue('');
             setUploadNotes('');
             if (fileInputRef.current) fileInputRef.current.value = '';
             await load();
@@ -165,6 +175,8 @@ export default function EntityDocumentsPage() {
             title: doc.title,
             docType: doc.docType,
             expiresOn: doc.expiresOn ?? '',
+            issuedOn: doc.issuedOn ?? '',
+            returnCopyDueOn: doc.returnCopyDueOn ?? '',
             notes: doc.notes ?? '',
         });
         setConfirmDeleteId(null);
@@ -181,6 +193,8 @@ export default function EntityDocumentsPage() {
                     title: edit.title,
                     docType: edit.docType,
                     expiresOn: edit.expiresOn || null,
+                    issuedOn: edit.issuedOn || null,
+                    returnCopyDueOn: edit.returnCopyDueOn || null,
                     notes: edit.notes || null,
                 }),
             });
@@ -325,6 +339,28 @@ export default function EntityDocumentsPage() {
                                     className={`${inputClass} font-mono`}
                                 />
                             </div>
+                            {(uploadType === 'farm_certificate_qf' || uploadType === 'farm_certificate_cf') && (
+                                <>
+                                    <div>
+                                        <label className={labelClass}>Issued (optional)</label>
+                                        <input
+                                            type="date"
+                                            value={uploadIssued}
+                                            onChange={(e) => setUploadIssued(e.target.value)}
+                                            className={`${inputClass} font-mono`}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={labelClass}>Return copy due (optional)</label>
+                                        <input
+                                            type="date"
+                                            value={uploadReturnCopyDue}
+                                            onChange={(e) => setUploadReturnCopyDue(e.target.value)}
+                                            className={`${inputClass} font-mono`}
+                                        />
+                                    </div>
+                                </>
+                            )}
                             <div className="flex items-end">
                                 <button
                                     type="button"
@@ -389,6 +425,13 @@ export default function EntityDocumentsPage() {
                                                             {doc.notes && (
                                                                 <p className="mt-0.5 truncate text-xs text-foreground-muted">
                                                                     {doc.notes}
+                                                                </p>
+                                                            )}
+                                                            {(doc.issuedOn || doc.returnCopyDueOn) && (
+                                                                <p className="mt-0.5 text-xs text-foreground-muted">
+                                                                    {doc.issuedOn ? `Issued ${doc.issuedOn}` : ''}
+                                                                    {doc.issuedOn && doc.returnCopyDueOn ? ' · ' : ''}
+                                                                    {doc.returnCopyDueOn ? `Return copy due ${doc.returnCopyDueOn}` : ''}
                                                                 </p>
                                                             )}
                                                         </div>
@@ -486,6 +529,28 @@ export default function EntityDocumentsPage() {
                                                                         className={inputClass}
                                                                     />
                                                                 </div>
+                                                                {(edit.docType === 'farm_certificate_qf' || edit.docType === 'farm_certificate_cf') && (
+                                                                    <>
+                                                                        <div>
+                                                                            <label className={labelClass}>Issued</label>
+                                                                            <input
+                                                                                type="date"
+                                                                                value={edit.issuedOn}
+                                                                                onChange={(e) => setEdit({ ...edit, issuedOn: e.target.value })}
+                                                                                className={`${inputClass} font-mono`}
+                                                                            />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label className={labelClass}>Return copy due</label>
+                                                                            <input
+                                                                                type="date"
+                                                                                value={edit.returnCopyDueOn}
+                                                                                onChange={(e) => setEdit({ ...edit, returnCopyDueOn: e.target.value })}
+                                                                                className={`${inputClass} font-mono`}
+                                                                            />
+                                                                        </div>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                             <div className="mt-3 flex items-center gap-3">
                                                                 <button

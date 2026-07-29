@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useRef, useSyncExternalStore } from 'react';
+import { ReactNode, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 
@@ -12,6 +12,8 @@ interface ModalProps {
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'fullscreen';
     closeOnBackdrop?: boolean;
     closeOnEscape?: boolean;
+    /** Reset the scroll container when asynchronously loaded content changes identity. */
+    resetKey?: string | number | null;
 }
 
 const sizeClasses = {
@@ -20,7 +22,7 @@ const sizeClasses = {
     lg: 'max-w-2xl',
     xl: 'max-w-4xl',
     '2xl': 'max-w-5xl',
-    fullscreen: 'max-w-[95vw] w-[95vw] h-[90vh]',
+    fullscreen: 'max-w-[calc(100vw-2rem)] w-[calc(100vw-2rem)] h-[calc(100dvh-2rem)]',
 };
 
 export function Modal({
@@ -31,6 +33,7 @@ export function Modal({
     size = 'md',
     closeOnBackdrop = true,
     closeOnEscape = true,
+    resetKey,
 }: ModalProps) {
     const modalRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
@@ -62,21 +65,28 @@ export function Modal({
     // Lock body scroll when modal is open
     useEffect(() => {
         if (isOpen) {
+            const previousOverflow = document.body.style.overflow;
             document.body.style.overflow = 'hidden';
-        } else {
-            document.body.style.overflow = '';
+            return () => {
+                document.body.style.overflow = previousOverflow;
+            };
         }
-        return () => {
-            document.body.style.overflow = '';
-        };
     }, [isOpen]);
 
-    // Reset scroll position when modal opens
-    useEffect(() => {
-        if (isOpen && contentRef.current) {
+    // Reset before paint and once more after async content has laid out. The
+    // second reset prevents browsers from restoring the prior scroll offset
+    // when a transaction fetch replaces the loading state.
+    useLayoutEffect(() => {
+        if (!isOpen) return;
+        const reset = () => {
+            if (!contentRef.current) return;
             contentRef.current.scrollTop = 0;
-        }
-    }, [isOpen]);
+            contentRef.current.scrollLeft = 0;
+        };
+        reset();
+        const frame = requestAnimationFrame(reset);
+        return () => cancelAnimationFrame(frame);
+    }, [isOpen, resetKey]);
 
     // Focus trap
     useEffect(() => {
@@ -111,20 +121,20 @@ export function Modal({
     if (!mounted || !isOpen) return null;
 
     const modalContent = (
-        <div className={`fixed inset-0 z-[9999] flex items-center justify-center ${mobileFullscreen ? '' : 'p-4'}`}>
+        <div className={`fixed inset-0 z-[9999] flex h-[100dvh] items-center justify-center overflow-hidden overscroll-contain ${mobileFullscreen ? '' : 'p-4'}`}>
             {/* Backdrop */}
             <div
-                className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+                className="absolute inset-0 bg-black/70"
                 onClick={closeOnBackdrop ? onClose : undefined}
             />
 
             {/* Modal */}
             <div
                 ref={modalRef}
-                className={`relative bg-background-secondary border border-border shadow-2xl w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200 ${
+                className={`relative flex w-full min-w-0 flex-col overflow-hidden border border-border bg-surface-elevated shadow-xl ${
                     mobileFullscreen
-                        ? 'w-full h-full max-w-none max-h-none rounded-none'
-                        : `rounded-2xl ${sizeClasses[effectiveSize]} max-h-[90vh]`
+                        ? 'w-full h-[100dvh] max-w-none max-h-none rounded-none'
+                        : `my-auto rounded-lg ${sizeClasses[effectiveSize]} max-h-[calc(100dvh-2rem)]`
                 }`}
                 role="dialog"
                 aria-modal="true"
@@ -132,12 +142,13 @@ export function Modal({
             >
                 {/* Header */}
                 {title && (
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                    <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4">
                         <h2 id="modal-title" className="text-lg font-semibold text-foreground">
                             {title}
                         </h2>
                         <button
                             onClick={onClose}
+                            aria-label="Close dialog"
                             className="text-foreground-secondary hover:text-foreground transition-colors p-1 rounded-lg hover:bg-surface-hover"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -148,7 +159,7 @@ export function Modal({
                 )}
 
                 {/* Content */}
-                <div ref={contentRef} className="flex-1 overflow-y-auto">
+                <div ref={contentRef} className="min-w-0 flex-1 overflow-auto">
                     {children}
                 </div>
             </div>

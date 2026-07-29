@@ -277,13 +277,11 @@ export async function PUT(request: NextRequest) {
             bandPct: validated.bandPct ?? DEFAULT_BAND_PCT,
         };
 
-        const savedRow = existing.length > 0
-            ? await ToolConfigService.update(existing[0].id, user.id, bookGuid, { config })
-            : await ToolConfigService.create(user.id, bookGuid, {
-                toolType: TOOL_TYPE,
-                name: CONFIG_NAME,
-                config,
-            });
+        const savedRow = await ToolConfigService.upsertUserSingleton(user.id, bookGuid, {
+            toolType: TOOL_TYPE,
+            name: CONFIG_NAME,
+            config,
+        });
 
         if (!savedRow) {
             return NextResponse.json({ error: 'Failed to save targets' }, { status: 500 });

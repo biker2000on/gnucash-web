@@ -6,13 +6,22 @@ import { SessionData, sessionOptions } from '@/lib/session-config';
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // The generated install manifest must be available before authentication so
+  // browsers can discover the PWA. Keep this an exact pathname: lookalikes
+  // such as /manifest.webmanifest-private remain protected below.
+  if (pathname === '/manifest.webmanifest') {
+    return NextResponse.next();
+  }
+
   // Public auth API routes, tokenized calendar feeds, and tokenized public
   // document endpoints (/api/public/invoice/[token] does its own token-based
   // authorization) -- no session required
   if (
     pathname.startsWith('/api/auth/') ||
     pathname.startsWith('/api/calendar/') ||
-    pathname.startsWith('/api/public/')
+    pathname.startsWith('/api/public/') ||
+    pathname === '/api/docs' ||
+    pathname === '/api/webhooks/stripe'
   ) {
     return NextResponse.next();
   }
@@ -53,15 +62,16 @@ export const config = {
      * Match all paths except:
      * - / (landing page, public)
      * - /features/* (public marketing pages)
+     * - /docs/* (public product and API documentation)
      * - /login (auth page)
      * - /api/auth/* (auth endpoints)
      * - /_next (Next.js internals)
-     * - /icon.svg (favicon)
+     * - /favicon.svg (favicon)
      * - Static files (.ico, .png, .jpg, .svg, etc.)
      *
      * The regex (?!$) ensures the root path "/" (empty capture after
      * stripping the leading "/") is excluded, keeping the landing page public.
      */
-    '/((?!_next|login|features|share/|icon\\.svg|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|woff2?|ttf|css|js|json)$)(?!$).*)',
+    '/((?!_next|login|features|docs|share/|icon\\.svg|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|woff2?|ttf|css|js|json)$)(?!$).*)',
   ],
 };

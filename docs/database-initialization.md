@@ -1,6 +1,7 @@
 # Database Initialization
 
-This application automatically creates required database views on startup.
+This application automatically creates required database views and GnuCash Web
+extension tables on startup.
 
 ## Account Hierarchy View
 
@@ -24,7 +25,13 @@ The view includes the following columns:
 
 ### Automatic Creation
 
-The view is automatically created or updated by the `initializeDatabase()` function in `src/lib/db-init.ts`. In Docker deployments this runs from `docker-entrypoint.sh` (as the bundled `db-init.js`, built from `scripts/db-init-entrypoint.ts`) before the server starts. In local development, run it with `npx tsx --env-file=.env.local scripts/dev-run-db-init.ts`.
+The view is automatically created or updated by the `initializeDatabase()` function in `src/lib/db-init.ts`. In Docker deployments this runs from `docker-entrypoint.sh` (as the bundled `db-init.js`, built from `scripts/db-init-entrypoint.ts`) before the server starts. App and worker processes serialize the complete initialization sequence with a PostgreSQL advisory lock, preventing concurrent DDL races while still allowing either process to initialize the schema. In local development, run it with `npx tsx --env-file=.env.local scripts/dev-run-db-init.ts`.
+
+The same startup pass idempotently creates extension schemas used by features
+such as the Financial Action Center, Living Financial Plan, and Family Office.
+The Living Plan tables retain adopted versions, monthly reconciliations, and
+decision history; the Family Office schema stores typed book-link metadata and
+presentation-only inter-book elimination approvals.
 
 This ensures that:
 1. New deployments work immediately without manual database setup
@@ -35,7 +42,7 @@ This ensures that:
 
 If you need to create the view manually, you can run the SQL in `src/lib/db-init.ts` directly against your PostgreSQL database.
 
-## Adding New Views
+## Adding New Views or Extension Tables
 
 To add additional database initialization:
 

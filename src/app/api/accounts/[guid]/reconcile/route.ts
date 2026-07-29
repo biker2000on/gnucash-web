@@ -74,6 +74,8 @@ interface FinalizeBody {
     statementDate?: string;
     endingBalance?: number;
     splitGuids?: string[];
+    sessionId?: string | null;
+    interactionDelta?: number;
 }
 
 /**
@@ -125,12 +127,42 @@ export async function POST(
                 { status: 400 },
             );
         }
+        if (
+            body.sessionId !== undefined &&
+            body.sessionId !== null &&
+            (typeof body.sessionId !== 'string' || body.sessionId.length === 0)
+        ) {
+            return NextResponse.json(
+                { error: 'sessionId must be a non-empty string when provided' },
+                { status: 400 },
+            );
+        }
+        if (
+            body.interactionDelta !== undefined &&
+            (
+                typeof body.interactionDelta !== 'number' ||
+                !Number.isFinite(body.interactionDelta) ||
+                body.interactionDelta < 0
+            )
+        ) {
+            return NextResponse.json(
+                { error: 'interactionDelta must be a non-negative number when provided' },
+                { status: 400 },
+            );
+        }
 
         const result = await finalizeReconciliation(
             guid,
             statementDate,
             body.endingBalance,
             body.splitGuids,
+            undefined,
+            {
+                bookGuid: roleResult.bookGuid,
+                userId: roleResult.user.id,
+                sessionId: body.sessionId,
+                interactionDelta: body.interactionDelta,
+            },
         );
         return NextResponse.json({ success: true, ...result });
     } catch (error) {

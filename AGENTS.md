@@ -28,6 +28,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 
 - `(main)/` - Route group containing primary pages
   - `accounts/page.tsx` - Account hierarchy tree view
+  - `actions/page.tsx` - Financial Action Center with Fix/Decide/Do lanes, batch triage, mobile swipe actions, weekly close metrics, and calculation drill-through
   - `accounts/[guid]/page.tsx` - Individual account ledger with running balance
   - `ledger/page.tsx` - General ledger (all transactions)
   - `scheduled-transactions/page.tsx` - Scheduled transactions with execute/skip, enable/disable, batch mode, create new
@@ -63,6 +64,8 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `tax/farm-book-data.ts` - Pulls and annualizes farm income/expense actuals from user-selected account subtrees
 - `business/schedule-f.ts` / `schedule-f-mappings.ts` / `schedule-f-report.ts` - Schedule F line classification (apiary-aware keyword mapper + manual overrides in the lazily-created `gnucash_web_schedule_f_mappings` table) and report generation
 - `book-templates.ts` - Chart-of-accounts templates per entity type, including the Schedule F-aligned farm template for books with `business_activity = 'farm'`
+- `financial-actions/` - Shared action contracts, source adapters, deterministic eight-pack Opportunity Engine, durable state store, refresh throttling, and lazy schema
+- `provenance.ts` - Stable calculation trace IDs, bounded trace persistence, retrieval, and evidence-manifest support
 
 ### Reports (src/lib/reports/)
 
@@ -86,6 +89,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 - `reports/ContributionTable.tsx` - Contribution report with expandable per-account drill-down and tax-year editing
 - `reports/ContributionLimitBar.tsx` - IRS limit progress bar with color-coded thresholds
 - `scheduled-transactions/CreateScheduledPanel.tsx` - Slide-over form for creating new scheduled transactions
+- `provenance/ProvenanceModal.tsx` - Shared “Explain this number” drill-through for formulas, steps, assumptions, warnings, and source evidence
 
 ## Key Technical Details
 
@@ -129,31 +133,6 @@ npx vitest --coverage   # Run with coverage report
 - Setup file at `src/__tests__/setup.ts` (mocks localStorage, IntersectionObserver, BigInt serialization)
 - Path aliases (`@/*`) work in tests via `vite-tsconfig-paths`
 
-## Skill routing
-
-When the user's request matches an available skill, ALWAYS invoke it using the Skill
-tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
-The skill has specialized workflows that produce better results than ad-hoc answers.
-
-Key routing rules:
-- Product ideas, "is this worth building", brainstorming → invoke office-hours
-- Bugs, errors, "why is this broken", 500 errors → invoke investigate
-- Ship, deploy, push, create PR → invoke ship
-- QA, test the site, find bugs → invoke qa
-- Code review, check my diff → invoke review
-- Update docs after shipping → invoke document-release
-- Weekly retro → invoke retro
-- Design system, brand → invoke design-consultation
-- Visual audit, design polish → invoke design-review
-- Architecture review → invoke plan-eng-review
-- Save progress, checkpoint, resume → invoke checkpoint
-- Code quality, health check → invoke health
-
-## gstack
-
-For all web browsing, use the /browse skill from gstack. Never use mcp__claude-in-chrome__* tools.
-
-Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review, /design-consultation, /design-shotgun, /design-html, /review, /ship, /land-and-deploy, /canary, /benchmark, /browse, /connect-chrome, /qa, /qa-only, /design-review, /setup-browser-cookies, /setup-deploy, /retro, /investigate, /document-release, /codex, /cso, /autoplan, /plan-devex-review, /devex-review, /careful, /freeze, /guard, /unfreeze, /gstack-upgrade, /learn
 
 ## Design System
 Always read DESIGN.md before making any visual or UI decisions.

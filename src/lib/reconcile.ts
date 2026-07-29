@@ -21,6 +21,7 @@
  * integer-cents math to avoid float drift.
  */
 
+import { randomUUID } from 'node:crypto';
 import prisma, { type ExtendedPrismaClient } from '@/lib/prisma';
 import { toDecimalNumber } from '@/lib/gnucash';
 import {
@@ -36,6 +37,7 @@ export {
     toCents,
     computeDifference,
     computeDifferenceCents,
+    toggleCandidateSelection,
     type ReconcileCandidate,
     type ReconcileWorkspace,
     type FinalizeReconcileResult,
@@ -55,7 +57,14 @@ export class ManualReconcileError extends Error {
 
 /** The subset of the client finalize needs — satisfied by both the singleton
  *  and the interactive-transaction client. */
-export type ReconcileTx = Pick<ExtendedPrismaClient, 'splits'>;
+export type ReconcileTx = Pick<ExtendedPrismaClient, 'splits' | '$executeRaw'>;
+
+export interface ReconciliationCompletion {
+    bookGuid: string;
+    userId: number;
+    sessionId?: string | null;
+    interactionDelta?: number;
+}
 
 /** Inclusive end-of-day (UTC) for a statement date, so every split posted on
  *  the statement date itself qualifies regardless of its stored time. */
@@ -119,6 +128,7 @@ export async function getReconcileWorkspace(
     const cutoff = statementDateCutoff(statementDate);
     const candidateRows = await prisma.$queryRaw<Array<{
         guid: string;
+        tx_guid: string;
         memo: string | null;
         reconcile_state: string;
         quantity_num: bigint;
@@ -127,7 +137,7 @@ export async function getReconcileWorkspace(
         num: string | null;
         description: string | null;
     }>>`
-        SELECT s.guid, s.memo, s.reconcile_state, s.quantity_num, s.quantity_denom,
+        SELECT s.guid, s.tx_guid, s.memo, s.reconcile_state, s.quantity_num, s.quantity_denom,
                t.post_date, t.num, t.description
         FROM splits s
         JOIN transactions t ON t.guid = s.tx_guid
@@ -136,6 +146,22 @@ export async function getReconcileWorkspace(
           AND t.post_date <= ${cutoff}
         ORDER BY t.post_date ASC, t.enter_date ASC, s.guid ASC
     `;
+    const completedSessions = await prisma.$queryRaw<Array<{
+        statement_date: Date;
+    }>>`
+        SELECT statement_date
+          FROM gnucash_web_reconciliation_sessions
+         WHERE account_guid = ${accountGuid}
+           AND status = 'completed'
+           AND statement_date IS NOT NULL
+         ORDER BY statement_date DESC
+         LIMIT 1
+    `;
+    const completedThrough = completedSessions[0]?.statement_date ?? null;
+    const verifiedThrough =
+        completedThrough && (!lastReconcileDate || completedThrough > lastReconcileDate)
+            ? completedThrough
+            : lastReconcileDate;
 
     return {
         account: {
@@ -145,10 +171,11 @@ export async function getReconcileWorkspace(
             currency: account.commodity?.mnemonic ?? null,
         },
         statementDate: statementDate.toISOString(),
-        lastReconcileDate: lastReconcileDate ? lastReconcileDate.toISOString() : null,
+        lastReconcileDate: verifiedThrough ? verifiedThrough.toISOString() : null,
         reconciledBalance: reconciledCents / 100,
         candidates: candidateRows.map((r) => ({
             guid: r.guid,
+            transactionGuid: r.tx_guid,
             date: r.post_date ? r.post_date.toISOString() : '',
             num: r.num ?? '',
             description: r.description ?? '',
@@ -181,6 +208,7 @@ export async function finalizeReconciliation(
     endingBalance: number,
     splitGuids: string[],
     tx?: ReconcileTx,
+    completion?: ReconciliationCompletion,
 ): Promise<FinalizeReconcileResult> {
     const uniqueGuids = [...new Set(splitGuids)];
 
@@ -274,6 +302,73 @@ export async function finalizeReconciliation(
                 data: { reconcile_state: 'y', reconcile_date: statementDate },
             });
             updated = result.count;
+        }
+
+        if (completion) {
+            const interactionDelta = Math.max(0, Math.floor(completion.interactionDelta ?? 0));
+            let completedExistingSession = 0;
+            if (completion.sessionId) {
+                completedExistingSession = await db.$executeRaw`
+                    UPDATE gnucash_web_reconciliation_sessions
+                       SET status = 'completed',
+                           completed_at = NOW(),
+                           interaction_count = interaction_count + ${interactionDelta},
+                           ending_difference = 0
+                     WHERE id = ${completion.sessionId}
+                       AND book_guid = ${completion.bookGuid}
+                       AND account_guid = ${accountGuid}
+                       AND user_id = ${completion.userId}
+                `;
+            }
+            if (completedExistingSession === 0) {
+                completedExistingSession = await db.$executeRaw`
+                    UPDATE gnucash_web_reconciliation_sessions
+                       SET status = 'completed',
+                           completed_at = NOW(),
+                           interaction_count = interaction_count + ${interactionDelta},
+                           ending_difference = 0
+                     WHERE id = (
+                         SELECT id
+                           FROM gnucash_web_reconciliation_sessions
+                          WHERE book_guid = ${completion.bookGuid}
+                            AND account_guid = ${accountGuid}
+                            AND user_id = ${completion.userId}
+                            AND statement_date = ${statementDate}
+                            AND status = 'started'
+                          ORDER BY started_at DESC
+                          LIMIT 1
+                     )
+                `;
+            }
+            if (completedExistingSession === 0) {
+                await db.$executeRaw`
+                    INSERT INTO gnucash_web_reconciliation_sessions (
+                        id, book_guid, account_guid, user_id, statement_date,
+                        status, interaction_count, completed_at, ending_difference
+                    )
+                    VALUES (
+                        ${randomUUID()}, ${completion.bookGuid}, ${accountGuid},
+                        ${completion.userId}, ${statementDate}, 'completed',
+                        ${interactionDelta}, NOW(), 0
+                    )
+                `;
+            }
+
+            // Continuous Close actions are deterministic and this successful
+            // tie-out is direct evidence that the account no longer needs the
+            // stale/never-reconciled action. Resolve it immediately instead of
+            // waiting for the general seven-day source-expiry grace period.
+            await db.$executeRaw`
+                UPDATE gnucash_web_financial_actions
+                   SET state = 'resolved',
+                       state_changed_at = NOW(),
+                       resolved_at = NOW()
+                 WHERE user_id = ${completion.userId}
+                   AND book_guid = ${completion.bookGuid}
+                   AND origin = 'statement_reconciliation'
+                   AND source_id = ${accountGuid}
+                   AND state IN ('open', 'snoozed', 'accepted')
+            `;
         }
 
         return {

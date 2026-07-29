@@ -2,6 +2,157 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+## [0.23.0.0] - 2026-07-27
+
+### Added
+- Added reference documentation for every registered feature, including its
+  purpose, prerequisites, permissions, operating steps, read/write boundaries,
+  and verification checklist.
+- Added concept guides for double-entry books, investment quantity and value,
+  reconciliation and close, provenance and safe actions, and Family Office.
+- Added administrator guides for upgrades, backups and recovery, security,
+  workers and connections, and API automation.
+- Added route-aware Help links throughout the authenticated application and
+  documentation destinations to the command palette.
+- Added a documentation coverage check and made it a required pre-build step
+  in the release workflow.
+
+### Changed
+- Documentation search now covers tutorials, workflow guides, concepts,
+  administration, API reference, and the complete feature registry.
+- Public feature catalog entries now link directly to their matching operating
+  guide.
+
+### Fixed
+- Corrected the commodity-verification OpenAPI annotation so the public API
+  specification builds without YAML parser errors.
+
+## [0.22.0.0] - 2026-07-27
+
+### Added
+- Added a public, version-labeled documentation site with searchable onboarding,
+  seven core workflow guides, and a dedicated API reference at `/docs/api`.
+- Added a searchable public catalog generated from the complete feature
+  registry.
+- Added a Platform marketing page for the Action Center, Living Plan, Money
+  Timeline, Family Office, financial provenance, and Safe Operator.
+
+### Changed
+- Refreshed planning and business marketing coverage for the household,
+  resilience, mobility, cash-conversion, rental, and entity-operation packs.
+- Marketing navigation now links directly to documentation and the complete
+  feature catalog.
+- Public capability statistics now derive from the feature registry.
+- Refined self-hosting and GnuCash compatibility claims to distinguish the
+  compatible core ledger, web extension tables, and optional external
+  connectors.
+
+## [0.21.1.0] - 2026-07-26
+
+### Added
+- Added an administrator-triggered, book-scoped BullMQ job that upgrades
+  legacy receipt extractions with the configured AI provider and reports live
+  progress without overwriting reviewed metadata or reprocessing AI results by
+  default.
+
+### Changed
+- Account API `fullname` values are now book-relative in flat and hierarchical
+  responses, with the book name exposed separately as `book_name`.
+
+### Fixed
+- Clearing General Ledger filters now reloads the complete unfiltered result.
+- Transaction modals reset their scroll state and open in the current viewport.
+- Reconciliation selection, totals, and completion now include every account
+  split represented by an aggregated ledger row.
+- Command-palette transaction results no longer reuse hits from an earlier
+  short query.
+
+## [0.21.0.0] - 2026-07-26
+
+### Added
+- Added per-student education and 529 planning with tuition inflation, projected balances, required contributions, state deduction tracking, glide-path guidance, Timeline milestones, and funding actions.
+- Added utility usage and unit-rate history with OCR-backed bill suggestions and an actual-rate solar payback scenario.
+- Added liability-backed family banking with allowances, chore approvals, deposits, spending, parent savings matches, goals, and a read-only child view.
+- Added trip and vacation envelopes with funding targets, current-trip Quick Add tagging, date-range transaction suggestions, live spending, and plan-versus-actual.
+- Added vehicle total-cost-of-ownership reporting across Fuel Tracker, mileage, insurance, maintenance, registration, depreciation, and repair-versus-replace scenarios.
+- Added Education, Utility, Family, Trip, and Vehicle evidence to the Action Center, Money Timeline, and shared calculation provenance.
+
+## [0.20.0.0] - 2026-07-26
+
+### Added
+- Added Rental Portfolio management with properties, units, tenants, leases, escalation and late-fee terms, rent roll, security-deposit liabilities, payment ledgers, tenant statement export, and Schedule E links.
+- Added a shared insurance policy and coverage-gap system with inventory and category sub-limit analysis, renewal signals, and a claims ZIP containing home inventory, photos, receipts, and masked policy evidence.
+- Added an inflation-aware home capital-replacement forecast and DIME/survivor-cash-flow life insurance needs analysis.
+- Added a receipt-backed Personal Price Index with normalized unit prices and live official BLS CPI benchmarks.
+- Added a healthcare open-enrollment comparator that replays actual claims across premiums, deductibles, coinsurance, OOP limits, and HSA tax effects.
+- Added a mobile mileage log with Schedule C/E/F substantiation and effective-date IRS rates, including the July 2026 mid-year adjustment.
+- Added encrypted Fuel Tracker integration with vehicle mapping, paginated incremental fill-up import, source deduplication, transaction matching, manual sync, and nightly worker synchronization.
+- Added Rental, Insurance, Capital, Healthcare, and Vehicle events to the Money Timeline and evidence-backed decisions to the Action Center.
+
+## [0.19.0.0] - 2026-07-24
+
+### Added
+- Added previewable domain commands and a bounded Safe Operator with explicit approval, durable idempotency, audit history, evidence, and supported undo.
+- Added scheduled-transaction editing and create-from-ledger actions through the shared preview workflow.
+- Added per-book Stripe Connections, public invoice payment links and payment history, estimate accept/decline, signed webhook posting for payments and processor fees, and payment events in the Timeline and Action Center.
+- Added job profitability across invoice revenue, collections, tracked labor, WIP, vendor/linked/tagged costs, gross margin, and operational alerts.
+- Added employee receipt reimbursements with approval/rejection previews, automatic draft vouchers, posting-state synchronization, Action Center approvals, and Timeline due dates.
+- Added Continuous Close reconciliation coverage, verified-through and stale-account status, session duration/interaction/abandonment telemetry, report drill-through, and close actions.
+
+### Changed
+- Ask Your Books now links into the Safe Operator for supported financial actions.
+- Public invoice shares act as a lightweight customer portal without exposing authenticated book data.
+
+## [0.18.0.1] - 2026-07-23
+
+### Fixed
+- Serialized the complete database initializer with a PostgreSQL advisory lock so concurrently starting app and worker containers cannot race while creating extension tables.
+
+## [0.18.0.0] - 2026-07-23
+
+### Added
+- Added the Unified Money Timeline under Money with a shared evidence-backed `FinancialEvent` contract, day/month/year views, expected cash and confidence across eleven event domains, conflict detection, and per-domain iCal filters.
+- Added the Living Financial Plan of Record under Planning: adopt Scenario Sandbox models, retain immutable versions, model life events and guardrails, reconcile actuals monthly, explain causes, and keep a decision journal.
+- Added Family Office consolidation from the main navigation across the caller's authorized ownership graph, including ownership look-through, net worth/P&L/cash flow/investments/liquidity, explicit cross-currency exclusions, transfer matching, and approved presentation-only eliminations.
+- Added family-scoped document/OCR search, Ask Your Books, Action Center, and Money Timeline views.
+
+### Security
+- Cross-book graph expansion now intersects every relationship endpoint with the caller's existing per-book permissions; book links never grant access.
+- Consolidation never silently combines currencies when a required exchange rate is missing.
+
+## [0.17.0.0] - 2026-07-23
+
+### Added
+- Existing books can now receive the complete Schedule F chart through an idempotent, type-aware farm-account graft.
+- E-595QF and E-595CF certificates now carry issue, expiry, and return-copy dates in Documents; their obligations appear in the Action Center and compliance calendar/iCal feed.
+- The Farm Analyzer now evaluates North Carolina's preceding-year OR three-preceding-year-average qualifying-farmer test from book history.
+
+### Fixed
+- Farm Analyzer configuration is now shared per book and protected by atomic singleton upserts and partial unique indexes; account-associated multi-instance tool configs remain supported.
+- Farm Analyzer and Schedule F totals now convert foreign transaction values into the book currency at historical posting-date rates and fail clearly when a required rate is missing.
+- Farm and S-corp analysis now share one tested household-income annualization and exclusion calculation.
+
+### Changed
+- Other singleton tool settings now use race-safe upserts, and startup removes legacy duplicate configuration rows.
+- The farm correctness and reliability backlog is marked delivered.
+
+## [0.16.0.0] - 2026-07-23
+
+### Added
+- Added the Financial Action Center: one keyboard- and mobile-friendly Fix / Decide / Do inbox fed by transaction review, receipts, statements, Data Health, insights, compliance, business close, failed jobs, and notifications.
+- Added eight deterministic “Next Best Dollar” opportunity packs with inspectable value ranges, urgency, confidence, liquidity, reversibility, goal alignment, evidence, and outcome tracking.
+- Added Universal Financial Provenance with stable calculation traces, “Explain this number” drill-through, stale-price warnings, per-book verified-through dates, retained decision snapshots, and an exportable evidence manifest.
+- Added trace metadata to dashboard KPIs, account balances, estimated-tax results, and cash-flow forecasts.
+
+### Changed
+- Action detection is persisted and refreshed on a bounded five-minute cadence, with explicit refresh throttling and atomic, serialized materialization.
+- P0 roadmap items are marked delivered and the next roadmap sequence now starts with the Money Timeline and Living Plan.
+
+### Removed
+- Removed the incomplete Amazon order-history importer, its dedicated APIs, parser/matching pipeline, database models, and stale product references.
+
 ## [0.15.0.1] - 2026-07-22
 
 ### Fixed

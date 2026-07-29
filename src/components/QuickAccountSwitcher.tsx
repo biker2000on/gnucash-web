@@ -6,12 +6,6 @@ import { createPortal } from 'react-dom'
 import { useAccounts } from '@/lib/hooks/useAccounts'
 import { Account } from '@/lib/types'
 
-/** Strip the root/book account name (first colon-delimited segment) from fullname */
-function stripRoot(fullname: string): string {
-  const idx = fullname.indexOf(':')
-  return idx >= 0 ? fullname.slice(idx + 1) : fullname
-}
-
 interface QuickAccountSwitcherProps {
   isOpen: boolean
   onClose: () => void
@@ -33,7 +27,7 @@ export function QuickAccountSwitcher({ isOpen, onClose }: QuickAccountSwitcherPr
     if (!query.trim()) return eligible
     const lower = query.toLowerCase()
     return eligible.filter(a => {
-      const display = stripRoot(a.fullname || a.name)
+      const display = a.fullname || a.name
       return display.toLowerCase().includes(lower)
     })
   }, [accounts, query])
@@ -137,7 +131,7 @@ export function QuickAccountSwitcher({ isOpen, onClose }: QuickAccountSwitcherPr
                       : 'text-foreground-secondary hover:bg-surface-hover'
                   }`}
                 >
-                  {stripRoot(account.fullname || account.name)}
+                  {account.fullname || account.name}
                 </button>
               ))
 

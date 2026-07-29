@@ -392,6 +392,25 @@ describe('postQuickAdd', () => {
         expect(result).toEqual({ synced: true });
     });
 
+    it('applies the current trip tag after the idempotent transaction post', async () => {
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce(new Response('', { status: 201 }))
+            .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+        const payload = makePayload();
+
+        const result = await postQuickAdd(payload, fetchImpl as typeof fetch, ['beach-trip']);
+
+        expect(result).toEqual({ synced: true });
+        expect(fetchImpl).toHaveBeenNthCalledWith(
+            2,
+            `/api/transactions/${payload.guid}/tags`,
+            expect.objectContaining({
+                method: 'PUT',
+                body: JSON.stringify({ tags: ['beach-trip'] }),
+            }),
+        );
+    });
+
     it('reports an error with status and body otherwise', async () => {
         const result = await postQuickAdd(
             makePayload(),

@@ -9,6 +9,7 @@ import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import { TransactionModal } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
+import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
 import { InlineEditRow } from './InlineEditRow';
 import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
@@ -48,6 +49,15 @@ import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
 import { useQueryClient } from '@tanstack/react-query';
+import {
+    getRowAccountSplits,
+    getSelectableRowSplits,
+    isRowSelected,
+    selectAllRows,
+    sumSelectedRows,
+    toggleRowSelection,
+    type ReconciliationRowSplit,
+} from '@/lib/reconciliation-selection';
 
 export interface AccountTransaction extends Transaction {
     running_balance: string;
@@ -55,6 +65,9 @@ export interface AccountTransaction extends Transaction {
     commodity_mnemonic: string;
     account_split_guid: string;
     account_split_reconcile_state: string;
+    account_splits?: ReconciliationRowSplit[];
+    share_balance?: string;
+    cost_basis?: string;
     reviewed?: boolean;
     source?: string;
     match_type?: string | null;
@@ -122,6 +135,31 @@ export default function AccountLedger({
     const isInvestmentAccount = commodityNamespace !== undefined && commodityNamespace !== 'CURRENCY';
     const sharePrecision = commodityScu ? Math.max(0, Math.round(Math.log10(commodityScu))) : 4;
     const [transactions, setTransactions] = useState<AccountTransaction[]>(initialTransactions);
+    const investmentCurrentShares = useMemo(() => {
+        const latestSaved = transactions.find(tx => Boolean(tx.currency_guid));
+        const balance = latestSaved
+            ? Number(latestSaved.share_balance ?? latestSaved.running_balance)
+            : currentBalance;
+        return Number.isFinite(balance) ? balance : 0;
+    }, [transactions, currentBalance]);
+    const investmentCurrencyGuid = useMemo(
+        () => transactions.find(tx => Boolean(tx.currency_guid))?.currency_guid || '',
+        [transactions],
+    );
+    const investmentSymbol = useMemo(
+        () => transactions.find(tx => Boolean(tx.commodity_mnemonic))?.commodity_mnemonic || accountCurrency,
+        [transactions, accountCurrency],
+    );
+    const investmentAvailableSharesFor = useCallback((tx: AccountTransaction) => {
+        const accountSplit = tx.splits?.find(split => split.account_guid === accountGuid);
+        const originalQuantity = accountSplit
+            ? Number(accountSplit.quantity_num) / Number(accountSplit.quantity_denom)
+            : 0;
+        return Math.max(
+            0,
+            investmentCurrentShares + (tx.currency_guid && originalQuantity < 0 ? Math.abs(originalQuantity) : 0),
+        );
+    }, [accountGuid, investmentCurrentShares]);
     const [offset, setOffset] = useState(initialTransactions.length);
     const [hasMore, setHasMore] = useState(initialTransactions.length >= 100);
     const [loading, setLoading] = useState(false);
@@ -351,23 +389,12 @@ export default function AccountLedger({
     }, []);
 
 
-    const toggleSplitSelection = useCallback((splitGuid: string) => {
-        setSelectedSplits(prev => {
-            const newSet = new Set(prev);
-            if (newSet.has(splitGuid)) {
-                newSet.delete(splitGuid);
-            } else {
-                newSet.add(splitGuid);
-            }
-            return newSet;
-        });
+    const toggleTransactionSelection = useCallback((tx: AccountTransaction) => {
+        setSelectedSplits(prev => toggleRowSelection(tx, prev));
     }, []);
 
     const selectAllUnreconciled = useCallback(() => {
-        const unreconciledSplits = transactions
-            .filter(tx => tx.account_split_reconcile_state !== 'y')
-            .map(tx => tx.account_split_guid);
-        setSelectedSplits(new Set(unreconciledSplits));
+        setSelectedSplits(selectAllRows(transactions));
     }, [transactions]);
 
     const clearSelection = useCallback(() => {
@@ -376,22 +403,27 @@ export default function AccountLedger({
 
     // Calculate the sum of selected splits for reconciliation
     const selectedBalance = useMemo(() => {
-        let sum = 0;
-        for (const tx of transactions) {
-            if (selectedSplits.has(tx.account_split_guid)) {
-                sum += parseFloat(tx.account_split_value) || 0;
-            }
-        }
-        return sum;
+        return sumSelectedRows(transactions, selectedSplits);
     }, [transactions, selectedSplits]);
 
     const handleReconcileComplete = useCallback(() => {
         // Refresh the transactions to show updated reconcile states
         setTransactions(prev => prev.map(tx => {
-            if (selectedSplits.has(tx.account_split_guid)) {
-                return { ...tx, account_split_reconcile_state: 'y' };
-            }
-            return tx;
+            const accountSplits = getRowAccountSplits(tx);
+            if (!accountSplits.some(split => selectedSplits.has(split.guid))) return tx;
+            const nextAccountSplits = accountSplits.map(split => (
+                selectedSplits.has(split.guid) ? { ...split, reconcile_state: 'y' } : split
+            ));
+            const nextSplits = tx.splits?.map(split => (
+                selectedSplits.has(split.guid) ? { ...split, reconcile_state: 'y' } : split
+            ));
+            return {
+                ...tx,
+                splits: nextSplits,
+                account_splits: nextAccountSplits,
+                account_split_reconcile_state:
+                    nextAccountSplits.every(split => split.reconcile_state === 'y') ? 'y' : tx.account_split_reconcile_state,
+            };
         }));
         setSelectedSplits(new Set());
         setIsReconciling(false);
@@ -708,6 +740,30 @@ export default function AccountLedger({
 
             const shares = parseFloat(data.shares);
             const total = parseFloat(data.total);
+            const stockQtyDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
+            const isNewTransaction = !tx.currency_guid;
+            const currencyGuid = tx.currency_guid || investmentCurrencyGuid;
+
+            if (!currencyGuid) {
+                throw new Error('Transaction currency is unavailable. Refresh the ledger and try again.');
+            }
+
+            if (!data.isBuy) {
+                const originalStockSplit = tx.splits?.find(split => split.account_guid === accountGuid);
+                const originalQuantity = originalStockSplit
+                    ? Number(originalStockSplit.quantity_num) / Number(originalStockSplit.quantity_denom)
+                    : 0;
+                const editableAvailable = Math.max(
+                    0,
+                    investmentCurrentShares + (!isNewTransaction && originalQuantity < 0 ? Math.abs(originalQuantity) : 0),
+                );
+                if (shares > editableAvailable + (0.5 / stockQtyDenom)) {
+                    throw new Error(
+                        `Cannot sell ${shares.toFixed(sharePrecision)} shares; `
+                        + `${editableAvailable.toFixed(sharePrecision)} are available`,
+                    );
+                }
+            }
 
             // GnuCash sign convention for the stock account split (matches
             // GnuCash desktop). The stock account is debited on a buy and
@@ -722,17 +778,17 @@ export default function AccountLedger({
             const transferValue = -stockValue;
 
             const { num: stockValueNum, denom: stockValueDenom } = toNumDenom(stockValue);
-            const stockQtyDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
             const stockQtyNum = Math.round(stockQuantity * stockQtyDenom);
             const { num: transferValueNum, denom: transferValueDenom } = toNumDenom(transferValue);
 
             const body: Record<string, unknown> = {
-                currency_guid: tx.currency_guid || accountCommodityGuid || '',
+                currency_guid: currencyGuid,
                 post_date: data.post_date,
                 description: data.description,
                 splits: [
                     {
                         account_guid: accountGuid,
+                        action: data.isBuy ? 'Buy' : 'Sell',
                         value_num: stockValueNum,
                         value_denom: stockValueDenom,
                         quantity_num: stockQtyNum,
@@ -749,8 +805,6 @@ export default function AccountLedger({
                     },
                 ],
             };
-
-            const isNewTransaction = !tx.currency_guid;
 
             let res: Response;
             if (isNewTransaction) {
@@ -790,7 +844,17 @@ export default function AccountLedger({
             error(err instanceof Error && err.message !== 'Failed to update' ? err.message : 'Failed to update transaction');
             throw err; // Re-throw so InvestmentEditRow knows save failed
         }
-    }, [transactions, accountGuid, accountCommodityGuid, commodityScu, fetchTransactions, success, error]);
+    }, [
+        transactions,
+        accountGuid,
+        commodityScu,
+        investmentCurrencyGuid,
+        investmentCurrentShares,
+        sharePrecision,
+        fetchTransactions,
+        success,
+        error,
+    ]);
 
     // Toggle reviewed status
     const toggleReviewed = useCallback(async (transactionGuid: string) => {
@@ -1177,6 +1241,11 @@ export default function AccountLedger({
                 id: 'duplicate',
                 label: 'Duplicate',
                 onSelect: () => { void handleDuplicate(guid); },
+            },
+            {
+                id: 'schedule',
+                label: 'Create schedule from this…',
+                onSelect: () => router.push(`/scheduled-transactions?fromTransaction=${guid}`),
             },
             {
                 id: 'tags',
@@ -2082,7 +2151,6 @@ export default function AccountLedger({
                     {/* Reconcile button in toolbar; panel floats separately */}
                     {!isReconciling && (
                         <ReconciliationPanel
-                            accountGuid={accountGuid}
                             accountCurrency={accountCurrency}
                             isInvestment={isInvestmentAccount}
                             sharePrecision={sharePrecision}
@@ -2090,7 +2158,6 @@ export default function AccountLedger({
                             selectedBalance={selectedBalance}
                             onReconcileComplete={handleReconcileComplete}
                             selectedSplits={selectedSplits}
-                            onToggleSplit={toggleSplitSelection}
                             onSelectAll={selectAllUnreconciled}
                             onClearSelection={clearSelection}
                             isReconciling={isReconciling}
@@ -2304,7 +2371,7 @@ export default function AccountLedger({
                                             {isReconciling && (
                                                 <input
                                                     type="checkbox"
-                                                    checked={selectedSplits.size > 0 && displayTransactions.every(tx => tx.account_split_reconcile_state === 'y' || selectedSplits.has(tx.account_split_guid))}
+                                                    checked={selectedSplits.size > 0 && displayTransactions.every(tx => getSelectableRowSplits(tx).length === 0 || isRowSelected(tx, selectedSplits))}
                                                     onChange={(e) => {
                                                         if (e.target.checked) selectAllUnreconciled();
                                                         else clearSelection();
@@ -2350,6 +2417,7 @@ export default function AccountLedger({
                                             transaction={tx}
                                             accountGuid={accountGuid}
                                             sharePrecision={sharePrecision}
+                                            availableShares={investmentAvailableSharesFor(tx)}
                                             isActive={index === focusedRowIndex}
                                             showCheckbox={true}
                                             isChecked={editSelectedGuids.has(tx.guid)}
@@ -2619,7 +2687,7 @@ export default function AccountLedger({
                                 const isUnreviewed = tx.reviewed === false;
                                 const amount = parseFloat(tx.account_split_value);
                                 const reconcileInfo = getReconcileIcon(tx.account_split_reconcile_state);
-                                const isSelected = selectedSplits.has(tx.account_split_guid);
+                                const isSelected = isRowSelected(tx, selectedSplits);
 
                                 if (editingGuid === tx.guid) {
                                     return (
@@ -2657,11 +2725,11 @@ export default function AccountLedger({
                                             if (colId === 'select') {
                                                 return (
                                                     <td key={cell.id} className="px-3 py-2 align-middle">
-                                                        {tx.account_split_reconcile_state !== 'y' && (
+                                                        {getSelectableRowSplits(tx).length > 0 && (
                                                             <input
                                                                 type="checkbox"
                                                                 checked={isSelected}
-                                                                onChange={() => toggleSplitSelection(tx.account_split_guid)}
+                                                                onChange={() => toggleTransactionSelection(tx)}
                                                                 className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
                                                             />
                                                         )}
@@ -3068,21 +3136,49 @@ export default function AccountLedger({
                 onDelete={handleDeleteClick}
             />
 
-            <TransactionFormModal
-                isOpen={isEditModalOpen}
-                onClose={() => {
-                    setIsEditModalOpen(false);
-                    setEditingTransaction(null);
-                }}
-                transaction={editingTransaction}
-                defaultAccountGuid={accountGuid}
-                onSuccess={() => {
-                    setIsEditModalOpen(false);
-                    setEditingTransaction(null);
-                    fetchTransactions();
-                }}
-                onRefresh={fetchTransactions}
-            />
+            {isInvestmentAccount && !editingTransaction ? (
+                <Modal
+                    isOpen={isEditModalOpen}
+                    onClose={() => setIsEditModalOpen(false)}
+                    title="New Investment Transaction"
+                    size="2xl"
+                    closeOnBackdrop={false}
+                    closeOnEscape={true}
+                    resetKey="new-investment"
+                >
+                    <div className="px-6 py-4">
+                        <InvestmentTransactionForm
+                            accountGuid={accountGuid}
+                            accountName={`${investmentSymbol} investment account`}
+                            accountCommodityGuid={accountCommodityGuid || ''}
+                            commoditySymbol={investmentSymbol}
+                            commodityFraction={commodityScu}
+                            currentShares={investmentCurrentShares}
+                            onSave={() => {
+                                setIsEditModalOpen(false);
+                                fetchTransactions();
+                            }}
+                            onCancel={() => setIsEditModalOpen(false)}
+                        />
+                    </div>
+                </Modal>
+            ) : (
+                <TransactionFormModal
+                    isOpen={isEditModalOpen}
+                    onClose={() => {
+                        setIsEditModalOpen(false);
+                        setEditingTransaction(null);
+                    }}
+                    transaction={editingTransaction}
+                    defaultAccountGuid={accountGuid}
+                    onSuccess={() => {
+                        setIsEditModalOpen(false);
+                        setEditingTransaction(null);
+                        fetchTransactions();
+                    }}
+                    onRefresh={fetchTransactions}
+                />
+            )}
 
             <ConfirmationDialog
                 isOpen={deleteConfirmOpen}
@@ -3205,7 +3301,6 @@ export default function AccountLedger({
         {/* Floating reconciliation panel - outside overflow-clip container */}
         {isReconciling && (
             <ReconciliationPanel
-                accountGuid={accountGuid}
                 accountCurrency={accountCurrency}
                 isInvestment={isInvestmentAccount}
                 sharePrecision={sharePrecision}
@@ -3213,7 +3308,6 @@ export default function AccountLedger({
                 selectedBalance={selectedBalance}
                 onReconcileComplete={handleReconcileComplete}
                 selectedSplits={selectedSplits}
-                onToggleSplit={toggleSplitSelection}
                 onSelectAll={selectAllUnreconciled}
                 onClearSelection={clearSelection}
                 isReconciling={isReconciling}

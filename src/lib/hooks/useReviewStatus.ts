@@ -1,8 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
-import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
+import type { JobProgressEventPayload } from '@/contexts/JobProgressContext';
 
 export function useReviewStatus() {
-    return useQuery<ReviewStatusMap>({
+    const queryClient = useQueryClient();
+    const query = useQuery<ReviewStatusMap>({
         queryKey: ['accounts', 'review-status'],
         queryFn: async () => {
             const res = await fetch('/api/accounts/review-status');
@@ -16,4 +19,21 @@ export function useReviewStatus() {
         // counts arrive.
         refetchOnMount: 'always',
     });
+
+    useEffect(() => {
+        const refreshAfterSimpleFinSync = (event: Event) => {
+            const detail = (event as CustomEvent<JobProgressEventPayload>).detail;
+            if (
+                detail?.kind === 'sync-simplefin'
+                && (detail.status === 'completed' || detail.status === 'failed')
+            ) {
+                void queryClient.invalidateQueries({ queryKey: ['accounts', 'review-status'] });
+            }
+        };
+
+        window.addEventListener('job-progress', refreshAfterSimpleFinSync);
+        return () => window.removeEventListener('job-progress', refreshAfterSimpleFinSync);
+    }, [queryClient]);
+
+    return query;
 }

@@ -7,6 +7,7 @@ import { ReportFilters, ReportData, SavedReport, SavedReportInput, ReportType } 
 import { ReportTable } from '@/components/reports/ReportTable';
 import { AccountPicker } from '@/components/reports/AccountPicker';
 import SaveReportDialog from '@/components/reports/SaveReportDialog';
+import { ContinuousCloseDashboard } from '@/components/reports/ContinuousCloseDashboard';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -106,6 +107,7 @@ function ReconciliationReportContent() {
 
     return (
         <div className="space-y-6">
+            <ContinuousCloseDashboard />
             {/* Account Selection Section */}
             <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
                 <div className="flex items-center justify-between p-4 border-b border-border">

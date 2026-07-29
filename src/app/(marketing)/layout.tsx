@@ -23,6 +23,18 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                                 {page.navLabel}
                             </Link>
                         ))}
+                        <Link
+                            href="/features"
+                            className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150"
+                        >
+                            All features
+                        </Link>
+                        <Link
+                            href="/docs"
+                            className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150"
+                        >
+                            Docs
+                        </Link>
                     </nav>
 
                     <div className="flex items-center gap-3 shrink-0">
@@ -53,6 +65,12 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                                 {page.navLabel}
                             </Link>
                         ))}
+                        <Link href="/features" className="px-3 py-1.5 text-xs whitespace-nowrap text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150">
+                            All features
+                        </Link>
+                        <Link href="/docs" className="px-3 py-1.5 text-xs whitespace-nowrap text-foreground-secondary hover:text-foreground rounded-md hover:bg-surface-hover transition-colors duration-150">
+                            Docs
+                        </Link>
                     </div>
                 </nav>
             </header>
@@ -85,6 +103,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                                     </Link>
                                 </li>
                             ))}
+                            <li>
+                                <Link href="/features" className="text-sm text-foreground-secondary hover:text-foreground transition-colors duration-150">
+                                    All features
+                                </Link>
+                            </li>
                         </ul>
                     </div>
                     <div>
@@ -99,6 +122,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                     <div>
                         <div className="text-[11px] uppercase tracking-wider text-foreground-muted font-semibold mb-3">Get started</div>
                         <ul className="space-y-2">
+                            <li>
+                                <Link href="/docs" className="text-sm text-foreground-secondary hover:text-foreground transition-colors duration-150">
+                                    Documentation
+                                </Link>
+                            </li>
                             <li>
                                 <Link href="/login" className="text-sm text-foreground-secondary hover:text-foreground transition-colors duration-150">
                                     Sign in

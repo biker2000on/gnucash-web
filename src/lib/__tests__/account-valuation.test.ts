@@ -30,6 +30,13 @@ const USD = {
   fraction: 100,
 };
 
+const EUR = {
+  guid: 'eur-guid',
+  mnemonic: 'EUR',
+  fullname: 'Euro',
+  fraction: 100,
+};
+
 function pricePair(commodityGuid: string, currencyGuid: string, value: number) {
   const denom = 1000000;
   return {
@@ -132,5 +139,27 @@ describe('buildAccountValuationContext', () => {
       commodityNamespace: 'NASDAQ',
     })).toBe(123.45);
     expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses an explicit report currency for cross-book valuation', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([
+      pricePair('gbp-guid', 'eur-guid', 1.17),
+    ]);
+
+    const valuation = await buildAccountValuationContext([
+      {
+        accountType: 'CASH',
+        commodityGuid: 'gbp-guid',
+        commodityNamespace: 'CURRENCY',
+      },
+    ], new Date('2026-07-28'), EUR);
+
+    expect(valuation.reportCurrencyMnemonic).toBe('EUR');
+    expect(valuation.getMultiplier({
+      accountType: 'CASH',
+      commodityGuid: 'gbp-guid',
+      commodityNamespace: 'CURRENCY',
+    })).toBeCloseTo(1.17);
+    expect(mockGetBaseCurrency).not.toHaveBeenCalled();
   });
 });

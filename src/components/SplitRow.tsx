@@ -7,6 +7,7 @@ import { evaluateMathExpression, containsMathExpression } from '@/lib/math-eval'
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useTaxShortcut } from '@/lib/hooks/useTaxShortcut';
+import { formatEvaluatedAccountAmount } from '@/lib/transaction-currency';
 
 interface SplitRowProps {
     split: SplitFormData;
@@ -70,8 +71,10 @@ export function SplitRow({
     }, [fetchDefaultRate, split.account_guid, split.exchange_rate, transactionCurrencyGuid]);
 
     const handleAccountChange = (accountGuid: string, accountName: string) => {
+        setAccountCommodity(null);
         onChange(index, 'account_guid', accountGuid);
         onChange(index, 'account_name', accountName);
+        onChange(index, 'exchange_rate', '');
     };
 
     const handleDebitChange = (value: string) => {
@@ -93,14 +96,14 @@ export function SplitRow({
     const handleDebitBlur = () => {
         const result = evaluateMathExpression(split.debit);
         if (result !== null) {
-            onChange(index, 'debit', result.toFixed(2));
+            onChange(index, 'debit', formatEvaluatedAccountAmount(split.debit, result));
         }
     };
 
     const handleCreditBlur = () => {
         const result = evaluateMathExpression(split.credit);
         if (result !== null) {
-            onChange(index, 'credit', result.toFixed(2));
+            onChange(index, 'credit', formatEvaluatedAccountAmount(split.credit, result));
         }
     };
 
@@ -215,7 +218,7 @@ export function SplitRow({
                     </label>
                     <input
                         type="number"
-                        step="0.0001"
+                        step="any"
                         value={split.exchange_rate || ''}
                         onChange={(e) => onChange(index, 'exchange_rate', e.target.value)}
                         className="w-28 px-2 py-1 bg-amber-950/30 border border-amber-600/50 rounded text-amber-200 text-xs font-mono focus:outline-none focus:border-amber-500"

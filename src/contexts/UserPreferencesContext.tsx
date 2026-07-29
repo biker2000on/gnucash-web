@@ -56,6 +56,14 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
     useEffect(() => {
         async function loadPreferences() {
             try {
+                const pathname = window.location.pathname;
+                const isPublicPage =
+                    pathname === '/' ||
+                    pathname === '/login' ||
+                    pathname.startsWith('/docs') ||
+                    pathname.startsWith('/features') ||
+                    pathname.startsWith('/share/');
+
                 // First check localStorage for cached value
                 const cached = localStorage.getItem(STORAGE_KEY);
                 if (cached) {
@@ -92,6 +100,9 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
                         // Invalid cache, ignore
                     }
                 }
+
+                // Public surfaces have no authenticated preference record to load.
+                if (isPublicPage) return;
 
                 // Then fetch from API
                 const res = await fetch('/api/user/preferences');

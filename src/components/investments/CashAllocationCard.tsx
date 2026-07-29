@@ -53,13 +53,13 @@ export function CashAllocationCard({ cashByAccount, overallCash }: CashAllocatio
       <div className="divide-y divide-border">
         {/* Overall Total Row */}
         <div className="p-4 bg-background-tertiary/30">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <span className="font-semibold text-foreground">Overall Portfolio</span>
             <span className={`font-bold text-lg ${getCashColor(overallCash.cashPercent)}`}>
               {overallCash.cashPercent.toFixed(1)}% cash
             </span>
           </div>
-          <div className="flex items-center gap-4 text-sm text-foreground-secondary mb-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-foreground-secondary mb-2">
             <span>Cash: {formatCurrency(overallCash.totalCashBalance)}</span>
             <span>Invested: {formatCurrency(overallCash.totalInvestmentValue)}</span>
             <span>Total: {formatCurrency(overallCash.totalValue)}</span>
@@ -70,16 +70,16 @@ export function CashAllocationCard({ cashByAccount, overallCash }: CashAllocatio
         {/* Per-Account Rows */}
         {cashByAccount.map((account) => (
           <div key={account.parentGuid} className="p-4">
-            <div className="flex items-center justify-between mb-1">
-              <div>
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+              <div className="min-w-0">
                 <span className="font-medium text-foreground">{account.parentName}</span>
-                <span className="text-sm text-foreground-muted ml-2">{account.parentPath}</span>
+                <span className="block break-words text-sm text-foreground-muted">{account.parentPath}</span>
               </div>
               <span className={`font-semibold ${getCashColor(account.cashPercent)}`}>
                 {account.cashPercent.toFixed(1)}%
               </span>
             </div>
-            <div className="flex items-center gap-4 text-sm text-foreground-secondary mb-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-foreground-secondary mb-2">
               <span>Cash: {formatCurrency(account.cashBalance)}</span>
               <span>Invested: {formatCurrency(account.investmentValue)}</span>
             </div>

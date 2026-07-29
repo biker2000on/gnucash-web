@@ -61,7 +61,7 @@ export function GoalForm({ initial, saving, submitLabel, onSubmit, onCancel }: G
     };
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4 p-6">
             {/* Type selector */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">Goal type</label>
@@ -130,7 +130,8 @@ export function GoalForm({ initial, saving, submitLabel, onSubmit, onCancel }: G
                         className={inputClass}
                     />
                     <p className="mt-1 text-xs text-foreground-muted">
-                        Target auto-computes from your monthly expense run-rate.
+                        Uses up to 12 completed months of non-tax spending. Tax,
+                        payroll withholding, savings, and investment contributions are excluded.
                     </p>
                 </div>
             )}
@@ -156,7 +157,7 @@ export function GoalForm({ initial, saving, submitLabel, onSubmit, onCancel }: G
             {isEmergency && (
                 <div>
                     <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Fixed target override (optional)
+                        Fallback target (optional)
                     </label>
                     <input
                         type="number"
@@ -164,7 +165,7 @@ export function GoalForm({ initial, saving, submitLabel, onSubmit, onCancel }: G
                         step="0.01"
                         value={values.targetAmount}
                         onChange={e => set('targetAmount', e.target.value)}
-                        placeholder="Used only if no expense data"
+                        placeholder="Used only when no expense history exists"
                         className={inputClass}
                     />
                 </div>

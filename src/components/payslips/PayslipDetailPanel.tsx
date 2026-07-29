@@ -119,11 +119,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
           const accounts: Array<{ guid: string; name: string; fullname?: string }> = await accRes.json();
           const names: Record<string, string> = {};
           for (const a of accounts) {
-            // Strip book name (first segment) from fullname path
-            const fullname = a.fullname || '';
-            const segments = fullname.split(':');
-            const stripped = segments.length > 1 ? segments.slice(1).join(':') : fullname;
-            names[a.guid] = stripped || a.name;
+            names[a.guid] = a.fullname || a.name;
           }
           if (!cancelled) setAccountNames(names);
         }

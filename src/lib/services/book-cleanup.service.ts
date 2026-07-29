@@ -34,9 +34,7 @@ export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_invitations',
     'gnucash_web_simplefin_connections',
     'gnucash_web_tags',
-    'gnucash_web_category_mappings',
     'gnucash_web_import_batches',
-    'gnucash_web_amazon_orders',
     'gnucash_web_entity_profiles',
     'gnucash_web_entity_members',
     'gnucash_web_book_features',
@@ -108,6 +106,13 @@ export const SPLIT_OR_TXN_KEYED_TABLES = [
 export const LAZY_BOOK_GUID_TABLES = [
     'gnucash_web_email_bills',
     'gnucash_web_notifications',
+    'gnucash_web_financial_actions',
+    'gnucash_web_financial_action_refresh',
+    'gnucash_web_calculation_traces',
+    // Upgrade safety: these tables are no longer created or modeled, but old
+    // installations may retain them until a separate data-retirement decision.
+    'gnucash_web_amazon_orders',
+    'gnucash_web_category_mappings',
     // Deleted before saved_reports below; the FK on saved_report_id also
     // cascades, but base-type-only schedules have no other cleanup path.
     'gnucash_web_report_schedules',
@@ -272,8 +277,7 @@ export async function deleteBookExtensionData(
         prisma.gnucash_web_home_items.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_home_rooms.deleteMany({ where: { book_guid: bookGuid } }),
 
-        // Imports (orders before batches — orders reference batch id)
-        prisma.gnucash_web_amazon_orders.deleteMany({ where: { book_guid: bookGuid } }),
+        // Import history
         prisma.gnucash_web_import_batches.deleteMany({ where: { book_guid: bookGuid } }),
 
         // SimpleFIN (account map → connections)
@@ -312,7 +316,6 @@ export async function deleteBookExtensionData(
 
         // Per-book config and misc
         prisma.gnucash_web_tool_config.deleteMany({ where: { book_guid: bookGuid } }),
-        prisma.gnucash_web_category_mappings.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_entity_members.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_entity_profiles.deleteMany({ where: { book_guid: bookGuid } }),
         prisma.gnucash_web_book_features.deleteMany({ where: { book_guid: bookGuid } }),

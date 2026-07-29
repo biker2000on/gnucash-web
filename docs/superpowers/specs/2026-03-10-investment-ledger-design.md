@@ -92,7 +92,7 @@ The auto-calculated field is always derivable from the other two: `Total = Share
 
 ### On Submit
 
-1. Create the stock account split (shares as quantity, total as value — value is negative for buys per GnuCash convention)
+1. Create the stock account split (shares as quantity, total as value — both are positive for buys and negative for sells)
 2. Create the cash/transfer account split (opposite value)
 3. Auto-generate trading splits via existing `processMultiCurrencySplits()`
 

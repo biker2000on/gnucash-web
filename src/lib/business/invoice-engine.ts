@@ -179,6 +179,8 @@ export interface ApplyPaymentInput {
   /** Check/reference number. */
   num?: string;
   memo?: string;
+  /** Caller-supplied stable GUID for idempotent provider/webhook posting. */
+  transactionGuid?: string;
   /** Explicit allocation; omitted => oldest-first across open documents. */
   allocations?: Array<{ invoiceGuid: string; amount: number }>;
 }
@@ -1108,6 +1110,20 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
   }
   const postDate = parseIsoDateNoon(input.date, 'date');
 
+  if (input.transactionGuid) {
+    const existing = await prisma.transactions.findUnique({
+      where: { guid: input.transactionGuid },
+      select: { guid: true },
+    });
+    if (existing) {
+      return {
+        transactionGuid: existing.guid,
+        allocations: input.allocations ?? [],
+        fullyPaidInvoiceGuids: [],
+      };
+    }
+  }
+
   // Period lock: payments create a transaction dated input.date
   const lockBookGuid = await getBookGuidForAccount(input.transferAccountGuid);
   if (lockBookGuid) await assertNotLocked(lockBookGuid, [postDate]);
@@ -1198,7 +1214,7 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
     }
 
     // Build the payment transaction
-    const txnGuid = generateGuid();
+    const txnGuid = input.transactionGuid ?? generateGuid();
     await tx.transactions.create({
       data: {
         guid: txnGuid,

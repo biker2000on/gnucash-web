@@ -34,6 +34,129 @@ export type UpdateToolConfigInput = z.infer<typeof UpdateToolConfigSchema>;
  * Service class for tool configuration operations
  */
 export class ToolConfigService {
+  /** Shared singleton config for a book (user_id/account_guid are NULL). */
+  static async getBookSingleton(bookGuid: string, toolType: string) {
+    return prisma.gnucash_web_tool_config.findFirst({
+      where: {
+        user_id: null,
+        account_guid: null,
+        book_guid: bookGuid,
+        tool_type: toolType,
+      },
+      orderBy: { updated_at: 'desc' },
+    });
+  }
+
+  /**
+   * Atomic shared-book singleton write. The matching partial unique index is
+   * installed by db-init; the predicate must be repeated for PostgreSQL to
+   * select that index as the conflict arbiter.
+   */
+  static async upsertBookSingleton(
+    bookGuid: string,
+    data: Omit<CreateToolConfigInput, 'accountGuid'>,
+  ) {
+    const validated = CreateToolConfigSchema.parse({ ...data, accountGuid: null });
+    const rows = await prisma.$queryRaw<Array<{
+      id: number;
+      user_id: number | null;
+      book_guid: string;
+      tool_type: string;
+      name: string;
+      account_guid: string | null;
+      config: unknown;
+      created_at: Date;
+      updated_at: Date;
+    }>>`
+      INSERT INTO gnucash_web_tool_config
+        (user_id, book_guid, tool_type, name, account_guid, config)
+      VALUES
+        (NULL, ${bookGuid}, ${validated.toolType}, ${validated.name}, NULL,
+         ${JSON.stringify(validated.config)}::jsonb)
+      ON CONFLICT (book_guid, tool_type)
+        WHERE user_id IS NULL AND account_guid IS NULL
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        config = EXCLUDED.config,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id, user_id, book_guid, tool_type, name, account_guid,
+                config, created_at, updated_at
+    `;
+    return rows[0];
+  }
+
+  /** Atomic JSON merge for partial shared-book config updates. */
+  static async mergeBookSingleton(
+    bookGuid: string,
+    toolType: string,
+    name: string,
+    patch: Record<string, unknown>,
+    clearKeys: string[] = [],
+  ) {
+    const validated = CreateToolConfigSchema.parse({
+      toolType,
+      name,
+      accountGuid: null,
+      config: patch,
+    });
+    const rows = await prisma.$queryRaw<Array<{
+      id: number;
+      config: unknown;
+      updated_at: Date;
+    }>>`
+      INSERT INTO gnucash_web_tool_config
+        (user_id, book_guid, tool_type, name, account_guid, config)
+      VALUES
+        (NULL, ${bookGuid}, ${validated.toolType}, ${validated.name}, NULL,
+         ${JSON.stringify(validated.config)}::jsonb)
+      ON CONFLICT (book_guid, tool_type)
+        WHERE user_id IS NULL AND account_guid IS NULL
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        config =
+          (gnucash_web_tool_config.config - ${clearKeys}::text[])
+          || EXCLUDED.config,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id, config, updated_at
+    `;
+    return rows[0];
+  }
+
+  /** Personal singleton config; safe under concurrent first writes. */
+  static async upsertUserSingleton(
+    userId: number,
+    bookGuid: string,
+    data: Omit<CreateToolConfigInput, 'accountGuid'>,
+  ) {
+    const validated = CreateToolConfigSchema.parse({ ...data, accountGuid: null });
+    const rows = await prisma.$queryRaw<Array<{
+      id: number;
+      user_id: number | null;
+      book_guid: string;
+      tool_type: string;
+      name: string;
+      account_guid: string | null;
+      config: unknown;
+      created_at: Date;
+      updated_at: Date;
+    }>>`
+      INSERT INTO gnucash_web_tool_config
+        (user_id, book_guid, tool_type, name, account_guid, config)
+      VALUES
+        (${userId}, ${bookGuid}, ${validated.toolType}, ${validated.name}, NULL,
+         ${JSON.stringify(validated.config)}::jsonb)
+      ON CONFLICT (user_id, book_guid, tool_type)
+        WHERE user_id IS NOT NULL AND account_guid IS NULL
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        config = EXCLUDED.config,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING id, user_id, book_guid, tool_type, name, account_guid,
+                config, created_at, updated_at
+    `;
+    return rows[0];
+  }
+
   /**
    * List all tool configurations for a user in a specific book
    * Optionally filter by tool type

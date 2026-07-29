@@ -7,6 +7,8 @@ import { getLinksForBusinessBook } from '@/lib/services/book-links.service';
 import { hasMinimumRole } from '@/lib/services/permission.service';
 import { ToolConfigService } from '@/lib/services/tool-config.service';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
+import { buildHouseholdIncomeContext } from '@/lib/tax/household-income-context';
+import { FarmCurrencyConversionError } from '@/lib/tax/farm-currency';
 import {
   aggregateFarmBookData,
   FARM_ANALYZER_TOOL_TYPE,
@@ -23,30 +25,11 @@ import {
   FILING_STATUSES,
   SUPPORTED_TAX_YEARS,
   isSupportedTaxYear,
-  type BookTaxData,
   type FilingStatus,
-  type TaxCategory,
 } from '@/lib/tax/types';
 
 const TOOL_TYPE = FARM_ANALYZER_TOOL_TYPE;
 const CONFIG_NAME = 'Farm analyzer inputs';
-
-function categoryTotal(data: BookTaxData, category: TaxCategory): number {
-  return data.categories.find((c) => c.category === category)?.total ?? 0;
-}
-
-/** Category total EXCLUDING amounts from the given account guids. */
-function categoryTotalExcluding(
-  data: BookTaxData,
-  category: TaxCategory,
-  excludeGuids: Set<string>,
-): number {
-  const agg = data.categories.find((c) => c.category === category);
-  if (!agg) return 0;
-  return agg.accounts
-    .filter((a) => !excludeGuids.has(a.accountGuid))
-    .reduce((sum, a) => sum + a.amount, 0);
-}
 
 function parseMoney(raw: string | null): number | null {
   if (raw === null || raw === '') return null;
@@ -83,38 +66,9 @@ function guidArray(v: unknown): string[] | undefined {
   return guids.length === v.length ? guids : undefined;
 }
 
-/**
- * Other-household income context from a book's tax categories, optionally
- * excluding the farm accounts' own contribution.
- */
-function householdIncomeContext(
-  data: BookTaxData,
-  excludeGuids?: Set<string>,
-): { w2Wages: number; ordinaryIncome: number; seIncome: number } {
-  const elapsed = data.elapsedYearFraction > 0 ? data.elapsedYearFraction : 1;
-  const cat = (c: TaxCategory) =>
-    (excludeGuids ? categoryTotalExcluding(data, c, excludeGuids) : categoryTotal(data, c)) /
-    elapsed;
-  const w2Wages = cat('w2_wages');
-  const ordinaryIncome =
-    Math.round(
-      (w2Wages +
-        cat('interest_income') +
-        cat('ordinary_dividends') +
-        cat('rental_income') +
-        cat('retirement_income') +
-        cat('other_income')) * 100,
-    ) / 100;
-  const seIncome = Math.max(
-    0,
-    Math.round((cat('self_employment_income') - cat('business_expense')) * 100) / 100,
-  );
-  return { w2Wages, ordinaryIncome, seIncome };
-}
-
-async function loadPinnedInputs(userId: number, bookGuid: string): Promise<PinnedInputs> {
-  const configs = await ToolConfigService.listByUser(userId, bookGuid, TOOL_TYPE);
-  const config = configs[0]?.config;
+async function loadPinnedInputs(_userId: number, bookGuid: string): Promise<PinnedInputs> {
+  const shared = await ToolConfigService.getBookSingleton(bookGuid, TOOL_TYPE);
+  const config = shared?.config;
   if (!config || typeof config !== 'object') return {};
   const c = config as Record<string, unknown>;
   return {
@@ -189,29 +143,22 @@ export async function GET(request: NextRequest) {
     let filingStatus: FilingStatus = 'single';
     let incomeAccounts: unknown[] = [];
     let expenseAccounts: unknown[] = [];
+    let loadPriorFarmIncome: (historyYear: number) => Promise<number>;
 
     if (isFarmBusinessBook) {
       /* --- The whole book is the farm --------------------------------- */
-      const [bookData, links] = await Promise.all([
+      const [bookData, links, scheduleF] = await Promise.all([
         aggregateBookTaxData(bookAccountGuids, year, null),
         getLinksForBusinessBook(bookGuid),
+        generateScheduleF(bookGuid, bookAccountGuids, year),
       ]);
-      ytdGross = categoryTotal(bookData, 'self_employment_income');
-      ytdExpenses = categoryTotal(bookData, 'business_expense');
+      ytdGross = scheduleF.grossIncome;
+      ytdExpenses = scheduleF.totalExpenses;
       elapsed = bookData.elapsedYearFraction;
-
-      // A fresh farm book has no tax-estimator mappings yet, which would
-      // read as $0 income despite posted transactions — fall back to a
-      // whole-book INCOME/EXPENSE sum (the Schedule F loader).
-      if (bookData.mappedAccountCount === 0) {
-        const scheduleF = await generateScheduleF(bookAccountGuids, year);
-        ytdGross = scheduleF.grossIncome;
-        ytdExpenses = scheduleF.totalExpenses;
-        if (ytdGross > 0 || ytdExpenses > 0) {
-          warnings.push(
-            'No tax-estimator mappings exist in this book — using a whole-book income/expense sum instead. Map accounts in the tax estimator for category-accurate numbers.',
-          );
-        }
+      if (scheduleF.convertedCurrencies.length > 0) {
+        warnings.push(
+          `Converted ${scheduleF.convertedCurrencies.join(', ')} farm transactions into ${scheduleF.currencyCode} using historical posting-date rates.`,
+        );
       }
 
       if (entity.entityType === 'llc_partnership') {
@@ -233,7 +180,7 @@ export async function GET(request: NextRequest) {
           getEntityProfile(link.householdBookGuid, user.id),
           aggregateBookTaxData(hhGuids, year, null),
         ]);
-        const hh = householdIncomeContext(hhData);
+        const hh = buildHouseholdIncomeContext(hhData);
         otherHouseholdW2Wages = hh.w2Wages;
         otherHouseholdOrdinaryIncome = hh.ordinaryIncome;
         otherHouseholdSeIncome = hh.seIncome;
@@ -254,6 +201,10 @@ export async function GET(request: NextRequest) {
             : 'No household book is linked to this business — link one in book settings for accurate marginal rates. Assuming no other household income.',
         );
       }
+      loadPriorFarmIncome = async (historyYear) => {
+        const report = await generateScheduleF(bookGuid, bookAccountGuids, historyYear);
+        return report.grossIncome;
+      };
     } else {
       /* --- Household (or general-business) book: pinned farm subtrees --- */
       const incomeRoots = pinned.farmIncomeAccountGuids ?? [];
@@ -272,7 +223,7 @@ export async function GET(request: NextRequest) {
       }
 
       const [farmData, bookData] = await Promise.all([
-        aggregateFarmBookData(bookAccountGuids, incomeRoots, expenseRoots, year),
+        aggregateFarmBookData(bookGuid, bookAccountGuids, incomeRoots, expenseRoots, year),
         aggregateBookTaxData(bookAccountGuids, year, null),
       ]);
       ytdGross = farmData.grossIncome;
@@ -280,6 +231,11 @@ export async function GET(request: NextRequest) {
       elapsed = farmData.elapsedYearFraction;
       incomeAccounts = farmData.incomeAccounts;
       expenseAccounts = farmData.expenseAccounts;
+      if (farmData.convertedCurrencies.length > 0) {
+        warnings.push(
+          `Converted ${farmData.convertedCurrencies.join(', ')} farm transactions into ${farmData.currencyCode} using historical posting-date rates.`,
+        );
+      }
 
       if (farmData.taxMappedFarmGuids.length > 0) {
         warnings.push(
@@ -290,7 +246,7 @@ export async function GET(request: NextRequest) {
       /* Other household income = the book's tax categories minus the farm
          accounts' contribution (per-account amounts are in the aggregates). */
       const farmGuids = new Set([...farmData.incomeGuids, ...farmData.expenseGuids]);
-      const hh = householdIncomeContext(bookData, farmGuids);
+      const hh = buildHouseholdIncomeContext(bookData, farmGuids);
       otherHouseholdW2Wages = hh.w2Wages;
       otherHouseholdOrdinaryIncome = hh.ordinaryIncome;
       otherHouseholdSeIncome = hh.seIncome;
@@ -306,6 +262,16 @@ export async function GET(request: NextRequest) {
           'No tax-estimator mappings found in this book — other household income is treated as $0, which understates your marginal rate. Map your W-2/income accounts in the tax estimator for accurate deltas.',
         );
       }
+      loadPriorFarmIncome = async (historyYear) => {
+        const history = await aggregateFarmBookData(
+          bookGuid,
+          bookAccountGuids,
+          incomeRoots,
+          expenseRoots,
+          historyYear,
+        );
+        return history.grossIncome;
+      };
     }
 
     /* --- Annualize + resolve inputs (query > pinned > default) --------- */
@@ -330,6 +296,16 @@ export async function GET(request: NextRequest) {
     );
     const priorYearFarmIncome =
       parseMoney(searchParams.get('priorYear')) ?? pinned.priorYearFarmIncome ?? null;
+    const derivedPriorThreeYearFarmIncome = await Promise.all(
+      [year - 1, year - 2, year - 3].map((historyYear) =>
+        loadPriorFarmIncome(historyYear),
+      ),
+    );
+    const priorThreeYearFarmIncome: Array<number | null> = [
+      priorYearFarmIncome ?? derivedPriorThreeYearFarmIncome[0],
+      derivedPriorThreeYearFarmIncome[1],
+      derivedPriorThreeYearFarmIncome[2],
+    ];
     const acreage = parseMoney(searchParams.get('acreage')) ?? pinned.acreage ?? null;
     const firstYearParam = searchParams.get('firstYear');
     const isFirstLlcYear =
@@ -367,6 +343,7 @@ export async function GET(request: NextRequest) {
       annualTaxableFarmPurchases: purchases,
       combinedSalesTaxRate: salesTaxRate,
       priorYearFarmIncome,
+      priorThreeYearFarmIncome,
       acreage,
       isFirstLlcYear,
       otherHouseholdOrdinaryIncome,
@@ -394,6 +371,7 @@ export async function GET(request: NextRequest) {
         purchases,
         salesTaxRate,
         priorYearFarmIncome,
+        priorThreeYearFarmIncome,
         acreage,
         isFirstLlcYear,
         filingStatus,
@@ -408,6 +386,12 @@ export async function GET(request: NextRequest) {
       exemptCategories: EXEMPT_PURCHASE_CATEGORIES,
     });
   } catch (error) {
+    if (error instanceof FarmCurrencyConversionError) {
+      return NextResponse.json(
+        { error: error.message, missingRates: error.missingRates },
+        { status: 422 },
+      );
+    }
     console.error('Error generating farm analysis:', error);
     return NextResponse.json({ error: 'Failed to generate farm analysis' }, { status: 500 });
   }
@@ -423,7 +407,7 @@ export async function PUT(request: NextRequest) {
   try {
     const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
-    const { user, bookGuid } = roleResult;
+    const { bookGuid } = roleResult;
 
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== 'object') {
@@ -500,25 +484,13 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'No valid inputs to pin' }, { status: 400 });
     }
 
-    // Merge with the existing pinned config so partial PUTs don't drop keys.
-    const existing = await ToolConfigService.listByUser(user.id, bookGuid, TOOL_TYPE);
-    if (existing.length > 0) {
-      const prev =
-        existing[0].config && typeof existing[0].config === 'object'
-          ? (existing[0].config as Record<string, unknown>)
-          : {};
-      const merged: Record<string, unknown> = { ...prev, ...config };
-      for (const key of clears) delete merged[key];
-      await ToolConfigService.update(existing[0].id, user.id, bookGuid, {
-        config: merged,
-      });
-    } else {
-      await ToolConfigService.create(user.id, bookGuid, {
-        toolType: TOOL_TYPE,
-        name: CONFIG_NAME,
-        config,
-      });
-    }
+    await ToolConfigService.mergeBookSingleton(
+      bookGuid,
+      TOOL_TYPE,
+      CONFIG_NAME,
+      config,
+      clears,
+    );
 
     return NextResponse.json({ ok: true, pinned: config, cleared: clears });
   } catch (error) {

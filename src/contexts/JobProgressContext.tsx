@@ -92,6 +92,9 @@ export function formatJobSummary(
   if (kind === 'regenerate-thumbnails') {
     return `Thumbnails complete: ${n('regenerated') ?? 0} regenerated, ${n('failed') ?? 0} failed`;
   }
+  if (kind === 'reextract-receipts') {
+    return `Receipt extraction complete: ${n('upgraded') ?? 0} upgraded with AI, ${n('fallback') ?? 0} fallback, ${n('failed') ?? 0} failed`;
+  }
   return `${label} complete`;
 }
 

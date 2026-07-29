@@ -138,6 +138,7 @@ export function TransactionEditModal({
             onClose={onClose}
             title={getTitle()}
             size="lg"
+            resetKey={`${transactionGuid ?? 'new'}:${mode}`}
         >
             {loading ? (
                 <div className="p-8 flex items-center justify-center">
@@ -158,7 +159,7 @@ export function TransactionEditModal({
                     />
                 </div>
             ) : transaction ? (
-                <div className="p-6 space-y-6">
+                <div className="space-y-5 p-4 sm:p-5">
                     {/* Delete Confirmation */}
                     {showDeleteConfirm && (
                         <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4">
@@ -214,15 +215,15 @@ export function TransactionEditModal({
                         <h4 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
                             Splits
                         </h4>
-                        <div className="bg-input-bg border border-border rounded-xl overflow-hidden">
-                            <table className="w-full">
+                        <div className="max-w-full overflow-x-auto rounded-lg border border-border bg-input-bg">
+                            <table className="w-full min-w-[640px] table-fixed">
                                 <thead>
                                     <tr className="text-xs text-foreground-muted uppercase tracking-wider">
-                                        <th className="px-4 py-3 text-left">Account</th>
-                                        <th className="px-4 py-3 text-left">Memo</th>
-                                        <th className="px-4 py-3 text-left">Action</th>
-                                        <th className="px-4 py-3 text-center">Status</th>
-                                        <th className="px-4 py-3 text-right">Amount</th>
+                                        <th className="w-[44%] px-4 py-3 text-left lg:w-[32%]">Account</th>
+                                        <th className="hidden w-[18%] px-4 py-3 text-left lg:table-cell">Memo</th>
+                                        <th className="hidden w-[14%] px-4 py-3 text-left lg:table-cell">Action</th>
+                                        <th className="w-[16%] px-2 py-3 text-center">Status</th>
+                                        <th className="w-[40%] px-4 py-3 text-right lg:w-[20%]">Amount</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border">
@@ -231,7 +232,7 @@ export function TransactionEditModal({
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
                                             <tr key={split.guid} className="hover:bg-surface-hover/30">
-                                                <td className="px-4 py-3">
+                                                <td className="break-words px-4 py-3 align-top">
                                                     <Link
                                                         href={`/accounts/${split.account_guid}`}
                                                         className="text-foreground hover:text-primary transition-colors"
@@ -240,18 +241,18 @@ export function TransactionEditModal({
                                                         {split.account_name}
                                                     </Link>
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-foreground-muted italic">
+                                                <td className="hidden truncate px-4 py-3 text-sm italic text-foreground-muted lg:table-cell">
                                                     {split.memo || '—'}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-foreground-secondary">
+                                                <td className="hidden truncate px-4 py-3 text-sm text-foreground-secondary lg:table-cell">
                                                     {split.action || '—'}
                                                 </td>
-                                                <td className="px-4 py-3 text-center">
+                                                <td className="px-2 py-3 text-center align-top">
                                                     <span className={`text-xs px-2 py-1 rounded-full ${reconcile.color}`}>
                                                         {split.reconcile_state.toUpperCase()}
                                                     </span>
                                                 </td>
-                                                <td className={`px-4 py-3 text-right font-mono ${
+                                                <td className={`whitespace-nowrap px-4 py-3 text-right font-mono align-top ${
                                                     amount < 0 ? 'text-rose-400' : 'text-emerald-400'
                                                 }`}>
                                                     {formatCurrency(split.quantity_decimal, split.commodity_mnemonic)}
@@ -265,16 +266,16 @@ export function TransactionEditModal({
                     </div>
 
                     {/* Metadata */}
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div className="bg-input-bg border border-border rounded-xl p-4">
+                    <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                        <div className="rounded-lg border border-border bg-input-bg p-4">
                             <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Enter Date</div>
                             <div className="text-foreground-secondary font-mono">
                                 {new Date(transaction.enter_date).toLocaleString()}
                             </div>
                         </div>
-                        <div className="bg-input-bg border border-border rounded-xl p-4">
+                        <div className="min-w-0 rounded-lg border border-border bg-input-bg p-4">
                             <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Transaction ID</div>
-                            <div className="text-foreground-secondary font-mono text-xs truncate" title={transaction.guid}>
+                            <div className="break-all font-mono text-xs text-foreground-secondary" title={transaction.guid}>
                                 {transaction.guid}
                             </div>
                         </div>

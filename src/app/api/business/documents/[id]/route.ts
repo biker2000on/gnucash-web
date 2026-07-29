@@ -41,6 +41,18 @@ export async function PUT(request: Request, { params }: RouteParams) {
                     : body.expiresOn === null
                       ? null
                       : String(body.expiresOn),
+            issuedOn:
+                body.issuedOn === undefined
+                    ? undefined
+                    : body.issuedOn === null
+                      ? null
+                      : String(body.issuedOn),
+            returnCopyDueOn:
+                body.returnCopyDueOn === undefined
+                    ? undefined
+                    : body.returnCopyDueOn === null
+                      ? null
+                      : String(body.returnCopyDueOn),
             notes: body.notes === undefined ? undefined : body.notes === null ? null : String(body.notes),
         };
 

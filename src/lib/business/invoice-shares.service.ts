@@ -116,6 +116,14 @@ export interface PublicInvoiceView {
   total: number;
   amountPaid: number;
   amountDue: number;
+  paymentEnabled: boolean;
+  payments: Array<{
+    id: string;
+    date: string;
+    amount: number;
+    fee: number;
+    status: string;
+  }>;
 }
 
 export interface PublicEstimateView {
@@ -131,6 +139,7 @@ export interface PublicEstimateView {
   billTo: PublicBillTo | null;
   lines: PublicLineView[];
   total: number;
+  canRespond: boolean;
 }
 
 export type PublicShareView = PublicInvoiceView | PublicEstimateView;
@@ -402,6 +411,27 @@ async function buildPublicInvoiceView(
   const amountPaid = view.posted
     ? Math.max(0, Math.round((view.totals.total - view.amountDue) * 100) / 100)
     : 0;
+  const [paymentConnection, paymentRows] = await Promise.all([
+    prisma.$queryRaw<Array<{ enabled: boolean }>>`
+      SELECT enabled FROM gnucash_web_payment_connections
+      WHERE book_guid = ${bookGuid} AND provider = 'stripe'
+    `,
+    prisma.$queryRaw<Array<{
+      provider_event_id: string;
+      created_at: Date;
+      amount: number | null;
+      fee: number | null;
+      status: string;
+    }>>`
+      SELECT provider_event_id, created_at, amount::float8 AS amount,
+             fee::float8 AS fee, status
+      FROM gnucash_web_payment_events
+      WHERE book_guid = ${bookGuid} AND invoice_guid = ${invoiceGuid}
+        AND status IN ('cleared', 'failed', 'payment_posted', 'refunded')
+      ORDER BY created_at DESC
+      LIMIT 50
+    `,
+  ]);
 
   return {
     type: 'invoice',
@@ -429,6 +459,14 @@ async function buildPublicInvoiceView(
     total: view.totals.total,
     amountPaid,
     amountDue: view.amountDue,
+    paymentEnabled: Boolean(paymentConnection[0]?.enabled) && view.posted && view.amountDue > 0,
+    payments: paymentRows.map(row => ({
+      id: row.provider_event_id,
+      date: row.created_at.toISOString(),
+      amount: Number(row.amount ?? 0),
+      fee: Number(row.fee ?? 0),
+      status: row.status,
+    })),
   };
 }
 
@@ -485,6 +523,22 @@ async function buildPublicEstimateView(
     billTo: customerBillTo(customer),
     lines,
     total,
+    canRespond: estimate.status === 'sent' || estimate.status === 'draft',
+  };
+}
+
+export async function resolveActiveShareTarget(token: string): Promise<{
+  bookGuid: string;
+  invoiceRef: string;
+  estimateId: number | null;
+} | null> {
+  if (typeof token !== 'string' || !SHARE_TOKEN_RE.test(token)) return null;
+  const row = await prisma.gnucash_web_invoice_shares.findUnique({ where: { token } });
+  if (!row || !isShareActive(row)) return null;
+  return {
+    bookGuid: row.book_guid,
+    invoiceRef: row.invoice_guid,
+    estimateId: parseEstimateShareRef(row.invoice_guid),
   };
 }
 

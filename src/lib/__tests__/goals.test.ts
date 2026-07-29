@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+    completedEmergencyExpenseHistoryMonths,
+    computeEmergencyExpenseRunRate,
     computeGoalProgress,
+    emergencyExpenseHistoryWindow,
+    isEmergencyFundExpensePath,
     resolveTargetAmount,
     type Goal,
     type GoalContext,
@@ -47,6 +51,71 @@ describe('goals engine', () => {
         it('falls back to target_amount when the expense run-rate is unavailable', () => {
             const g = goal({ goalType: 'emergency_fund', targetMonths: 3, targetAmount: 5000 });
             expect(resolveTargetAmount(g, {})).toBe(5000);
+            expect(resolveTargetAmount(g, { monthlyExpense: 0 })).toBe(5000);
+        });
+
+        it('excludes taxes, payroll deductions, savings, and investments', () => {
+            const expenseByAccount = new Map([
+                ['rent', 18_000],
+                ['federal', 24_000],
+                ['fica', 8_000],
+                ['investing', 12_000],
+                ['refund', -500],
+            ]);
+            const paths = new Map([
+                ['rent', 'Expenses:Housing:Rent'],
+                ['federal', 'Expenses:Taxes:Federal Income Tax'],
+                ['fica', 'Expenses:Taxes:FICA:Social Security'],
+                ['investing', 'Expenses:Savings:Brokerage Investment'],
+                ['refund', 'Expenses:Medical:Reimbursements'],
+            ]);
+
+            const runRate = computeEmergencyExpenseRunRate(expenseByAccount, paths, 12);
+            expect(runRate).toEqual({
+                monthlyExpense: 1500,
+                includedTotal: 18_000,
+                excludedTotal: 44_000,
+                historyMonths: 12,
+            });
+            expect(resolveTargetAmount(
+                goal({ goalType: 'emergency_fund', targetMonths: 2 }),
+                { monthlyExpense: runRate.monthlyExpense }
+            )).toBe(3000);
+        });
+
+        it('includes unknown expense categories rather than silently underfunding', () => {
+            expect(isEmergencyFundExpensePath('Expenses:Unusual Household Cost')).toBe(true);
+            expect(isEmergencyFundExpensePath('Expenses:Insurance:Medicare Premiums')).toBe(true);
+            expect(isEmergencyFundExpensePath('')).toBe(true);
+        });
+
+        it('uses completed calendar months and caps long histories at twelve months', () => {
+            const asOf = new Date(2026, 6, 28);
+            const window = emergencyExpenseHistoryWindow(asOf, 12);
+
+            expect(window.start).toEqual(new Date(2025, 6, 1));
+            expect(window.endExclusive).toEqual(new Date(2026, 6, 1));
+            expect(window.end).toEqual(new Date(2026, 5, 30, 23, 59, 59, 999));
+            expect(completedEmergencyExpenseHistoryMonths(
+                new Date(2024, 0, 10),
+                window.endExclusive,
+                12
+            )).toBe(12);
+            expect(completedEmergencyExpenseHistoryMonths(
+                new Date(2026, 3, 12),
+                window.endExclusive,
+                12
+            )).toBe(3);
+        });
+
+        it('returns no run rate when there are no completed months', () => {
+            const result = computeEmergencyExpenseRunRate(
+                new Map([['rent', 2000]]),
+                new Map([['rent', 'Expenses:Rent']]),
+                0
+            );
+            expect(result.monthlyExpense).toBe(0);
+            expect(completedEmergencyExpenseHistoryMonths(null, new Date(2026, 6, 1))).toBe(0);
         });
     });
 

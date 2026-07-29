@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
 import { createScheduledTransaction, CreateScheduledTxInput } from '@/lib/services/scheduled-tx-create';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 
 
 /**
@@ -26,7 +27,11 @@ export async function GET(request: NextRequest) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const enabledOnly = request.nextUrl.searchParams.get('enabled') === 'true';
-    const scheduledTransactions = await fetchScheduledTransactions(enabledOnly);
+    const scopedAccounts = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
+    const scheduledTransactions = (await fetchScheduledTransactions(enabledOnly))
+      .filter(transaction =>
+        transaction.splits.length > 0 &&
+        transaction.splits.every(split => scopedAccounts.has(split.accountGuid)));
 
     return NextResponse.json(scheduledTransactions);
   } catch (error) {
@@ -44,7 +49,7 @@ export async function POST(request: NextRequest) {
     if (roleResult instanceof NextResponse) return roleResult;
 
     const body: CreateScheduledTxInput = await request.json();
-    const result = await createScheduledTransaction(body);
+    const result = await createScheduledTransaction(body, { bookGuid: roleResult.bookGuid });
 
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 400 });

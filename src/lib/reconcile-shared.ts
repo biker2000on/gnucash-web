@@ -10,6 +10,8 @@
 
 export interface ReconcileCandidate {
     guid: string;
+    /** Owning transaction GUID, used for transaction-level actions. */
+    transactionGuid: string;
     /** Transaction post date (ISO string). */
     date: string;
     /** Transaction num field (check number etc.). */
@@ -42,6 +44,43 @@ export interface FinalizeReconcileResult {
     reconciledSplits: number;
     statementDate: string;
     endingBalance: number;
+}
+
+/**
+ * Apply a candidate click to the current selection.
+ *
+ * A normal click toggles one candidate. Shift-click always selects the
+ * inclusive range from the previous anchor to the clicked row, matching the
+ * ledger's existing bulk-selection behavior.
+ */
+export function toggleCandidateSelection(
+    candidates: ReconcileCandidate[],
+    selected: Set<string>,
+    index: number,
+    anchorIndex: number | null,
+    shiftKey: boolean,
+): Set<string> {
+    const candidate = candidates[index];
+    if (!candidate) return new Set(selected);
+
+    const next = new Set(selected);
+    if (
+        shiftKey &&
+        anchorIndex !== null &&
+        anchorIndex >= 0 &&
+        anchorIndex < candidates.length
+    ) {
+        const start = Math.min(anchorIndex, index);
+        const end = Math.max(anchorIndex, index);
+        for (let candidateIndex = start; candidateIndex <= end; candidateIndex += 1) {
+            next.add(candidates[candidateIndex].guid);
+        }
+        return next;
+    }
+
+    if (next.has(candidate.guid)) next.delete(candidate.guid);
+    else next.add(candidate.guid);
+    return next;
 }
 
 /* ─────────────────────────── pure helpers ─────────────────────────── */

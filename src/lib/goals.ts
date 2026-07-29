@@ -97,6 +97,17 @@ export interface GoalProgress {
     alreadyMet: boolean;
 }
 
+export interface EmergencyExpenseRunRate {
+    /** Average eligible spending per completed month. */
+    monthlyExpense: number;
+    /** Eligible spending across the history window. */
+    includedTotal: number;
+    /** Tax/payroll/savings spending intentionally excluded from the reserve. */
+    excludedTotal: number;
+    /** Completed calendar months used as the denominator. */
+    historyMonths: number;
+}
+
 /* ------------------------------------------------------------------ */
 /* Date + math helpers                                                 */
 /* ------------------------------------------------------------------ */
@@ -104,6 +115,104 @@ export interface GoalProgress {
 function round2(value: number): number {
     const r = Math.round(value * 100) / 100;
     return r === 0 ? 0 : r;
+}
+
+const TAX_OR_PAYROLL_EXPENSE_PATTERN =
+    /(?:^|:|\b)(?:tax(?:es)?|withhold(?:ing)?|fica|oasdi)(?:\b|:|$)|(?:payroll|deduction).*(?:social security|medicare)|(?:social security|medicare).*(?:tax|withhold|payroll|deduction)/i;
+const SAVINGS_OR_INVESTMENT_EXPENSE_PATTERN =
+    /(?:^|:|\b)(?:sav(?:e|ing|ings)|invest(?:ment|ing)?|retire(?:ment)?|401\s*\(?k\)?|403\s*\(?b\)?|457\s*\(?b\)?|ira|roth|brokerage|pension|hsa contribution)(?:\b|:|$)/i;
+
+/**
+ * Whether an expense account represents spending an emergency reserve should
+ * cover. Unknown categories stay included so an unusual chart of accounts
+ * cannot silently underfund the target.
+ */
+export function isEmergencyFundExpensePath(accountPath: string): boolean {
+    const normalized = accountPath.trim();
+    if (!normalized) return true;
+    return !TAX_OR_PAYROLL_EXPENSE_PATTERN.test(normalized)
+        && !SAVINGS_OR_INVESTMENT_EXPENSE_PATTERN.test(normalized);
+}
+
+/**
+ * Convert account-level expense totals into a monthly emergency-fund run rate.
+ * Negative account totals (refunds/reimbursements greater than spending) do
+ * not offset unrelated living costs.
+ */
+export function computeEmergencyExpenseRunRate(
+    expenseByAccount: ReadonlyMap<string, number>,
+    accountPaths: ReadonlyMap<string, string>,
+    historyMonths: number
+): EmergencyExpenseRunRate {
+    const months = Number.isFinite(historyMonths)
+        ? Math.max(0, Math.floor(historyMonths))
+        : 0;
+    let includedTotal = 0;
+    let excludedTotal = 0;
+
+    for (const [accountGuid, rawAmount] of expenseByAccount) {
+        if (!Number.isFinite(rawAmount)) continue;
+        const amount = Math.max(0, rawAmount);
+        if (amount === 0) continue;
+
+        const path = accountPaths.get(accountGuid) ?? '';
+        if (isEmergencyFundExpensePath(path)) {
+            includedTotal += amount;
+        } else {
+            excludedTotal += amount;
+        }
+    }
+
+    includedTotal = round2(includedTotal);
+    excludedTotal = round2(excludedTotal);
+    return {
+        monthlyExpense: months > 0 ? round2(includedTotal / months) : 0,
+        includedTotal,
+        excludedTotal,
+        historyMonths: months,
+    };
+}
+
+/** Number of completed calendar months available, capped at `maximumMonths`. */
+export function completedEmergencyExpenseHistoryMonths(
+    firstExpenseDate: Date | null,
+    endExclusive: Date,
+    maximumMonths = 12
+): number {
+    if (!firstExpenseDate || !Number.isFinite(firstExpenseDate.getTime())) return 0;
+    if (!Number.isFinite(endExclusive.getTime()) || maximumMonths <= 0) return 0;
+
+    const firstMonth = new Date(
+        firstExpenseDate.getFullYear(),
+        firstExpenseDate.getMonth(),
+        1
+    );
+    const endMonth = new Date(
+        endExclusive.getFullYear(),
+        endExclusive.getMonth(),
+        1
+    );
+    const available = (endMonth.getFullYear() - firstMonth.getFullYear()) * 12
+        + endMonth.getMonth() - firstMonth.getMonth();
+    return Math.max(0, Math.min(Math.floor(maximumMonths), available));
+}
+
+/** Completed-month window ending immediately before the current month. */
+export function emergencyExpenseHistoryWindow(
+    asOf: Date,
+    historyMonths: number
+): { start: Date; end: Date; endExclusive: Date } {
+    const endExclusive = new Date(asOf.getFullYear(), asOf.getMonth(), 1);
+    const months = Number.isFinite(historyMonths)
+        ? Math.max(0, Math.floor(historyMonths))
+        : 0;
+    const start = new Date(
+        endExclusive.getFullYear(),
+        endExclusive.getMonth() - months,
+        1
+    );
+    const end = new Date(endExclusive.getTime() - 1);
+    return { start, end, endExclusive };
 }
 
 function daysInMonth(year: number, monthIndex: number): number {
@@ -144,8 +253,12 @@ function amortizedPayment(principal: number, annualRatePct: number, months: numb
 /** Resolve a goal's dollar target given the run-rate context. */
 export function resolveTargetAmount(goal: Goal, context: Pick<GoalContext, 'monthlyExpense'>): number {
     if (goal.goalType === 'emergency_fund') {
-        if (goal.targetMonths != null && context.monthlyExpense != null) {
-            return round2(context.monthlyExpense * goal.targetMonths);
+        if (
+            goal.targetMonths != null
+            && context.monthlyExpense != null
+            && context.monthlyExpense > 0
+        ) {
+            return round2(Math.max(0, context.monthlyExpense) * Math.max(0, goal.targetMonths));
         }
         return round2(goal.targetAmount ?? 0);
     }

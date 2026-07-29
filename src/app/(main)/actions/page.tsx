@@ -1,0 +1,764 @@
+'use client';
+
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useToast } from '@/contexts/ToastContext';
+import { useBooks } from '@/contexts/BookContext';
+import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
+import type {
+  CalculationTrace,
+  FinancialAction,
+  FinancialActionLane,
+  FinancialActionList,
+  FinancialActionState,
+} from '@/lib/financial-actions/types';
+import { subscribeToActionCenterUpdates } from '@/lib/financial-actions/client-events';
+
+const LANES: Array<{
+  id: FinancialActionLane;
+  label: string;
+  description: string;
+  accent: string;
+}> = [
+  { id: 'fix', label: 'Fix', description: 'Make the books trustworthy', accent: 'border-negative/50' },
+  { id: 'decide', label: 'Decide', description: 'Choose the highest-value next move', accent: 'border-warning/50' },
+  { id: 'do', label: 'Do', description: 'Finish approved operations', accent: 'border-primary/50' },
+];
+
+type ActionView = 'pending' | 'all' | 'completed';
+
+const COMPLETED_STATES = new Set<FinancialActionState>(['resolved', 'dismissed', 'expired']);
+
+const ORIGIN_LABELS: Record<FinancialAction['origin'], string> = {
+  transaction_review: 'Transaction review',
+  receipt_inbox: 'Receipt',
+  statement_reconciliation: 'Statement',
+  data_health: 'Data Health',
+  insight: 'Insight',
+  compliance: 'Compliance',
+  business_close: 'Close',
+  failed_job: 'Failed job',
+  notification: 'Notification',
+  payment: 'Payment',
+  opportunity: 'Opportunity',
+  reimbursement: 'Reimbursement',
+  job_profitability: 'Job profitability',
+  rental: 'Rental',
+  resilience: 'Household resilience',
+  education: 'Education',
+  utility: 'Utilities',
+  family: 'Family banking',
+  trip: 'Trip',
+  vehicle: 'Vehicle',
+};
+
+function formatCurrency(value: number): string {
+  return value.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  });
+}
+
+function impactLabel(action: FinancialAction): string | null {
+  if (!action.impact) return null;
+  if (action.impact.low === action.impact.high) return formatCurrency(action.impact.high);
+  return `${formatCurrency(action.impact.low)}–${formatCurrency(action.impact.high)}`;
+}
+
+function snoozeDate(days: number): string {
+  return new Date(Date.now() + days * 86_400_000).toISOString();
+}
+
+function firstVisualActionIndex(actions: FinancialAction[]): number {
+  for (const lane of LANES) {
+    const index = actions.findIndex(action => action.lane === lane.id);
+    if (index >= 0) return index;
+  }
+  return 0;
+}
+
+function focusIndexAfterActionChange(
+  previousActions: FinancialAction[],
+  nextActions: FinancialAction[],
+  currentIndex: number,
+  departingIds: ReadonlySet<string> = new Set(),
+): number {
+  if (nextActions.length === 0) return 0;
+
+  const currentAction = previousActions[Math.min(currentIndex, previousActions.length - 1)];
+  if (!currentAction) return firstVisualActionIndex(nextActions);
+
+  if (!departingIds.has(currentAction.id)) {
+    const retainedIndex = nextActions.findIndex(action => action.id === currentAction.id);
+    if (retainedIndex >= 0) return retainedIndex;
+  }
+
+  const currentLaneActions = previousActions.filter(action => action.lane === currentAction.lane);
+  const currentRow = Math.max(
+    0,
+    currentLaneActions.findIndex(action => action.id === currentAction.id),
+  );
+  const nextLaneActions = nextActions.filter(action => action.lane === currentAction.lane);
+  const nextAction = nextLaneActions[Math.min(currentRow, nextLaneActions.length - 1)];
+  if (nextAction) {
+    return nextActions.findIndex(action => action.id === nextAction.id);
+  }
+
+  return firstVisualActionIndex(nextActions);
+}
+
+function actionsAfterStateUpdate(
+  actions: FinancialAction[],
+  ids: ReadonlySet<string>,
+  state: FinancialActionState,
+  actionView: ActionView,
+): FinancialAction[] {
+  const stateIsCompleted = COMPLETED_STATES.has(state);
+
+  return actions.flatMap(action => {
+    if (!ids.has(action.id)) return [action];
+    if (
+      (actionView === 'pending' && stateIsCompleted)
+      || (actionView === 'completed' && !stateIsCompleted)
+    ) {
+      return [];
+    }
+    return [{
+      ...action,
+      state,
+      lane: state === 'accepted' ? 'do' : action.lane,
+    }];
+  });
+}
+
+function ActionCard({
+  action,
+  selected,
+  focused,
+  onSelect,
+  onState,
+  onExplain,
+  onOpenOperation,
+  bookName,
+}: {
+  action: FinancialAction;
+  selected: boolean;
+  focused: boolean;
+  onSelect: () => void;
+  onState: (state: FinancialActionState, snoozedUntil?: string) => void;
+  onExplain: () => void;
+  onOpenOperation: (href: string) => void;
+  bookName?: string;
+}) {
+  const touchStart = useRef<number | null>(null);
+  const primary = action.operations.find(operation => operation.primary && operation.href)
+    ?? action.operations.find(operation => operation.href);
+  const amount = impactLabel(action);
+  const cashRequired = typeof action.metadata?.cashRequired === 'number'
+    ? action.metadata.cashRequired
+    : null;
+  const accountPath = typeof action.metadata?.accountPath === 'string'
+    ? action.metadata.accountPath
+    : null;
+  const overdue = action.dueDate && action.dueDate < new Date().toISOString().slice(0, 10);
+
+  return (
+    <article
+      data-action-id={action.id}
+      tabIndex={focused ? 0 : -1}
+      className={`rounded-xl border bg-surface p-4 transition-colors ${
+        selected || focused ? 'border-primary ring-1 ring-primary/30' : 'border-border hover:border-primary/40'
+      }`}
+      onTouchStart={event => {
+        touchStart.current = event.changedTouches[0]?.clientX ?? null;
+      }}
+      onTouchEnd={event => {
+        if (touchStart.current === null) return;
+        const distance = (event.changedTouches[0]?.clientX ?? touchStart.current) - touchStart.current;
+        touchStart.current = null;
+        if (distance >= 90) onState('accepted');
+        if (distance <= -90) onState('dismissed');
+      }}
+    >
+      <div className="flex items-start gap-3">
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-label={selected ? `Deselect ${action.title}` : `Select ${action.title}`}
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+            selected ? 'border-primary bg-primary text-background' : 'border-border text-transparent hover:border-primary'
+          }`}
+        >
+          ✓
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+              action.severity === 'critical'
+                ? 'bg-negative/15 text-negative'
+                : action.severity === 'warning'
+                  ? 'bg-warning/15 text-warning'
+                  : 'bg-primary/10 text-primary'
+            }`}>
+              {action.severity}
+            </span>
+            <span className="text-[11px] text-foreground-muted">{ORIGIN_LABELS[action.origin]}</span>
+            {action.state !== 'open' && (
+              <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-foreground-secondary">
+                {action.state}
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 text-sm font-semibold leading-5 text-foreground">{action.title}</h3>
+          {bookName && (
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-primary">
+              {bookName}
+            </p>
+          )}
+          {accountPath && (
+            <p className="mt-1 break-words text-[11px] leading-4 text-foreground-muted">
+              {accountPath}
+            </p>
+          )}
+          <p className={accountPath
+            ? 'mt-2 text-xs leading-5 text-foreground-secondary'
+            : 'mt-1 text-xs leading-5 text-foreground-secondary'}
+          >
+            {action.summary}
+          </p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            {amount && (
+              <span className="font-mono font-semibold text-positive">
+                {amount} {action.impact?.period === 'annual' ? '/ yr' : ''}
+              </span>
+            )}
+            {cashRequired !== null && cashRequired > 0 && (
+              <span className="font-mono text-foreground-secondary">
+                Cash required {formatCurrency(cashRequired)}
+              </span>
+            )}
+            {action.score && (
+              <span className="font-mono text-foreground-secondary">Score {Math.round(action.score.total)}</span>
+            )}
+            {action.dueDate && (
+              <span className={overdue ? 'font-medium text-negative' : 'text-foreground-muted'}>
+                {overdue ? 'Overdue ' : 'Due '}{action.dueDate}
+              </span>
+            )}
+            <span className="text-foreground-muted">{Math.round(action.confidence * 100)}% confidence</span>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {primary?.href && (
+              <button
+                type="button"
+                onClick={() => onOpenOperation(primary.href!)}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-background hover:bg-primary-hover"
+              >
+                {primary.label}
+              </button>
+            )}
+            {action.lane === 'decide' && action.state !== 'accepted' && (
+              <button
+                type="button"
+                onClick={() => onState('accepted')}
+                className="rounded-lg border border-positive/40 px-3 py-2 text-xs font-medium text-positive hover:bg-positive/10"
+              >
+                Accept
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onExplain}
+              className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground-secondary hover:border-primary/50 hover:text-primary"
+            >
+              Show the math
+            </button>
+            <button
+              type="button"
+              onClick={() => onState('snoozed', snoozeDate(7))}
+              className="rounded-lg px-2 py-2 text-xs text-foreground-muted hover:bg-surface-hover hover:text-foreground"
+            >
+              Snooze
+            </button>
+            <button
+              type="button"
+              onClick={() => onState(action.lane === 'do' ? 'resolved' : 'dismissed')}
+              className="rounded-lg px-2 py-2 text-xs text-foreground-muted hover:bg-surface-hover hover:text-negative"
+            >
+              {action.lane === 'do' ? 'Resolve' : 'Dismiss'}
+            </button>
+          </div>
+          <p className="mt-3 text-[10px] text-foreground-muted sm:hidden">
+            Swipe right to accept · left to dismiss
+          </p>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export default function FinancialActionCenterPage() {
+  const toast = useToast();
+  const router = useRouter();
+  const { activeBookGuid, books, switchBook } = useBooks();
+  const searchParams = useSearchParams();
+  const familyScope = searchParams.get('scope') === 'family';
+  const [data, setData] = useState<FinancialActionList | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [mutating, setMutating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [actionView, setActionView] = useState<ActionView>('pending');
+  const [trace, setTrace] = useState<CalculationTrace | null>(null);
+  const hasInitializedCardFocus = useRef(false);
+  const pendingCardFocusIndex = useRef<number | null>(null);
+  const shouldRevealFocusedCard = useRef(false);
+  const displayedActions = useRef<FinancialAction[]>([]);
+  const focusedIndexRef = useRef(0);
+  const dataRef = useRef<FinancialActionList | null>(null);
+
+  const applyActionData = useCallback((
+    nextData: FinancialActionList,
+    departingIds: ReadonlySet<string> = new Set(),
+  ) => {
+    const previousActions = displayedActions.current;
+    const previousFocusedIndex = focusedIndexRef.current;
+    let nextFocusedIndex: number;
+
+    if (!hasInitializedCardFocus.current && nextData.actions.length > 0) {
+      nextFocusedIndex = firstVisualActionIndex(nextData.actions);
+      hasInitializedCardFocus.current = true;
+      pendingCardFocusIndex.current = nextFocusedIndex;
+    } else {
+      nextFocusedIndex = focusIndexAfterActionChange(
+        previousActions,
+        nextData.actions,
+        previousFocusedIndex,
+        departingIds,
+      );
+      const previouslyFocusedAction = previousActions[
+        Math.min(previousFocusedIndex, previousActions.length - 1)
+      ];
+      if (previouslyFocusedAction && departingIds.has(previouslyFocusedAction.id)) {
+        pendingCardFocusIndex.current = nextFocusedIndex;
+      }
+    }
+
+    displayedActions.current = nextData.actions;
+    focusedIndexRef.current = nextFocusedIndex;
+    dataRef.current = nextData;
+    setData(nextData);
+    setFocusedIndex(nextFocusedIndex);
+  }, []);
+
+  const load = useCallback(async (refresh = false, background = false) => {
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
+    try {
+      const includeCompleted = actionView !== 'pending';
+      const response = await fetch(
+        `/api/actions?includeCompleted=${includeCompleted}&refresh=${refresh}&scope=${familyScope ? 'family' : 'book'}`,
+        { cache: 'no-store' },
+      );
+      if (!response.ok) throw new Error('The Action Center could not be loaded.');
+      const loadedData = await response.json() as FinancialActionList;
+      const nextData = actionView === 'completed'
+        ? {
+            ...loadedData,
+            actions: loadedData.actions.filter(action => COMPLETED_STATES.has(action.state)),
+          }
+        : loadedData;
+      const visibleIds = new Set(nextData.actions.map(action => action.id));
+      applyActionData(nextData);
+      setSelected(current =>
+        new Set([...current].filter(id => visibleIds.has(id))),
+      );
+    } catch (loadError) {
+      if (!background) {
+        setError(loadError instanceof Error ? loadError.message : 'Failed to load actions.');
+      }
+    } finally {
+      if (!background) setLoading(false);
+    }
+  }, [actionView, applyActionData, familyScope]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => subscribeToActionCenterUpdates(() => {
+    void load(false, true);
+  }), [load]);
+
+  useEffect(() => {
+    const refreshOnFocus = () => void load(false, true);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load(false, true);
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [load]);
+
+  const visibleActions = useMemo(() => data?.actions ?? [], [data]);
+
+  const updateState = useCallback(async (
+    ids: string[],
+    state: FinancialActionState,
+    snoozedUntil?: string,
+  ) => {
+    if (ids.length === 0 || mutating) return;
+    setMutating(true);
+    try {
+      const response = await fetch(`/api/actions?scope=${familyScope ? 'family' : 'book'}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, state, snoozedUntil }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || 'The action update failed.');
+      const currentData = dataRef.current;
+      if (currentData) {
+        const updatedIds = new Set(ids);
+        const nextActions = actionsAfterStateUpdate(
+          currentData.actions,
+          updatedIds,
+          state,
+          actionView,
+        );
+        const nextActionsById = new Map(nextActions.map(action => [action.id, action]));
+        const departingIds = new Set(
+          currentData.actions
+            .filter(action => updatedIds.has(action.id))
+            .filter(action => {
+              const nextAction = nextActionsById.get(action.id);
+              return !nextAction || nextAction.lane !== action.lane;
+            })
+            .map(action => action.id),
+        );
+        applyActionData({ ...currentData, actions: nextActions }, departingIds);
+      }
+      setSelected(new Set());
+      toast.success(`${ids.length} action${ids.length === 1 ? '' : 's'} updated.`);
+      await load(false, true);
+    } catch (updateError) {
+      toast.error(updateError instanceof Error ? updateError.message : 'Failed to update actions.');
+    } finally {
+      setMutating(false);
+    }
+  }, [actionView, applyActionData, familyScope, load, mutating, toast]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.matches('input, textarea, select, button, a')) return;
+
+      const moveWithinLane = (direction: -1 | 1) => {
+        setFocusedIndex(index => {
+          if (visibleActions.length === 0) return 0;
+          const current = visibleActions[Math.min(index, visibleActions.length - 1)];
+          const laneActions = visibleActions.filter(action => action.lane === current.lane);
+          const row = laneActions.findIndex(action => action.id === current.id);
+          const next = laneActions[Math.max(0, Math.min(laneActions.length - 1, row + direction))];
+          const nextIndex = visibleActions.findIndex(action => action.id === next.id);
+          if (nextIndex !== index) shouldRevealFocusedCard.current = true;
+          focusedIndexRef.current = nextIndex;
+          return nextIndex;
+        });
+      };
+
+      const moveBetweenLanes = (direction: -1 | 1) => {
+        setFocusedIndex(index => {
+          if (visibleActions.length === 0) return 0;
+          const current = visibleActions[Math.min(index, visibleActions.length - 1)];
+          const currentLaneIndex = LANES.findIndex(lane => lane.id === current.lane);
+          const currentLaneActions = visibleActions.filter(action => action.lane === current.lane);
+          const row = currentLaneActions.findIndex(action => action.id === current.id);
+
+          for (
+            let laneIndex = currentLaneIndex + direction;
+            laneIndex >= 0 && laneIndex < LANES.length;
+            laneIndex += direction
+          ) {
+            const laneActions = visibleActions.filter(action => action.lane === LANES[laneIndex].id);
+            if (laneActions.length === 0) continue;
+            const next = laneActions[Math.min(row, laneActions.length - 1)];
+            const nextIndex = visibleActions.findIndex(action => action.id === next.id);
+            if (nextIndex !== index) shouldRevealFocusedCard.current = true;
+            focusedIndexRef.current = nextIndex;
+            return nextIndex;
+          }
+
+          return index;
+        });
+      };
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveWithinLane(1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveWithinLane(-1);
+      } else if (
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(min-width: 1280px)').matches
+      ) {
+        event.preventDefault();
+        moveBetweenLanes(event.key === 'ArrowLeft' ? -1 : 1);
+      } else if (event.key === 'x' && visibleActions[focusedIndex]) {
+        event.preventDefault();
+        const id = visibleActions[focusedIndex].id;
+        setSelected(current => {
+          const next = new Set(current);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          return next;
+        });
+      } else if (event.key === 'a' && visibleActions[focusedIndex]) {
+        event.preventDefault();
+        void updateState([visibleActions[focusedIndex].id], 'accepted');
+      } else if (event.key === 'd' && visibleActions[focusedIndex]) {
+        event.preventDefault();
+        void updateState([visibleActions[focusedIndex].id], 'dismissed');
+      } else if (event.key === 's' && visibleActions[focusedIndex]) {
+        event.preventDefault();
+        void updateState([visibleActions[focusedIndex].id], 'snoozed', snoozeDate(7));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [focusedIndex, updateState, visibleActions]);
+
+  useEffect(() => {
+    const shouldApplyInitialFocus = pendingCardFocusIndex.current === focusedIndex;
+    const shouldReveal = shouldRevealFocusedCard.current;
+    if (!shouldApplyInitialFocus && !shouldReveal) return;
+    if (shouldApplyInitialFocus) pendingCardFocusIndex.current = null;
+    shouldRevealFocusedCard.current = false;
+    const focusedAction = visibleActions[focusedIndex];
+    if (!focusedAction) return;
+    const card = [...document.querySelectorAll<HTMLElement>('[data-action-id]')]
+      .find(element => element.dataset.actionId === focusedAction.id);
+    if (!card) return;
+
+    card.focus({ preventScroll: true });
+    if (!shouldReveal) return;
+
+    const bounds = card.getBoundingClientRect();
+    const viewportInset = 16;
+    if (
+      typeof card.scrollIntoView === 'function'
+      && (bounds.top < viewportInset || bounds.bottom > window.innerHeight - viewportInset)
+    ) {
+      card.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    }
+  }, [focusedIndex, visibleActions]);
+
+  const toggleSelected = (id: string) => {
+    setSelected(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const openOperation = useCallback(async (action: FinancialAction, href: string) => {
+    if (familyScope && action.bookGuid !== activeBookGuid) {
+      await switchBook(action.bookGuid, href);
+      return;
+    }
+    router.push(href);
+  }, [activeBookGuid, familyScope, router, switchBook]);
+
+  const bookNameByGuid = useMemo(
+    () => new Map(books.map(book => [book.guid, book.name])),
+    [books],
+  );
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-foreground">Financial Action Center</h1>
+            {familyScope && (
+              <span className="rounded border border-primary/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                Family graph
+              </span>
+            )}
+            {data && data.summary.overdue > 0 && (
+              <span className="rounded-full bg-negative/15 px-2 py-0.5 text-xs font-semibold text-negative">
+                {data.summary.overdue} overdue
+              </span>
+            )}
+          </div>
+          <p className="mt-1 max-w-2xl text-sm text-foreground-secondary">
+            A five-minute close for the issues, decisions, and operations that matter now.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/api/provenance/manifest?download=true"
+            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground-secondary hover:border-primary/50 hover:text-primary"
+          >
+            Export evidence
+          </Link>
+          <label className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs text-foreground-secondary">
+            <span>View</span>
+            <select
+              aria-label="Action view"
+              value={actionView}
+              onChange={event => setActionView(event.target.value as ActionView)}
+              className="bg-transparent font-medium text-foreground outline-none"
+            >
+              <option value="pending">Pending</option>
+              <option value="all">All</option>
+              <option value="completed">Completed</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => void load(true, true)}
+            disabled={loading}
+            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground-secondary hover:border-primary/50 disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      {data && (
+        <section className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-4">
+          {[
+            ['New this week', data.summary.new],
+            ['Resolved', data.summary.resolved],
+            ['Automated', data.summary.automated],
+            ['Overdue', data.summary.overdue],
+          ].map(([label, value]) => (
+            <div key={label} className="bg-surface px-4 py-3">
+              <div className="text-[11px] uppercase tracking-wider text-foreground-muted">{label}</div>
+              <div className="mt-1 font-mono text-xl font-semibold text-foreground">{value}</div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {selected.size > 0 && (
+        <div className="sticky top-3 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-primary/40 bg-background-secondary p-3 shadow-xl">
+          <span className="mr-2 text-sm font-semibold text-foreground">{selected.size} selected</span>
+          <button onClick={() => void updateState([...selected], 'accepted')} disabled={mutating} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-background disabled:opacity-50">
+            Accept
+          </button>
+          <button onClick={() => void updateState([...selected], 'resolved')} disabled={mutating} className="rounded-lg border border-positive/40 px-3 py-2 text-xs font-medium text-positive disabled:opacity-50">
+            Resolve
+          </button>
+          <button onClick={() => void updateState([...selected], 'snoozed', snoozeDate(7))} disabled={mutating} className="rounded-lg border border-border px-3 py-2 text-xs text-foreground-secondary disabled:opacity-50">
+            Snooze 7 days
+          </button>
+          <button onClick={() => void updateState([...selected], 'dismissed')} disabled={mutating} className="rounded-lg px-3 py-2 text-xs text-negative disabled:opacity-50">
+            Dismiss
+          </button>
+          <Link href="/settings/rules" className="rounded-lg px-3 py-2 text-xs text-foreground-secondary hover:text-primary">
+            Create a rule
+          </Link>
+        </div>
+      )}
+
+      <div className="hidden text-right text-[11px] text-foreground-muted md:block">
+        Keyboard: <span className="font-mono">↑/↓</span> row · <span className="font-mono">←/→</span> lane (desktop) · <span className="font-mono">x</span> select · <span className="font-mono">a</span> accept · <span className="font-mono">s</span> snooze · <span className="font-mono">d</span> dismiss
+      </div>
+
+      {loading && (
+        <div className="grid gap-4 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="h-48 animate-pulse rounded-xl border border-border bg-surface" />
+          ))}
+        </div>
+      )}
+      {error && (
+        <div className="rounded-xl border border-negative/40 bg-negative/10 p-5">
+          <p className="text-sm text-negative">{error}</p>
+          <button onClick={() => void load()} className="mt-3 text-sm font-medium text-foreground underline">Try again</button>
+        </div>
+      )}
+
+      {!loading && !error && data && data.actions.length === 0 && (
+        <div className="rounded-xl border border-positive/30 bg-surface px-6 py-14 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-positive/40 text-xl text-positive">✓</div>
+          <h2 className="mt-4 text-lg font-semibold text-foreground">
+            {actionView === 'completed'
+              ? 'No completed actions'
+              : data.verifiedThrough
+                ? 'Weekly close complete'
+                : 'No actions pending'}
+          </h2>
+          <p className="mt-2 text-sm text-foreground-secondary">
+            {actionView === 'completed'
+              ? 'Resolved, dismissed, and expired actions will appear here.'
+              : data.verifiedThrough
+                ? `Books reviewed through ${new Date(`${data.verifiedThrough}T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}.`
+                : 'No complete reconciliation coverage is available yet.'}
+          </p>
+        </div>
+      )}
+
+      {!loading && !error && data && data.actions.length > 0 && (
+        <div className="grid gap-5 xl:grid-cols-3">
+          {LANES.map(lane => {
+            const actions = data.actions.filter(action => action.lane === lane.id);
+            return (
+              <section key={lane.id} className={`rounded-xl border-t-2 ${lane.accent}`}>
+                <div className="flex items-end justify-between px-1 py-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">{lane.label}</h2>
+                    <p className="text-xs text-foreground-muted">{lane.description}</p>
+                  </div>
+                  <span className="font-mono text-sm text-foreground-secondary">{actions.length}</span>
+                </div>
+                <div className="space-y-3">
+                  {actions.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center text-xs text-foreground-muted">
+                      Nothing in this lane.
+                    </div>
+                  )}
+                  {actions.map(action => {
+                    const index = visibleActions.findIndex(item => item.id === action.id);
+                    return (
+                      <ActionCard
+                        key={action.id}
+                        action={action}
+                        selected={selected.has(action.id)}
+                        focused={index === focusedIndex}
+                        onSelect={() => toggleSelected(action.id)}
+                        onState={(state, until) => void updateState([action.id], state, until)}
+                        onExplain={() => setTrace(action.trace)}
+                        onOpenOperation={href => void openOperation(action, href)}
+                        bookName={familyScope ? bookNameByGuid.get(action.bookGuid) : undefined}
+                      />
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+
+      <ProvenanceModal
+        trace={trace}
+        isOpen={trace !== null}
+        onClose={() => setTrace(null)}
+      />
+    </div>
+  );
+}

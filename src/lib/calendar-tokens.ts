@@ -91,7 +91,7 @@ export function ensureCalendarTokensTable(): Promise<void> {
                     book_guid VARCHAR(32) NOT NULL,
                     token_hash CHAR(64) NOT NULL UNIQUE,
                     prefix VARCHAR(16) NOT NULL,
-                    event_types JSONB NOT NULL DEFAULT '["scheduled","fixed_income","rmd"]'::jsonb,
+                    event_types JSONB NOT NULL DEFAULT '["scheduled","fixed_income","rmd","compliance","renewal","home","invoice","goal","equity_comp","report_schedule","plan"]'::jsonb,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     revoked_at TIMESTAMP
                   );

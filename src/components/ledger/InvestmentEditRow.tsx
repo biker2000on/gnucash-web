@@ -31,6 +31,8 @@ interface InvestmentEditRowProps {
     transaction: AccountTransaction;
     accountGuid: string;
     sharePrecision?: number;
+    /** Shares available before this row, including the original sale when editing one. */
+    availableShares?: number;
     isActive: boolean;
     showCheckbox: boolean;
     isChecked: boolean;
@@ -54,6 +56,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         transaction,
         accountGuid,
         sharePrecision: sp = 4,
+        availableShares = 0,
         isActive,
         showCheckbox,
         isChecked,
@@ -157,6 +160,10 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             const finalPrice = autoCalcField === 'price' ? parseFloat(displayPrice) : parseFloat(userPriceStr);
             if (!description.trim() || !transferAccountGuid || isNaN(shares) || shares <= 0) return false;
             if (isNaN(finalTotal) || finalTotal <= 0) return false;
+            if (!isBuy && shares > availableShares + (0.5 * Math.pow(10, -sp))) {
+                setSaveError(true);
+                return false;
+            }
             try {
                 setSaveError(false);
                 await onSave(transaction.guid, {
@@ -177,7 +184,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
             }
         }, [isDirty, description, transferAccountGuid, transferAccountName, userSharesStr,
             userPriceStr, userTotalStr, displayPrice, displayTotal, autoCalcField,
-            postDate, transaction.guid, originalEnterDate, onSave, isBuy, sp]);
+            postDate, transaction.guid, originalEnterDate, onSave, isBuy, sp, availableShares]);
 
         useImperativeHandle(ref, () => ({ save, isDirty }), [save, isDirty]);
 
@@ -442,15 +449,32 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                     ),
                     shares: (
                         <td className="px-2 py-1 align-middle">
-                            <AmountCell
-                                value={userSharesStr}
-                                onChange={handleSharesChange}
-                                autoFocus={focusedColumn === 3}
-                                onEnter={onEnter}
-                                onArrowUp={onArrowUp}
-                                onArrowDown={onArrowDown}
-                                onFocus={() => onColumnFocus?.(3)}
-                            />
+                            <div className="flex items-center gap-1">
+                                <div className="min-w-0 flex-1">
+                                    <AmountCell
+                                        value={userSharesStr}
+                                        onChange={handleSharesChange}
+                                        autoFocus={focusedColumn === 3}
+                                        onEnter={onEnter}
+                                        onArrowUp={onArrowUp}
+                                        onArrowDown={onArrowDown}
+                                        onFocus={() => onColumnFocus?.(3)}
+                                    />
+                                </div>
+                                {!isBuy && availableShares > (0.5 * Math.pow(10, -sp)) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setUserSharesStr(availableShares.toFixed(sp));
+                                            setAutoCalcField('total');
+                                        }}
+                                        className="shrink-0 rounded border border-border px-1.5 py-1 text-[10px] text-foreground-muted hover:border-border-hover hover:text-foreground transition-colors"
+                                        title={`Sell all ${availableShares.toFixed(sp)} shares`}
+                                    >
+                                        All
+                                    </button>
+                                )}
+                            </div>
                         </td>
                     ),
                     price: (

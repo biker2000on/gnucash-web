@@ -12,9 +12,39 @@ interface SplitInput {
   amount: string;
 }
 
+export interface ScheduledPanelValue {
+  guid?: string;
+  name: string;
+  startDate: string | null;
+  endDate: string | null;
+  autoCreate: boolean;
+  autoNotify: boolean;
+  recurrence: {
+    periodType: string;
+    mult: number;
+    periodStart: string;
+    weekendAdjust: string;
+  } | null;
+  splits: Array<{ accountGuid: string; amount: number }>;
+}
+
 interface CreateScheduledPanelProps {
   onClose: () => void;
   onCreated: () => void;
+  initialValue?: ScheduledPanelValue | null;
+  sourceTransactionGuid?: string | null;
+}
+
+interface CommandPreview {
+  id: string;
+  preview: {
+    title: string;
+    summary: string;
+    balanced: boolean;
+    balanceDelta: number;
+    diff: Array<{ field: string; before: string | number | boolean | null; after: string | number | boolean | null }>;
+    warnings: string[];
+  };
 }
 
 const PERIOD_OPTIONS = [
@@ -37,7 +67,12 @@ const WEEKEND_ADJUST_OPTIONS = [
 // Component
 // ---------------------------------------------------------------------------
 
-export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPanelProps) {
+export function CreateScheduledPanel({
+  onClose,
+  onCreated,
+  initialValue = null,
+  sourceTransactionGuid = null,
+}: CreateScheduledPanelProps) {
   // Form state
   const [name, setName] = useState('');
   const [periodType, setPeriodType] = useState('month');
@@ -55,6 +90,50 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
   // UI state
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [command, setCommand] = useState<CommandPreview | null>(null);
+
+  const isEditing = Boolean(initialValue?.guid);
+
+  useEffect(() => {
+    if (!initialValue?.recurrence) return;
+    setName(initialValue.name);
+    setPeriodType(initialValue.recurrence.periodType);
+    setMultiplier(initialValue.recurrence.mult);
+    setStartDate(initialValue.startDate ?? initialValue.recurrence.periodStart);
+    setEndDate(initialValue.endDate ?? '');
+    setWeekendAdjust(initialValue.recurrence.weekendAdjust);
+    setSplits(initialValue.splits.map(split => ({
+      accountGuid: split.accountGuid,
+      amount: String(split.amount),
+    })));
+    setAutoCreate(initialValue.autoCreate);
+    setAutoNotify(initialValue.autoNotify);
+  }, [initialValue]);
+
+  useEffect(() => {
+    if (!sourceTransactionGuid || initialValue) return;
+    let cancelled = false;
+    fetch(`/api/transactions/${sourceTransactionGuid}`)
+      .then(async res => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Failed to load transaction');
+        return data as {
+          description?: string;
+          splits?: Array<{ account_guid: string; value_decimal: string }>;
+        };
+      })
+      .then(data => {
+        if (cancelled) return;
+        setName(data.description ? `${data.description} schedule` : 'Scheduled transaction');
+        setStartDate(new Date().toISOString().slice(0, 10));
+        const nextSplits = (data.splits ?? [])
+          .map(split => ({ accountGuid: split.account_guid, amount: String(Number(split.value_decimal)) }))
+          .filter(split => split.accountGuid && Number.isFinite(Number(split.amount)));
+        if (nextSplits.length >= 2) setSplits(nextSplits);
+      })
+      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load transaction'); });
+    return () => { cancelled = true; };
+  }, [initialValue, sourceTransactionGuid]);
 
   // Close on Escape
   useEffect(() => {
@@ -106,7 +185,25 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
     splits.length >= 2 &&
     splits.every(s => s.accountGuid.trim() !== '' && s.amount !== '' && !isNaN(parseFloat(s.amount)));
 
-  // Submit
+  const scheduleBody = () => ({
+    name: name.trim(),
+    recurrence: {
+      periodType,
+      mult: showMultiplier ? multiplier : 1,
+      periodStart: startDate,
+      weekendAdjust: showWeekendAdjust ? weekendAdjust : 'none',
+    },
+    startDate,
+    endDate: endDate || null,
+    autoCreate,
+    autoNotify,
+    splits: splits.map(s => ({
+      accountGuid: s.accountGuid.trim(),
+      amount: parseFloat(s.amount),
+    })),
+  });
+
+  // Preview first. Execution is a separate, explicitly approved request.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValid || submitting) return;
@@ -115,38 +212,39 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
     setError(null);
 
     try {
-      const body = {
-        name: name.trim(),
-        recurrence: {
-          periodType,
-          mult: showMultiplier ? multiplier : 1,
-          periodStart: startDate,
-          weekendAdjust: showWeekendAdjust ? weekendAdjust : 'none',
-        },
-        startDate,
-        endDate: endDate || null,
-        autoCreate,
-        autoNotify,
-        splits: splits.map(s => ({
-          accountGuid: s.accountGuid.trim(),
-          amount: parseFloat(s.amount),
-        })),
-      };
-
-      const res = await fetch('/api/scheduled-transactions', {
+      const res = await fetch('/api/domain-commands', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          commandType: isEditing ? 'scheduled.update' : 'scheduled.create',
+          input: isEditing
+            ? { guid: initialValue!.guid, schedule: scheduleBody() }
+            : { schedule: scheduleBody() },
+        }),
       });
-
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        throw new Error(data?.error || `Failed to create (${res.status})`);
+        throw new Error(data?.error || `Failed to preview (${res.status})`);
       }
-
-      onCreated();
+      setCommand(data.command);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleExecute = async () => {
+    if (!command || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/domain-commands/${command.id}/execute`, { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || `Failed to execute (${res.status})`);
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Execution failed.');
     } finally {
       setSubmitting(false);
     }
@@ -165,11 +263,13 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
         className="fixed right-0 top-0 bottom-0 w-full sm:w-[480px] bg-surface z-50 overflow-y-auto"
         role="dialog"
         aria-modal="true"
-        aria-label="New Scheduled Transaction"
+        aria-label={isEditing ? 'Edit Scheduled Transaction' : 'New Scheduled Transaction'}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-lg font-semibold text-foreground">New Scheduled Transaction</h2>
+          <h2 className="text-lg font-semibold text-foreground">
+            {isEditing ? 'Edit Scheduled Transaction' : sourceTransactionGuid ? 'Schedule from Transaction' : 'New Scheduled Transaction'}
+          </h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-foreground-muted hover:text-foreground hover:bg-surface-hover transition-colors"
@@ -183,6 +283,7 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          <fieldset disabled={Boolean(command)} className="contents">
           {/* Name */}
           <div>
             <label className="text-xs text-foreground-secondary block mb-1">Name</label>
@@ -343,10 +444,45 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
               <span className="text-sm text-foreground">Auto-notify</span>
             </label>
           </fieldset>
+          </fieldset>
 
           {/* Error message */}
           {error && (
             <p className="text-red-400 text-sm">{error}</p>
+          )}
+
+          {command && (
+            <section className="rounded-lg border border-primary/40 bg-background-secondary p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">{command.preview.title}</p>
+                  <p className="mt-1 text-xs text-foreground-secondary">{command.preview.summary}</p>
+                </div>
+                <span className={`rounded-md px-2 py-1 font-mono text-[11px] ${
+                  command.preview.balanced ? 'bg-positive/10 text-positive' : 'bg-negative/10 text-negative'
+                }`}>
+                  {command.preview.balanced ? 'BALANCED' : `DELTA ${command.preview.balanceDelta.toFixed(2)}`}
+                </span>
+              </div>
+              {command.preview.diff.length > 0 && (
+                <div className="mt-3 divide-y divide-border/60 border-y border-border/60">
+                  {command.preview.diff.map(item => (
+                    <div key={item.field} className="grid grid-cols-[6rem_1fr] gap-2 py-2 text-xs">
+                      <span className="text-foreground-muted">{item.field}</span>
+                      <span className="text-foreground-secondary">
+                        {String(item.before ?? '—')} <span className="text-primary">→</span> {String(item.after ?? '—')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {command.preview.warnings.map(warning => (
+                <p key={warning} className="mt-2 text-xs text-warning">{warning}</p>
+              ))}
+              <p className="mt-3 text-[11px] text-foreground-muted">
+                This approval applies only to command <span className="font-mono">{command.id}</span> and expires in 30 minutes.
+              </p>
+            </section>
           )}
 
           {/* Footer buttons */}
@@ -360,11 +496,31 @@ export function CreateScheduledPanel({ onClose, onCreated }: CreateScheduledPane
             </button>
             <button
               type="submit"
-              disabled={!isValid || submitting}
+              disabled={!isValid || submitting || Boolean(command)}
               className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {submitting ? 'Creating...' : 'Create'}
+              {submitting ? 'Preparing...' : command ? 'Preview ready' : 'Preview changes'}
             </button>
+            {command && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setCommand(null)}
+                  disabled={submitting}
+                  className="px-4 py-2 text-sm font-medium rounded-lg border border-border text-foreground-secondary hover:text-foreground disabled:opacity-50"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecute}
+                  disabled={submitting || !command.preview.balanced}
+                  className="px-4 py-2 text-sm font-medium rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground disabled:opacity-50"
+                >
+                  {submitting ? 'Executing...' : isEditing ? 'Approve update' : 'Approve creation'}
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>

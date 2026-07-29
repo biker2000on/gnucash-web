@@ -13,7 +13,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getAiConfig } from '@/lib/ai-config';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook, getBookAccountGuids } from '@/lib/book-scope';
+import { getAuthorizedFamilyGraph } from '@/lib/family-office/service';
 import { isAiConfigured } from '@/lib/ai-query/client';
 import { generateQuery, type ChatTurn } from '@/lib/ai-query/generate';
 import { validateGeneratedSql } from '@/lib/ai-query/guardrails';
@@ -71,7 +72,13 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: NOT_CONFIGURED_MESSAGE }, { status: 400 });
         }
 
-        const accountGuids = await getBookAccountGuids();
+        const familyScope = body?.scope === 'family';
+        const accountGuids = familyScope
+            ? (await Promise.all(
+                (await getAuthorizedFamilyGraph(user.id, roleResult.bookGuid)).entities
+                    .map(entity => getAccountGuidsForBook(entity.bookGuid)),
+            )).flat()
+            : await getBookAccountGuids();
         if (accountGuids.length === 0) {
             return NextResponse.json({ error: 'The active book has no accounts to query.' }, { status: 400 });
         }
@@ -114,7 +121,7 @@ export async function POST(request: NextRequest) {
             accountGuids,
         });
 
-        return NextResponse.json({ answer, sql, rows, links });
+        return NextResponse.json({ answer, sql, rows, links, scope: familyScope ? 'family' : 'book' });
     } catch (error) {
         console.error('AI query error:', error);
         const message = error instanceof Error && error.name === 'TimeoutError'

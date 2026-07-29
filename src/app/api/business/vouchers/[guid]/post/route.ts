@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { getActiveBookRootGuid } from '@/lib/book-scope';
 import { postVoucher, unpostVoucher } from '@/lib/business/vouchers';
 import { mapInvoiceError } from '@/lib/business/api-errors';
+import { markReimbursementVoucherPosted } from '@/lib/business/reimbursements';
 
 /**
  * POST /api/business/vouchers/[guid]/post — post the voucher to A/P
@@ -31,6 +32,7 @@ export async function POST(
       description: body.description,
       bookRootGuid,
     });
+    await markReimbursementVoucherPosted(guid, roleResult.bookGuid);
     return NextResponse.json({ result });
   } catch (error) {
     return mapInvoiceError(error);

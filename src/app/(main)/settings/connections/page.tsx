@@ -7,6 +7,7 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { PaymentConnectionCard } from '@/components/business/PaymentConnectionCard';
 
 interface SimpleFinAccount {
   id: string;
@@ -322,6 +323,8 @@ export default function ConnectionsPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-foreground">Connections</h1>
+
+      <PaymentConnectionCard />
 
       {/* Bank Connections (SimpleFin) */}
       <div className="bg-surface rounded-xl border border-border p-6">

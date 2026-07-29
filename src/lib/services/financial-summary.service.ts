@@ -15,6 +15,10 @@ import prisma from '@/lib/prisma';
 import { toDecimal } from '@/lib/gnucash';
 import { getBaseCurrency, findExchangeRate } from '@/lib/currency';
 import type { Currency } from '@/lib/currency';
+import {
+  buildAccountValuationContext,
+  type AccountValuationContext,
+} from '@/lib/account-valuation';
 
 const ASSET_TYPES = ['ASSET', 'BANK', 'CASH', 'RECEIVABLE'];
 const LIABILITY_TYPES = ['LIABILITY', 'CREDIT', 'PAYABLE'];
@@ -69,9 +73,12 @@ export class FinancialSummaryService {
   static async computeFullSummary(
     bookAccountGuids: string[],
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    baseCurrencyOverride?: Currency | null,
   ): Promise<FinancialSummary> {
-    const baseCurrency = await getBaseCurrency();
+    const baseCurrency = baseCurrencyOverride === undefined
+      ? await getBaseCurrency()
+      : baseCurrencyOverride;
 
     const netWorthSummary = await this.computeNetWorthSummary(
       bookAccountGuids,
@@ -119,7 +126,9 @@ export class FinancialSummaryService {
     endDate: Date,
     baseCurrency: Currency | null
   ): Promise<NetWorthSummary> {
-    // Fetch all non-hidden accounts of relevant types in active book
+    // Use the same report-currency valuation engine as the balance sheet and
+    // account reports. This keeps FX, inverse-rate, triangulation, and
+    // security-price behavior consistent across every net-worth surface.
     const accounts = await prisma.accounts.findMany({
       where: {
         guid: { in: bookAccountGuids },
@@ -140,190 +149,63 @@ export class FinancialSummaryService {
       },
     });
 
-    const assetAccountGuids = accounts
-      .filter(a => ASSET_TYPES.includes(a.account_type))
-      .map(a => a.guid);
-
-    const liabilityAccountGuids = accounts
-      .filter(a => LIABILITY_TYPES.includes(a.account_type))
-      .map(a => a.guid);
-
-    const investmentAccounts = accounts.filter(
-      a => INVESTMENT_TYPES.includes(a.account_type) && a.commodity?.namespace !== 'CURRENCY'
-    );
-    const investmentAccountGuids = investmentAccounts.map(a => a.guid);
-
-    // Fetch splits for asset + liability accounts (up to endDate for net worth)
-    const cashSplits = await prisma.splits.findMany({
-      where: {
-        account_guid: {
-          in: [...assetAccountGuids, ...liabilityAccountGuids],
+    const accountByGuid = new Map(accounts.map(account => [account.guid, account]));
+    const valuationInputs = accounts.map(account => ({
+      accountType: account.account_type,
+      commodityGuid: account.commodity_guid,
+      commodityNamespace: account.commodity?.namespace,
+    }));
+    const [splits, startValuation, endValuation] = await Promise.all([
+      prisma.splits.findMany({
+        where: {
+          account_guid: { in: accounts.map(account => account.guid) },
+          transaction: { post_date: { lte: endDate } },
         },
-        transaction: {
-          post_date: { lte: endDate },
+        select: {
+          account_guid: true,
+          quantity_num: true,
+          quantity_denom: true,
+          transaction: { select: { post_date: true } },
         },
-      },
-      select: {
-        account_guid: true,
-        quantity_num: true,
-        quantity_denom: true,
-        transaction: {
-          select: {
-            post_date: true,
-          },
-        },
-      },
-    });
-
-    // Fetch investment splits (up to endDate for net worth)
-    const investmentSplits = await prisma.splits.findMany({
-      where: {
-        account_guid: {
-          in: investmentAccountGuids,
-        },
-        transaction: {
-          post_date: { lte: endDate },
-        },
-      },
-      select: {
-        account_guid: true,
-        quantity_num: true,
-        quantity_denom: true,
-        transaction: {
-          select: {
-            post_date: true,
-          },
-        },
-      },
-    });
-
-    // Fetch all prices for investment commodities
-    const investmentCommodityGuids = [
-      ...new Set(
-        investmentAccounts
-          .map(a => a.commodity_guid)
-          .filter((g): g is string => g !== null)
-      ),
-    ];
-
-    const allPrices = await prisma.prices.findMany({
-      where: {
-        commodity_guid: {
-          in: investmentCommodityGuids,
-        },
-        // Skip implied $0 prices from zero-value transfer transactions
-        value_num: { gt: 0 },
-      },
-      select: {
-        commodity_guid: true,
-        date: true,
-        value_num: true,
-        value_denom: true,
-      },
-      orderBy: {
-        date: 'desc',
-      },
-    });
-
-    // Build price lookup
-    const priceMap = new Map<string, Array<{ date: Date; value: number }>>();
-    for (const p of allPrices) {
-      const arr = priceMap.get(p.commodity_guid) || [];
-      arr.push({
-        date: p.date,
-        value: parseFloat(toDecimal(p.value_num, p.value_denom)),
-      });
-      priceMap.set(p.commodity_guid, arr);
-    }
-
-    const accountCommodityMap = new Map<string, string>();
-    for (const a of investmentAccounts) {
-      if (a.commodity_guid) {
-        accountCommodityMap.set(a.guid, a.commodity_guid);
-      }
-    }
-
-    const assetSet = new Set(assetAccountGuids);
-    const liabilitySet = new Set(liabilityAccountGuids);
-
-    // Build account -> currency guid map for cash/liability accounts
-    const accountCurrencyMap = new Map<string, string>();
-    for (const a of accounts) {
-      if (a.commodity_guid && !INVESTMENT_TYPES.includes(a.account_type)) {
-        accountCurrencyMap.set(a.guid, a.commodity_guid);
-      }
-    }
-
-    // Identify non-base currency GUIDs from cash/liability accounts
-    const nonBaseCurrencyGuids = [
-      ...new Set(
-        [...assetAccountGuids, ...liabilityAccountGuids]
-          .map(guid => accountCurrencyMap.get(guid))
-          .filter((g): g is string => g !== undefined && g !== baseCurrency?.guid)
-      ),
-    ];
-
-    // Fetch exchange rates at startDate and endDate for each non-base currency
-    const startRates = new Map<string, number>();
-    const endRates = new Map<string, number>();
-
-    for (const currGuid of nonBaseCurrencyGuids) {
-      if (!baseCurrency) continue;
-      const startRate = await findExchangeRate(currGuid, baseCurrency.guid, startDate);
-      const endRate = await findExchangeRate(currGuid, baseCurrency.guid, endDate);
-      startRates.set(currGuid, startRate ? startRate.rate : 1);
-      endRates.set(currGuid, endRate ? endRate.rate : 1);
-    }
-
-    function getLatestPriceAsOf(commodityGuid: string, asOf: Date): number {
-      const prices = priceMap.get(commodityGuid);
-      if (!prices || prices.length === 0) return 0;
-      for (const p of prices) {
-        if (p.date <= asOf) return p.value;
-      }
-      return 0;
-    }
+      }),
+      buildAccountValuationContext(valuationInputs, startDate, baseCurrency),
+      buildAccountValuationContext(valuationInputs, endDate, baseCurrency),
+    ]);
 
     function computeNetWorthAtDate(
       asOf: Date,
-      ratesForDate: Map<string, number>
+      valuation: AccountValuationContext,
     ): NetWorthResult {
       let assetTotal = 0;
       let liabilityTotal = 0;
+      let investmentValue = 0;
+      const quantityByAccount = new Map<string, number>();
 
-      for (const split of cashSplits) {
+      for (const split of splits) {
         const postDate = split.transaction.post_date;
         if (!postDate || postDate > asOf) continue;
-        const rawValue = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
-        const accountCurrGuid = accountCurrencyMap.get(split.account_guid);
-        const rate = (accountCurrGuid && baseCurrency && accountCurrGuid !== baseCurrency.guid)
-          ? (ratesForDate.get(accountCurrGuid) || 1)
-          : 1;
-        const value = rawValue * rate;
-        if (assetSet.has(split.account_guid)) {
-          assetTotal += value;
-        } else if (liabilitySet.has(split.account_guid)) {
-          liabilityTotal += value;
-        }
-      }
-
-      const sharesByAccount = new Map<string, number>();
-      for (const split of investmentSplits) {
-        const postDate = split.transaction.post_date;
-        if (!postDate || postDate > asOf) continue;
-        const qty = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
-        sharesByAccount.set(
+        const quantity = parseFloat(toDecimal(split.quantity_num, split.quantity_denom));
+        quantityByAccount.set(
           split.account_guid,
-          (sharesByAccount.get(split.account_guid) || 0) + qty
+          (quantityByAccount.get(split.account_guid) ?? 0) + quantity,
         );
       }
 
-      let investmentValue = 0;
-      for (const [accountGuid, shares] of sharesByAccount) {
-        const commodityGuid = accountCommodityMap.get(accountGuid);
-        if (!commodityGuid) continue;
-        const price = getLatestPriceAsOf(commodityGuid, asOf);
-        investmentValue += shares * price;
+      for (const [accountGuid, quantity] of quantityByAccount) {
+        const account = accountByGuid.get(accountGuid);
+        if (!account) continue;
+        const value = quantity * valuation.getMultiplier({
+          accountType: account.account_type,
+          commodityGuid: account.commodity_guid,
+          commodityNamespace: account.commodity?.namespace,
+        });
+        if (ASSET_TYPES.includes(account.account_type)) {
+          assetTotal += value;
+        } else if (LIABILITY_TYPES.includes(account.account_type)) {
+          liabilityTotal += value;
+        } else if (INVESTMENT_TYPES.includes(account.account_type)) {
+          investmentValue += value;
+        }
       }
 
       return {
@@ -334,8 +216,8 @@ export class FinancialSummaryService {
       };
     }
 
-    const endNW = computeNetWorthAtDate(endDate, endRates);
-    const startNW = computeNetWorthAtDate(startDate, startRates);
+    const endNW = computeNetWorthAtDate(endDate, endValuation);
+    const startNW = computeNetWorthAtDate(startDate, startValuation);
     const change = endNW.netWorth - startNW.netWorth;
     const changePercent = startNW.netWorth !== 0
       ? (change / Math.abs(startNW.netWorth)) * 100

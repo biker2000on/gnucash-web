@@ -129,6 +129,7 @@ export function TransactionModal({
             onClose={onClose}
             title="Transaction Details"
             size="xl"
+            resetKey={transactionGuid}
         >
             {loading ? (
                 <div className="p-8 flex items-center justify-center">
@@ -140,7 +141,7 @@ export function TransactionModal({
             ) : error ? (
                 <div className="p-8 text-center text-rose-400">{error}</div>
             ) : transaction ? (
-                <div className="p-6 space-y-6">
+                <div className="space-y-5 p-4 sm:p-5">
                     {/* Transaction Header */}
                     <div className="space-y-2">
                         <div className="flex items-start justify-between gap-4">
@@ -172,15 +173,19 @@ export function TransactionModal({
                         <h4 className="text-sm font-semibold text-foreground-secondary uppercase tracking-wider mb-3">
                             Splits
                         </h4>
-                        <div className="bg-input-bg border border-border rounded-xl overflow-hidden">
-                            <table className="w-full">
+                        <div className="max-w-full overflow-x-auto rounded-lg border border-border bg-input-bg">
+                            <table className="w-full min-w-[640px] table-fixed">
                                 <thead>
                                     <tr className="text-xs text-foreground-muted uppercase tracking-wider">
-                                        <th className="px-4 py-3 text-left">Account</th>
-                                        <th className="px-4 py-3 text-left">Memo</th>
-                                        <th className="px-4 py-3 text-center">Status</th>
-                                        <th className="px-4 py-3 text-right">Debit</th>
-                                        <th className="px-4 py-3 text-right">Credit</th>
+                                        <th className="w-[40%] px-4 py-3 text-left lg:w-[32%]">Account</th>
+                                        <th className="hidden w-[18%] px-4 py-3 text-left lg:table-cell">Memo</th>
+                                        <th className="w-[10%] px-2 py-3 text-center">Status</th>
+                                        <th className="w-[25%] px-3 py-3 text-right lg:w-[20%]">
+                                            Debit ({transaction.currency_mnemonic || 'USD'})
+                                        </th>
+                                        <th className="w-[25%] px-3 py-3 text-right lg:w-[20%]">
+                                            Credit ({transaction.currency_mnemonic || 'USD'})
+                                        </th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border">
@@ -198,12 +203,12 @@ export function TransactionModal({
                                         // multi-currency transfers)
                                         const showQty = qty !== 0 && split.commodity_mnemonic !== txCurrency;
                                         const qtyLine = showQty
-                                            ? `${qty > 0 ? '+' : ''}${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic}`
+                                            ? `Native: ${qty > 0 ? '+' : ''}${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic}`
                                             : null;
                                         const reconcile = getReconcileLabel(split.reconcile_state);
                                         return (
                                             <tr key={split.guid} className="hover:bg-surface-hover/30">
-                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                <td className="break-words px-4 py-3 align-top">
                                                     <Link
                                                         href={`/accounts/${split.account_guid}`}
                                                         className="text-foreground hover:text-primary transition-colors"
@@ -215,32 +220,32 @@ export function TransactionModal({
                                                         <span className="ml-2 text-xs text-foreground-muted">({split.action})</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-foreground-muted italic max-w-[200px] truncate" title={split.memo || undefined}>
+                                                <td className="hidden truncate px-4 py-3 text-sm italic text-foreground-muted lg:table-cell" title={split.memo || undefined}>
                                                     {split.memo || '—'}
                                                 </td>
-                                                <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                <td className="px-2 py-3 text-center align-top">
                                                     <span className={`text-xs px-2 py-1 rounded-full ${reconcile.color}`}>
                                                         {split.reconcile_state.toUpperCase()}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-mono text-emerald-400 whitespace-nowrap align-top">
+                                                <td className="px-3 py-3 text-right font-mono text-positive align-top">
                                                     {value > 0 ? (
                                                         <>
-                                                            {formatCurrency(value.toString(), txCurrency)}
+                                                            <span className="whitespace-nowrap">{formatCurrency(value.toString(), txCurrency)}</span>
                                                             {qtyLine && (
-                                                                <div className="text-xs text-foreground-muted">{qtyLine}</div>
+                                                                <div className="break-words text-[11px] leading-4 text-foreground-muted">{qtyLine}</div>
                                                             )}
                                                         </>
                                                     ) : value === 0 && qty > 0 ? (
                                                         <span className="text-foreground-secondary">{qtyLine}</span>
                                                     ) : ''}
                                                 </td>
-                                                <td className="px-4 py-3 text-right font-mono text-rose-400 whitespace-nowrap align-top">
+                                                <td className="px-3 py-3 text-right font-mono text-negative align-top">
                                                     {value < 0 ? (
                                                         <>
-                                                            {formatCurrency(Math.abs(value).toString(), txCurrency)}
+                                                            <span className="whitespace-nowrap">{formatCurrency(Math.abs(value).toString(), txCurrency)}</span>
                                                             {qtyLine && (
-                                                                <div className="text-xs text-foreground-muted">{qtyLine}</div>
+                                                                <div className="break-words text-[11px] leading-4 text-foreground-muted">{qtyLine}</div>
                                                             )}
                                                         </>
                                                     ) : value === 0 && qty < 0 ? (
@@ -256,16 +261,16 @@ export function TransactionModal({
                     </div>
 
                     {/* Metadata */}
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div className="bg-input-bg border border-border rounded-xl p-4">
+                    <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                        <div className="rounded-lg border border-border bg-input-bg p-4">
                             <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Enter Date</div>
                             <div className="text-foreground-secondary font-mono">
                                 {new Date(transaction.enter_date).toLocaleString()}
                             </div>
                         </div>
-                        <div className="bg-input-bg border border-border rounded-xl p-4">
+                        <div className="min-w-0 rounded-lg border border-border bg-input-bg p-4">
                             <div className="text-foreground-muted text-xs uppercase tracking-wider mb-1">Transaction ID</div>
-                            <div className="text-foreground-secondary font-mono text-xs truncate" title={transaction.guid}>
+                            <div className="break-all font-mono text-xs text-foreground-secondary" title={transaction.guid}>
                                 {transaction.guid}
                             </div>
                         </div>

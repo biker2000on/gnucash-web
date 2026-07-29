@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { computeNextOccurrences, RecurrencePattern } from '@/lib/recurrence';
 import { fetchScheduledTransactions } from '@/lib/scheduled-transactions';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 
 interface UpcomingOccurrence {
   date: string;
@@ -42,7 +43,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all enabled scheduled transactions
-    const scheduledTransactions = await fetchScheduledTransactions(true);
+    const scopedAccounts = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
+    const scheduledTransactions = (await fetchScheduledTransactions(true))
+      .filter(transaction =>
+        transaction.splits.length > 0 &&
+        transaction.splits.every(split => scopedAccounts.has(split.accountGuid)));
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);

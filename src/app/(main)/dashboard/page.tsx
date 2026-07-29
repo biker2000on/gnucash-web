@@ -58,6 +58,10 @@ interface KPIData {
     topExpenseCategory: string;
     topExpenseAmount: number;
     investmentValue: number;
+    traces?: Partial<Record<
+        'netWorth' | 'totalIncome' | 'totalExpenses' | 'savingsRate' | 'investmentValue',
+        { traceId: string; href: string }
+    >>;
 }
 
 interface NetWorthDataPoint {

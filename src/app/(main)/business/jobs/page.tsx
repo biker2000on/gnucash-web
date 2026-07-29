@@ -11,7 +11,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { formatCurrency } from '@/lib/format';
 import type { ContactKind } from '@/lib/business-types';
-import type { JobExDTO, JobReport } from '@/lib/business/jobs.service';
+import type { JobExDTO, JobProfitabilityReport } from '@/lib/business/jobs.service';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
@@ -30,16 +30,24 @@ const EMPTY_FORM: JobForm = {
     name: '', reference: '', active: true, ownerType: 'customer', ownerGuid: '', rate: '',
 };
 
-/** Per-job drill-down: documents referencing the job with totals/paid/due. */
-function JobReportPanel({ jobGuid }: { jobGuid: string }) {
-    const [report, setReport] = useState<JobReport | null>(null);
+/** Per-job drill-down: margin, WIP, direct costs, labor, and documents. */
+function JobReportPanel({ jobGuid, isReadonly }: { jobGuid: string; isReadonly: boolean }) {
+    const [report, setReport] = useState<JobProfitabilityReport | null>(null);
     const [failed, setFailed] = useState(false);
+    const [addingCost, setAddingCost] = useState(false);
+    const [costDescription, setCostDescription] = useState('');
+    const [costAmount, setCostAmount] = useState('');
+    const [costDate, setCostDate] = useState(new Date().toISOString().slice(0, 10));
+    const [sourceType, setSourceType] = useState<'manual' | 'transaction' | 'voucher' | 'material'>('manual');
+    const [sourceId, setSourceId] = useState('');
+    const [billable, setBillable] = useState(false);
+    const [savingCost, setSavingCost] = useState(false);
 
-    useEffect(() => {
+    const load = useCallback(() => {
         let cancelled = false;
         fetch(`/api/business/jobs/${jobGuid}/report`)
             .then((res) => (res.ok ? res.json() : Promise.reject()))
-            .then((data: { report: JobReport }) => {
+            .then((data: { report: JobProfitabilityReport }) => {
                 if (!cancelled) setReport(data.report);
             })
             .catch(() => {
@@ -48,23 +56,124 @@ function JobReportPanel({ jobGuid }: { jobGuid: string }) {
         return () => { cancelled = true; };
     }, [jobGuid]);
 
+    useEffect(() => load(), [load]);
+
     if (failed) {
         return <p className="px-9 py-3 text-sm text-error">Failed to load the job report.</p>;
     }
     if (!report) {
         return <p className="px-9 py-3 text-sm text-foreground-muted">Loading job report...</p>;
     }
-    if (report.documents.length === 0) {
-        return (
-            <p className="px-9 py-3 text-sm text-foreground-muted">
-                No invoices or bills reference this job yet.
-            </p>
-        );
-    }
+
+    const saveCost = async () => {
+        setSavingCost(true);
+        try {
+            const res = await fetch(`/api/business/jobs/${jobGuid}/costs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceType,
+                    sourceId: sourceId || null,
+                    description: costDescription,
+                    costDate,
+                    amount: Number(costAmount),
+                    billable,
+                }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => null);
+                throw new Error(data?.error || 'Failed to add cost');
+            }
+            setAddingCost(false);
+            setCostDescription('');
+            setCostAmount('');
+            setSourceId('');
+            setBillable(false);
+            setReport(null);
+            load();
+        } catch {
+            setFailed(true);
+        } finally {
+            setSavingCost(false);
+        }
+    };
+
+    const removeCost = async (id: number) => {
+        const res = await fetch(`/api/business/jobs/${jobGuid}/costs?id=${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            setReport(null);
+            load();
+        }
+    };
+
+    const p = report.profitability;
 
     return (
-        <div className="px-9 py-3">
-            <table className="w-full text-[13px]">
+        <div className="space-y-4 px-9 py-4">
+            <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                {[
+                    ['Revenue', formatCurrency(p.revenue)],
+                    ['Direct costs', formatCurrency(p.directCosts)],
+                    ['Labor', formatCurrency(p.laborCost)],
+                    ['Gross profit', formatCurrency(p.grossProfit)],
+                    ['Margin', p.marginPercent == null ? '—' : `${p.marginPercent.toFixed(1)}%`],
+                    ['Unbilled WIP', formatCurrency(p.unbilledTimeValue + p.unbilledExpenseValue)],
+                ].map(([label, value]) => (
+                    <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-widest text-foreground-muted">{label}</p>
+                        <p className="mt-1 font-mono text-sm font-semibold text-foreground" style={TNUM}>{value}</p>
+                    </div>
+                ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground-secondary">
+                <span>{p.trackedHours.toFixed(2)} tracked hours</span>
+                <span>{p.unbilledHours.toFixed(2)} unbilled hours</span>
+                <span>{formatCurrency(p.accountsReceivable)} receivable</span>
+                {p.overdueCollections > 0 && <span className="text-warning">{formatCurrency(p.overdueCollections)} older than 30 days</span>}
+                {p.taggedExpenseTotal > 0 && <span>{formatCurrency(p.taggedExpenseTotal)} from job tags</span>}
+                <button type="button" onClick={() => setAddingCost(value => !value)} disabled={isReadonly} className="ml-auto text-primary disabled:opacity-50">
+                    {addingCost ? 'Cancel' : '+ Link cost'}
+                </button>
+            </div>
+
+            {addingCost && (
+                <div className="grid gap-2 rounded-lg border border-primary/30 bg-background-secondary p-3 sm:grid-cols-2 xl:grid-cols-6">
+                    <select value={sourceType} onChange={event => setSourceType(event.target.value as typeof sourceType)} className={inputClass}>
+                        <option value="manual">Manual</option>
+                        <option value="transaction">Transaction</option>
+                        <option value="voucher">Voucher</option>
+                        <option value="material">Material</option>
+                    </select>
+                    <input value={sourceId} onChange={event => setSourceId(event.target.value)} placeholder="Source GUID (optional)" className={`${inputClass} font-mono`} />
+                    <input value={costDescription} onChange={event => setCostDescription(event.target.value)} placeholder="Description" className={inputClass} />
+                    <input type="date" value={costDate} onChange={event => setCostDate(event.target.value)} className={`${inputClass} font-mono`} />
+                    <input type="number" min="0.01" step="0.01" value={costAmount} onChange={event => setCostAmount(event.target.value)} placeholder="Amount" className={`${inputClass} font-mono`} />
+                    <div className="flex items-center justify-between gap-2">
+                        <label className="flex items-center gap-1 text-xs text-foreground-secondary">
+                            <input type="checkbox" checked={billable} onChange={event => setBillable(event.target.checked)} /> Billable
+                        </label>
+                        <button type="button" onClick={() => void saveCost()} disabled={savingCost || !(Number(costAmount) > 0)} className="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+                            Add
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {p.costLinks.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                    {p.costLinks.map(cost => (
+                        <span key={cost.id} className="inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs text-foreground-secondary">
+                            <span>{cost.costDate} · {cost.description || cost.sourceType} · <span className="font-mono">{formatCurrency(cost.amount)}</span></span>
+                            {!isReadonly && <button type="button" onClick={() => void removeCost(cost.id)} className="text-negative">×</button>}
+                        </span>
+                    ))}
+                </div>
+            )}
+
+            {report.documents.length === 0 ? (
+                <p className="py-3 text-sm text-foreground-muted">No invoices or bills reference this job yet.</p>
+            ) : <table className="w-full text-[13px]">
                 <thead>
                     <tr className="text-xs text-foreground-muted uppercase tracking-wider border-b border-border/50">
                         <th className="px-2 py-1.5 text-left">#</th>
@@ -118,7 +227,7 @@ function JobReportPanel({ jobGuid }: { jobGuid: string }) {
                         <td className="px-2 py-1.5 text-right font-mono text-foreground" style={TNUM}>{formatCurrency(report.totals.due)}</td>
                     </tr>
                 </tfoot>
-            </table>
+            </table>}
         </div>
     );
 }
@@ -413,7 +522,7 @@ export default function JobsPage() {
                                             {isOpen && (
                                                 <tr className="bg-background-tertiary/30">
                                                     <td colSpan={7} className="p-0">
-                                                        <JobReportPanel jobGuid={job.guid} />
+                                                        <JobReportPanel jobGuid={job.guid} isReadonly={isReadonly} />
                                                     </td>
                                                 </tr>
                                             )}

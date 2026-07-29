@@ -112,10 +112,10 @@ export default function AutoAssignDialog({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden p-4">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
-      <div className="relative bg-surface border border-border rounded-xl shadow-2xl w-full max-w-lg mx-4">
+      <div className="relative max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-auto rounded-lg border border-border bg-surface-elevated shadow-xl">
         <div className="p-6 space-y-5">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-foreground">Auto-Assign Lots</h2>

@@ -14,7 +14,7 @@ interface Book {
 interface BookContextType {
     activeBookGuid: string | null;
     books: Book[];
-    switchBook: (guid: string) => Promise<void>;
+    switchBook: (guid: string, destination?: string) => Promise<void>;
     refreshBooks: () => Promise<void>;
     loading: boolean;
     hasNoBooks: boolean;
@@ -52,7 +52,7 @@ export function BookProvider({ children }: { children: ReactNode }) {
         refreshBooks();
     }, [refreshBooks]);
 
-    const switchBook = useCallback(async (guid: string) => {
+    const switchBook = useCallback(async (guid: string, destination?: string) => {
         try {
             const res = await fetch('/api/books/active', {
                 method: 'PUT',
@@ -60,6 +60,10 @@ export function BookProvider({ children }: { children: ReactNode }) {
                 body: JSON.stringify({ bookGuid: guid }),
             });
             if (res.ok) {
+                if (destination) {
+                    window.location.href = destination;
+                    return;
+                }
                 // If on an account-specific ledger, redirect to account hierarchy
                 // since the account GUID belongs to the old book
                 const path = window.location.pathname;

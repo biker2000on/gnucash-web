@@ -30,6 +30,8 @@ import {
 } from '@/lib/services/business.service';
 import type { JobDTO } from '@/lib/business-types';
 import { OWNER_TYPE_CUSTOMER, OWNER_TYPE_JOB } from './business-reports';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { logAudit } from '@/lib/services/audit.service';
 
 /** KVP slot GnuCash uses for the job's default rate (gncJob.c GNC_JOB_RATE). */
 export const JOB_RATE_SLOT = 'job-rate';
@@ -200,6 +202,38 @@ export interface JobReport {
   draftCount: number;
 }
 
+export interface JobCostLink {
+  id: number;
+  sourceType: 'manual' | 'transaction' | 'voucher' | 'material';
+  sourceId: string | null;
+  description: string;
+  costDate: string;
+  amount: number;
+  billable: boolean;
+  invoicedInvoiceGuid: string | null;
+}
+
+export interface JobProfitability {
+  revenue: number;
+  collected: number;
+  accountsReceivable: number;
+  directCosts: number;
+  laborCost: number;
+  grossProfit: number;
+  marginPercent: number | null;
+  trackedHours: number;
+  unbilledHours: number;
+  unbilledTimeValue: number;
+  unbilledExpenseValue: number;
+  overdueCollections: number;
+  costLinks: JobCostLink[];
+  taggedExpenseTotal: number;
+}
+
+export interface JobProfitabilityReport extends JobReport {
+  profitability: JobProfitability;
+}
+
 function round2(n: number): number {
   const r = Math.round(n * 100) / 100;
   return r === 0 ? 0 : r; // normalize -0
@@ -342,7 +376,271 @@ export async function loadJobDocuments(
 export async function generateJobReport(
   jobGuid: string,
   bookAccountGuids: string[],
-): Promise<JobReport> {
-  const rows = await loadJobDocuments(jobGuid, bookAccountGuids);
-  return buildJobReport(rows);
+  options: { bookGuid?: string } = {},
+): Promise<JobProfitabilityReport> {
+  const [rows, job] = await Promise.all([
+    loadJobDocuments(jobGuid, bookAccountGuids),
+    getJobEx(jobGuid),
+  ]);
+  if (!job) throw new BusinessValidationError('Job not found');
+  const report = buildJobReport(rows);
+  const bookGuid = options.bookGuid ?? await bookGuidForAccounts(bookAccountGuids);
+  if (!bookGuid) throw new BusinessValidationError('Active book could not be resolved');
+
+  const [timeRows, costRows, taggedRows] = await Promise.all([
+    prisma.$queryRaw<Array<{
+      tracked_hours: number;
+      labor_cost: number;
+      unbilled_hours: number;
+      unbilled_value: number;
+    }>>`
+      SELECT
+        COALESCE(SUM(te.minutes) / 60.0, 0)::float8 AS tracked_hours,
+        COALESCE(SUM(
+          te.minutes / 60.0 *
+          COALESCE(
+            e.rate_num::numeric / NULLIF(e.rate_denom, 0)::numeric,
+            te.rate,
+            0
+          )
+        ), 0)::float8 AS labor_cost,
+        COALESCE(SUM(te.minutes) FILTER (
+          WHERE te.billable = TRUE AND te.invoiced_invoice_guid IS NULL
+        ) / 60.0, 0)::float8 AS unbilled_hours,
+        COALESCE(SUM(
+          te.minutes / 60.0 * COALESCE(te.rate, ${job.rate ?? 0}, 0)
+        ) FILTER (
+          WHERE te.billable = TRUE AND te.invoiced_invoice_guid IS NULL
+        ), 0)::float8 AS unbilled_value
+      FROM gnucash_web_time_entries te
+      LEFT JOIN gnucash_web_users u ON u.id = te.user_id
+      LEFT JOIN employees e ON LOWER(e.username) = LOWER(u.username)
+      WHERE te.job_guid = ${jobGuid}
+        AND te.book_guid = ${bookGuid}
+    `,
+    prisma.$queryRaw<Array<{
+      id: number;
+      source_type: JobCostLink['sourceType'];
+      source_id: string | null;
+      description: string | null;
+      cost_date: Date;
+      amount: number;
+      billable: boolean;
+      invoiced_invoice_guid: string | null;
+    }>>`
+      SELECT id, source_type, source_id, description, cost_date,
+             amount::float8 AS amount, billable, invoiced_invoice_guid
+      FROM gnucash_web_job_cost_links
+      WHERE job_guid = ${jobGuid}
+        AND book_guid = ${bookGuid}
+      ORDER BY cost_date DESC, id DESC
+    `,
+    prisma.$queryRaw<Array<{ tagged_cost: number }>>`
+      SELECT COALESCE(SUM(
+        s.quantity_num::numeric / NULLIF(s.quantity_denom, 0)::numeric
+      ), 0)::float8 AS tagged_cost
+      FROM gnucash_web_transaction_tags tt
+      JOIN gnucash_web_tags tag ON tag.id = tt.tag_id
+      JOIN splits s ON s.tx_guid = tt.transaction_guid
+      JOIN accounts a ON a.guid = s.account_guid
+      WHERE LOWER(tag.name) IN (
+        ${`job-${job.id.toLowerCase()}`},
+        ${`job-${job.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`}
+      )
+        AND s.account_guid = ANY(${bookAccountGuids}::text[])
+        AND a.account_type = 'EXPENSE'
+        AND NOT EXISTS (
+          SELECT 1 FROM gnucash_web_job_cost_links l
+          WHERE l.job_guid = ${jobGuid}
+            AND l.source_type = 'transaction'
+            AND l.source_id = tt.transaction_guid
+        )
+    `,
+  ]);
+
+  const time = timeRows[0] ?? { tracked_hours: 0, labor_cost: 0, unbilled_hours: 0, unbilled_value: 0 };
+  const costLinks: JobCostLink[] = costRows.map(row => ({
+    id: row.id,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    description: row.description ?? '',
+    costDate: row.cost_date.toISOString().slice(0, 10),
+    amount: round2(Number(row.amount)),
+    billable: row.billable,
+    invoicedInvoiceGuid: row.invoiced_invoice_guid,
+  }));
+  const invoiceDocs = report.documents.filter(document => document.kind === 'invoice' && document.posted);
+  const billCosts = report.documents
+    .filter(document => document.kind === 'bill' && document.posted)
+    .reduce((sum, document) => sum + document.total, 0);
+  const revenue = round2(invoiceDocs.reduce((sum, document) => sum + document.total, 0));
+  const collected = round2(invoiceDocs.reduce((sum, document) => sum + document.paid, 0));
+  const accountsReceivable = round2(invoiceDocs.reduce((sum, document) => sum + document.due, 0));
+  const explicitCosts = costLinks.reduce((sum, item) => sum + item.amount, 0);
+  const taggedExpenseTotal = round2(Number(taggedRows[0]?.tagged_cost ?? 0));
+  const directCosts = round2(billCosts + explicitCosts + taggedExpenseTotal);
+  const laborCost = round2(Number(time.labor_cost ?? 0));
+  const grossProfit = round2(revenue - directCosts - laborCost);
+  const unbilledExpenseValue = round2(costLinks
+    .filter(item => item.billable && !item.invoicedInvoiceGuid)
+    .reduce((sum, item) => sum + item.amount, 0));
+  const staleDate = new Date();
+  staleDate.setUTCDate(staleDate.getUTCDate() - 30);
+  const overdueCollections = round2(invoiceDocs
+    .filter(document => document.due > 0 && document.datePosted && new Date(`${document.datePosted}T00:00:00Z`) < staleDate)
+    .reduce((sum, document) => sum + document.due, 0));
+
+  return {
+    ...report,
+    profitability: {
+      revenue,
+      collected,
+      accountsReceivable,
+      directCosts,
+      laborCost,
+      grossProfit,
+      marginPercent: revenue > 0 ? round2(grossProfit / revenue * 100) : null,
+      trackedHours: round2(Number(time.tracked_hours ?? 0)),
+      unbilledHours: round2(Number(time.unbilled_hours ?? 0)),
+      unbilledTimeValue: round2(Number(time.unbilled_value ?? 0)),
+      unbilledExpenseValue,
+      overdueCollections,
+      costLinks,
+      taggedExpenseTotal,
+    },
+  };
+}
+
+function isDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+async function bookGuidForAccounts(accountGuids: string[]): Promise<string | null> {
+  if (accountGuids.length === 0) return null;
+  const rows = await prisma.$queryRaw<Array<{ guid: string }>>`
+    WITH RECURSIVE ancestors AS (
+      SELECT guid, parent_guid FROM accounts WHERE guid = ${accountGuids[0]}
+      UNION ALL
+      SELECT parent.guid, parent.parent_guid
+      FROM accounts parent
+      JOIN ancestors child ON child.parent_guid = parent.guid
+    )
+    SELECT b.guid
+    FROM books b
+    JOIN ancestors a ON a.guid = b.root_account_guid
+    LIMIT 1
+  `;
+  return rows[0]?.guid ?? null;
+}
+
+export async function addJobCostLink(input: {
+  bookGuid: string;
+  jobGuid: string;
+  userId: number;
+  sourceType: JobCostLink['sourceType'];
+  sourceId?: string | null;
+  description?: string;
+  costDate: string;
+  amount: number;
+  billable?: boolean;
+}): Promise<JobCostLink> {
+  if (!(input.amount > 0) || !Number.isFinite(input.amount)) {
+    throw new BusinessValidationError('Cost amount must be greater than zero');
+  }
+  if (!isDateOnly(input.costDate)) {
+    throw new BusinessValidationError('Cost date must be YYYY-MM-DD');
+  }
+  if (!await getJob(input.jobGuid)) throw new BusinessValidationError('Job not found');
+  if (input.sourceType === 'transaction' && input.sourceId) {
+    const transaction = await prisma.transactions.findFirst({
+      where: {
+        guid: input.sourceId,
+        splits: { some: { account_guid: { in: await getAccountGuidsForBook(input.bookGuid) } } },
+      },
+      select: { guid: true },
+    });
+    if (!transaction) throw new BusinessValidationError('Transaction is not in the active book');
+  }
+  const rows = await prisma.$queryRaw<Array<{
+    id: number;
+    source_type: JobCostLink['sourceType'];
+    source_id: string | null;
+    description: string | null;
+    cost_date: Date;
+    amount: number;
+    billable: boolean;
+    invoiced_invoice_guid: string | null;
+  }>>`
+    INSERT INTO gnucash_web_job_cost_links
+      (book_guid, job_guid, source_type, source_id, description, cost_date, amount, billable, created_by)
+    VALUES (
+      ${input.bookGuid}, ${input.jobGuid}, ${input.sourceType}, ${input.sourceId ?? null},
+      ${input.description?.trim() || null}, ${new Date(`${input.costDate}T12:00:00Z`)},
+      ${Math.round(input.amount * 100) / 100}, ${input.billable ?? false}, ${input.userId}
+    )
+    RETURNING id, source_type, source_id, description, cost_date,
+              amount::float8 AS amount, billable, invoiced_invoice_guid
+  `;
+  const row = rows[0];
+  const created = {
+    id: row.id,
+    sourceType: row.source_type,
+    sourceId: row.source_id,
+    description: row.description ?? '',
+    costDate: row.cost_date.toISOString().slice(0, 10),
+    amount: round2(Number(row.amount)),
+    billable: row.billable,
+    invoicedInvoiceGuid: row.invoiced_invoice_guid,
+  };
+  await logAudit(
+    'CREATE',
+    'JOB_COST',
+    String(row.id),
+    null,
+    created,
+    { bookGuid: input.bookGuid, userId: input.userId },
+  );
+  return created;
+}
+
+export async function deleteJobCostLink(
+  bookGuid: string,
+  jobGuid: string,
+  id: number,
+  userId?: number,
+): Promise<boolean> {
+  const existing = await prisma.$queryRaw<Array<{
+    id: number;
+    source_type: string;
+    source_id: string | null;
+    description: string | null;
+    cost_date: Date;
+    amount: number;
+    billable: boolean;
+  }>>`
+    SELECT id, source_type, source_id, description, cost_date,
+           amount::float8 AS amount, billable
+    FROM gnucash_web_job_cost_links
+    WHERE id = ${id} AND book_guid = ${bookGuid} AND job_guid = ${jobGuid}
+  `;
+  const count = await prisma.$executeRaw`
+    DELETE FROM gnucash_web_job_cost_links
+    WHERE id = ${id} AND book_guid = ${bookGuid} AND job_guid = ${jobGuid}
+  `;
+  if (count > 0) {
+    await logAudit(
+      'DELETE',
+      'JOB_COST',
+      String(id),
+      existing[0] ? {
+        ...existing[0],
+        cost_date: existing[0].cost_date.toISOString().slice(0, 10),
+      } : null,
+      null,
+      { bookGuid, userId },
+    );
+  }
+  return count > 0;
 }

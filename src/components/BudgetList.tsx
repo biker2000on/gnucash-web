@@ -409,10 +409,22 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
     }
 
     return (
-        <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl">
+        <div className="overflow-hidden rounded-lg border border-border bg-surface">
             {toolbar}
             {visible.length === 0 ? emptyFiltered : (
-                <table className="w-full text-sm">
+                <div className="max-w-full overflow-x-auto">
+                <table className="w-full min-w-[900px] table-fixed text-sm">
+                    <colgroup>
+                        <col className="w-[23%]" />
+                        <col className="w-[9%]" />
+                        <col className="w-[9%]" />
+                        <col className="w-[8%]" />
+                        <col className="w-[12%]" />
+                        <col className="w-[11%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[14%]" />
+                        <col className="w-[4%]" />
+                    </colgroup>
                     <thead>
                         <tr className="text-foreground-secondary border-b border-border">
                             <SortHeader label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -422,7 +434,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
                             <SortHeader label="Allocations" column="allocations" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="hidden lg:table-cell" />
                             <SortHeader label="Budgeted" column="budgeted" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" className="hidden lg:table-cell" title="Current period budgeted" />
                             <SortHeader label="Spent" column="spent" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} align="right" title="Current period actual" />
-                            <SortHeader label="% Used" column="pctUsed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} className="w-[24%] min-w-[170px]" title="Current period progress" />
+                            <SortHeader label="% Used" column="pctUsed" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} title="Current period progress" />
                             <th className="px-4 py-3 w-12"><span className="sr-only">Actions</span></th>
                         </tr>
                     </thead>
@@ -476,6 +488,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
                         })}
                     </tbody>
                 </table>
+                </div>
             )}
         </div>
     );

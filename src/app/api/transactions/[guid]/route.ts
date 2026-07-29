@@ -122,7 +122,10 @@ export async function PUT(
         // Validate the transaction
         const validation = validateTransaction(body);
         if (!validation.valid) {
-            return NextResponse.json({ errors: validation.errors }, { status: 400 });
+            return NextResponse.json({
+                error: validation.errors.map(item => item.message).join(' '),
+                errors: validation.errors,
+            }, { status: 400 });
         }
 
         // Verify transaction exists and capture old values for audit
@@ -184,9 +187,7 @@ export async function PUT(
             }
         }
 
-        // Track multi-currency status for audit log
-        let isMultiCurrency = false;
-        let totalSplitsCount = body.splits.length;
+        const existingSplitByGuid = new Map(existingTx.splits.map(split => [split.guid, split]));
 
         // Update transaction and recreate splits in a transaction
         const transaction = await prisma.$transaction(async (tx) => {
@@ -195,9 +196,7 @@ export async function PUT(
                 body.splits,
                 tx
             );
-            isMultiCurrency = multiCurrencyResult.isMultiCurrency;
             const allSplits = multiCurrencyResult.allSplits;
-            totalSplitsCount = allSplits.length;
 
             // Update transaction (enter_date updated for optimistic locking)
             await tx.transactions.update({
@@ -219,20 +218,24 @@ export async function PUT(
             // Insert all splits (including auto-generated trading splits)
             for (const split of allSplits) {
                 const splitGuid = split.guid && /^[0-9a-f]{32}$/.test(split.guid) ? split.guid : generateGuid();
+                const existingSplit = existingSplitByGuid.get(splitGuid);
                 await tx.splits.create({
                     data: {
                         guid: splitGuid,
                         tx_guid: guid,
                         account_guid: split.account_guid,
                         memo: split.memo || '',
-                        action: split.action || '',
+                        action: split.action ?? existingSplit?.action ?? '',
                         reconcile_state: split.reconcile_state || 'n',
-                        reconcile_date: null,
+                        reconcile_date:
+                            existingSplit && existingSplit.reconcile_state === (split.reconcile_state || 'n')
+                                ? existingSplit.reconcile_date
+                                : null,
                         value_num: BigInt(split.value_num),
                         value_denom: BigInt(split.value_denom),
                         quantity_num: BigInt(split.quantity_num),
                         quantity_denom: BigInt(split.quantity_denom),
-                        lot_guid: null,
+                        lot_guid: existingSplit?.lot_guid ?? null,
                     },
                 });
             }
@@ -255,6 +258,9 @@ export async function PUT(
                     },
                 },
             });
+        }, {
+            maxWait: 30_000,
+            timeout: 300_000,
         });
 
         if (!transaction) {

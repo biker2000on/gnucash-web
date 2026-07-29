@@ -3,12 +3,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Modal } from '@/components/ui/Modal';
 
-/** Strip the root/book account name (first colon-delimited segment) from fullname */
-function stripRoot(fullname: string): string {
-    const idx = fullname.indexOf(':');
-    return idx >= 0 ? fullname.slice(idx + 1) : fullname;
-}
-
 interface FlatAccount {
     guid: string;
     name: string;
@@ -86,7 +80,7 @@ export default function AccountPickerDialog({
             const q = search.toLowerCase();
             result = result.filter(
                 a => {
-                    const display = stripRoot(a.fullname || a.name);
+                    const display = a.fullname || a.name;
                     return display.toLowerCase().includes(q);
                 }
             );
@@ -162,7 +156,7 @@ export default function AccountPickerDialog({
                                         : 'text-foreground-secondary hover:bg-surface-hover'
                                 }`}
                             >
-                                {stripRoot(account.fullname || account.name)}
+                                {account.fullname || account.name}
                             </button>
                         ))
                     )}

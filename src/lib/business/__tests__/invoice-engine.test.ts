@@ -728,6 +728,28 @@ describe('invoice engine (fake prisma)', () => {
     expect(payments[0].allocations).toHaveLength(2);
   });
 
+  it('reuses a caller-supplied payment transaction GUID idempotently', async () => {
+    const invoice = await createInvoice(customerInvoiceInput());
+    await postInvoice(invoice.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const transactionGuid = 'a'.repeat(32);
+    const input = {
+      ownerType: 'customer' as const,
+      ownerGuid: 'cust1',
+      transferAccountGuid: 'bank1',
+      amount: 105,
+      date: '2026-03-01',
+      allocations: [{ invoiceGuid: invoice.guid, amount: 105 }],
+      transactionGuid,
+    };
+
+    const first = await applyPayment(input);
+    const second = await applyPayment(input);
+
+    expect(first.transactionGuid).toBe(transactionGuid);
+    expect(second.transactionGuid).toBe(transactionGuid);
+    expect(holder.db!.transactions.rows.filter((row: Row) => row.guid === transactionGuid)).toHaveLength(1);
+  });
+
   it('rejects overpayments cleanly', async () => {
     const inv = await createInvoice(customerInvoiceInput());
     await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });

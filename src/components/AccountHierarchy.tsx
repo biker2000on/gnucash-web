@@ -22,10 +22,11 @@ import { useInvalidateAccounts } from '@/lib/hooks/useAccounts';
 import { useToast } from '@/contexts/ToastContext';
 import { useReviewStatus } from '@/lib/hooks/useReviewStatus';
 import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
-import { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
+import type { ReviewStatusMap } from '@/app/api/accounts/review-status/route';
 import { Modal } from './ui/Modal';
 import { FilterBar } from './ui/FilterBar';
 import { AccountForm } from './AccountForm';
+import SimpleFinSyncIndicator from './SimpleFinSyncIndicator';
 import { TransactionContextMenu, type TransactionContextMenuItem } from '@/components/ledger/TransactionContextMenu';
 import TagChip from './tags/TagChip';
 import type { Tag } from '@/lib/tags';
@@ -62,6 +63,8 @@ interface DerivedAccount extends AccountWithChildren {
     reconciledUsd: number;
     aggregatedUnreviewed: number;
     hasSimpleFin: boolean;
+    simpleFinSyncStatus: string | null;
+    simpleFinSyncError: string | null;
     lastReconcileDate: string | null;
 }
 
@@ -254,6 +257,8 @@ function deriveTree(
             reconciledUsd,
             aggregatedUnreviewed: aggregateUnreviewed(account, statusMap),
             hasSimpleFin: statusMap[account.guid]?.hasSimpleFin ?? false,
+            simpleFinSyncStatus: statusMap[account.guid]?.simpleFinSyncStatus ?? null,
+            simpleFinSyncError: statusMap[account.guid]?.simpleFinSyncError ?? null,
             lastReconcileDate,
         };
     };
@@ -784,10 +789,11 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             />
                         ))}
                         {account.hasSimpleFin && (
-                            <svg className="w-3 h-3 text-foreground-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Linked to SimpleFin">
-                                <title>Linked to SimpleFin</title>
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
+                            <SimpleFinSyncIndicator
+                                status={account.simpleFinSyncStatus}
+                                error={account.simpleFinSyncError}
+                                compact
+                            />
                         )}
                         {account.aggregatedUnreviewed > 0 && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex-shrink-0">

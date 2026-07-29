@@ -32,7 +32,7 @@ export async function GET() {
         const userId = roleResult.user.id;
 
         const [baseline, savedScenarios] = await Promise.all([
-            buildScenarioBaseline(userId),
+            buildScenarioBaseline(userId, roleResult.bookGuid),
             getPreference<SavedScenario[]>(userId, SCENARIO_PREF_KEY, []),
         ]);
 
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const baseline = await buildScenarioBaseline(userId);
+        const baseline = await buildScenarioBaseline(userId, roleResult.bookGuid);
         const scenario = normalizeScenario(payload.scenario, baseline.asOfDate);
         const assumptions = mergeScenarioAssumptions(payload.assumptions ?? null);
         const result = runScenario(baseline, scenario, assumptions);
