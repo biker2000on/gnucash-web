@@ -323,8 +323,9 @@ export async function adoptLivingPlan(
   const guardrails = normalizeGuardrails(input.guardrails);
   const projection = runScenario(baseline, scenario, assumptions);
   await prisma.$transaction(async tx => {
+    // ::text cast: void return breaks Prisma $queryRaw deserialization.
     await tx.$queryRaw`
-      SELECT pg_advisory_xact_lock(${userId}::integer, hashtext(${bookGuid}))
+      SELECT pg_advisory_xact_lock(${userId}::integer, hashtext(${bookGuid}))::text AS locked
     `;
     type LockedPlan = { id: string; current_version: number };
     const locked = await tx.$queryRaw<LockedPlan[]>`

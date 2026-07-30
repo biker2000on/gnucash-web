@@ -193,7 +193,8 @@ export async function executeCloseBook(
 
     await prisma.$transaction(async (tx) => {
         // Serialize per book; released automatically at commit/rollback.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'close-book:' + bookGuid}))`;
+        // ::text cast: void return breaks Prisma $queryRaw deserialization.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'close-book:' + bookGuid}))::text AS locked`;
 
         // Idempotency marker: refuse a second close of an already-closed period.
         const markerRows = await tx.$queryRaw<Array<{ string_val: string | null }>>`

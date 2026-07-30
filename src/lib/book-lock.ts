@@ -56,7 +56,10 @@ export async function acquireBookLock(
     operation?: string,
 ): Promise<void> {
     if (typeof tx.$queryRaw !== 'function') return; // test double — no raw support
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${bookLockKey(bookGuid)}))`;
+    // ::text cast: pg_advisory_xact_lock returns void, which Prisma's
+    // $queryRaw cannot deserialize ("Failed to deserialize column of type
+    // 'void'"); casting makes the result a plain nullable text column.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${bookLockKey(bookGuid)}))::text AS locked`;
 }
 
 /**
@@ -88,7 +91,8 @@ export async function acquireNamedXactLock(
     key: string,
 ): Promise<boolean> {
     if (typeof tx.$queryRaw !== 'function') return false; // test double — no raw support
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+    // ::text cast — see acquireBookLock: void columns break $queryRaw.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))::text AS locked`;
     return true;
 }
 

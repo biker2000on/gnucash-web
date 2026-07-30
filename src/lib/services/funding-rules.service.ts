@@ -623,7 +623,8 @@ async function applySweep(rule: FundingRule, deposit: DepositCandidate, dedupeKe
     const applied = await prisma.$transaction(async tx => {
         // Serialize this (rule, deposit) pair across overlapping runs; the
         // lock is released automatically at commit/rollback.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${fundingSweepLockKey(rule.id, deposit.txGuid)}))`;
+        // ::text cast: void return breaks Prisma $queryRaw deserialization.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${fundingSweepLockKey(rule.id, deposit.txGuid)}))::text AS locked`;
 
         // Authoritative dedupe re-check AFTER taking the lock: a concurrent
         // run holding the lock first has already committed its sweep and its

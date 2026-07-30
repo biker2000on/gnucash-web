@@ -480,7 +480,8 @@ export async function nextCounterId(
   // Bootstrap: serialize concurrent bootstraps of this counter, then re-check
   // existence — the lock loser must increment the winner's slot, not create a
   // second one.
-  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`gncCounter:${bookGuid}:${counterName}`}::text))`;
+  // ::text cast on the result: void return breaks Prisma $queryRaw deserialization.
+  await db.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`gncCounter:${bookGuid}:${counterName}`}::text))::text AS locked`;
   ({ frame, counterRow } = await findCounter());
   if (counterRow) return increment(counterRow.id);
 
