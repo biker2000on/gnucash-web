@@ -399,11 +399,11 @@ export default function ApiDocsPage() {
                 <h2 className="text-lg font-semibold text-foreground">Notes</h2>
                 <ul className="text-sm text-foreground-secondary list-disc pl-5 space-y-1">
                     <li>
-                        Amounts in the GnuCash data model are fractions (<code className="font-mono text-xs">value_num / value_denom</code>).
+                        Amounts in the ledger data model are fractions (<code className="font-mono text-xs">value_num / value_denom</code>).
                         List endpoints also return <code className="font-mono text-xs">value_decimal</code> strings for convenience.
                     </li>
                     <li>
-                        Income accounts follow GnuCash sign conventions: money earned appears as negative split values.
+                        Income accounts follow double-entry sign conventions: money earned appears as negative split values.
                     </li>
                     <li>
                         Additional endpoints exist for nearly every feature in the app; the ones above are the

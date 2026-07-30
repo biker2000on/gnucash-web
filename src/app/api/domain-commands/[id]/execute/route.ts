@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { executeDomainCommand, DomainCommandError } from '@/lib/domain-commands';
+import { publishDataChange } from '@/lib/data-events';
 
 export async function POST(
   _request: Request,
@@ -15,6 +16,7 @@ export async function POST(
       bookGuid: auth.bookGuid,
       userId: auth.user.id,
     });
+    void publishDataChange(auth.bookGuid, 'schedules', { action: 'update' });
     return NextResponse.json({ command });
   } catch (error) {
     if (error instanceof DomainCommandError) {

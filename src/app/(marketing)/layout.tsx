@@ -120,8 +120,8 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                         <div className="text-[11px] uppercase tracking-wider text-foreground-muted font-semibold mb-3">Foundation</div>
                         <ul className="space-y-2 text-sm text-foreground-secondary">
                             <li>Double-entry accounting</li>
-                            <li>PostgreSQL + GnuCash schema</li>
-                            <li>Desktop round-trip via XML</li>
+                            <li>PostgreSQL storage, exact fractions</li>
+                            <li>GnuCash import/export via XML</li>
                             <li>Docker, single image</li>
                         </ul>
                     </div>
@@ -151,7 +151,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
                                     href="https://www.gnucash.org"
                                     className="text-sm text-foreground-secondary hover:text-foreground transition-colors duration-150"
                                 >
-                                    GnuCash desktop
+                                    GnuCash desktop (import/export)
                                 </a>
                             </li>
                         </ul>

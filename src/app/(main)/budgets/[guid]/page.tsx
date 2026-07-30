@@ -920,7 +920,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                             <button
                                                 onClick={() => setShowHiddenAccounts(v => !v)}
                                                 aria-pressed={showHiddenAccounts}
-                                                title="Include accounts marked hidden in GnuCash"
+                                                title="Include accounts marked hidden"
                                                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                                                     showHiddenAccounts
                                                         ? 'bg-primary/20 text-primary border border-primary/30'

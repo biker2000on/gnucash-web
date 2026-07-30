@@ -1,15 +1,16 @@
 export interface ProductIdentity {
   readonly name: 'Folio';
-  readonly descriptor: 'for GnuCash';
-  readonly brand: 'Folio for GnuCash';
+  /** Sub-line under the wordmark; empty = wordmark only. */
+  readonly descriptor: '';
+  readonly brand: 'Folio';
   readonly shortName: 'Folio';
-  readonly description: 'A self-hosted, GnuCash-compatible personal finance platform.';
+  readonly description: 'A self-hosted personal and small-business finance platform.';
 }
 
 export const product: Readonly<ProductIdentity> = Object.freeze<ProductIdentity>({
   name: 'Folio',
-  descriptor: 'for GnuCash',
-  brand: 'Folio for GnuCash',
+  descriptor: '',
+  brand: 'Folio',
   shortName: 'Folio',
-  description: 'A self-hosted, GnuCash-compatible personal finance platform.',
+  description: 'A self-hosted personal and small-business finance platform.',
 });

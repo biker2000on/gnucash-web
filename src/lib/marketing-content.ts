@@ -79,20 +79,20 @@ export const FEATURE_PAGES: FeaturePage[] = [
         navLabel: 'Accounting',
         title: 'Real double-entry accounting, everywhere you are',
         tagline:
-            'Your GnuCash book — the same accounts, splits, and lots — served as a fast web app. Nothing is reinterpreted, nothing is locked in.',
+            'Your complete financial book — accounts, splits, and lots — served as a fast web app. Nothing is reinterpreted, nothing is locked in: import from and export to GnuCash desktop any time.',
         heroImage: '/marketing/accounting.jpg',
         heroAlt: 'Tax forms and a calculator on a desk',
         sections: [
             {
                 heading: 'The ledger, done right',
-                lead: 'Every view respects double-entry semantics: balanced splits, running balances, and GnuCash sign conventions.',
+                lead: 'Every view respects double-entry semantics: balanced splits, running balances, and strict sign conventions.',
                 items: [
                     { name: 'Account hierarchy', description: 'The full tree with balances, dual-column investment views, hide/show, sorting, and persistent state.' },
                     { name: 'Account & general ledgers', description: 'Running balances, infinite scroll, debounced search with #tag syntax, and a right-click context menu.' },
                     { name: 'Bulk editing', description: 'Multi-select to review, move, delete, recategorize, retag, or find-and-replace descriptions across hundreds of transactions.' },
                     { name: 'Change history with undo', description: 'Every mutation is recorded with full before/after snapshots. Restore a deleted transaction with one click.' },
                     { name: 'Quick Add', description: 'A thumb-first capture screen with an offline queue — record the coffee while you are still in line, sync later.' },
-                    { name: 'Scheduled transactions', description: 'All nine GnuCash recurrence types with execute/skip, batch catch-up, and mortgage-aware dynamic amounts.' },
+                    { name: 'Scheduled transactions', description: 'All nine recurrence types with execute/skip, batch catch-up, and mortgage-aware dynamic amounts.' },
                 ],
             },
             {
@@ -131,7 +131,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
         sections: [
             {
                 heading: 'Cost basis you can defend',
-                lead: 'The lot engine mirrors GnuCash desktop: sells split across lots, transfers keep their acquisition dates, and gains post as balanced transactions.',
+                lead: 'True lot accounting: sells split across lots, transfers keep their acquisition dates, and gains post as balanced transactions.',
                 items: [
                     { name: 'Lot tracking & scrubbing', description: 'FIFO, LIFO, or average-cost auto-assignment with transfer-aware topological ordering and full revert.' },
                     { name: 'Capital gains — Form 8949', description: 'Realized sales bucketed into IRS boxes with Schedule D totals, wash-sale adjustments, and 1099-B reconciliation.' },
@@ -231,13 +231,13 @@ export const FEATURE_PAGES: FeaturePage[] = [
         navLabel: 'Business',
         title: 'Run a small business on your own books',
         tagline:
-            'GnuCash-compatible invoicing, receivables, and inventory — with the reports a sole proprietor actually files.',
+            'Double-entry invoicing, receivables, and inventory — with the reports a sole proprietor actually files.',
         heroImage: '/marketing/business.jpg',
         heroAlt: 'A customer paying at a small business point of sale',
         sections: [
             {
                 heading: 'From invoice to payment',
-                lead: 'The native GnuCash business engine, modernized.',
+                lead: 'A native double-entry business engine.',
                 items: [
                     { name: 'Invoices & bills', description: 'Desktop-compatible posting with discounts, tax tables, unposting, and FIFO or explicit payment allocation.' },
                     { name: 'Customers, vendors & jobs', description: 'Full CRUD with auto-numbering, billing terms, and deactivate-not-delete safety.' },

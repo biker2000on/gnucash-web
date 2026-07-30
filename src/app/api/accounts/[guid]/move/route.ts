@@ -68,7 +68,17 @@ export async function PUT(
             );
         }
 
-        const account = await AccountService.move(guid, parseResult.data.newParentGuid);
+        // The new parent must belong to the same active book: a cross-book
+        // reparent escapes the per-book lock (each request locks a different
+        // book), letting two opposing moves re-create the account-cycle
+        // corruption the lock exists to prevent — and even alone it grafts an
+        // account into a tree the caller may not own.
+        const { newParentGuid } = parseResult.data;
+        if (newParentGuid !== null && !await isAccountInActiveBook(newParentGuid)) {
+            return NextResponse.json({ error: 'Parent account not found' }, { status: 404 });
+        }
+
+        const account = await AccountService.move(guid, newParentGuid);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'accounts', { guid, action: 'update' });
         return NextResponse.json(account);

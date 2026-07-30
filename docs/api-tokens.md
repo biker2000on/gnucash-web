@@ -55,6 +55,27 @@ curl -X DELETE -b <session-cookie> https://your-server/api/settings/api-tokens/<
 
 Revocation is immediate.
 
+### Editing or deleting transactions (optimistic locking)
+
+`PUT /api/transactions/{guid}` and `DELETE /api/transactions/{guid}` require an
+`original_enter_date` optimistic-lock token — the `enter_date` value you loaded
+for that transaction (or `null` if the row had none). Requests without it get
+**428** (`code: original_enter_date_required`); a mismatch (someone edited the
+transaction since you loaded it) gets **409** — re-fetch and retry with the
+fresh value. The server bumps `enter_date` on every write, including sibling
+paths like reconciliation, bulk edits, and lot operations.
+
+```bash
+# PUT: include it in the JSON body
+curl -X PUT -H "Authorization: Bearer gcw_…" -H "Content-Type: application/json" \
+  -d '{"original_enter_date":"2026-07-28T14:03:22.000Z", ...}' \
+  https://your-server/api/transactions/<guid>
+
+# DELETE: query param (or JSON body)
+curl -X DELETE -H "Authorization: Bearer gcw_…" \
+  "https://your-server/api/transactions/<guid>?original_enter_date=2026-07-28T14%3A03%3A22.000Z"
+```
+
 ## Webhooks
 
 Webhooks POST a JSON body to your endpoint whenever a matching in-app

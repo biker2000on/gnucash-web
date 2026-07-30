@@ -58,7 +58,7 @@ This document consolidates four parallel audits: API write paths, complex multi-
 `src/lib/gnucash-xml/importer.ts:174-629`
 - Atomic (good), but with `overwrite: true` it mass-deletes then re-inserts for up to 5 minutes at READ COMMITTED while other users keep writing — their commits are silently wiped or applied on top of half-restored data. No "import in progress" flag. Commodity creation (lines 204-235) is check-then-insert with no unique on `(namespace, mnemonic)`.
 
-### C6. No `gnclock` interlock with GnuCash desktop
+### C6. No `gnclock` interlock with GnuCash desktop — RESOLVED AS OUT OF SCOPE (2026-07-29: desktop never opens this DB; interop is export-only)
 `prisma/schema.prisma:396-402` (`@@ignore`d; zero references in `src/`)
 - The app never reads nor writes `gnclock`. Desktop holding the book in RAM will overwrite web-app writes on save (and vice versa), with **no warning in either direction**. For the stated goal ("fix the GnuCash multi-user complaint"), this is table stakes.
 
@@ -118,8 +118,9 @@ This document consolidates four parallel audits: API write paths, complex multi-
 14. Replace `book-scope.ts` / `period-lock.service.ts` module-global caches with per-request `cache()` or Redis.
 15. Set explicit pool `max`; shorten interactive-transaction timeouts; move import/lot-assign fully onto the job queue.
 
-### Phase 6 — GnuCash desktop coexistence
-16. Read `gnclock` at book open and before writes; insert/remove the app's own row; persistent UI banner when desktop holds the lock.
+### ~~Phase 6 — GnuCash desktop coexistence~~ (OUT OF SCOPE — decided 2026-07-29)
+16. ~~Read `gnclock` at book open and before writes; insert/remove the app's own row; persistent UI banner when desktop holds the lock.~~
+    **Dropped.** This database is not opened by GnuCash desktop; desktop interop happens via export only. If live desktop coexistence is ever wanted, it will be designed as its own mechanism — do not resurrect the `gnclock` item as part of concurrency work.
 
 ### Cleanup
 17. Delete dead `src/lib/services/transaction.service.ts`; fail closed on missing `SESSION_SECRET`; enforce book permissions in `book-scope.ts` fallback; update `docs/security-rbac-research.md` status; user-scope localStorage prefs.

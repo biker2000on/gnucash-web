@@ -601,7 +601,7 @@ export default function HomeMaintenancePage() {
                                     />
                                 </div>
                                 <div>
-                                    <label className={labelClass}>GnuCash txn GUID (optional)</label>
+                                    <label className={labelClass}>Ledger txn GUID (optional)</label>
                                     <input
                                         type="text"
                                         value={doneForm.txnGuid}
@@ -918,7 +918,7 @@ export default function HomeMaintenancePage() {
                                         />
                                     </div>
                                     <div>
-                                        <label className={labelClass}>GnuCash txn GUID</label>
+                                        <label className={labelClass}>Ledger txn GUID</label>
                                         <input
                                             type="text"
                                             value={logForm.txnGuid}

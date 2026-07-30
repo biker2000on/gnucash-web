@@ -178,7 +178,7 @@ export default function AccountsPage() {
         <div className="bg-background-secondary rounded-lg p-8 border border-border text-center">
           <p className="text-foreground-secondary text-lg mb-2">No investment accounts found</p>
           <p className="text-foreground-muted">
-            Investment accounts will appear here once you have them in GnuCash.
+            Investment accounts will appear here once they exist in your book.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
-# Folio for GnuCash
+# Folio
 
-A self-hosted, GnuCash-compatible personal finance platform. Read and write access to your GnuCash PostgreSQL database from any device. Built with Next.js 16, React 19, and TypeScript.
+A self-hosted personal and small-business finance platform with full double-entry accounting, served from your own PostgreSQL database. Compatible with GnuCash desktop for import and export. Built with Next.js 16, React 19, and TypeScript.
 
 ## Features
 
@@ -12,16 +12,16 @@ A self-hosted, GnuCash-compatible personal finance platform. Read and write acce
 
 **Scheduled Transactions**
 - View all scheduled transactions with recurrence display and upcoming occurrences
-- Execute or skip individual occurrences, creating real GnuCash transactions from templates
+- Execute or skip individual occurrences, creating real transactions from templates
 - "Since Last Run" batch mode to process all overdue occurrences at once
-- Enable/disable toggle and create new scheduled transactions with full GnuCash template compatibility
+- Enable/disable toggle and create new scheduled transactions with full template support
 - Edit schedules or create one from an existing ledger transaction through a previewed, auditable command
 - Mortgage-linked transactions compute dynamic principal/interest splits
 
 **Investment Management**
 - Investment portfolio with market value, cost basis, and gain/loss
 - Lot-level tracking with realized/unrealized gains, holding periods, and tax-loss harvesting
-- Auto-lot assignment (FIFO/LIFO/average) with GnuCash-compatible lot scrub engine
+- Auto-lot assignment (FIFO/LIFO/average) with an automatic lot scrub engine
 - Cost basis tracing across account transfers
 
 **Reports & Analysis**
@@ -71,7 +71,7 @@ route-aware Help links inside the application. The interactive OpenAPI reference
 ### Prerequisites
 
 - [Node.js 20+](https://nodejs.org/) (Project uses Volta for version pinning)
-- A PostgreSQL database with a [GnuCash schema](https://www.gnucash.org/docs/v5/mobile-man/gnc-database-architecture.html).
+- A PostgreSQL database using the [GnuCash-compatible core schema](https://www.gnucash.org/docs/v5/mobile-man/gnc-database-architecture.html) (an existing GnuCash PostgreSQL database works as-is).
 
 ### Environment Variables
 
@@ -118,8 +118,8 @@ Includes PostgreSQL, Redis, app, worker, and Watchtower for auto-updates.
 ### Standalone
 
 ```bash
-docker build -t gnucash-web .
-docker run -p 3000:3000 -e DATABASE_URL="your_db_url" gnucash-web
+docker build -t folio .
+docker run -p 3000:3000 -e DATABASE_URL="your_db_url" folio
 ```
 
 ## 🛠️ Tech Stack
@@ -134,4 +134,4 @@ docker run -p 3000:3000 -e DATABASE_URL="your_db_url" gnucash-web
 
 ## 📄 License
 
-This project is open-source and intended for personal use with GnuCash data.
+This project is open-source and intended for personal use. GnuCash import/export compatibility is maintained; not affiliated with the GnuCash project.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { publishDataChange } from '@/lib/data-events';
 
 const VALID_TRANSACTION_TYPES = [
   'buy', 'sell', 'dividend', 'stock_split',
@@ -69,6 +70,7 @@ export async function PUT(
       DO UPDATE SET transaction_type = ${transaction_type}
     `;
 
+    void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'update' });
     return NextResponse.json({ split_guid, transaction_type });
   } catch (error) {
     console.error('Error setting transaction type:', error);
@@ -99,6 +101,7 @@ export async function DELETE(
       WHERE split_guid = ${splitGuid}
     `;
 
+    void publishDataChange(roleResult.bookGuid, 'transactions', { action: 'update' });
     return NextResponse.json({ deleted: true, split_guid: splitGuid });
   } catch (error) {
     console.error('Error deleting transaction type:', error);

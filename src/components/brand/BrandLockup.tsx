@@ -27,7 +27,7 @@ export function BrandLockup({ size, compact = false }: BrandLockupProps): JSX.El
         }}
       >
         <span style={{ fontWeight: 700 }}>{product.name}</span>
-        {!compact && (
+        {!compact && product.descriptor && (
           <span style={{ color: 'var(--foreground-secondary)', fontSize: '0.75em' }}>
             {product.descriptor}
           </span>

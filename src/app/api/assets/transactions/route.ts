@@ -13,11 +13,13 @@ import {
   processDepreciationSchedule,
 } from '@/lib/asset-transaction-service';
 import { requireRole } from '@/lib/auth';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 export async function POST(request: NextRequest) {
   try {
     const roleResult = await requireRole('edit');
     if (roleResult instanceof NextResponse) return roleResult;
+    const { bookGuid } = roleResult;
 
     const action = request.nextUrl.searchParams.get('action');
     const body = await request.json();
@@ -37,6 +39,7 @@ export async function POST(request: NextRequest) {
         date,
         description,
       });
+      afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
       return NextResponse.json(result);
     }
 
@@ -52,6 +55,7 @@ export async function POST(request: NextRequest) {
         Number(scheduleId),
         upToDate ? new Date(upToDate) : undefined
       );
+      afterLedgerWrite(bookGuid, 'transactions', { action: 'bulk' });
       return NextResponse.json(result);
     }
 
@@ -81,6 +85,7 @@ export async function POST(request: NextRequest) {
       memo,
     });
 
+    afterLedgerWrite(bookGuid, 'transactions', { action: 'create' });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Internal server error';

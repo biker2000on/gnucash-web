@@ -606,8 +606,12 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
   }
 
   // Period lock: 'added' lines create transactions dated at the line date,
-  // so none of them may fall in a closed period.
-  await assertNotLocked(batch.book_guid, addedLines.map((l) => l.line_date));
+  // so none of them may fall in a closed period. Authoritative in-transaction
+  // check: bypass the TTL cache and query on THIS transaction's connection.
+  await assertNotLocked(batch.book_guid, addedLines.map((l) => l.line_date), {
+    bypassCache: true,
+    client: tx,
+  });
 
   // Effective matches = explicitly-confirmed matches PLUS the engine's
   // auto-matches. The reconcile view shows auto-matches and its tie-out counts
@@ -637,6 +641,23 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
     ...explicitMatched.map((l) => l.matched_split_guid as string),
     ...autoMatches.map((m) => m.splitGuid),
   ];
+
+  // Canonical lock order (transaction rows first, sorted, then splits): lock
+  // the parents of every pre-existing split we are about to reconcile BEFORE
+  // the tie-out reads them, and bump enter_date so a stale editor holding one
+  // of these transactions open gets a 409 instead of silently reverting the
+  // reconcile flags on save.
+  if (matchedSplitGuids.length > 0) {
+    await tx.$executeRaw`
+      SELECT t.guid FROM transactions t
+      WHERE t.guid IN (
+        SELECT DISTINCT s.tx_guid FROM splits s
+        WHERE s.guid = ANY(${matchedSplitGuids})
+      )
+      ORDER BY t.guid
+      FOR UPDATE
+    `;
+  }
   let matchedSplitsAmount = 0;
   if (matchedSplitGuids.length > 0) {
     const splits = await tx.splits.findMany({
@@ -758,6 +779,19 @@ export async function finalizeReconcile(batch: StatementBatchRow): Promise<Final
         where: { guid: { in: statementSplitGuids } },
         data: { reconcile_state: 'y', reconcile_date: reconcileDate },
       });
+    }
+
+    // Bump the optimistic-concurrency token on the pre-existing transactions
+    // whose splits were just reconciled (their rows are already locked above;
+    // the 'added' transactions were created this instant and need no bump).
+    if (matchedSplitGuids.length > 0) {
+      await tx.$executeRaw`
+        UPDATE transactions SET enter_date = NOW()
+        WHERE guid IN (
+          SELECT DISTINCT s.tx_guid FROM splits s
+          WHERE s.guid = ANY(${matchedSplitGuids})
+        )
+      `;
     }
 
     // Batch status was already flipped to 'reconciled' by the opening claim;

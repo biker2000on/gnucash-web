@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { addTemplateAccounts } from '@/lib/default-book';
 import { getFarmAccountTemplate } from '@/lib/book-templates';
 import { invalidateBookAccountGuidsCache } from '@/lib/book-scope';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /** Add the Schedule F chart to the active book without changing existing rows. */
 export async function POST() {
@@ -15,6 +16,7 @@ export async function POST() {
       getFarmAccountTemplate(),
     );
     invalidateBookAccountGuidsCache();
+    afterLedgerWrite(roleResult.bookGuid, 'accounts', { action: 'create' });
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to add farm accounts';

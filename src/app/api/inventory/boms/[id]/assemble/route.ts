@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { assembleBom } from '@/lib/inventory-engine';
 import { mapInventoryError } from '@/lib/inventory-api-errors';
+import { afterLedgerWrite } from '@/lib/data-events';
 
 /**
  * POST /api/inventory/boms/[id]/assemble — build batches of a BOM.
@@ -44,6 +45,7 @@ export async function POST(
       reference: body.reference,
       post: body.post,
     });
+    afterLedgerWrite(roleResult.bookGuid, 'transactions', { action: 'create' });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return mapInventoryError(error);

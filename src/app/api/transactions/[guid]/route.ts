@@ -244,7 +244,7 @@ export async function PUT(
             await assertNotLocked(
                 roleResult.bookGuid,
                 [lockedTx.post_date, body.post_date],
-                { bypassCache: true },
+                { bypassCache: true, client: tx },
             );
 
             // Full before-image for the audit trail (undo-capable). The row is
@@ -415,9 +415,10 @@ export async function DELETE(
 
         const { guid } = await params;
 
-        // Optional optimistic-lock token: query param first, then JSON body.
-        // When present the delete only proceeds if the row's enter_date still
-        // matches what the client loaded.
+        // MANDATORY optimistic-lock token (same contract as PUT): query param
+        // first, then JSON body. Deleting blind is the same lost-update as
+        // overwriting blind — a script deleting what another user just
+        // corrected must 409, not silently destroy the correction.
         const { searchParams } = new URL(request.url);
         let rawToken: unknown = searchParams.get('original_enter_date');
         if (rawToken === null) {
@@ -431,14 +432,18 @@ export async function DELETE(
             // Query-param encoding of an explicit null token
             rawToken = null;
         }
-        let enterDateToken: { ok: true; value: Date | null } | { ok: false } | null = null;
-        if (rawToken !== undefined) {
-            enterDateToken = parseEnterDateToken(rawToken);
-            if (!enterDateToken.ok) {
-                return NextResponse.json({
-                    error: 'original_enter_date must be an ISO date string or null',
-                }, { status: 400 });
-            }
+        if (rawToken === undefined) {
+            return NextResponse.json({
+                error: 'original_enter_date is required: send the enter_date value you loaded '
+                    + '(query param or JSON body) so a concurrent edit is detected instead of destroyed.',
+                code: 'original_enter_date_required',
+            }, { status: 428 });
+        }
+        const enterDateToken = parseEnterDateToken(rawToken);
+        if (!enterDateToken.ok) {
+            return NextResponse.json({
+                error: 'original_enter_date must be an ISO date string or null',
+            }, { status: 400 });
         }
 
         // Everything — row lock + version check, period-lock check, snapshot,
@@ -458,14 +463,13 @@ export async function DELETE(
             }
             const lockedTx = lockedRows[0];
 
-            if (enterDateToken && enterDateToken.ok
-                && !enterDateMatches(lockedTx.enter_date, enterDateToken.value)) {
+            if (!enterDateMatches(lockedTx.enter_date, enterDateToken.value)) {
                 throw new TransactionConflictError();
             }
 
             // Period lock (authoritative, in-transaction, cache bypassed):
             // transactions dated in a closed period cannot be deleted.
-            await assertNotLocked(roleResult.bookGuid, [lockedTx.post_date], { bypassCache: true });
+            await assertNotLocked(roleResult.bookGuid, [lockedTx.post_date], { bypassCache: true, client: tx });
 
             // Full before-image for the audit trail (restore-capable). Row is
             // locked and our deletes have not run yet, so this is consistent.

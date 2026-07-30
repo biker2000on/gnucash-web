@@ -25,7 +25,7 @@ function AccountsContent() {
             <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold text-foreground">Accounts</h1>
-                    <p className="text-foreground-muted">Explore your GnuCash account structure.</p>
+                    <p className="text-foreground-muted">Explore your account structure.</p>
                 </div>
                 <DateRangePicker
                     startDate={startDate}
@@ -58,7 +58,7 @@ export default function AccountsPage() {
             <div className="space-y-6">
                 <header>
                     <h1 className="text-3xl font-bold text-foreground">Accounts</h1>
-                    <p className="text-foreground-muted">Explore your GnuCash account structure.</p>
+                    <p className="text-foreground-muted">Explore your account structure.</p>
                 </header>
                 <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-12 shadow-2xl flex items-center justify-center">
                     <div className="flex items-center gap-3">

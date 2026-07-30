@@ -128,7 +128,7 @@ export async function POST(request: Request) {
             await assertNotLocked(
                 roleResult.bookGuid,
                 freshSplits.map(s => s.transaction?.post_date),
-                { bypassCache: true },
+                { bypassCache: true, client: tx },
             );
 
             // Canonical lock order (same as the transaction PUT/DELETE

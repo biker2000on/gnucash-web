@@ -837,7 +837,7 @@ export default function ScheduledTransactionsPage() {
           filteredTransactions.length === 0 ? (
             <div className="p-12 text-center text-foreground-muted">
               {transactions.length === 0
-                ? 'No scheduled transactions found. These are created in GnuCash desktop.'
+                ? 'No scheduled transactions found. Create one with New schedule.'
                 : 'No scheduled transactions match your filters.'}
             </div>
           ) : (
