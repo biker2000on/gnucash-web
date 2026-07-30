@@ -1,13 +1,13 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Account, CreateTransactionRequest } from '@/lib/types';
+import { CreateTransactionRequest } from '@/lib/types';
 import { toNumDenom } from '@/lib/validation';
 import { useAccounts } from '@/lib/hooks/useAccounts';
 import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
-import { formatAccountPath } from '@/lib/account-utils';
+import { AccountSelector } from '@/components/ui/AccountSelector';
 
 export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -292,22 +292,6 @@ export function InvestmentTransactionForm({
     // Fetch all accounts for selectors
     const { data: accounts = [], isLoading: loadingAccounts } = useAccounts({ flat: true });
 
-    // Filter accounts by type for selectors
-    const cashAccounts = useMemo(() =>
-        accounts.filter(a => ['BANK', 'ASSET', 'CASH'].includes(a.account_type)),
-        [accounts]
-    );
-
-    const incomeAccounts = useMemo(() =>
-        accounts.filter(a => a.account_type === 'INCOME'),
-        [accounts]
-    );
-
-    const expenseAccounts = useMemo(() =>
-        accounts.filter(a => a.account_type === 'EXPENSE'),
-        [accounts]
-    );
-
     // Fetch USD currency GUID
     useEffect(() => {
         fetch('/api/commodities?type=CURRENCY')
@@ -437,12 +421,13 @@ export function InvestmentTransactionForm({
     const handleAccountSelect = (
         field: 'cashAccountGuid' | 'incomeAccountGuid' | 'expenseAccountGuid',
         nameField: 'cashAccountName' | 'incomeAccountName' | 'expenseAccountName',
-        account: Account
+        accountGuid: string,
+        accountName: string,
     ) => {
         setForm(prev => ({
             ...prev,
-            [field]: account.guid,
-            [nameField]: account.fullname || account.name,
+            [field]: accountGuid,
+            [nameField]: accountName,
         }));
     };
 
@@ -597,36 +582,6 @@ export function InvestmentTransactionForm({
             setSaving(false);
         }
     };
-
-    const renderAccountSelector = (
-        label: string,
-        accounts: Account[],
-        selectedGuid: string,
-        selectedName: string,
-        onSelect: (account: Account) => void,
-        placeholder: string
-    ) => (
-        <div>
-            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
-                {label}
-            </label>
-            <select
-                value={selectedGuid}
-                onChange={(e) => {
-                    const account = accounts.find(a => a.guid === e.target.value);
-                    if (account) onSelect(account);
-                }}
-                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
-            >
-                <option value="">{placeholder}</option>
-                {accounts.map(account => (
-                    <option key={account.guid} value={account.guid}>
-                        {formatAccountPath(account.fullname, account.name)}
-                    </option>
-                ))}
-            </select>
-        </div>
-    );
 
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -812,24 +767,30 @@ export function InvestmentTransactionForm({
                                 className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
                             />
                         </div>
-                        {renderAccountSelector(
-                            'Expense Account (for fees)',
-                            expenseAccounts,
-                            form.expenseAccountGuid,
-                            form.expenseAccountName,
-                            (a) => handleAccountSelect('expenseAccountGuid', 'expenseAccountName', a),
-                            'Select expense account...'
-                        )}
+                        <div>
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                Expense Account (for fees)
+                            </label>
+                            <AccountSelector
+                                value={form.expenseAccountGuid}
+                                onChange={(guid, name) => handleAccountSelect('expenseAccountGuid', 'expenseAccountName', guid, name)}
+                                placeholder="Select expense account..."
+                                accountTypes={['EXPENSE']}
+                            />
+                        </div>
                     </div>
 
-                    {renderAccountSelector(
-                        'Cash Account',
-                        cashAccounts,
-                        form.cashAccountGuid,
-                        form.cashAccountName,
-                        (a) => handleAccountSelect('cashAccountGuid', 'cashAccountName', a),
-                        'Select cash/bank account...'
-                    )}
+                    <div>
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                            Cash Account
+                        </label>
+                        <AccountSelector
+                            value={form.cashAccountGuid}
+                            onChange={(guid, name) => handleAccountSelect('cashAccountGuid', 'cashAccountName', guid, name)}
+                            placeholder="Select cash/bank account..."
+                            accountTypes={['BANK', 'ASSET', 'CASH']}
+                        />
+                    </div>
                 </>
             )}
 
@@ -852,22 +813,28 @@ export function InvestmentTransactionForm({
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
-                        {renderAccountSelector(
-                            'Cash Account',
-                            cashAccounts,
-                            form.cashAccountGuid,
-                            form.cashAccountName,
-                            (a) => handleAccountSelect('cashAccountGuid', 'cashAccountName', a),
-                            'Select cash/bank account...'
-                        )}
-                        {renderAccountSelector(
-                            'Income Account',
-                            incomeAccounts,
-                            form.incomeAccountGuid,
-                            form.incomeAccountName,
-                            (a) => handleAccountSelect('incomeAccountGuid', 'incomeAccountName', a),
-                            'Select income account...'
-                        )}
+                        <div>
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                Cash Account
+                            </label>
+                            <AccountSelector
+                                value={form.cashAccountGuid}
+                                onChange={(guid, name) => handleAccountSelect('cashAccountGuid', 'cashAccountName', guid, name)}
+                                placeholder="Select cash/bank account..."
+                                accountTypes={['BANK', 'ASSET', 'CASH']}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                                Income Account
+                            </label>
+                            <AccountSelector
+                                value={form.incomeAccountGuid}
+                                onChange={(guid, name) => handleAccountSelect('incomeAccountGuid', 'incomeAccountName', guid, name)}
+                                placeholder="Select income account..."
+                                accountTypes={['INCOME']}
+                            />
+                        </div>
                     </div>
                 </>
             )}
@@ -890,14 +857,17 @@ export function InvestmentTransactionForm({
                         />
                     </div>
 
-                    {renderAccountSelector(
-                        'Cash Account',
-                        cashAccounts,
-                        form.cashAccountGuid,
-                        form.cashAccountName,
-                        (a) => handleAccountSelect('cashAccountGuid', 'cashAccountName', a),
-                        'Select cash/bank account...'
-                    )}
+                    <div>
+                        <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
+                            Cash Account
+                        </label>
+                        <AccountSelector
+                            value={form.cashAccountGuid}
+                            onChange={(guid, name) => handleAccountSelect('cashAccountGuid', 'cashAccountName', guid, name)}
+                            placeholder="Select cash/bank account..."
+                            accountTypes={['BANK', 'ASSET', 'CASH']}
+                        />
+                    </div>
                 </>
             )}
 
