@@ -336,49 +336,16 @@ function buildBusinessNavItem(features: ResolvedBookFeatures | null): NavItem {
     };
 }
 
+// Group children come straight from the registry (already ordered by
+// frequency of use there) — no hardcoded duplicates.
 const navItems: NavItem[] = [
-    {
-        name: 'Dashboard',
-        href: '/dashboard',
-        icon: 'LayoutDashboard',
-        children: [
-            { name: 'Overview', href: '/dashboard' },
-            { name: 'Action Center', href: '/actions' },
-            { name: 'Family Office', href: '/family-office' },
-            { name: 'Ask Your Books', href: '/tools/ask' },
-            { name: 'Feature Catalog', href: '/catalog' },
-        ],
-    },
+    { name: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard', children: registryNavChildren('home') },
     { name: 'Quick Add', href: '/quick-add', icon: 'PlusCircle', mobileOnly: true },
-    {
-        name: 'Money',
-        href: '/money',
-        icon: 'BookOpen',
-        children: [
-            { name: 'Money Timeline', href: '/money/timeline' },
-            ...registryNavChildren('money'),
-        ],
-    },
-    {
-        name: 'Budgets & Goals',
-        href: '/budgets',
-        icon: 'PiggyBank',
-        children: [
-            ...registryNavChildren('budgets'),
-            { name: 'Budget Income Statement', href: '/reports/budget_income_statement' },
-        ],
-    },
+    { name: 'Money', href: '/money', icon: 'BookOpen', children: registryNavChildren('money') },
+    { name: 'Budgets & Goals', href: '/budgets', icon: 'PiggyBank', children: registryNavChildren('budgets') },
     { name: 'Investments', href: '/investments', icon: 'TrendingUp', children: registryNavChildren('investments') },
     { name: 'Taxes', href: '/taxes', icon: 'Percent', children: registryNavChildren('taxes') },
-    {
-        name: 'Planning',
-        href: '/planning',
-        icon: 'Wrench',
-        children: [
-            { name: 'Living Plan', href: '/planning/plan' },
-            ...registryNavChildren('planning'),
-        ],
-    },
+    { name: 'Planning', href: '/planning', icon: 'Wrench', children: registryNavChildren('planning') },
     { name: 'Reports', href: '/reports', icon: 'BarChart3' },
     { name: 'Settings', href: '/settings', icon: 'Settings', children: registryNavChildren('settings') },
 ];
