@@ -30,6 +30,7 @@ export async function POST(
         }
 
         const amounts = await BudgetService.setAllPeriods(
+            roleResult.bookGuid,
             guid,
             account_guid,
             hasArray ? (amountsArray as number[]) : (amount as number)
@@ -39,9 +40,7 @@ export async function POST(
         return NextResponse.json({ success: true, amounts });
     } catch (error) {
         console.error('Error setting all periods:', error);
-        return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'Failed to set all periods' },
-            { status: 500 }
-        );
+        const message = error instanceof Error ? error.message : 'Failed to set all periods';
+        return NextResponse.json({ error: message }, { status: message.includes('not found') ? 404 : 500 });
     }
 }

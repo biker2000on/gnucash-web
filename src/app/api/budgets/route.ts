@@ -18,7 +18,7 @@ export async function GET() {
         const roleResult = await requireRole('readonly');
         if (roleResult instanceof NextResponse) return roleResult;
 
-        const budgets = await BudgetService.list();
+        const budgets = await BudgetService.list(roleResult.bookGuid);
         return NextResponse.json(budgets);
     } catch (error) {
         console.error('Error fetching budgets:', error);
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const budget = await BudgetService.create(parseResult.data);
+        const budget = await BudgetService.create(roleResult.bookGuid, parseResult.data);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'budgets', { guid: budget.guid, action: 'create' });
         return NextResponse.json(budget, { status: 201 });

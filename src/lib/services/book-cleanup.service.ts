@@ -74,6 +74,13 @@ export const EXCLUDED_BOOK_GUID_MODELS: Record<string, string> = {
     // design so admins can still see who deleted what; their book_guid
     // simply points at a book that no longer exists.
     gnucash_web_audit: 'audit history is retained intentionally after book deletion',
+
+    // This row must outlive generic extension cleanup: the book DELETE route
+    // uses it to find the native budgets, removes restrictive recurrence rows,
+    // then deletes the budgets. Ownership is removed by the budget FK cascade.
+    // Deleting it here first would orphan the native budgets permanently.
+    gnucash_web_budget_ownership:
+        'deleteOwnedBudgetsForBook deletes native budgets recurrence-first; ownership then cascades',
 };
 
 /**

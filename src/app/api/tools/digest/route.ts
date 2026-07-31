@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getActiveBookRootGuid } from '@/lib/book-scope';
 import { generateDigest, normalizeMonth, digestToSummaryText } from '@/lib/digest';
 import { createNotification, ensureNotificationsTable } from '@/lib/notifications';
 import prisma from '@/lib/prisma';
@@ -30,8 +29,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const rootGuid = await getActiveBookRootGuid();
-        const digest = await generateDigest(rootGuid, { month, aiUserId: user.id });
+        const digest = await generateDigest(bookGuid, { month, aiUserId: user.id });
 
         return NextResponse.json({ ...digest, bookGuid });
     } catch (error) {
@@ -69,8 +67,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const rootGuid = await getActiveBookRootGuid();
-        const digest = await generateDigest(rootGuid, { month, aiUserId: user.id });
+        const digest = await generateDigest(bookGuid, { month, aiUserId: user.id });
 
         // Dedupe: skip if this month's digest was already delivered to the user.
         await ensureNotificationsTable();

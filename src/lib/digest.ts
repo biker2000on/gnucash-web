@@ -17,7 +17,8 @@
 import prisma from '@/lib/prisma';
 import { pickCurrentBudget } from '@/lib/budget-select';
 import { getBaseCurrency } from '@/lib/currency';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { BudgetService } from '@/lib/services/budget.service';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
 import { detectRecurringCharges, type RecurringSeries, type Cadence } from '@/lib/recurring-detection';
 import { loadForecastData } from '@/lib/forecast-data';
@@ -529,12 +530,22 @@ function categorize(
  * assumed). Returns null when no budget exists.
  */
 async function loadBudgetSection(
+    bookGuid: string,
+    bookAccountGuids: Set<string>,
     bounds: MonthBounds,
     actualByAccount: Map<string, number>
 ): Promise<DigestBudget | null> {
     // Pick the budget covering the digest month (falling back to the most
     // recently ended) — never alphabetical-first, which pinned old budgets.
-    const candidates = await prisma.budgets.findMany({ include: { recurrences: true } });
+    const candidates = await BudgetService.list(bookGuid) as Array<{
+        guid: string;
+        num_periods: number;
+        recurrences?: Array<{
+            recurrence_period_start: Date;
+            recurrence_period_type: string;
+            recurrence_mult: number;
+        }>;
+    }>;
     const monthDate = new Date(Date.UTC(bounds.year, bounds.monthNumber - 1, 15));
     const picked = pickCurrentBudget(candidates, monthDate);
     if (!picked) return null;
@@ -544,6 +555,7 @@ async function loadBudgetSection(
         include: {
             recurrences: true,
             amounts: {
+                where: { account_guid: { in: [...bookAccountGuids] } },
                 include: { account: { select: { name: true, account_type: true } } },
             },
         },
@@ -570,6 +582,7 @@ async function loadBudgetSection(
     if (periodNum !== null) {
         for (const amt of budget.amounts) {
             if (amt.period_num !== periodNum) continue;
+            if (!bookAccountGuids.has(amt.account_guid)) continue;
             // Only report expense-account budget lines with a non-zero budget.
             if (amt.account.account_type !== 'EXPENSE') continue;
             const budgetedValue =
@@ -602,16 +615,14 @@ async function loadBudgetSection(
 /* ------------------------------------------------------------------ */
 
 /**
- * Assemble the full monthly digest for a book. `bookGuid` is accepted for API
- * symmetry and future multi-book use; section queries are scoped to the active
- * book via `getBookAccountGuids()`.
+ * Assemble the full monthly digest for an explicitly authorized book.
  */
 export async function generateDigest(
     bookGuid: string,
     options: GenerateDigestOptions = {}
 ): Promise<MonthlyDigest> {
     const bounds = monthBounds(normalizeMonth(options.month));
-    const bookAccountGuids = await getBookAccountGuids();
+    const bookAccountGuids = await getAccountGuidsForBook(bookGuid);
     const baseCurrency = await getBaseCurrency();
     const currency = baseCurrency?.mnemonic ?? 'USD';
 
@@ -683,7 +694,7 @@ export async function generateDigest(
     // Budget status (best-effort; approximated monthly periods).
     let budget: DigestBudget | null = null;
     try {
-        budget = await loadBudgetSection(bounds, currentIE.expenseByAccount);
+        budget = await loadBudgetSection(bookGuid, new Set(bookAccountGuids), bounds, currentIE.expenseByAccount);
     } catch (error) {
         console.error('Digest: budget section failed:', error);
     }

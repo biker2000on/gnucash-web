@@ -4,6 +4,8 @@ import { importGnuCashData, BookAlreadyExistsError } from '@/lib/gnucash-xml/imp
 import type { ImportProgress } from '@/lib/gnucash-xml/importer';
 import { requireRole } from '@/lib/auth';
 import { grantRole } from '@/lib/services/permission.service';
+import prisma from '@/lib/prisma';
+import { hasTargetBookRole } from '@/lib/target-book-auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 
@@ -80,11 +82,44 @@ export async function POST(request: NextRequest) {
 
     const overwrite = formData.get('overwrite') === 'true';
     const stream = formData.get('stream') === 'true';
+    const targetBookGuid = data.book?.id;
+    const existingTargetBook = targetBookGuid
+      ? await prisma.books.findUnique({
+          where: { guid: targetBookGuid },
+          select: { guid: true },
+        })
+      : null;
+
+    // Existing XML targets require a pre-existing admin grant on that exact
+    // book. Token authorization is additionally pinned to the token's book.
+    if (
+      targetBookGuid
+      && existingTargetBook
+      && !await hasTargetBookRole(roleResult, targetBookGuid, 'admin')
+    ) {
+      return NextResponse.json(
+        { error: 'Requires admin role for the target book' },
+        { status: 403 },
+      );
+    }
+    if (roleResult.viaToken && targetBookGuid !== roleResult.bookGuid) {
+      return NextResponse.json(
+        { error: 'API token is not authorized for the target book' },
+        { status: 403 },
+      );
+    }
+
+    // Close the authorization/create race: a target that looked new must not
+    // become an overwrite if another request creates it before import starts.
+    const authorizedOverwrite = overwrite && Boolean(existingTargetBook);
+    const shouldGrantImportedBook = !existingTargetBook;
 
     // ── Non-streaming (legacy) path ─────────────────────────────
     if (!stream) {
-      const summary = await importGnuCashData(data, bookName, { overwrite });
-      if (summary.bookGuid) {
+      const summary = await importGnuCashData(data, bookName, {
+        overwrite: authorizedOverwrite,
+      });
+      if (summary.bookGuid && shouldGrantImportedBook) {
         await grantRole(roleResult.user.id, summary.bookGuid, 'admin', roleResult.user.id);
       }
       await invalidateImportCaches(summary.bookGuid);
@@ -110,11 +145,11 @@ export async function POST(request: NextRequest) {
         try {
           send('progress', { phase: 'Parsing XML', progress: 0 });
           const summary = await importGnuCashData(data, bookName, {
-            overwrite,
+            overwrite: authorizedOverwrite,
             onProgress,
           });
 
-          if (summary.bookGuid) {
+          if (summary.bookGuid && shouldGrantImportedBook) {
             await grantRole(userId, summary.bookGuid, 'admin', userId);
           }
 

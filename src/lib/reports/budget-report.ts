@@ -208,10 +208,11 @@ export function buildBudgetReportSections(groups: BudgetReportGroup[]): ReportSe
  * budget does not exist.
  */
 export async function generateBudgetReport(
+    bookGuid: string,
     budgetGuid: string,
     filters: ReportFilters,
 ): Promise<BudgetReportData | null> {
-    const actuals = await loadBudgetActuals(budgetGuid);
+    const actuals = await loadBudgetActuals(bookGuid, budgetGuid);
     if (!actuals) return null;
 
     const periodNums = selectPeriodNums(actuals.periods, filters.startDate, filters.endDate);

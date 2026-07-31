@@ -496,10 +496,13 @@ async function bookAccountGuidsForBook(bookGuid: string): Promise<string[]> {
 async function generateBudgetReportData(
     config: Record<string, unknown>,
     filters: ReportFilters,
+    bookGuid: string,
 ): Promise<ReportData> {
+    const bookAccountGuids = filters.bookAccountGuids ?? [];
     const include = {
         recurrences: true,
         amounts: {
+            where: { account_guid: { in: bookAccountGuids } },
             include: {
                 account: { select: { name: true, account_type: true } },
             },
@@ -507,12 +510,25 @@ async function generateBudgetReportData(
     } as const;
 
     const budgetGuid = typeof config.budgetGuid === 'string' ? config.budgetGuid : null;
+    const ownershipRows = await prisma.gnucash_web_budget_ownership.findMany({
+        where: { book_guid: bookGuid },
+        select: { budget_guid: true },
+    });
+    const ownedBudgetGuids = ownershipRows.map(row => row.budget_guid);
+    const ownedBudgetGuidsSet = new Set(ownedBudgetGuids);
     let budget;
     if (budgetGuid) {
-        budget = await prisma.budgets.findUnique({ where: { guid: budgetGuid }, include });
+        budget = ownedBudgetGuidsSet.has(budgetGuid)
+            ? await prisma.budgets.findUnique({ where: { guid: budgetGuid }, include })
+            : null;
     } else {
         // Default to the budget covering today (not alphabetical-first)
-        const candidates = await prisma.budgets.findMany({ include: { recurrences: true } });
+        const candidates = ownedBudgetGuids.length > 0
+            ? await prisma.budgets.findMany({
+                where: { guid: { in: ownedBudgetGuids } },
+                include: { recurrences: true },
+            })
+            : [];
         const picked = pickCurrentBudget(candidates);
         budget = picked
             ? await prisma.budgets.findUnique({ where: { guid: picked.guid }, include })
@@ -520,7 +536,7 @@ async function generateBudgetReportData(
     }
     if (!budget) throw new Error('No budget found for budget report schedule');
 
-    const bookGuids = new Set(filters.bookAccountGuids ?? []);
+    const bookGuids = new Set(bookAccountGuids);
     const rec = budget.recurrences?.[0] ?? null;
     const recurrence: BudgetRecurrence = rec
         ? {
@@ -663,6 +679,7 @@ export async function generateScheduledReport(
     baseReportType: string,
     config: Record<string, unknown>,
     filters: ReportFilters,
+    bookGuid: string,
 ): Promise<GeneratedScheduledReport> {
     switch (baseReportType) {
         case 'balance_sheet':
@@ -672,7 +689,7 @@ export async function generateScheduledReport(
         case 'cash_flow':
             return { kind: 'sections', data: await generateCashFlow(filters) };
         case 'budget_report':
-            return { kind: 'sections', data: await generateBudgetReportData(config, filters) };
+            return { kind: 'sections', data: await generateBudgetReportData(config, filters, bookGuid) };
         case 'trial_balance':
             return { kind: 'trial_balance', data: await generateTrialBalance(filters) };
         case 'net_worth_chart':
@@ -966,7 +983,7 @@ export async function runReportSchedule(
         bookAccountGuids,
     };
 
-    const generated = await generateScheduledReport(baseReportType, config, filters);
+    const generated = await generateScheduledReport(baseReportType, config, filters, schedule.bookGuid);
     const email = renderScheduleEmail({
         reportName,
         cadence: schedule.cadence,

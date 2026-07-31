@@ -48,7 +48,7 @@ export async function GET(
         const asOfParam = searchParams.get('asOf');
         const asOf = asOfParam && /^\d{4}-\d{2}-\d{2}$/.test(asOfParam) ? asOfParam : undefined;
 
-        const view = await getEnvelopeView(guid, { asOf });
+        const view = await getEnvelopeView(roleResult.bookGuid, guid, { asOf });
         if (!view) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }
@@ -145,11 +145,15 @@ export async function PUT(
             return NextResponse.json({ error: parsed.error }, { status: 400 });
         }
 
-        await upsertEnvelopeConfig(guid, parsed.rows);
-        const config = await getEnvelopeConfig(guid);
+        await upsertEnvelopeConfig(roleResult.bookGuid, guid, parsed.rows);
+        const config = await getEnvelopeConfig(roleResult.bookGuid, guid);
         return NextResponse.json({ config });
     } catch (error) {
         console.error('Error saving envelope config:', error);
-        return NextResponse.json({ error: 'Failed to save envelope config' }, { status: 500 });
+        const message = error instanceof Error ? error.message : 'Failed to save envelope config';
+        return NextResponse.json(
+            { error: message },
+            { status: message.includes('not found') ? 404 : 500 }
+        );
     }
 }

@@ -55,7 +55,7 @@ export async function GET(
         const asOfParam = searchParams.get('asOf');
         const asOf = asOfParam && /^\d{4}-\d{2}-\d{2}$/.test(asOfParam) ? asOfParam : undefined;
 
-        const result = await loadBudgetActuals(guid, { asOf });
+        const result = await loadBudgetActuals(roleResult.bookGuid, guid, { asOf });
         if (!result) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }

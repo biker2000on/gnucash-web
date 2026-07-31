@@ -24,7 +24,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
     const balancesMatch = Math.abs(expectedClosing - closingBalance.total) < 0.01;
 
     return (
-        <div className="p-6 space-y-8">
+        <div className="treasurer-report p-6 space-y-8">
             {/* Report Header */}
             <div className="text-center space-y-1">
                 {header.organization && (

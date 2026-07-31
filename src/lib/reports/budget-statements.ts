@@ -7,6 +7,7 @@ import {
 } from '@/lib/budget-actuals';
 import { toDecimalNumber } from '@/lib/gnucash';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
+import { isBudgetOwnedByBook } from '@/lib/budget-ownership';
 
 /**
  * Budget Statements — Budget Income Statement, Budget Balance Sheet, and
@@ -551,20 +552,6 @@ export function buildBarchartPoints(
 /* DB-bound generators                                                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * A budget "belongs to" the active book when it either has no amounts at all
- * (a legal empty budget) or at least one of its budgeted accounts is inside
- * the book's account tree. Mirrors how loadBudgetActuals scopes accounts.
- */
-async function budgetBelongsToBook(budgetGuid: string, bookAccountGuids: string[]): Promise<boolean> {
-    const totalAmounts = await prisma.budget_amounts.count({ where: { budget_guid: budgetGuid } });
-    if (totalAmounts === 0) return true;
-    const inBook = await prisma.budget_amounts.count({
-        where: { budget_guid: budgetGuid, account_guid: { in: bookAccountGuids } },
-    });
-    return inBook > 0;
-}
-
 interface HierarchyAccount {
     guid: string;
     name: string;
@@ -596,13 +583,12 @@ function ancestorClosure(accounts: HierarchyAccount[], keepGuids: Set<string>): 
  * Returns null when the budget does not exist or belongs to another book.
  */
 export async function generateBudgetIncomeStatement(
+    bookGuid: string,
     bookAccountGuids: string[],
     budgetGuid: string,
     options: BudgetIncomeStatementOptions = {},
 ): Promise<BudgetIncomeStatementData | null> {
-    if (!(await budgetBelongsToBook(budgetGuid, bookAccountGuids))) return null;
-
-    const actuals = await loadBudgetActuals(budgetGuid);
+    const actuals = await loadBudgetActuals(bookGuid, budgetGuid);
     if (!actuals) return null;
 
     const periodNums = selectPeriodIndices(actuals.numPeriods, options.periodStart, options.periodEnd);
@@ -678,6 +664,7 @@ export async function generateBudgetIncomeStatement(
  * not exist or belongs to another book.
  */
 export async function budgetBarchartSeries(
+    bookGuid: string,
     bookAccountGuids: string[],
     budgetGuid: string,
     options: {
@@ -687,9 +674,7 @@ export async function budgetBarchartSeries(
         periodEnd?: number | null;
     } = {},
 ): Promise<BudgetBarchartSeriesData | null> {
-    if (!(await budgetBelongsToBook(budgetGuid, bookAccountGuids))) return null;
-
-    const actuals = await loadBudgetActuals(budgetGuid);
+    const actuals = await loadBudgetActuals(bookGuid, budgetGuid);
     if (!actuals) return null;
 
     const scope = options.scope ?? 'expense';
@@ -761,17 +746,23 @@ export async function budgetBarchartSeries(
  * null when the budget does not exist or belongs to another book.
  */
 export async function generateBudgetBalanceSheet(
+    bookGuid: string,
     bookAccountGuids: string[],
     budgetGuid: string,
     periodIndex: number,
 ): Promise<BudgetBalanceSheetData | null> {
-    if (!(await budgetBelongsToBook(budgetGuid, bookAccountGuids))) return null;
+    // Ownership is the access boundary; the account set below remains a
+    // defense-in-depth filter for every ledger and budget-amount query.
+    if (!await isBudgetOwnedByBook(prisma, budgetGuid, bookGuid)) return null;
 
     const budget = await prisma.budgets.findUnique({
         where: { guid: budgetGuid },
         include: {
             recurrences: true,
-            amounts: { include: { account: { select: { account_type: true } } } },
+            amounts: {
+                where: { account_guid: { in: bookAccountGuids } },
+                include: { account: { select: { account_type: true } } },
+            },
         },
     });
     if (!budget || budget.num_periods <= 0) return null;

@@ -256,12 +256,19 @@ function mapRule(row: RuleRow): FundingRule {
 /* CRUD                                                                 */
 /* ------------------------------------------------------------------ */
 
-async function accountNames(guids: string[]): Promise<Map<string, string>> {
-    if (guids.length === 0) return new Map();
+/** Keep display-name lookups inside the current book even for stale rule refs. */
+export function filterAccountGuidsForBook(requestedGuids: string[], bookAccountGuids: string[]): string[] {
+    const allowed = new Set(bookAccountGuids);
+    return [...new Set(requestedGuids)].filter(guid => allowed.has(guid));
+}
+
+async function accountNames(bookGuid: string, guids: string[]): Promise<Map<string, string>> {
+    const scopedGuids = filterAccountGuidsForBook(guids, await getAccountGuidsForBook(bookGuid));
+    if (scopedGuids.length === 0) return new Map();
     const rows = await prisma.$queryRaw<Array<{ guid: string; fullname: string | null; name: string }>>`
         SELECT ah.guid, ah.fullname, ah.name
         FROM account_hierarchy ah
-        WHERE ah.guid = ANY(${guids})
+        WHERE ah.guid = ANY(${scopedGuids})
     `;
     return new Map(rows.map(r => [r.guid, r.fullname ?? r.name]));
 }
@@ -278,7 +285,7 @@ export async function listFundingRules(bookGuid: string): Promise<FundingRule[]>
         if (r.triggerAccountGuid) guids.add(r.triggerAccountGuid);
         for (const a of r.allocations) guids.add(a.accountGuid);
     }
-    const names = await accountNames([...guids]);
+    const names = await accountNames(bookGuid, [...guids]);
     for (const r of rules) {
         r.triggerAccountName = r.triggerAccountGuid ? names.get(r.triggerAccountGuid) ?? null : null;
         r.allocationNames = r.allocations.map(a => ({
@@ -528,6 +535,11 @@ export async function runFundingRules(options: {
     for (const rule of rules) {
         if (!rule.triggerAccountGuid || rule.allocations.length === 0) continue;
         try {
+            const ruleAccountGuids = await getAccountGuidsForBook(rule.bookGuid);
+            const requiredGuids = [rule.triggerAccountGuid, ...rule.allocations.map(a => a.accountGuid)];
+            if (requiredGuids.some(guid => !ruleAccountGuids.includes(guid))) {
+                throw new FundingRuleError('Rule accounts are no longer in this book');
+            }
             const deposits = await loadRecentDeposits(rule.triggerAccountGuid, cutoff);
             for (const deposit of deposits) {
                 if (!ruleMatchesDeposit(rule, deposit)) continue;
@@ -593,9 +605,14 @@ export async function runFundingRules(options: {
  * the in-transaction dedupe re-check under the pair's advisory lock).
  */
 async function applySweep(rule: FundingRule, deposit: DepositCandidate, dedupeKey: string): Promise<string | null> {
-    // Re-validate currencies at apply time (accounts may have changed since
-    // the rule was saved).
+    // Re-validate book membership and currencies at apply time (accounts may
+    // have changed or been reparented since the rule was saved). This must be
+    // a fail-closed guard before any ledger write.
     const allGuids = [rule.triggerAccountGuid!, ...rule.allocations.map(a => a.accountGuid)];
+    const bookGuids = new Set(await getAccountGuidsForBook(rule.bookGuid));
+    if (allGuids.some(guid => !bookGuids.has(guid))) {
+        throw new FundingRuleError('Rule accounts are no longer in this book');
+    }
     const accounts = await prisma.accounts.findMany({
         where: { guid: { in: allGuids } },
         select: { guid: true, commodity_guid: true, commodity: { select: { namespace: true } } },
@@ -706,7 +723,7 @@ export async function listFundingApplications(bookGuid: string, limit = 50): Pro
     });
     const ruleRows = ruleIds.size > 0
         ? await prisma.gnucash_web_budget_funding_rules.findMany({
-            where: { id: { in: [...ruleIds] } },
+            where: { id: { in: [...ruleIds] }, book_guid: bookGuid },
             select: { id: true, name: true },
         })
         : [];

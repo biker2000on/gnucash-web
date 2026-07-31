@@ -27,7 +27,7 @@
  */
 
 import prisma from '@/lib/prisma';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { toDecimalNumber } from '@/lib/gnucash';
 
 /* ------------------------------------------------------------------ */
@@ -317,6 +317,7 @@ export interface LoadMonthlyActualsOptions {
  * income totals) for the %-of-income template.
  */
 export async function loadMonthlyActuals(
+    bookGuid: string,
     options: LoadMonthlyActualsOptions
 ): Promise<LoadMonthlyActualsResult> {
     const months = Math.max(1, Math.min(60, Math.floor(options.months)));
@@ -328,7 +329,7 @@ export async function loadMonthlyActuals(
     const [lastY, lastM] = monthKeys[monthKeys.length - 1].split('-').map(n => parseInt(n, 10));
     const endDate = new Date(Date.UTC(lastY, lastM, 0, 23, 59, 59, 999)); // last day of last month
 
-    const bookGuids = await getBookAccountGuids();
+    const bookGuids = await getAccountGuidsForBook(bookGuid);
 
     // All book EXPENSE + INCOME accounts (income always loaded for the
     // income estimate, even when includeIncome is false).

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 import { BudgetService } from '@/lib/services/budget.service';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import prisma from '@/lib/prisma';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateAllForBook } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
@@ -18,13 +18,13 @@ export async function GET(
         const { guid } = await params;
 
         // Verify budget exists
-        const budget = await prisma.budgets.findUnique({ where: { guid } });
+        const budget = await BudgetService.getById(roleResult.bookGuid, guid);
         if (!budget) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }
 
         // Get ALL accounts in active book (not just budgeted ones)
-        const bookAccountGuids = await getBookAccountGuids();
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
         const accounts = await prisma.accounts.findMany({
             where: {
                 guid: { in: bookAccountGuids },
@@ -70,14 +70,14 @@ export async function POST(
             );
         }
 
-        const amounts = await BudgetService.addAccount(guid, account_guid);
+        const amounts = await BudgetService.addAccount(roleResult.bookGuid, guid, account_guid);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json({ success: true, amounts });
     } catch (error) {
         console.error('Error adding account to budget:', error);
         const message = error instanceof Error ? error.message : 'Failed to add account';
-        const status = message.includes('already in budget') ? 400 : 500;
+        const status = message.includes('not found') ? 404 : message.includes('already in budget') ? 400 : 500;
         return NextResponse.json({ error: message }, { status });
     }
 }

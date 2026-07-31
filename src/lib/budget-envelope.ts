@@ -31,6 +31,8 @@ import { toDecimalNumber } from '@/lib/gnucash';
 import { formatCurrency } from '@/lib/format';
 import { createNotification, ensureNotificationsTable, type NotificationSeverity } from '@/lib/notifications';
 import { loadBookAccountGuids } from '@/lib/anomaly-detection';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { BudgetService } from '@/lib/services/budget.service';
 import {
     computePeriodRanges,
     findCurrentPeriodNum,
@@ -308,6 +310,28 @@ export function ensureEnvelopesTable(): Promise<void> {
 
                     CREATE INDEX IF NOT EXISTS idx_budget_envelopes_budget
                         ON gnucash_web_budget_envelopes(budget_guid);
+
+                    -- Envelope rows are app-managed and have no independent
+                    -- meaning without their native budget. Clean up legacy
+                    -- orphans before adding the lifecycle FK so a deleted
+                    -- GUID can never expose stale config after recreation.
+                    DELETE FROM gnucash_web_budget_envelopes e
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM budgets b WHERE b.guid = e.budget_guid
+                    );
+
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'fk_budget_envelopes_budget'
+                          AND conrelid = 'gnucash_web_budget_envelopes'::regclass
+                    ) THEN
+                        ALTER TABLE gnucash_web_budget_envelopes
+                        ADD CONSTRAINT fk_budget_envelopes_budget
+                        FOREIGN KEY (budget_guid)
+                        REFERENCES budgets(guid)
+                        ON DELETE CASCADE;
+                    END IF;
                 END $$;
             `);
         })();
@@ -323,7 +347,8 @@ interface EnvelopeRow {
 }
 
 /** Load envelope config rows for one budget. */
-export async function getEnvelopeConfig(budgetGuid: string): Promise<EnvelopeConfig[]> {
+export async function getEnvelopeConfig(bookGuid: string, budgetGuid: string): Promise<EnvelopeConfig[]> {
+    if (!await BudgetService.getById(bookGuid, budgetGuid)) return [];
     await ensureEnvelopesTable();
     const rows = await prisma.$queryRaw<EnvelopeRow[]>`
         SELECT account_guid, rollover_enabled, alert_threshold_pct, goal_id
@@ -341,9 +366,17 @@ export async function getEnvelopeConfig(budgetGuid: string): Promise<EnvelopeCon
 
 /** Upsert envelope config rows (unique on budget_guid + account_guid). */
 export async function upsertEnvelopeConfig(
+    bookGuid: string,
     budgetGuid: string,
     rows: EnvelopeConfig[]
 ): Promise<void> {
+    const [budget, accountGuids] = await Promise.all([
+        BudgetService.getById(bookGuid, budgetGuid),
+        getAccountGuidsForBook(bookGuid),
+    ]);
+    if (!budget || rows.some(row => !accountGuids.includes(row.accountGuid))) {
+        throw new Error('Budget or account not found');
+    }
     await ensureEnvelopesTable();
     for (const row of rows) {
         await prisma.$executeRaw`
@@ -388,13 +421,14 @@ export interface EnvelopeViewResponse {
  * Returns null when the budget does not exist.
  */
 export async function getEnvelopeView(
+    bookGuid: string,
     budgetGuid: string,
     options: { asOf?: string } = {}
 ): Promise<EnvelopeViewResponse | null> {
-    const actuals = await loadBudgetActuals(budgetGuid, options);
+    const actuals = await loadBudgetActuals(bookGuid, budgetGuid, options);
     if (!actuals) return null;
 
-    const config = await getEnvelopeConfig(budgetGuid);
+    const config = await getEnvelopeConfig(bookGuid, budgetGuid);
     const envelopes = computeRollovers(actuals.accounts, config, actuals.currentPeriod);
     const alerts = evaluateBudgetAlerts(
         { budgetGuid, currentPeriod: actuals.currentPeriod, accounts: actuals.accounts },
@@ -514,8 +548,15 @@ export async function scanBudgetAlerts(
         const maxNotifications = opts.maxNotifications ?? 20;
 
         const bookGuids = new Set(await loadBookAccountGuids(bookGuid));
+        const ownershipRows = await prisma.gnucash_web_budget_ownership.findMany({
+            where: { book_guid: bookGuid },
+            select: { budget_guid: true },
+        });
+        const budgetGuids = ownershipRows.map(row => row.budget_guid);
+        if (budgetGuids.length === 0) return { detected: 0, created: 0 };
 
         const budgets = await prisma.budgets.findMany({
+            where: { guid: { in: budgetGuids } },
             include: {
                 recurrences: true,
                 amounts: {
@@ -612,7 +653,7 @@ export async function scanBudgetAlerts(
                 };
             });
 
-            const config = await getEnvelopeConfig(budget.guid);
+            const config = await getEnvelopeConfig(bookGuid, budget.guid);
             const rollovers = computeRollovers(accounts, config, currentPeriod);
             const alerts = evaluateBudgetAlerts(
                 { budgetGuid: budget.guid, currentPeriod, accounts },

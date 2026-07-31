@@ -31,7 +31,7 @@ export async function GET(
 
         const { guid } = await params;
 
-        const budget = await BudgetService.getById(guid);
+        const budget = await BudgetService.getById(roleResult.bookGuid, guid);
         if (!budget) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }
@@ -92,7 +92,7 @@ export async function PUT(
             );
         }
 
-        const budget = await BudgetService.update(guid, parseResult.data);
+        const budget = await BudgetService.update(roleResult.bookGuid, guid, parseResult.data);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json(budget);
@@ -135,7 +135,7 @@ export async function DELETE(
 
         const { guid } = await params;
 
-        const result = await BudgetService.delete(guid);
+        const result = await BudgetService.delete(roleResult.bookGuid, guid);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'delete' });
         return NextResponse.json(result);

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole } from '@/lib/auth';
-import { getUserRoleForBook } from '@/lib/services/permission.service';
+import {
+    getUserRoleForBook,
+    hasMinimumRole,
+} from '@/lib/services/permission.service';
 import { acquireBookLock } from '@/lib/book-lock';
 import {
     collectBookStorageKeys,
@@ -10,6 +13,8 @@ import {
 } from '@/lib/services/book-cleanup.service';
 import { cacheInvalidateAllForBook } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
+import { deleteOwnedBudgetsForBook } from '@/lib/budget-ownership';
+import { hasTargetBookRole } from '@/lib/target-book-auth';
 
 /**
  * GET /api/books/[guid]
@@ -24,6 +29,12 @@ export async function GET(
         if (authResult instanceof NextResponse) return authResult;
 
         const { guid } = await params;
+        if (!await hasMinimumRole(authResult.user.id, guid, 'readonly')) {
+            return NextResponse.json(
+                { error: 'Requires access to the target book' },
+                { status: 403 },
+            );
+        }
 
         const book = await prisma.books.findUnique({
             where: { guid },
@@ -116,6 +127,12 @@ export async function PUT(
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { guid } = await params;
+        if (!await hasTargetBookRole(roleResult, guid, 'admin')) {
+            return NextResponse.json(
+                { error: 'Requires admin role for the target book' },
+                { status: 403 },
+            );
+        }
         const body = await request.json();
         const { name, description } = body;
 
@@ -180,6 +197,12 @@ export async function DELETE(
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { guid } = await params;
+        if (!await hasTargetBookRole(roleResult, guid, 'admin')) {
+            return NextResponse.json(
+                { error: 'Requires admin role for the target book' },
+                { status: 403 },
+            );
+        }
 
         const book = await prisma.books.findUnique({
             where: { guid },
@@ -243,7 +266,12 @@ export async function DELETE(
                 includeLazyTables: true,
             });
 
-            // Delete budget_amounts referencing these accounts
+            // Remove native budgets explicitly owned by this book. Native
+            // recurrences use a restrictive FK, so they must go first.
+            await deleteOwnedBudgetsForBook(tx, guid);
+
+            // Remove legacy/unowned budget amounts that still reference these
+            // accounts. Ambiguous budgets remain unowned and fail closed.
             await tx.budget_amounts.deleteMany({
                 where: { account_guid: { in: allAccountGuids } },
             });

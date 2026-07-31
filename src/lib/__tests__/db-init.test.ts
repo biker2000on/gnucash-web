@@ -156,4 +156,46 @@ describe('initializeDatabase', () => {
         expect(ddl).toContain('ADD COLUMN IF NOT EXISTS undone_by INTEGER');
         expect(ddl).toContain("pg_advisory_xact_lock(hashtext('gnucash_web_audit_undo_columns'))");
     });
+
+    it('creates immutable budget ownership with a fail-closed backfill', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const ddl = sqls.find((s) => s.includes('gnucash_web_budget_ownership_schema'));
+        expect(ddl).toBeDefined();
+        expect(ddl).toContain('REFERENCES budgets(guid) ON DELETE CASCADE');
+        expect(ddl).toContain('REFERENCES books(guid) ON DELETE CASCADE');
+        expect(ddl).toContain('CREATE INDEX IF NOT EXISTS idx_budget_ownership_book');
+        expect(ddl).toContain('Budget ownership is immutable');
+
+        // Non-empty budgets require every distinct account to resolve and all
+        // resolved accounts to agree on one book.
+        expect(ddl).toContain('amount_account_count = resolved_account_count');
+        expect(ddl).toContain('resolved_book_count = 1');
+
+        // Empty budgets are assigned only in a one-book database.
+        expect(ddl).toContain('HAVING COUNT(*) = 1');
+        expect(ddl).toContain('NOT EXISTS');
+        expect(ddl).toContain('FROM budget_amounts ba');
+    });
+
+    it('upgrades envelope lifecycle constraints during startup', async () => {
+        await initializeDatabase();
+
+        const sqls = mocks.query.mock.calls.map((c) => String(c[0]));
+        const ddl = sqls.find((s) => s.includes('gnucash_web_budget_envelopes_schema'));
+        expect(ddl).toBeDefined();
+        expect(ddl).toContain('CREATE TABLE IF NOT EXISTS gnucash_web_budget_envelopes');
+        expect(ddl).toContain('CREATE INDEX IF NOT EXISTS idx_budget_envelopes_budget');
+
+        // Remove only stale rows before installing the FK, so a future budget
+        // with the same GUID cannot inherit an old envelope configuration.
+        expect(ddl).toMatch(
+            /DELETE FROM gnucash_web_budget_envelopes e[\s\S]*WHERE NOT EXISTS[\s\S]*FROM budgets b WHERE b\.guid = e\.budget_guid/,
+        );
+        expect(ddl).toContain("conname = 'fk_budget_envelopes_budget'");
+        expect(ddl).toContain('FOREIGN KEY (budget_guid)');
+        expect(ddl).toContain('REFERENCES budgets(guid)');
+        expect(ddl).toContain('ON DELETE CASCADE');
+    });
 });

@@ -40,7 +40,7 @@ export async function GET(
             );
         }
 
-        const estimate = await computeBudgetEstimate(guid, accountGuid, method, months);
+        const estimate = await computeBudgetEstimate(roleResult.bookGuid, guid, accountGuid, method, months);
         if (!estimate) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }

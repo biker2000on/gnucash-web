@@ -5,6 +5,8 @@ import prisma from '@/lib/prisma';
 import { toDecimalNumber } from '@/lib/gnucash';
 import { applyScenario } from '@/lib/budget-generator';
 import { BudgetService } from '@/lib/services/budget.service';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { isBudgetOwnedByBook } from '@/lib/budget-ownership';
 
 const ScenarioSchema = z.object({
     name: z.string().min(1).max(2048),
@@ -42,9 +44,20 @@ export async function POST(
         }
         const { name, factor } = parseResult.data;
 
+        if (!await isBudgetOwnedByBook(prisma, guid, roleResult.bookGuid)) {
+            return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
+        }
+
+        // Ownership authorizes the budget; this separate account-set filter
+        // prevents any post-corruption foreign amount from entering a clone.
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
+
         const source = await prisma.budgets.findUnique({
             where: { guid },
-            include: { recurrences: true, amounts: true },
+            include: {
+                recurrences: true,
+                amounts: { where: { account_guid: { in: bookAccountGuids } } },
+            },
         });
         if (!source) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
@@ -68,7 +81,7 @@ export async function POST(
             : undefined;
 
         const pct = Math.round((factor - 1) * 100);
-        const budget = await BudgetService.createWithAmounts({
+        const budget = await BudgetService.createWithAmounts(roleResult.bookGuid, {
             name,
             description: `Scenario of "${source.name}" (${pct >= 0 ? '+' : ''}${pct}%)`,
             num_periods: source.num_periods,

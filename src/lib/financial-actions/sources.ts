@@ -655,7 +655,7 @@ async function notificationActions(
   bookGuid: string,
 ): Promise<FinancialActionCandidate[]> {
   const { notifications } = await listNotifications(userId, bookGuid, 100);
-  const budgetContexts = await loadBudgetNotificationContexts(notifications);
+  const budgetContexts = await loadBudgetNotificationContexts(notifications, bookGuid);
   return notifications
     .filter(notification =>
       notification.readAt === null
@@ -736,8 +736,9 @@ function isBudgetNotification(notification: AppNotification): boolean {
     || notification.type.includes('budget');
 }
 
-async function loadBudgetNotificationContexts(
+export async function loadBudgetNotificationContexts(
   notifications: AppNotification[],
+  bookGuid: string,
 ): Promise<Map<number, BudgetNotificationContext>> {
   const asOf = isoDate(new Date());
   const references = notifications
@@ -748,7 +749,17 @@ async function loadBudgetNotificationContexts(
     });
   if (references.length === 0) return new Map();
 
-  const budgetGuids = [...new Set(references.map(reference => reference.parsed.budgetGuid))];
+  const requestedBudgetGuids = [...new Set(references.map(reference => reference.parsed.budgetGuid))];
+  const ownershipRows = await prisma.gnucash_web_budget_ownership.findMany({
+    where: {
+      book_guid: bookGuid,
+      budget_guid: { in: requestedBudgetGuids },
+    },
+    select: { budget_guid: true },
+  });
+  const budgetGuids = ownershipRows.map(row => row.budget_guid);
+  if (budgetGuids.length === 0) return new Map();
+
   const budgets = await prisma.budgets.findMany({
     where: { guid: { in: budgetGuids } },
     include: {
@@ -1210,7 +1221,7 @@ async function notificationOpportunitySignals(
 ): Promise<{ estimatedTax: OpportunitySignal | null; budgetGaps: OpportunitySignal[] }> {
   const { notifications } = await listNotifications(userId, bookGuid, 200);
   const unread = notifications.filter(item => item.readAt === null);
-  const budgetContexts = await loadBudgetNotificationContexts(unread);
+  const budgetContexts = await loadBudgetNotificationContexts(unread, bookGuid);
   const tax = unread.find(item =>
     item.type.includes('estimated_tax') || /safe.?harbor|estimated tax shortfall/i.test(`${item.title} ${item.message}`),
   );

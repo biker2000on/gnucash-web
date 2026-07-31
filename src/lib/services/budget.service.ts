@@ -7,6 +7,11 @@
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, serializeBigInts, toDecimal } from '@/lib/gnucash';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import {
+  createBudgetOwnership,
+  isBudgetOwnedByBook,
+} from '@/lib/budget-ownership';
 
 // Validation schemas
 export const CreateBudgetSchema = z.object({
@@ -27,19 +32,56 @@ export const UpdateBudgetSchema = z.object({
 export type CreateBudgetInput = z.infer<typeof CreateBudgetSchema>;
 export type UpdateBudgetInput = z.infer<typeof UpdateBudgetSchema>;
 
+function assertGuid(guid: string, label: 'budget' | 'account'): void {
+  if (!guid || guid.length !== 32) {
+    throw new Error(`Invalid ${label} GUID`);
+  }
+}
+
+async function assertAccountsBelongToBook(
+  bookGuid: string,
+  accountGuids: string[],
+): Promise<void> {
+  for (const accountGuid of accountGuids) {
+    assertGuid(accountGuid, 'account');
+  }
+
+  const bookAccountGuids = new Set(await getAccountGuidsForBook(bookGuid));
+  for (const accountGuid of accountGuids) {
+    if (!bookAccountGuids.has(accountGuid)) {
+      throw new Error(`Account not found: ${accountGuid}`);
+    }
+  }
+}
+
 /**
  * Service class for budget operations
  */
 export class BudgetService {
   /**
-   * List all budgets
+   * List budgets explicitly owned by one book.
    */
-  static async list() {
+  static async list(bookGuid: string) {
+    const [ownershipRows, bookAccountGuids] = await Promise.all([
+      prisma.gnucash_web_budget_ownership.findMany({
+        where: { book_guid: bookGuid },
+        select: { budget_guid: true },
+      }),
+      getAccountGuidsForBook(bookGuid),
+    ]);
+    const budgetGuids = ownershipRows.map((row) => row.budget_guid);
+    if (budgetGuids.length === 0) return [];
+
     const budgets = await prisma.budgets.findMany({
+      where: { guid: { in: budgetGuids } },
       include: {
         recurrences: true,
         _count: {
-          select: { amounts: true },
+          select: {
+            amounts: {
+              where: { account_guid: { in: bookAccountGuids } },
+            },
+          },
         },
       },
       orderBy: { name: 'asc' },
@@ -51,12 +93,20 @@ export class BudgetService {
   /**
    * Get a single budget with all amounts
    */
-  static async getById(guid: string) {
+  static async getById(bookGuid: string, guid: string) {
+    assertGuid(guid, 'budget');
+    if (!await isBudgetOwnedByBook(prisma, guid, bookGuid)) {
+      return null;
+    }
+    const bookAccountGuids = await getAccountGuidsForBook(bookGuid);
+    const bookAccountGuidSet = new Set(bookAccountGuids);
+
     const budget = await prisma.budgets.findUnique({
       where: { guid },
       include: {
         recurrences: true,
         amounts: {
+          where: { account_guid: { in: bookAccountGuids } },
           include: {
             account: {
               include: {
@@ -85,13 +135,18 @@ export class BudgetService {
         mult: recurrence.recurrence_mult,
         period_start: recurrence.recurrence_period_start,
       } : null,
-      amounts: budget.amounts.map(amount => ({
+      // Keep a response-boundary check in addition to the SQL filter. This
+      // fails closed even if a mocked/custom client or future query change
+      // returns a corrupt cross-book amount row.
+      amounts: budget.amounts
+        .filter(amount => bookAccountGuidSet.has(amount.account_guid))
+        .map(amount => ({
         ...amount,
         amount_decimal: toDecimal(amount.amount_num, amount.amount_denom),
         account_name: amount.account.name,
         account_parent_guid: amount.account.parent_guid,
         commodity_mnemonic: amount.account.commodity?.mnemonic,
-      })),
+        })),
     });
   }
 
@@ -100,7 +155,7 @@ export class BudgetService {
    * the period calendar drives start dates, current-budget selection, and
    * seasonal estimates.
    */
-  static async create(input: CreateBudgetInput) {
+  static async create(bookGuid: string, input: CreateBudgetInput) {
     const data = CreateBudgetSchema.parse(input);
 
     const budgetGuid = generateGuid();
@@ -115,6 +170,7 @@ export class BudgetService {
           num_periods: data.num_periods,
         },
       });
+      await createBudgetOwnership(tx, budgetGuid, bookGuid);
       await tx.recurrences.create({
         data: {
           obj_guid: budgetGuid,
@@ -133,28 +189,22 @@ export class BudgetService {
   /**
    * Update a budget
    */
-  static async update(guid: string, input: UpdateBudgetInput) {
-    if (!guid || guid.length !== 32) {
-      throw new Error('Invalid budget GUID');
-    }
+  static async update(bookGuid: string, guid: string, input: UpdateBudgetInput) {
+    assertGuid(guid, 'budget');
 
     const data = UpdateBudgetSchema.parse(input);
 
-    // Check budget exists
-    const existing = await prisma.budgets.findUnique({
-      where: { guid },
-    });
-
-    if (!existing) {
-      throw new Error(`Budget not found: ${guid}`);
-    }
-
-    const budget = await prisma.budgets.update({
-      where: { guid },
-      data: {
-        ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && { description: data.description || null }),
-      },
+    const budget = await prisma.$transaction(async tx => {
+      if (!await isBudgetOwnedByBook(tx, guid, bookGuid)) {
+        throw new Error(`Budget not found: ${guid}`);
+      }
+      return tx.budgets.update({
+        where: { guid },
+        data: {
+          ...(data.name !== undefined && { name: data.name }),
+          ...(data.description !== undefined && { description: data.description || null }),
+        },
+      });
     });
 
     return serializeBigInts(budget);
@@ -163,26 +213,19 @@ export class BudgetService {
   /**
    * Delete a budget and its amounts
    */
-  static async delete(guid: string) {
-    if (!guid || guid.length !== 32) {
-      throw new Error('Invalid budget GUID');
-    }
+  static async delete(bookGuid: string, guid: string) {
+    assertGuid(guid, 'budget');
 
-    // Check budget exists
-    const existing = await prisma.budgets.findUnique({
-      where: { guid },
+    await prisma.$transaction(async tx => {
+      if (!await isBudgetOwnedByBook(tx, guid, bookGuid)) {
+        throw new Error(`Budget not found: ${guid}`);
+      }
+
+      // Amounts and ownership cascade from the budget. The native recurrence
+      // FK is restrictive, so its rows must be removed first.
+      await tx.recurrences.deleteMany({ where: { obj_guid: guid } });
+      await tx.budgets.delete({ where: { guid } });
     });
-
-    if (!existing) {
-      throw new Error(`Budget not found: ${guid}`);
-    }
-
-    // Delete budget (amounts cascade via FK). The recurrence must go FIRST:
-    // its obj_guid FK to budgets is ON DELETE RESTRICT.
-    await prisma.$transaction([
-      prisma.recurrences.deleteMany({ where: { obj_guid: guid } }),
-      prisma.budgets.delete({ where: { guid } }),
-    ]);
 
     return { success: true, guid };
   }
@@ -191,68 +234,57 @@ export class BudgetService {
    * Update a budget amount for a specific account and period
    */
   static async setAmount(
+    bookGuid: string,
     budgetGuid: string,
     accountGuid: string,
     periodNum: number,
     amount: number
   ) {
-    // Validate inputs
-    if (!budgetGuid || budgetGuid.length !== 32) {
-      throw new Error('Invalid budget GUID');
-    }
-    if (!accountGuid || accountGuid.length !== 32) {
-      throw new Error('Invalid account GUID');
-    }
-
-    // Check budget exists
-    const budget = await prisma.budgets.findUnique({
-      where: { guid: budgetGuid },
-    });
-
-    if (!budget) {
-      throw new Error(`Budget not found: ${budgetGuid}`);
-    }
-
-    // Validate period number
-    if (periodNum < 0 || periodNum >= budget.num_periods) {
-      throw new Error(`Period must be between 0 and ${budget.num_periods - 1}`);
-    }
-
-    // Check account exists
-    const account = await prisma.accounts.findUnique({
-      where: { guid: accountGuid },
-    });
-
-    if (!account) {
-      throw new Error(`Account not found: ${accountGuid}`);
-    }
+    assertGuid(budgetGuid, 'budget');
+    await assertAccountsBelongToBook(bookGuid, [accountGuid]);
 
     // Upsert the amount
     const amountNum = BigInt(Math.round(amount * 100));
     const amountDenom = BigInt(100);
 
-    const budgetAmount = await prisma.budget_amounts.upsert({
-      where: {
-        budget_guid_account_guid_period_num: {
+    const budgetAmount = await prisma.$transaction(async tx => {
+      if (!await isBudgetOwnedByBook(tx, budgetGuid, bookGuid)) {
+        throw new Error(`Budget not found: ${budgetGuid}`);
+      }
+      const budget = await tx.budgets.findUnique({
+        where: { guid: budgetGuid },
+        select: { num_periods: true },
+      });
+      if (!budget) {
+        throw new Error(`Budget not found: ${budgetGuid}`);
+      }
+      if (periodNum < 0 || periodNum >= budget.num_periods) {
+        throw new Error(`Period must be between 0 and ${budget.num_periods - 1}`);
+      }
+
+      return tx.budget_amounts.upsert({
+        where: {
+          budget_guid_account_guid_period_num: {
+            budget_guid: budgetGuid,
+            account_guid: accountGuid,
+            period_num: periodNum,
+          },
+        },
+        update: {
+          amount_num: amountNum,
+          amount_denom: amountDenom,
+        },
+        create: {
           budget_guid: budgetGuid,
           account_guid: accountGuid,
           period_num: periodNum,
+          amount_num: amountNum,
+          amount_denom: amountDenom,
         },
-      },
-      update: {
-        amount_num: amountNum,
-        amount_denom: amountDenom,
-      },
-      create: {
-        budget_guid: budgetGuid,
-        account_guid: accountGuid,
-        period_num: periodNum,
-        amount_num: amountNum,
-        amount_denom: amountDenom,
-      },
-      include: {
-        account: true,
-      },
+        include: {
+          account: true,
+        },
+      });
     });
 
     return serializeBigInts({
@@ -264,46 +296,64 @@ export class BudgetService {
   /**
    * Add an account to a budget with zero amounts for all periods
    */
-  static async addAccount(budgetGuid: string, accountGuid: string) {
-    // Get the budget to know num_periods
-    const budget = await prisma.budgets.findUnique({
-      where: { guid: budgetGuid },
-      select: { num_periods: true },
-    });
-    if (!budget) throw new Error('Budget not found');
+  static async addAccount(bookGuid: string, budgetGuid: string, accountGuid: string) {
+    assertGuid(budgetGuid, 'budget');
+    await assertAccountsBelongToBook(bookGuid, [accountGuid]);
 
-    // Check account exists and is not already in budget
-    const existingAmounts = await prisma.budget_amounts.findFirst({
-      where: { budget_guid: budgetGuid, account_guid: accountGuid },
-    });
-    if (existingAmounts) throw new Error('Account already in budget');
-
-    // Create amounts for all periods with 0 value
-    const amounts = [];
-    for (let period = 0; period < budget.num_periods; period++) {
-      const amount = await prisma.budget_amounts.create({
-        data: {
-          budget_guid: budgetGuid,
-          account_guid: accountGuid,
-          period_num: period,
-          amount_num: 0n,
-          amount_denom: 100n,
-        },
+    const amounts = await prisma.$transaction(async tx => {
+      if (!await isBudgetOwnedByBook(tx, budgetGuid, bookGuid)) {
+        throw new Error(`Budget not found: ${budgetGuid}`);
+      }
+      const budget = await tx.budgets.findUnique({
+        where: { guid: budgetGuid },
+        select: { num_periods: true },
       });
-      amounts.push(amount);
-    }
+      if (!budget) throw new Error(`Budget not found: ${budgetGuid}`);
+
+      const existingAmounts = await tx.budget_amounts.findFirst({
+        where: { budget_guid: budgetGuid, account_guid: accountGuid },
+      });
+      if (existingAmounts) throw new Error('Account already in budget');
+
+      const created = [];
+      for (let period = 0; period < budget.num_periods; period++) {
+        created.push(await tx.budget_amounts.create({
+          data: {
+            budget_guid: budgetGuid,
+            account_guid: accountGuid,
+            period_num: period,
+            amount_num: 0n,
+            amount_denom: 100n,
+          },
+        }));
+      }
+      return created;
+    });
+
     return serializeBigInts(amounts);
   }
 
   /**
    * Delete all budget amounts for a specific account
    */
-  static async deleteAccountAmounts(budgetGuid: string, accountGuid: string) {
-    const result = await prisma.budget_amounts.deleteMany({
-      where: {
-        budget_guid: budgetGuid,
-        account_guid: accountGuid,
-      },
+  static async deleteAccountAmounts(
+    bookGuid: string,
+    budgetGuid: string,
+    accountGuid: string,
+  ) {
+    assertGuid(budgetGuid, 'budget');
+    await assertAccountsBelongToBook(bookGuid, [accountGuid]);
+
+    const result = await prisma.$transaction(async tx => {
+      if (!await isBudgetOwnedByBook(tx, budgetGuid, bookGuid)) {
+        throw new Error(`Budget not found: ${budgetGuid}`);
+      }
+      return tx.budget_amounts.deleteMany({
+        where: {
+          budget_guid: budgetGuid,
+          account_guid: accountGuid,
+        },
+      });
     });
     return result.count;
   }
@@ -314,25 +364,57 @@ export class BudgetService {
    * GnuCash-signed, same as setAmount.
    */
   static async setAllPeriods(
+    bookGuid: string,
     budgetGuid: string,
     accountGuid: string,
     amount: number | number[]
   ) {
-    const budget = await prisma.budgets.findUnique({
-      where: { guid: budgetGuid },
-      select: { num_periods: true },
+    assertGuid(budgetGuid, 'budget');
+    await assertAccountsBelongToBook(bookGuid, [accountGuid]);
+
+    const results = await prisma.$transaction(async tx => {
+      if (!await isBudgetOwnedByBook(tx, budgetGuid, bookGuid)) {
+        throw new Error(`Budget not found: ${budgetGuid}`);
+      }
+      const budget = await tx.budgets.findUnique({
+        where: { guid: budgetGuid },
+        select: { num_periods: true },
+      });
+      if (!budget) throw new Error(`Budget not found: ${budgetGuid}`);
+
+      const periodAmounts = [];
+      for (let period = 0; period < budget.num_periods; period++) {
+        const numericAmount = Array.isArray(amount) ? (amount[period] ?? 0) : amount;
+        const amountNum = BigInt(Math.round(numericAmount * 100));
+        periodAmounts.push(await tx.budget_amounts.upsert({
+          where: {
+            budget_guid_account_guid_period_num: {
+              budget_guid: budgetGuid,
+              account_guid: accountGuid,
+              period_num: period,
+            },
+          },
+          update: {
+            amount_num: amountNum,
+            amount_denom: 100n,
+          },
+          create: {
+            budget_guid: budgetGuid,
+            account_guid: accountGuid,
+            period_num: period,
+            amount_num: amountNum,
+            amount_denom: 100n,
+          },
+          include: { account: true },
+        }));
+      }
+      return periodAmounts;
     });
-    if (!budget) throw new Error('Budget not found');
 
-    const perPeriod = (period: number): number =>
-      Array.isArray(amount) ? (amount[period] ?? 0) : amount;
-
-    const amounts = [];
-    for (let period = 0; period < budget.num_periods; period++) {
-      const result = await this.setAmount(budgetGuid, accountGuid, period, perPeriod(period));
-      amounts.push(result);
-    }
-    return amounts;
+    return serializeBigInts(results.map(result => ({
+      ...result,
+      amount_decimal: toDecimal(result.amount_num, result.amount_denom),
+    })));
   }
 
   /**
@@ -344,7 +426,7 @@ export class BudgetService {
    * zero-filled, longer ones truncated to num_periods. Rows are written for
    * every period (including zeros) so the account is part of the budget.
    */
-  static async createWithAmounts(input: {
+  static async createWithAmounts(bookGuid: string, input: {
     name: string;
     description?: string;
     num_periods: number;
@@ -359,6 +441,8 @@ export class BudgetService {
     });
 
     const budgetGuid = generateGuid();
+    const accountGuids = [...new Set(input.lines.map(line => line.accountGuid))];
+    await assertAccountsBelongToBook(bookGuid, accountGuids);
 
     const rows: Array<{
       budget_guid: string;
@@ -392,6 +476,7 @@ export class BudgetService {
           num_periods: base.num_periods,
         },
       });
+      await createBudgetOwnership(tx, budgetGuid, bookGuid);
       if (input.period_start) {
         await tx.recurrences.create({
           data: {

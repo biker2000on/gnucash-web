@@ -19,6 +19,10 @@ function recordMany(op: string) {
 }
 
 const existingBookRef: { current: { root_account_guid: string | null } | null } = { current: null };
+const collidingBudgetsRef: { current: Array<{ guid: string }> } = { current: [] };
+const budgetOwnershipRef: {
+  current: Array<{ budget_guid: string; book_guid: string }>;
+} = { current: [] };
 
 const tx = {
   commodities: {
@@ -73,15 +77,32 @@ const tx = {
   splits: {
     createMany: recordMany('splits.createMany'),
   },
-  prices: { createMany: recordMany('prices.createMany') },
+  prices: {
+    createMany: recordMany('prices.createMany'),
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'prices.deleteMany', data: args });
+      return { count: 0 };
+    }),
+  },
   budgets: {
     create: record('budgets.create'),
+    findMany: vi.fn(async () => collidingBudgetsRef.current),
     deleteMany: vi.fn(async (args: { where: unknown }) => {
       calls.push({ op: 'budgets.deleteMany', data: args });
       return { count: 0 };
     }),
   },
   budget_amounts: { createMany: recordMany('budget_amounts.createMany') },
+  gnucash_web_budget_ownership: {
+    create: record('gnucash_web_budget_ownership.create'),
+    findMany: vi.fn(async () => budgetOwnershipRef.current),
+  },
+  recurrences: {
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'recurrences.deleteMany', data: args });
+      return { count: 0 };
+    }),
+  },
 };
 
 vi.mock('@/lib/prisma', () => ({
@@ -155,6 +176,8 @@ describe('importGnuCashData — lot FK handling', () => {
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
+    collidingBudgetsRef.current = [];
+    budgetOwnershipRef.current = [];
   });
 
   it('creates referenced lots before inserting splits that point at them', async () => {
@@ -201,6 +224,8 @@ describe('importGnuCashData — orphan budget slots', () => {
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
+    collidingBudgetsRef.current = [];
+    budgetOwnershipRef.current = [];
   });
 
   it('collapses repeated "account not found" warnings into one line per budget', async () => {
@@ -231,6 +256,13 @@ describe('importGnuCashData — orphan budget slots', () => {
     expect(orphanWarnings).toHaveLength(1);
     expect(orphanWarnings[0]).toContain('skipped 15 amount(s)');
     expect(orphanWarnings[0]).toContain('2 deleted account(s)');
+    expect(calls).toContainEqual({
+      op: 'gnucash_web_budget_ownership.create',
+      data: {
+        budget_guid: 'budget-orphans-00000000000000000',
+        book_guid: 'book-guid-0000000000000000000000',
+      },
+    });
   });
 });
 
@@ -240,6 +272,8 @@ describe('importGnuCashData — re-import handling', () => {
     vi.clearAllMocks();
     tx.commodities.findMany.mockResolvedValue([]);
     existingBookRef.current = null;
+    collidingBudgetsRef.current = [];
+    budgetOwnershipRef.current = [];
   });
 
   it('throws BookAlreadyExistsError when the book guid exists and overwrite is off', async () => {
@@ -270,5 +304,79 @@ describe('importGnuCashData — re-import handling', () => {
     // Book and root account are updated, not recreated.
     expect(ops).toContain('books.update');
     expect(ops).toContain('accounts.update');
+  });
+
+  it('rejects a foreign-owned budget collision before deleting any rows', async () => {
+    const data = minimalData();
+    const incomingBudgetGuid = 'foreign-budget-collision-000000000';
+    data.budgets = [{
+      id: incomingBudgetGuid,
+      name: 'Foreign collision',
+      numPeriods: 12,
+      amounts: [],
+    }];
+    existingBookRef.current = { root_account_guid: 'old-root-guid-000000000000000000' };
+    collidingBudgetsRef.current = [{ guid: incomingBudgetGuid }];
+    budgetOwnershipRef.current = [{
+      budget_guid: incomingBudgetGuid,
+      book_guid: 'another-book-guid-000000000000000',
+    }];
+
+    const { BudgetOwnershipConflictError } = await import('../importer');
+    await expect(
+      importGnuCashData(data, 'Test Book', { overwrite: true }),
+    ).rejects.toBeInstanceOf(BudgetOwnershipConflictError);
+
+    const ops = calls.map((call) => call.op);
+    expect(ops).not.toContain('prices.deleteMany');
+    expect(ops).not.toContain('recurrences.deleteMany');
+    expect(ops).not.toContain('budgets.deleteMany');
+    expect(ops).not.toContain('transactions.deleteMany');
+    expect(ops).not.toContain('gnucash_web_budget_ownership.create');
+  });
+
+  it('fails closed on an unowned legacy budget collision', async () => {
+    const data = minimalData();
+    const incomingBudgetGuid = 'legacy-budget-collision-0000000000';
+    data.budgets = [{
+      id: incomingBudgetGuid,
+      name: 'Unowned collision',
+      numPeriods: 12,
+      amounts: [],
+    }];
+    existingBookRef.current = { root_account_guid: 'old-root-guid-000000000000000000' };
+    collidingBudgetsRef.current = [{ guid: incomingBudgetGuid }];
+    budgetOwnershipRef.current = [];
+
+    await expect(
+      importGnuCashData(data, 'Test Book', { overwrite: true }),
+    ).rejects.toThrow('cannot be overwritten');
+    expect(calls.map((call) => call.op)).not.toContain('budgets.deleteMany');
+  });
+
+  it('permits replacement when the colliding budget belongs to the same book', async () => {
+    const data = minimalData();
+    const incomingBudgetGuid = 'owned-budget-collision-00000000000';
+    data.budgets = [{
+      id: incomingBudgetGuid,
+      name: 'Owned collision',
+      numPeriods: 12,
+      amounts: [],
+    }];
+    existingBookRef.current = { root_account_guid: 'old-root-guid-000000000000000000' };
+    collidingBudgetsRef.current = [{ guid: incomingBudgetGuid }];
+    budgetOwnershipRef.current = [{
+      budget_guid: incomingBudgetGuid,
+      book_guid: data.book!.id,
+    }];
+
+    await expect(
+      importGnuCashData(data, 'Test Book', { overwrite: true }),
+    ).resolves.toMatchObject({ budgets: 1 });
+
+    const ops = calls.map((call) => call.op);
+    expect(ops).toContain('recurrences.deleteMany');
+    expect(ops).toContain('budgets.deleteMany');
+    expect(ops).toContain('gnucash_web_budget_ownership.create');
   });
 });

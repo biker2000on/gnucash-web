@@ -49,21 +49,22 @@ const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
 async function generateShareSection(
     section: ShareSection,
+    bookGuid: string,
     bookAccountGuids: string[],
     today: string,
 ): Promise<GeneratedScheduledReport> {
     const base: ReportFilters = { startDate: null, endDate: today, bookAccountGuids };
     switch (section) {
         case 'balance_sheet':
-            return generateScheduledReport('balance_sheet', {}, base);
+            return generateScheduledReport('balance_sheet', {}, base, bookGuid);
         case 'income_statement_ytd':
             return generateScheduledReport('income_statement', {}, {
                 ...base,
                 startDate: `${today.slice(0, 4)}-01-01`,
-            });
+            }, bookGuid);
         case 'net_worth':
             // Renders as a 12-month-end table via the scheduler's chart mapping.
-            return generateScheduledReport('net_worth_chart', {}, base);
+            return generateScheduledReport('net_worth_chart', {}, base, bookGuid);
     }
 }
 
@@ -197,7 +198,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
     const sections: Array<{ key: ShareSection; generated: GeneratedScheduledReport | null }> = [];
     for (const key of link.sections) {
         try {
-            sections.push({ key, generated: await generateShareSection(key, book.accountGuids, today) });
+            sections.push({ key, generated: await generateShareSection(key, link.bookGuid, book.accountGuids, today) });
         } catch (err) {
             console.error(`Share link ${link.id}: failed to render section ${key}:`, err);
             sections.push({ key, generated: null });

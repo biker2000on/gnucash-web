@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateBudgetReport } from '@/lib/reports/budget-report';
 import { ReportFilters } from '@/lib/reports/types';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const bookAccountGuids = await getBookAccountGuids();
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
 
         const filters: ReportFilters = {
             startDate: searchParams.get('startDate'),
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
             bookAccountGuids,
         };
 
-        const report = await generateBudgetReport(budgetGuid, filters);
+        const report = await generateBudgetReport(roleResult.bookGuid, budgetGuid, filters);
         if (!report) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }

@@ -24,16 +24,14 @@ export async function PATCH(
             );
         }
 
-        const result = await BudgetService.setAmount(guid, account_guid, period_num, amount);
+        const result = await BudgetService.setAmount(roleResult.bookGuid, guid, account_guid, period_num, amount);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json(result);
     } catch (error) {
         console.error('Error updating budget amount:', error);
-        return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'Failed to update budget amount' },
-            { status: 500 }
-        );
+        const message = error instanceof Error ? error.message : 'Failed to update budget amount';
+        return NextResponse.json({ error: message }, { status: message.includes('not found') ? 404 : 500 });
     }
 }
 
@@ -57,15 +55,13 @@ export async function DELETE(
             );
         }
 
-        const deletedCount = await BudgetService.deleteAccountAmounts(guid, accountGuid);
+        const deletedCount = await BudgetService.deleteAccountAmounts(roleResult.bookGuid, guid, accountGuid);
         void cacheInvalidateAllForBook(roleResult.bookGuid);
         void publishDataChange(roleResult.bookGuid, 'budgets', { guid, action: 'update' });
         return NextResponse.json({ success: true, deleted_count: deletedCount });
     } catch (error) {
         console.error('Error deleting budget amounts:', error);
-        return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'Failed to delete budget amounts' },
-            { status: 500 }
-        );
+        const message = error instanceof Error ? error.message : 'Failed to delete budget amounts';
+        return NextResponse.json({ error: message }, { status: message.includes('not found') ? 404 : 500 });
     }
 }

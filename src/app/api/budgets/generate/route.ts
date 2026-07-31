@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import prisma from '@/lib/prisma';
 import { BudgetService } from '@/lib/services/budget.service';
 import { cacheInvalidateAllForBook } from '@/lib/cache';
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
         const needGeneration = preview || !input.lines;
 
         const loaded = needGeneration
-            ? await loadMonthlyActuals({
+            ? await loadMonthlyActuals(roleResult.bookGuid, {
                 months: input.months,
                 includeIncome: input.includeIncome,
                 accountGuids: input.accountGuids,
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
         // `type` is carried so income can be stored in raw GnuCash sign (negative).
         let finalLines: Array<{ accountGuid: string; name: string; type: string; amount: number }>;
         if (input.lines) {
-            const bookGuids = new Set(await getBookAccountGuids());
+            const bookGuids = new Set(await getAccountGuidsForBook(roleResult.bookGuid));
             const outside = input.lines.filter(l => !bookGuids.has(l.accountGuid));
             if (outside.length > 0) {
                 return NextResponse.json(
@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
         }
 
         const startMonth = input.startMonth ?? `${new Date().getUTCFullYear()}-01`;
-        const budget = await BudgetService.createWithAmounts({
+        const budget = await BudgetService.createWithAmounts(roleResult.bookGuid, {
             name: input.name,
             description: `Generated from ${input.source === 'history'
                 ? `${input.months}-month history (${input.statistic})`
@@ -207,7 +207,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'No books available' }, { status: 400 });
         }
         if (error instanceof Error) {
-            return NextResponse.json({ error: error.message }, { status: 400 });
+            const status = error.message.includes('not found') || error.message.includes('not in active book')
+                ? 404
+                : 400;
+            return NextResponse.json({ error: error.message }, { status });
         }
         return NextResponse.json({ error: 'Failed to generate budget' }, { status: 500 });
     }

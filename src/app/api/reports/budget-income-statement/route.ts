@@ -4,7 +4,7 @@ import {
     budgetBarchartSeries,
     type BarchartScope,
 } from '@/lib/reports/budget-statements';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
 /**
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const bookAccountGuids = await getBookAccountGuids();
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
 
         const parseIndex = (name: string): number | null => {
             const raw = searchParams.get(name);
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
             const scopeParam = searchParams.get('scope');
             const scope: BarchartScope =
                 scopeParam === 'income' || scopeParam === 'net' ? scopeParam : 'expense';
-            const series = await budgetBarchartSeries(bookAccountGuids, budgetGuid, {
+            const series = await budgetBarchartSeries(roleResult.bookGuid, bookAccountGuids, budgetGuid, {
                 scope,
                 accountGuid: searchParams.get('scopeAccount'),
                 periodStart,
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(series);
         }
 
-        const report = await generateBudgetIncomeStatement(bookAccountGuids, budgetGuid, {
+        const report = await generateBudgetIncomeStatement(roleResult.bookGuid, bookAccountGuids, budgetGuid, {
             periodStart,
             periodEnd,
         });

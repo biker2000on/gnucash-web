@@ -25,7 +25,8 @@
 
 import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { BudgetService } from '@/lib/services/budget.service';
 import { toDecimalNumber } from '@/lib/gnucash';
 
 /* ------------------------------------------------------------------ */
@@ -604,14 +605,21 @@ function bucketSplitsRollup(
  * active book are excluded. Returns null when the budget does not exist.
  */
 export async function loadBudgetActuals(
+    bookGuid: string,
     budgetGuid: string,
     options: { asOf?: string } = {}
 ): Promise<BudgetActualsResponse | null> {
+    // The service is the authoritative ownership gate. Do not infer access
+    // from the current session or leak a foreign budget with zero amounts.
+    if (!await BudgetService.getById(bookGuid, budgetGuid)) return null;
+    const bookGuids = new Set(await getAccountGuidsForBook(bookGuid));
+
     const budget = await prisma.budgets.findUnique({
         where: { guid: budgetGuid },
         include: {
             recurrences: true,
             amounts: {
+                where: { account_guid: { in: [...bookGuids] } },
                 include: {
                     account: {
                         select: {
@@ -626,7 +634,6 @@ export async function loadBudgetActuals(
     });
     if (!budget) return null;
 
-    const bookGuids = new Set(await getBookAccountGuids());
     const asOf = options.asOf ?? isoDateUTC(new Date());
 
     const rec = budget.recurrences?.[0] ?? null;

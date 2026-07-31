@@ -19,6 +19,7 @@ import {
     parseFundingDedupeKey,
     parseAllocations,
     allocationsTotal,
+    filterAccountGuidsForBook,
     FundingRuleError,
 } from '../funding-rules.service';
 
@@ -119,6 +120,16 @@ describe('funding sweep advisory-lock key', () => {
 
     it('is distinct from the num dedupe key namespace', () => {
         expect(fundingSweepLockKey(42, GUID_A)).not.toBe(fundingDedupeKey(42, GUID_A));
+    });
+});
+
+describe('filterAccountGuidsForBook', () => {
+    it('drops stale foreign GUIDs before display-name lookup', () => {
+        const foreign = 'f'.repeat(32);
+        expect(filterAccountGuidsForBook(
+            [GUID_A, foreign, GUID_A, GUID_B],
+            [GUID_A, GUID_B],
+        )).toEqual([GUID_A, GUID_B]);
     });
 });
 

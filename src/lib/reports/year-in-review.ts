@@ -21,6 +21,7 @@
 
 import prisma from '@/lib/prisma';
 import { pickCurrentBudget } from '@/lib/budget-select';
+import { BudgetService } from '@/lib/services/budget.service';
 import { toDecimalNumber } from '@/lib/gnucash';
 import { getBaseCurrency } from '@/lib/currency';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
@@ -550,21 +551,32 @@ interface MonthlyActualRow {
  * `now` are not evaluated.
  */
 async function loadBudgetStreak(
+    bookGuid: string,
     bookAccountGuids: string[],
     year: number,
     now: Date
 ): Promise<YirBudgetStreakCard | null> {
     // Prefer the budget covering the review year (mid-year reference), not
     // the alphabetically-first budget.
-    const candidates = await prisma.budgets.findMany({ include: { recurrences: true } });
+    const candidates = await BudgetService.list(bookGuid) as Array<{
+        guid: string;
+        num_periods: number;
+        recurrences?: Array<{
+            recurrence_period_start: Date;
+            recurrence_period_type: string;
+            recurrence_mult: number;
+        }>;
+    }>;
     const picked = pickCurrentBudget(candidates, new Date(Date.UTC(year, 6, 1)));
     if (!picked) return null;
+    const bookGuidSet = new Set(bookAccountGuids);
 
     const budget = await prisma.budgets.findUnique({
         where: { guid: picked.guid },
         include: {
             recurrences: true,
             amounts: {
+                where: { account_guid: { in: bookAccountGuids } },
                 include: { account: { select: { account_type: true } } },
             },
         },
@@ -574,7 +586,6 @@ async function loadBudgetStreak(
     const recurrence = budget.recurrences?.[0] ?? null;
     if (!recurrence) return null;
 
-    const bookGuidSet = new Set(bookAccountGuids);
     const ps = recurrence.recurrence_period_start;
 
     // Budgeted expense totals + account set per month of the year
@@ -648,6 +659,7 @@ async function loadBudgetStreak(
 /* ------------------------------------------------------------------ */
 
 export async function generateYearInReview(
+    bookGuid: string,
     bookAccountGuids: string[],
     year: number
 ): Promise<YearInReviewData> {
@@ -779,7 +791,7 @@ export async function generateYearInReview(
     /* --- Budget streak --- */
     let budgetStreak: YirBudgetStreakCard | null = null;
     try {
-        budgetStreak = await loadBudgetStreak(bookAccountGuids, year, now);
+        budgetStreak = await loadBudgetStreak(bookGuid, bookAccountGuids, year, now);
     } catch (error) {
         console.error('Year in review: budget streak failed:', error);
     }

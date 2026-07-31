@@ -159,13 +159,23 @@ describe('deleteBookExtensionData', () => {
         }
     });
 
-    it('never touches excluded models (audit history is preserved)', async () => {
+    it('never touches retained or lifecycle-managed excluded models', async () => {
         await deleteBookExtensionData(BOOK, ACCOUNTS);
 
         const deletedModels = new Set(state.deleteManyCalls.map((c) => c.model));
         for (const model of Object.keys(EXCLUDED_BOOK_GUID_MODELS)) {
             expect(deletedModels.has(model), `${model} must NOT be deleted`).toBe(false);
         }
+    });
+
+    it('leaves budget ownership for recurrence-first native budget cleanup', async () => {
+        await deleteBookExtensionData(BOOK, ACCOUNTS);
+
+        expect(
+            state.deleteManyCalls.some((c) => c.model === 'gnucash_web_budget_ownership'),
+        ).toBe(false);
+        expect(EXCLUDED_BOOK_GUID_MODELS.gnucash_web_budget_ownership)
+            .toContain('deleteOwnedBudgetsForBook');
     });
 
     it('deletes book_links rows where the book appears in either column', async () => {

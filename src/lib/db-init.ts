@@ -1441,6 +1441,147 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // Native GnuCash budgets do not carry a book foreign key. Keep ownership
+    // in an app-owned table so the native schema remains interoperable.
+    //
+    // The backfill is deliberately fail-closed:
+    // - a non-empty budget is assigned only when every referenced account
+    //   resolves to one book and all accounts resolve to the same book;
+    // - an empty budget is assigned only when the database contains one book;
+    // - ambiguous or unmapped budgets remain unowned and invisible.
+    const budgetOwnershipTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_budget_ownership_schema'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_budget_ownership (
+            budget_guid VARCHAR(32) PRIMARY KEY
+                REFERENCES budgets(guid) ON DELETE CASCADE,
+            book_guid VARCHAR(32) NOT NULL
+                REFERENCES books(guid) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_budget_ownership_book
+            ON gnucash_web_budget_ownership(book_guid);
+
+        CREATE OR REPLACE FUNCTION gnucash_web_prevent_budget_owner_change()
+        RETURNS trigger AS $ownership$
+        BEGIN
+            IF NEW.book_guid IS DISTINCT FROM OLD.book_guid THEN
+                RAISE EXCEPTION 'Budget ownership is immutable';
+            END IF;
+            RETURN NEW;
+        END;
+        $ownership$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS trg_budget_ownership_immutable
+            ON gnucash_web_budget_ownership;
+        CREATE TRIGGER trg_budget_ownership_immutable
+            BEFORE UPDATE OF book_guid ON gnucash_web_budget_ownership
+            FOR EACH ROW
+            EXECUTE FUNCTION gnucash_web_prevent_budget_owner_change();
+
+        WITH RECURSIVE book_accounts AS (
+            SELECT b.guid AS book_guid, a.guid AS account_guid
+            FROM books b
+            JOIN accounts a ON a.guid = b.root_account_guid
+
+            UNION ALL
+
+            SELECT ba.book_guid, child.guid
+            FROM book_accounts ba
+            JOIN accounts child ON child.parent_guid = ba.account_guid
+        ),
+        account_resolution AS (
+            SELECT
+                account_guid,
+                MIN(book_guid) AS book_guid,
+                COUNT(DISTINCT book_guid) AS book_count
+            FROM book_accounts
+            GROUP BY account_guid
+        ),
+        budget_resolution AS (
+            SELECT
+                ba.budget_guid,
+                MIN(ar.book_guid) FILTER (WHERE ar.book_count = 1) AS book_guid,
+                COUNT(DISTINCT ba.account_guid) AS amount_account_count,
+                COUNT(DISTINCT ba.account_guid)
+                    FILTER (WHERE ar.book_count = 1) AS resolved_account_count,
+                COUNT(DISTINCT ar.book_guid)
+                    FILTER (WHERE ar.book_count = 1) AS resolved_book_count
+            FROM budget_amounts ba
+            LEFT JOIN account_resolution ar
+                ON ar.account_guid = ba.account_guid
+            GROUP BY ba.budget_guid
+        )
+        INSERT INTO gnucash_web_budget_ownership (budget_guid, book_guid)
+        SELECT budget_guid, book_guid
+        FROM budget_resolution
+        WHERE amount_account_count = resolved_account_count
+          AND resolved_book_count = 1
+          AND book_guid IS NOT NULL
+        ON CONFLICT (budget_guid) DO NOTHING;
+
+        INSERT INTO gnucash_web_budget_ownership (budget_guid, book_guid)
+        SELECT b.guid, only_book.guid
+        FROM budgets b
+        CROSS JOIN (
+            SELECT MIN(guid) AS guid
+            FROM books
+            HAVING COUNT(*) = 1
+        ) only_book
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM budget_amounts ba
+            WHERE ba.budget_guid = b.guid
+        )
+        ON CONFLICT (budget_guid) DO NOTHING;
+        END $$;
+    `;
+
+    // Envelope configuration is also lazily guarded by budget-envelope.ts,
+    // but startup must install its lifecycle FK before import/book deletion
+    // can recycle a native budget GUID. Valid legacy rows are preserved;
+    // only rows whose native budget is already gone are removed.
+    const budgetEnvelopesTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_budget_envelopes_schema'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_budget_envelopes (
+            id SERIAL PRIMARY KEY,
+            budget_guid VARCHAR(32) NOT NULL,
+            account_guid VARCHAR(32) NOT NULL,
+            rollover_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            alert_threshold_pct INTEGER,
+            goal_id INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (budget_guid, account_guid)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_budget_envelopes_budget
+            ON gnucash_web_budget_envelopes(budget_guid);
+
+        DELETE FROM gnucash_web_budget_envelopes e
+        WHERE NOT EXISTS (
+            SELECT 1 FROM budgets b WHERE b.guid = e.budget_guid
+        );
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'fk_budget_envelopes_budget'
+              AND conrelid = 'gnucash_web_budget_envelopes'::regclass
+        ) THEN
+            ALTER TABLE gnucash_web_budget_envelopes
+            ADD CONSTRAINT fk_budget_envelopes_budget
+            FOREIGN KEY (budget_guid)
+            REFERENCES budgets(guid)
+            ON DELETE CASCADE;
+        END IF;
+        END $$;
+    `;
+
     // Market wave H: renewals & contracts — upcoming renewal dates with
     // reminder lead time and dismissal.
     const renewalsTableDDL = `
@@ -1842,6 +1983,8 @@ async function createExtensionTables() {
         await query(timeEntriesTableDDL);
         await query(bookSettingsTableDDL);
         await query(receiptsHsaColumnsDDL);
+        await query(budgetOwnershipTableDDL);
+        await query(budgetEnvelopesTableDDL);
         await query(budgetFundingRulesTableDDL);
         await query(renewalsTableDDL);
         await query(homeTablesDDL);

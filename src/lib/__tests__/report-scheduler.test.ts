@@ -8,7 +8,8 @@ vi.mock('@/lib/prisma', () => ({
         $executeRawUnsafe: vi.fn(async () => 0),
         books: { findUnique: vi.fn() },
         gnucash_web_users: { findUnique: vi.fn() },
-        budgets: { findUnique: vi.fn(), findFirst: vi.fn() },
+        budgets: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
+        gnucash_web_budget_ownership: { findMany: vi.fn() },
         splits: { findMany: vi.fn() },
         accounts: { findMany: vi.fn(), findFirst: vi.fn() },
     },
@@ -41,6 +42,7 @@ import {
     runReportSchedule,
     renderScheduleEmail,
     buildScheduleCsv,
+    generateScheduledReport,
     normalizeRecipients,
     type ReportSchedule,
 } from '../report-scheduler';
@@ -374,6 +376,71 @@ describe('runReportSchedule', () => {
         expect(result.status).toBe('sent');
         expect(mockGetSavedReport).toHaveBeenCalledWith(42, 1);
         expect(mockSendEmail.mock.calls[0][0].subject).toContain('My Monthly Balance');
+    });
+});
+
+describe('scheduled budget report ownership', () => {
+    const budgetFilters = {
+        startDate: '2026-01-01',
+        endDate: '2026-01-31',
+        bookAccountGuids: ['account-book-a'],
+    };
+
+    it('rejects an explicit budget owned by another book', async () => {
+        mockPrisma.gnucash_web_budget_ownership.findMany.mockResolvedValue([
+            { budget_guid: 'owned-by-book-a' },
+        ] as never);
+
+        await expect(generateScheduledReport(
+            'budget_report',
+            { budgetGuid: 'foreign-budget' },
+            budgetFilters,
+            'book-a',
+        )).rejects.toThrow('No budget found');
+
+        expect(mockPrisma.gnucash_web_budget_ownership.findMany).toHaveBeenCalledWith({
+            where: { book_guid: 'book-a' },
+            select: { budget_guid: true },
+        });
+        expect(mockPrisma.budgets.findUnique).not.toHaveBeenCalled();
+        expect(mockPrisma.budgets.findMany).not.toHaveBeenCalled();
+    });
+
+    it('chooses the default only from budgets owned by the schedule book', async () => {
+        mockPrisma.gnucash_web_budget_ownership.findMany.mockResolvedValue([
+            { budget_guid: 'owned-by-book-a' },
+        ] as never);
+        mockPrisma.budgets.findMany.mockResolvedValue([
+            { guid: 'owned-by-book-a', name: 'Owned budget', num_periods: 1, recurrences: [] },
+        ] as never);
+        mockPrisma.budgets.findUnique.mockResolvedValue({
+            guid: 'owned-by-book-a',
+            name: 'Owned budget',
+            num_periods: 1,
+            recurrences: [],
+            amounts: [],
+        } as never);
+
+        const generated = await generateScheduledReport(
+            'budget_report',
+            {},
+            budgetFilters,
+            'book-a',
+        );
+
+        expect(mockPrisma.budgets.findMany).toHaveBeenCalledWith({
+            where: { guid: { in: ['owned-by-book-a'] } },
+            include: { recurrences: true },
+        });
+        expect(mockPrisma.budgets.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+            where: { guid: 'owned-by-book-a' },
+            include: expect.objectContaining({
+                amounts: expect.objectContaining({
+                    where: { account_guid: { in: ['account-book-a'] } },
+                }),
+            }),
+        }));
+        expect(generated.data.title).toBe('Budget Report — Owned budget');
     });
 });
 

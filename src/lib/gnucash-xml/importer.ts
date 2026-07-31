@@ -9,6 +9,7 @@
 import prisma from '@/lib/prisma';
 import { generateGuid } from '@/lib/gnucash';
 import { acquireBookLock, acquireNamedXactLock, commodityLockKey } from '@/lib/book-lock';
+import { createBudgetOwnership } from '@/lib/budget-ownership';
 import type { GnuCashXmlData, ImportSummary } from './types';
 
 /**
@@ -89,10 +90,40 @@ function topologicalSortAccounts(
  * specific price rows the incoming XML is about to re-insert.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function clearCollisionRows(tx: any, data: GnuCashXmlData) {
+async function clearCollisionRows(tx: any, data: GnuCashXmlData, bookGuid: string) {
   const transactionGuids = data.transactions.map((t) => t.id).filter(Boolean);
   const budgetGuids = data.budgets.map((b) => b.id).filter(Boolean);
   const priceGuids = data.pricedb.map((p) => p.id).filter((g): g is string => Boolean(g));
+
+  // Validate every native budget collision before deleting ANY rows. An
+  // overwrite may replace a budget only when its immutable owner is the same
+  // book. Missing ownership is also unsafe: legacy ambiguous budgets must
+  // remain quarantined instead of being guessed and re-homed.
+  if (budgetGuids.length) {
+    const existingBudgets = await tx.budgets.findMany({
+      where: { guid: { in: budgetGuids } },
+      select: { guid: true },
+    });
+    const existingBudgetGuids = existingBudgets.map((budget: { guid: string }) => budget.guid);
+    if (existingBudgetGuids.length) {
+      const ownershipRows = await tx.gnucash_web_budget_ownership.findMany({
+        where: { budget_guid: { in: existingBudgetGuids } },
+        select: { budget_guid: true, book_guid: true },
+      });
+      const ownerByBudget = new Map<string, string>(
+        ownershipRows.map((row: { budget_guid: string; book_guid: string }) => [
+          row.budget_guid,
+          row.book_guid,
+        ]),
+      );
+      const unsafeBudgetGuid = existingBudgetGuids.find(
+        (budgetGuid: string) => ownerByBudget.get(budgetGuid) !== bookGuid,
+      );
+      if (unsafeBudgetGuid) {
+        throw new BudgetOwnershipConflictError(unsafeBudgetGuid, bookGuid);
+      }
+    }
+  }
 
   const lotGuids = new Set<string>();
   for (const t of data.transactions) {
@@ -138,6 +169,17 @@ export class BookAlreadyExistsError extends Error {
   constructor(public readonly bookGuid: string) {
     super(`Book ${bookGuid} already exists. Pass overwrite: true to replace it.`);
     this.name = 'BookAlreadyExistsError';
+  }
+}
+
+export class BudgetOwnershipConflictError extends Error {
+  readonly code = 'BUDGET_OWNERSHIP_CONFLICT';
+  constructor(
+    public readonly budgetGuid: string,
+    public readonly bookGuid: string,
+  ) {
+    super(`Budget ${budgetGuid} cannot be overwritten by book ${bookGuid}`);
+    this.name = 'BudgetOwnershipConflictError';
   }
 }
 
@@ -202,7 +244,7 @@ export async function importGnuCashData(
         }
         isOverwrite = true;
         emit({ phase: 'Clearing old data', progress: 2 });
-        await clearCollisionRows(tx, data);
+        await clearCollisionRows(tx, data, xmlBookGuid);
       }
     }
 
@@ -602,6 +644,7 @@ export async function importGnuCashData(
           num_periods: budget.numPeriods,
         },
       });
+      await createBudgetOwnership(tx, budget.id, bookGuid);
       // Budget recurrence (period calendar) — after the budget row, since
       // recurrences.obj_guid has an FK to budgets.guid. GnuCash always
       // writes one; without it start dates, current-budget picks, and

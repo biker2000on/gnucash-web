@@ -69,12 +69,45 @@ export function ReportViewer({
                     [class*="px-"] { padding-left: 4px !important; padding-right: 4px !important; }
                     [class*="mb-3"], [class*="mb-2"] { margin-bottom: 3px !important; }
                     [class*="pb-2"], [class*="pb-1"] { padding-bottom: 2px !important; }
+                    /* The treasurer report is commonly printed for meeting handouts.
+                       Use the design system's 12px minimum legible scale, then
+                       recover vertical space with tighter print-only rhythm. */
+                    .treasurer-report {
+                        font-size: 12px;
+                        line-height: 1.15;
+                    }
+                    .treasurer-report h3 { font-size: 13px; }
+                    .treasurer-report table,
+                    .treasurer-report .font-mono,
+                    .treasurer-report [class*="font-mono"] {
+                        font-size: 12px;
+                    }
+                    .treasurer-report[class*="p-6"],
+                    .treasurer-report [class*="p-4"] {
+                        padding: 4px !important;
+                    }
+                    .treasurer-report[class*="space-y-8"] > * + * {
+                        margin-top: 6px !important;
+                    }
+                    .treasurer-report [class*="py-"] {
+                        padding-top: 1px !important;
+                        padding-bottom: 1px !important;
+                    }
+                    .treasurer-report [class*="mb-3"],
+                    .treasurer-report [class*="mb-2"] {
+                        margin-bottom: 2px !important;
+                    }
+                    .treasurer-report [class*="pb-2"],
+                    .treasurer-report [class*="pb-1"] {
+                        padding-bottom: 1px !important;
+                    }
                     table {
                         width: 100%;
                         border-collapse: collapse;
                         margin: 4px 0;
                         font-size: 10px;
                     }
+                    .treasurer-report table { margin: 2px 0; }
                     th, td {
                         border-bottom: 1px solid #ddd;
                         padding: 2px 6px;

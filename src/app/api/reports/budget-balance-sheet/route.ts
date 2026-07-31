@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateBudgetBalanceSheet } from '@/lib/reports/budget-statements';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { requireRole } from '@/lib/auth';
 
 /**
@@ -30,9 +30,9 @@ export async function GET(request: NextRequest) {
         // NaN → very large index; the generator clamps to the last period.
         const periodIndex = Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
 
-        const bookAccountGuids = await getBookAccountGuids();
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
 
-        const report = await generateBudgetBalanceSheet(bookAccountGuids, budgetGuid, periodIndex);
+        const report = await generateBudgetBalanceSheet(roleResult.bookGuid, bookAccountGuids, budgetGuid, periodIndex);
         if (!report) {
             return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
         }

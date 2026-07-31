@@ -20,6 +20,8 @@
 
 import prisma from '@/lib/prisma';
 import { toDecimalNumber } from '@/lib/gnucash';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { BudgetService } from '@/lib/services/budget.service';
 import {
     computePeriodRanges,
     shiftDateKeyOneYearBack,
@@ -134,11 +136,16 @@ async function loadDatedAmounts(
  * Returns null when the budget does not exist.
  */
 export async function computeBudgetEstimate(
+    bookGuid: string,
     budgetGuid: string,
     accountGuid: string,
     method: EstimateMethod,
     months: number = 12
 ): Promise<BudgetEstimateResult | null> {
+    const accountGuids = new Set(await getAccountGuidsForBook(bookGuid));
+    if (!accountGuids.has(accountGuid)) return null;
+    if (!await BudgetService.getById(bookGuid, budgetGuid)) return null;
+
     const budget = await prisma.budgets.findUnique({
         where: { guid: budgetGuid },
         include: { recurrences: true },

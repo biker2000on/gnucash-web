@@ -109,13 +109,26 @@ export async function exportBookData(rootAccountGuid: string): Promise<GnuCashXm
     },
   });
 
-  // Fetch budgets with recurrences and filter to only those referencing accounts in this book
-  const allBudgets = await prisma.budgets.findMany({
-    include: { amounts: true, recurrences: true },
+  // Export only budgets explicitly owned by this book. The native budgets table
+  // has no book GUID, so account membership remains a defense-in-depth filter
+  // on each budget's amounts rather than the primary scope check.
+  const ownershipRows = await prisma.gnucash_web_budget_ownership.findMany({
+    where: { book_guid: book.guid },
+    select: { budget_guid: true },
   });
+  const ownedBudgetGuids = ownershipRows.map((row) => row.budget_guid);
+  const allBudgets = ownedBudgetGuids.length > 0
+    ? await prisma.budgets.findMany({
+      where: { guid: { in: ownedBudgetGuids } },
+      include: {
+        amounts: { where: { account_guid: { in: guids } } },
+        recurrences: true,
+      },
+    })
+    : [];
   const guidSet = new Set(guids);
   const budgets = allBudgets
-    .filter((b) => b.amounts.some((a) => guidSet.has(a.account_guid)))
+    .filter((b) => ownedBudgetGuids.includes(b.guid))
     .map((b) => ({
       ...b,
       amounts: b.amounts.filter((a) => guidSet.has(a.account_guid)),

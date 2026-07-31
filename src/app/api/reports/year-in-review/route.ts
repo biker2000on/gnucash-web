@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { generateYearInReview } from '@/lib/reports/year-in-review';
 
 /**
@@ -29,9 +29,9 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const bookAccountGuids = await getBookAccountGuids();
+        const bookAccountGuids = await getAccountGuidsForBook(roleResult.bookGuid);
 
-        const report = await generateYearInReview(bookAccountGuids, year);
+        const report = await generateYearInReview(roleResult.bookGuid, bookAccountGuids, year);
         return NextResponse.json(report);
     } catch (error) {
         console.error('Error generating year-in-review report:', error);
