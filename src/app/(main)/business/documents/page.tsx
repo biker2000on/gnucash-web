@@ -2,24 +2,15 @@
 
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
 import type { EntityDocument } from '@/lib/services/entity-documents.service';
+import {
+    getEditDocumentTypeOptions,
+    getEntityDocumentContext,
+    type EntityDocumentProfile,
+} from '@/lib/entity-document-context';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
-
-const TYPE_GROUPS: Array<{ type: string; label: string }> = [
-    { type: 'formation', label: 'Formation' },
-    { type: 'ein', label: 'EIN' },
-    { type: 'election', label: 'Elections' },
-    { type: 'insurance', label: 'Insurance' },
-    { type: 'license', label: 'Licenses' },
-    { type: 'agreement', label: 'Agreements' },
-    { type: 'farm_certificate_qf', label: 'E-595QF Certificates' },
-    { type: 'farm_certificate_cf', label: 'E-595CF Certificates' },
-    { type: 'other', label: 'Other' },
-];
-
-const TYPE_OPTIONS = TYPE_GROUPS.map((g) => ({ value: g.type, label: g.label }));
 
 interface DocumentsResponse {
     documents: EntityDocument[];
@@ -74,6 +65,7 @@ const labelClass = 'block text-xs text-foreground-secondary mb-1';
 export default function EntityDocumentsPage() {
     const toast = useToast();
     const [data, setData] = useState<DocumentsResponse | null>(null);
+    const [entityProfile, setEntityProfile] = useState<EntityDocumentProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -109,7 +101,20 @@ export default function EntityDocumentsPage() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            await load();
+            await Promise.all([
+                load(),
+                (async () => {
+                    try {
+                        const res = await fetch('/api/entity');
+                        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+                        const profile = (await res.json()) as EntityDocumentProfile;
+                        if (!cancelled) setEntityProfile(profile);
+                    } catch {
+                        // Documents remain usable with deliberately neutral copy.
+                        if (!cancelled) setEntityProfile(null);
+                    }
+                })(),
+            ]);
             if (!cancelled) setLoading(false);
         })();
         return () => {
@@ -227,12 +232,26 @@ export default function EntityDocumentsPage() {
 
     const documents = data?.documents ?? [];
     const expiring = data?.expiringSoon ?? [];
+    const context = getEntityDocumentContext(entityProfile);
+    const contextualTypes = new Set(context.typeOptions.map(({ value }) => value));
+    const documentGroups = [
+        ...context.typeOptions.map(({ value, label }) => ({
+            key: value,
+            label,
+            documents: documents.filter((doc) => doc.docType === value),
+        })),
+        {
+            key: '__legacy__',
+            label: 'Other document types',
+            documents: documents.filter((doc) => !contextualTypes.has(doc.docType)),
+        },
+    ];
 
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Entity Documents"
-                subtitle="The document vault for this entity: formation papers, EIN letter, elections, insurance certificates, licenses, and agreements — with expiry tracking."
+                title={context.title}
+                subtitle={context.subtitle}
             />
 
             {loading && (
@@ -312,7 +331,7 @@ export default function EntityDocumentsPage() {
                                     type="text"
                                     value={uploadTitle}
                                     onChange={(e) => setUploadTitle(e.target.value)}
-                                    placeholder="e.g. EIN assignment letter"
+                                    placeholder={context.uploadTitlePlaceholder}
                                     className={inputClass}
                                 />
                             </div>
@@ -323,7 +342,7 @@ export default function EntityDocumentsPage() {
                                     onChange={(e) => setUploadType(e.target.value)}
                                     className={inputClass}
                                 >
-                                    {TYPE_OPTIONS.map((o) => (
+                                    {context.typeOptions.map((o) => (
                                         <option key={o.value} value={o.value}>
                                             {o.label}
                                         </option>
@@ -378,7 +397,7 @@ export default function EntityDocumentsPage() {
                                 type="text"
                                 value={uploadNotes}
                                 onChange={(e) => setUploadNotes(e.target.value)}
-                                placeholder="Policy number, filing date, renewal contact…"
+                                placeholder={context.notesPlaceholder}
                                 className={inputClass}
                             />
                         </div>
@@ -387,23 +406,26 @@ export default function EntityDocumentsPage() {
                     {documents.length === 0 ? (
                         <div className="bg-background-secondary/30 border border-border rounded-xl p-8 text-center space-y-2">
                             <p className="text-sm text-foreground-secondary">
-                                No documents yet. A good starter set for the vault:
+                                {context.starterIntro}
                             </p>
                             <p className="text-sm text-foreground-secondary">
-                                the <span className="text-foreground font-medium">EIN assignment letter</span>,
-                                the <span className="text-foreground font-medium">operating agreement</span>,
-                                your <span className="text-foreground font-medium">insurance certificate</span>
-                                {' '}— and once elected, <span className="text-foreground font-medium">Form 2553</span> (S-corp election).
+                                {context.starterExamples.map((example, index) => (
+                                    <Fragment key={example}>
+                                        {index > 0 && (index === context.starterExamples.length - 1 ? ', and ' : ', ')}
+                                        <span className="text-foreground font-medium">{example}</span>
+                                    </Fragment>
+                                ))}
+                                .
                             </p>
                         </div>
                     ) : (
                         <div className="space-y-4">
-                            {TYPE_GROUPS.map((group) => {
-                                const docs = documents.filter((d) => d.docType === group.type);
+                            {documentGroups.map((group) => {
+                                const docs = group.documents;
                                 if (docs.length === 0) return null;
                                 return (
                                     <div
-                                        key={group.type}
+                                        key={group.key}
                                         className="bg-background-secondary/30 border border-border rounded-xl overflow-hidden"
                                     >
                                         <div className="border-b border-border px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-foreground-muted">
@@ -504,7 +526,7 @@ export default function EntityDocumentsPage() {
                                                                         onChange={(e) => setEdit({ ...edit, docType: e.target.value })}
                                                                         className={inputClass}
                                                                     >
-                                                                        {TYPE_OPTIONS.map((o) => (
+                                                                        {getEditDocumentTypeOptions(context, doc.docType).map((o) => (
                                                                             <option key={o.value} value={o.value}>
                                                                                 {o.label}
                                                                             </option>

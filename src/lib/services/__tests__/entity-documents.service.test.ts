@@ -44,9 +44,11 @@ vi.mock('@/lib/services/document-intake', () => ({
 }));
 
 import {
+    DOC_TYPES,
     daysUntilExpiry,
     isValidDocType,
     createEntityDocument,
+    updateEntityDocument,
     EntityDocumentValidationError,
 } from '../entity-documents.service';
 
@@ -74,8 +76,25 @@ describe('daysUntilExpiry', () => {
 });
 
 describe('isValidDocType', () => {
-    it('accepts the documented set and rejects the rest', () => {
-        for (const t of ['formation', 'ein', 'election', 'insurance', 'license', 'agreement', 'other']) {
+    it('accepts every first-class document type and rejects the rest', () => {
+        expect(DOC_TYPES).toEqual(expect.arrayContaining([
+            'formation',
+            'ein',
+            'election',
+            'insurance',
+            'license',
+            'agreement',
+            'farm_certificate_qf',
+            'farm_certificate_cf',
+            'identity',
+            'tax',
+            'property',
+            'estate',
+            'governance',
+            'determination',
+            'other',
+        ]));
+        for (const t of DOC_TYPES) {
             expect(isValidDocType(t)).toBe(true);
         }
         expect(isValidDocType('receipt')).toBe(false);
@@ -149,5 +168,37 @@ describe('createEntityDocument', () => {
 
         await expect(createEntityDocument(BOOK, baseInput)).rejects.toThrow('db down');
         expect(storageMock.delete).toHaveBeenCalledWith('entity-documents/2026/07/uuid.pdf');
+    });
+});
+
+describe('updateEntityDocument', () => {
+    it('allows an unchanged legacy type while editing other metadata', async () => {
+        const row = {
+            id: 11,
+            book_guid: BOOK,
+            title: 'Imported record',
+            doc_type: 'legacy_import',
+            file_key: 'entity-documents/legacy.pdf',
+            file_name: 'legacy.pdf',
+            mime_type: 'application/pdf',
+            size_bytes: BigInt(PDF.byteLength),
+            expires_on: null,
+            issued_on: null,
+            return_copy_due_on: null,
+            notes: null,
+            uploaded_at: new Date('2026-07-14T00:00:00Z'),
+        };
+        docsModel.findUnique.mockResolvedValue(row);
+        docsModel.update.mockResolvedValue({ ...row, title: 'Updated imported record' });
+
+        await expect(
+            updateEntityDocument(BOOK, 11, {
+                title: 'Updated imported record',
+                docType: 'legacy_import',
+            })
+        ).resolves.toMatchObject({
+            title: 'Updated imported record',
+            docType: 'legacy_import',
+        });
     });
 });

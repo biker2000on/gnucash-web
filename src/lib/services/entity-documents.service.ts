@@ -18,6 +18,7 @@ import {
     detectReceiptMimeType,
     sanitizeFilename,
 } from '@/lib/services/document-intake';
+import { DOCUMENT_TYPE_VALUES } from '@/lib/entity-document-context';
 
 /* ------------------------------------------------------------------ */
 /* Constants + pure helpers                                             */
@@ -26,17 +27,7 @@ import {
 export const DOCUMENT_MAX_FILE_SIZE = RECEIPT_MAX_FILE_SIZE; // 10MB, same as receipts
 export const DOCUMENT_KEY_PREFIX = 'entity-documents/';
 
-export const DOC_TYPES = [
-    'formation',
-    'ein',
-    'election',
-    'insurance',
-    'license',
-    'agreement',
-    'farm_certificate_qf',
-    'farm_certificate_cf',
-    'other',
-] as const;
+export const DOC_TYPES = DOCUMENT_TYPE_VALUES;
 export type DocType = (typeof DOC_TYPES)[number];
 
 export function isValidDocType(value: unknown): value is DocType {
@@ -251,7 +242,7 @@ export async function updateEntityDocument(
     id: number,
     input: UpdateEntityDocumentInput,
 ): Promise<EntityDocument> {
-    await getOwnedDocument(bookGuid, id);
+    const existing = await getOwnedDocument(bookGuid, id);
 
     const data: {
         title?: string;
@@ -269,7 +260,10 @@ export async function updateEntityDocument(
         data.title = title;
     }
     if (input.docType !== undefined) {
-        if (!isValidDocType(input.docType)) {
+        // Permit an existing pre-contract type to remain unchanged while the
+        // document's other metadata is edited. New and changed types must use
+        // the first-class DOC_TYPES contract.
+        if (!isValidDocType(input.docType) && input.docType !== existing.doc_type) {
             throw new EntityDocumentValidationError(
                 `Invalid document type (expected one of: ${DOC_TYPES.join(', ')})`
             );
