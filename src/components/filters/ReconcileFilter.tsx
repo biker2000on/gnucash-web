@@ -40,7 +40,7 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
                 Reconciliation Status
             </label>
-            <div className="flex gap-2">
+            <div className="flex min-w-0 gap-2">
                 {RECONCILE_STATES.map(state => {
                     const isSelected = selectedStates.includes(state.value);
                     const colors = colorClasses[state.color];
@@ -48,13 +48,13 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
                         <button
                             key={state.value}
                             onClick={() => toggleState(state.value)}
-                            className={`flex-1 px-3 py-2 min-h-[44px] text-sm rounded-lg border transition-all flex items-center justify-center gap-2 ${
+                            className={`flex-1 min-w-0 px-3 py-2 min-h-[44px] text-sm rounded-lg border transition-all flex items-center justify-center gap-2 ${
                                 isSelected ? colors.selected : colors.unselected
                             }`}
                             title={state.label}
                         >
                             <span className="font-mono font-bold">{state.shortLabel}</span>
-                            <span className="text-xs hidden sm:inline">{state.label}</span>
+                            <span className="hidden text-xs md:inline">{state.label}</span>
                         </button>
                     );
                 })}

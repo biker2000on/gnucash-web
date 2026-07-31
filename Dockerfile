@@ -55,6 +55,7 @@ RUN npm run build
 RUN npx esbuild worker.ts \
       --bundle --platform=node --target=node24 --format=cjs \
       --external:@prisma/client --external:sharp --external:bcrypt \
+      --external:pdfjs-dist/* \
       --outfile=.next/standalone/worker.js \
  && npx esbuild scripts/db-init-entrypoint.ts \
       --bundle --platform=node --target=node24 --format=cjs \
@@ -67,6 +68,11 @@ RUN NODE_TLS_REJECT_UNAUTHORIZED=0 npx prisma migrate diff \
       --from-empty --to-schema prisma/schema.prisma --script \
       -o .next/standalone/bootstrap.sql \
  && grep -q "CREATE TABLE" .next/standalone/bootstrap.sql
+
+# PDF.js must remain a real ESM package at runtime. Bundling it into worker.js
+# breaks its import.meta.url-based canvas polyfill and worker resolution.
+COPY --from=prod-deps /app/node_modules/pdfjs-dist .next/standalone/node_modules/pdfjs-dist
+COPY --from=prod-deps /app/node_modules/@napi-rs .next/standalone/node_modules/@napi-rs
 
 # Drop dead weight Next's file tracing pulls into standalone:
 #   - typescript: traced via a type-only prisma import, never required at runtime

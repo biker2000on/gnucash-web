@@ -38,8 +38,24 @@ interface Batch {
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 
 /** OFX/QFX files carry an <ACCTID>, so the account picker is optional for them. */
-function isOfxFilename(name: string | undefined): boolean {
+export function isOfxFilename(name: string | undefined): boolean {
   return /\.(ofx|qfx)$/i.test(name ?? '');
+}
+
+type UploadStatus = 'queued' | 'uploading' | 'success' | 'error';
+
+export interface StatementUploadItem {
+  id: string;
+  file: File;
+  status: UploadStatus;
+  error?: string;
+}
+
+/** Non-OFX/QFX files need the one reconcile account shared by this upload batch. */
+export function needsSharedReconcileAccount(items: StatementUploadItem[]): boolean {
+  return items.some(
+    (item) => (item.status === 'queued' || item.status === 'error') && !isOfxFilename(item.file.name),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +91,7 @@ function formatBalance(value: number | string | null, currency: string | null): 
 // Upload modal
 // ---------------------------------------------------------------------------
 
-function UploadModal({
+export function UploadModal({
   isOpen,
   onClose,
   onUploaded,
@@ -85,89 +101,212 @@ function UploadModal({
   onUploaded: () => void;
 }) {
   const toast = useToast();
-  const [file, setFile] = useState<File | null>(null);
+  const [items, setItems] = useState<StatementUploadItem[]>([]);
   const [accountGuid, setAccountGuid] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const nextItemId = useRef(0);
 
   // Reset when opened.
   useEffect(() => {
     if (isOpen) {
-      setFile(null);
+      setItems([]);
       setAccountGuid('');
       setError(null);
       setUploading(false);
+      nextItemId.current = 0;
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }, [isOpen]);
 
-  const isOfx = isOfxFilename(file?.name);
-  const canSubmit = !!file && (!!accountGuid || isOfx) && !uploading;
+  const queuedItems = items.filter((item) => item.status === 'queued');
+  const accountRequired = needsSharedReconcileAccount(items);
+  const canSubmit = queuedItems.length > 0 && (!accountRequired || !!accountGuid) && !uploading;
 
-  const handleSubmit = useCallback(async () => {
-    if (!file) {
-      setError('Choose a statement file (PDF, CSV, or OFX/QFX).');
-      return;
-    }
-    if (!accountGuid && !isOfxFilename(file.name)) {
-      setError('Select the ledger account this statement reconciles.');
-      return;
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      setError('File exceeds the 15MB limit.');
-      return;
+  const updateItem = useCallback((id: string, update: Partial<StatementUploadItem>) => {
+    setItems((current) => current.map((item) => (item.id === id ? { ...item, ...update } : item)));
+  }, []);
+
+  const uploadItem = useCallback(async (item: StatementUploadItem): Promise<boolean> => {
+    if (item.file.size > MAX_FILE_SIZE) {
+      updateItem(item.id, { status: 'error', error: 'File exceeds the 15MB limit.' });
+      return false;
     }
 
-    setUploading(true);
-    setError(null);
+    updateItem(item.id, { status: 'uploading', error: undefined });
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', item.file);
       if (accountGuid) formData.append('accountGuid', accountGuid);
       const res = await fetch('/api/statements/upload', { method: 'POST', body: formData });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Upload failed (HTTP ${res.status})`);
       }
-      toast.success('Statement uploaded. Parsing…');
-      onUploaded();
-      onClose();
+      updateItem(item.id, { status: 'success', error: undefined });
+      return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
-    } finally {
-      setUploading(false);
+      updateItem(item.id, {
+        status: 'error',
+        error: err instanceof Error ? err.message : 'Upload failed',
+      });
+      return false;
     }
-  }, [file, accountGuid, toast, onUploaded, onClose]);
+  }, [accountGuid, updateItem]);
+
+  const handleSubmit = useCallback(async () => {
+    if (queuedItems.length === 0) {
+      setError('Choose one or more statement files (PDF, CSV, or OFX/QFX).');
+      return;
+    }
+    if (!accountGuid && accountRequired) {
+      setError('Select the ledger account this statement reconciles.');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    let successfulUploads = 0;
+    for (const item of queuedItems) {
+      if (await uploadItem(item)) successfulUploads += 1;
+    }
+    if (successfulUploads > 0) {
+      toast.success(
+        successfulUploads === 1
+          ? 'Statement uploaded. Parsing…'
+          : `${successfulUploads} statements uploaded. Parsing…`,
+      );
+      onUploaded();
+    }
+    setUploading(false);
+  }, [accountGuid, accountRequired, onUploaded, queuedItems, toast, uploadItem]);
+
+  const handleRetry = useCallback(async (item: StatementUploadItem) => {
+    if (!accountGuid && !isOfxFilename(item.file.name)) {
+      setError('Select the ledger account this statement reconciles before retrying this file.');
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    if (await uploadItem(item)) {
+      toast.success(`Uploaded ${item.file.name}. Parsing…`);
+      onUploaded();
+    }
+    setUploading(false);
+  }, [accountGuid, onUploaded, toast, uploadItem]);
+
+  const addFiles = (files: FileList | null) => {
+    const selected = Array.from(files ?? []);
+    if (selected.length === 0) return;
+    setItems((current) => [
+      ...current,
+      ...selected.map((file) => ({
+        id: `statement-upload-${nextItemId.current++}`,
+        file,
+        status: 'queued' as const,
+      })),
+    ]);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Upload Statement" size="md">
+    <Modal
+      isOpen={isOpen}
+      onClose={() => { if (!uploading) onClose(); }}
+      title="Upload Statements"
+      size="lg"
+      closeOnBackdrop={!uploading}
+      closeOnEscape={!uploading}
+    >
       <div className="px-6 py-5 space-y-5">
         {/* File input */}
         <div>
           <label className="block text-xs font-medium text-foreground-muted uppercase tracking-wider mb-1.5">
-            Statement File
+            Statement Files
           </label>
           <input
             ref={fileInputRef}
             type="file"
             accept=".pdf,.csv,.ofx,.qfx"
-            onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
-              setError(null);
-            }}
+            multiple
+            disabled={uploading}
+            onChange={(e) => addFiles(e.target.files)}
             className="block w-full text-sm text-foreground-secondary file:mr-3 file:rounded-lg file:border file:border-border file:bg-background-tertiary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-foreground hover:file:bg-surface-hover file:transition-colors file:cursor-pointer"
           />
           <p className="text-xs text-foreground-muted mt-1.5">
-            PDF, CSV, or OFX/QFX. Max 15MB.
+            Select one or more PDF, CSV, or OFX/QFX files. Max 15MB each.
           </p>
         </div>
 
-        {/* Account selector (required except for OFX/QFX) */}
+        {items.length > 0 && (
+          <div className="border border-border rounded-lg divide-y divide-border overflow-hidden">
+            {items.map((item) => (
+              <div key={item.id} className="flex items-center gap-3 px-3 py-2.5">
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    item.status === 'success'
+                      ? 'bg-[color:var(--success)]'
+                      : item.status === 'error'
+                        ? 'bg-[color:var(--error)]'
+                        : item.status === 'uploading'
+                          ? 'bg-primary animate-pulse'
+                          : 'bg-foreground-muted'
+                  }`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm text-foreground" title={item.file.name}>{item.file.name}</div>
+                  {item.error ? (
+                    <div className="mt-0.5 text-xs text-[color:var(--error)]">{item.error}</div>
+                  ) : (
+                    <div className="mt-0.5 text-xs text-foreground-muted">
+                      {(item.file.size / 1024 / 1024).toFixed(1)} MB
+                    </div>
+                  )}
+                </div>
+                <span className={`text-xs font-medium ${
+                  item.status === 'success'
+                    ? 'text-[color:var(--success)]'
+                    : item.status === 'error'
+                      ? 'text-[color:var(--error)]'
+                      : 'text-foreground-secondary'
+                }`}>
+                  {item.status === 'uploading' ? 'Uploading…' : item.status[0].toUpperCase() + item.status.slice(1)}
+                </span>
+                {(item.status === 'queued' || item.status === 'error') && (
+                  <button
+                    type="button"
+                    onClick={() => setItems((current) => current.filter((queued) => queued.id !== item.id))}
+                    disabled={uploading}
+                    aria-label={`Remove ${item.file.name}`}
+                    className="text-xs font-medium text-foreground-muted hover:text-[color:var(--error)] transition-colors disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+                {item.status === 'error' && (
+                  <button
+                    type="button"
+                    onClick={() => handleRetry(item)}
+                    disabled={uploading}
+                    aria-label={`Retry ${item.file.name}`}
+                    className="text-xs font-medium text-primary hover:text-primary-hover transition-colors disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* One account is shared by all files in this batch. */}
         <div>
           <label className="block text-xs font-medium text-foreground-muted uppercase tracking-wider mb-1.5">
             Reconcile Account{' '}
-            {isOfx ? (
+            {!accountRequired ? (
               <span className="normal-case tracking-normal text-foreground-muted">(optional)</span>
             ) : (
               <span className="text-[color:var(--warning)]">*</span>
@@ -181,12 +320,13 @@ function UploadModal({
             }}
             placeholder="Select bank / asset / credit account…"
             accountTypes={RECONCILE_ACCOUNT_TYPES}
-            hasError={!!error && !accountGuid && !isOfx}
+            hasError={!!error && !accountGuid && accountRequired}
+            disabled={uploading}
           />
           <p className="text-xs text-foreground-muted mt-1.5">
-            {isOfx
-              ? 'Optional for OFX/QFX — auto-detected from the file when previously mapped. You can also assign it after parsing.'
-              : 'Required — the ledger account this statement will be reconciled against.'}
+            {accountRequired
+              ? 'Required — this account will be used for every PDF or CSV in the batch.'
+              : 'Optional for OFX/QFX-only batches — accounts can be auto-detected from mapped files or assigned after parsing.'}
           </p>
         </div>
 
@@ -213,7 +353,7 @@ function UploadModal({
           {uploading && (
             <span className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
           )}
-          {uploading ? 'Uploading…' : 'Upload'}
+          {uploading ? 'Uploading…' : `Upload queued${queuedItems.length ? ` (${queuedItems.length})` : ''}`}
         </button>
       </div>
     </Modal>

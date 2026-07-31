@@ -49,7 +49,7 @@ import { TransactionTagEditor } from '@/components/tags/TransactionTagEditor';
 import { BulkDescriptionModal, BulkTagsModal, type BulkDescriptionPayload } from '@/components/ledger/BulkEditModals';
 import TagChip from '@/components/tags/TagChip';
 import type { Tag } from '@/lib/tags';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import {
     getRowAccountSplits,
     getSelectableRowSplits,
@@ -73,6 +73,19 @@ export interface AccountTransaction extends Transaction {
     source?: string;
     match_type?: string | null;
     receipt_count?: number;
+}
+
+/**
+ * Replace the transaction SSE echo suppressed after local bulk mutations.
+ * The account hierarchy uses these independent derived caches for totals and
+ * account status rollups; reloading only this ledger does not refresh them.
+ */
+export function invalidateTransactionAccountCaches(queryClient: Pick<QueryClient, 'invalidateQueries'>) {
+    return Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['accounts', 'balances'] }),
+        queryClient.invalidateQueries({ queryKey: ['accounts', 'reconcile-summary'] }),
+        queryClient.invalidateQueries({ queryKey: ['accounts', 'review-status'] }),
+    ]);
 }
 
 type HoldingPeriod = 'short_term' | 'long_term' | null;
@@ -1184,12 +1197,13 @@ export default function AccountLedger({
             const data = await res.json();
             setEditSelectedGuids(new Set());
             suppressNextDataEvent('transactions');
+            await invalidateTransactionAccountCaches(queryClient);
             await fetchTransactions();
             success(`Moved ${data.updated} split${data.updated !== 1 ? 's' : ''} to ${targetAccountName}`);
         } catch (err) {
             error(err instanceof Error ? err.message : 'Failed to move splits');
         }
-    }, [transactions, editSelectedGuids, accountGuid, fetchTransactions, success, error]);
+    }, [transactions, editSelectedGuids, accountGuid, fetchTransactions, success, error, queryClient]);
 
     // Shared bulk-edit runner: PATCH /api/transactions/bulk with the ledger
     // account as the anchor (its split is never the one recategorized).
