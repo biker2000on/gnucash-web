@@ -686,7 +686,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         };
 
         const parentClasses = `relative flex items-center rounded-xl transition-all duration-200 group
-                        ${isCollapsed ? 'justify-center px-0 py-3' : 'px-4 py-3'}
+                        ${isCollapsed ? 'justify-center px-0 py-2' : 'px-4 py-2'}
                         ${isActive
                             ? 'bg-sidebar-active-bg text-sidebar-text-active shadow-lg shadow-primary/10'
                             : 'text-sidebar-text hover:bg-sidebar-hover hover:text-foreground'
@@ -755,7 +755,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                                     key={child.href}
                                     href={child.href}
                                     onClick={() => setMobileSidebarState({ open: false, pathname })}
-                                    className={`block px-3 py-2.5 min-h-[44px] flex items-center text-sm rounded-lg transition-colors
+                                    className={`block px-3 py-1.5 flex items-center text-sm rounded-lg transition-colors
                                         ${isChildActive
                                             ? 'text-sidebar-text-active bg-sidebar-active-bg/50'
                                             : 'text-foreground-muted hover:text-foreground-secondary hover:bg-sidebar-hover/50'
@@ -834,8 +834,8 @@ export default function Layout({ children }: { children: ReactNode }) {
                 )}
 
                 {/* Nav links (mobile-only items like Quick Add are excluded on desktop) */}
-                <nav className={`flex-1 space-y-1 overflow-y-auto overflow-x-hidden transition-all duration-300
-                    ${collapsed && hydrated ? 'px-2 py-4' : 'px-4 py-4'}`}>
+                <nav className={`flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden transition-all duration-300
+                    ${collapsed && hydrated ? 'px-2 py-3' : 'px-4 py-3'}`}>
                     {effectiveNavItems.filter((item) => !item.mobileOnly).map(renderNavItem)}
                 </nav>
 

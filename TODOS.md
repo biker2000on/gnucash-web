@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-07-26.
+Updated 2026-08-01.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -724,6 +724,133 @@ Action Center with calculation provenance.
 
 ---
 
+## P2 - Tax Deduction and Compliance Pack
+
+### Charitable Giving and Deduction Bunching
+
+**Status:** Proposed 2026-08-01.
+
+**What:** Track cash and non-cash donations with fair-market-value evidence
+(photos, receipts, and acknowledgment letters through the document vault),
+charity mileage through the existing mileage engine and its IRS charity rate,
+and QCDs once RMD age applies. Add a deterministic "bunch two years of giving
+into one" scenario that compares itemizing against the standard deduction,
+including donor-advised-fund front-loading.
+
+**Why:** The largest common tax surface the roadmap does not touch. Donation
+substantiation (Form 8283 thresholds, acknowledgment letters) is an evidence
+problem the document vault already solves elsewhere.
+
+**Integration:** Donation deadlines and acknowledgment follow-ups feed the
+Money Timeline; bunching and QCD opportunities rank in Next Best Dollar; every
+deduction figure traces to its receipts and valuations; bunching becomes a
+Living Plan scenario.
+
+**Effort:** M.
+
+### 1099 Contractor Compliance
+
+**Status:** Proposed 2026-08-01.
+
+**What:** Detect vendors paid over the reporting threshold from ledger history,
+track W-9 collection status in the document vault, generate 1099-NEC/MISC
+data for filing or export, and place the January deadlines on the compliance
+calendar.
+
+**Why:** Business books already have vendors, vouchers, and jobs, but nothing
+closes the annual information-return loop. Threshold detection is purely
+deterministic ledger math.
+
+**Integration:** Missing W-9s and unfiled forms become Action Center items;
+filing deadlines feed the Money Timeline and compliance iCal; every reported
+box amount traces to its source payments.
+
+**Effort:** S-M.
+
+---
+
+## P2 - Farm Production and Direct-Sales COGS Pack
+
+**Status:** Proposed 2026-08-01.
+
+**What:** Track production (honey, eggs, produce) from harvest through
+inventory to sale: harvest/production logs with quantities, per-unit cost
+buildup, inventory on hand, and sales-channel tracking (farmers market,
+wholesale, direct) flowing into Schedule F cost-of-goods and income lines.
+
+**Beez Trackz integration:** The apiary side of production should come from
+`../beez-trackz`, which already models harvests, bottling runs, lots, expenses,
+customers, orders, and wholesale pricing behind its Go `/api/v1` contract.
+Follow the Fuel Tracker pattern: per-book encrypted connection settings, a
+token-authenticated read-only API polled by a BullMQ worker, immutable
+source-ID dedupe, and a one-time mapping of Beez Trackz sales channels and
+expense categories to GnuCash accounts. This may include updating Beez Trackz
+itself — e.g., adding or extending read endpoints for harvests, bottling
+runs, order/payment status, and expenses with `since`-based incremental
+pagination — so the integration contract is clean rather than scraped.
+
+**Why:** The Schedule F machinery is deep, but the production-to-inventory-to
+sale chain that generates its COGS and income figures is untracked. Honey
+sales recorded in Beez Trackz and deposits in GnuCash currently never meet.
+
+**Integration:** Unmatched Beez Trackz orders versus ledger deposits become
+Action Center items; harvest and market dates feed the Money Timeline; every
+Schedule F COGS and income figure traces to harvests, bottling runs, and
+orders; per-channel margin feeds the farm analyzer.
+
+**Depends on:** Schedule F engine, farm book templates, Fuel Tracker
+connection pattern, and Action Center.
+
+**Effort:** M-L (plus coordinated Beez Trackz API work).
+
+---
+
+## P3 - Estate and Beneficiary Readiness Pack
+
+**Status:** Proposed 2026-08-01.
+
+**What:** Track per-account beneficiary designations with staleness detection
+keyed to Living Plan life events (marriage, birth, death, divorce), monitor
+will/trust/POA/healthcare-directive document freshness in the vault, maintain
+a survivor access runbook, and compute estate exposure against the federal and
+state exemption.
+
+**Why:** Low effort, high consequence-avoidance. The document vault, insurance
+policy model, and emergency information already hold most of the data; nothing
+currently notices when a designation goes stale.
+
+**Integration:** Stale beneficiaries and expiring documents become Action
+Center items; document review dates feed the Money Timeline; exposure math
+carries calculation provenance; estate events become Living Plan stress tests.
+
+**Effort:** S-M.
+
+---
+
+## P3 - Retirement Income Sequencing and Social Security Optimizer
+
+**Status:** Proposed 2026-08-01.
+
+**What:** Deterministic claiming-age comparison per spouse (including survivor
+and spousal benefits), withdrawal-order modeling across taxable, tax-deferred,
+and Roth accounts, and IRMAA cliff detection on modified AGI.
+
+**Why:** The FIRE/drawdown engines and RMD timeline exist; this is the
+decision layer on top of them. Claiming age and withdrawal order are among the
+largest single retirement decisions and are fully deterministic.
+
+**Integration:** Claiming windows and IRMAA thresholds feed the Money
+Timeline; sequencing recommendations rank in Next Best Dollar with "show the
+math"; the chosen strategy becomes an adopted Living Plan element reconciled
+against actual benefits and withdrawals.
+
+**Depends on:** FIRE/drawdown engines, tax estimator, RMD events, and Living
+Plan.
+
+**Effort:** M-L.
+
+---
+
 # Core workflow and connector backlog
 
 ## P1 - Scheduled Transactions: Edit and Create from Existing
@@ -774,7 +901,7 @@ and the Action Center.
 
 ## P3 - Multi-Window / Multi-Monitor Pop-Out Panes
 
-**Status:** Proposed 2026-08-01.
+**Status:** Implemented 2026-08-01.
 
 **Outcome:** The weekly close and other review-heavy workflows span two
 monitors: a driving list on one screen and the work surface on the other, so
@@ -827,6 +954,19 @@ page. Deterministic (window/state sync only), single- and cross-book alike,
 and preview/approve/undo semantics are inherited from the surfaces it hosts.
 
 **Effort:** M.
+
+**Delivered:** A per-surface pop-out window manager (named same-origin
+windows, BroadcastChannel state sync, remembered per-surface window
+geometry, poll-based close detection) backs three surfaces: transaction
+detail and “Explain this number” gain pop-out affordances in their shared
+modals — every host (journal, ledger, dashboard KPIs, Action Center) routes
+selections to the open pop-out and re-docks the last pane state inline when
+the window closes — and the Action Center adds a persisted two-window mode
+that drives each action's exact resolution surface in a companion window.
+Chrome-less authenticated `/popout/*` routes restore themselves on refresh;
+everything remains fully usable single-window. Cross-book (family-scope)
+resolution stays in the main window because it switches the shared session
+book.
 
 ---
 
@@ -892,6 +1032,25 @@ requested.
 regex and missing extractions from the receipt gallery. The book-scoped BullMQ
 job reports live progress, preserves review metadata, continues past individual
 failures, and protects already-AI-extracted receipts by default.
+
+---
+
+## P4 - Compact Sidebar Menu Density
+
+**Status:** Implemented 2026-08-01.
+
+Reduce the vertical spacing of sidebar navigation items — there is currently too
+much room between menu items. Desktop nav items in `src/components/Layout.tsx`
+use `py-3` (12px vertical padding) plus `space-y-1` between items; tighten to
+roughly `py-2`/`space-y-0.5` so more of the navigation fits on screen without
+scrolling. Keep sub-item rows at the 44px minimum touch target on mobile, and
+stay within the DESIGN.md "comfortable" density and 4px spacing scale.
+
+**Effort:** XS.
+
+**Delivered:** Desktop sidebar items tightened to 8px vertical padding with
+2px gaps and compact sub-item rows; the mobile drawer keeps its 44px touch
+targets.
 
 ---
 

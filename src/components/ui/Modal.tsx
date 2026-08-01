@@ -14,6 +14,8 @@ interface ModalProps {
     closeOnEscape?: boolean;
     /** Reset the scroll container when asynchronously loaded content changes identity. */
     resetKey?: string | number | null;
+    /** Extra icon buttons rendered in the title bar, before the close button. */
+    headerActions?: ReactNode;
 }
 
 const sizeClasses = {
@@ -34,6 +36,7 @@ export function Modal({
     closeOnBackdrop = true,
     closeOnEscape = true,
     resetKey,
+    headerActions,
 }: ModalProps) {
     const modalRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
@@ -146,15 +149,18 @@ export function Modal({
                         <h2 id="modal-title" className="text-lg font-semibold text-foreground">
                             {title}
                         </h2>
-                        <button
-                            onClick={onClose}
-                            aria-label="Close dialog"
-                            className="text-foreground-secondary hover:text-foreground transition-colors p-1 rounded-lg hover:bg-surface-hover"
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
+                        <div className="flex items-center gap-1">
+                            {headerActions}
+                            <button
+                                onClick={onClose}
+                                aria-label="Close dialog"
+                                className="text-foreground-secondary hover:text-foreground transition-colors p-1 rounded-lg hover:bg-surface-hover"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 )}
 

@@ -14,6 +14,9 @@ import type {
   FinancialActionState,
 } from '@/lib/financial-actions/types';
 import { subscribeToActionCenterUpdates } from '@/lib/financial-actions/client-events';
+import { usePopoutHost } from '@/lib/popout/usePopout';
+
+const RESOLUTION_POPOUT_PREF = 'gnucash-web:action-center:popout-resolution';
 
 const LANES: Array<{
   id: FinancialActionLane;
@@ -315,6 +318,27 @@ export default function FinancialActionCenterPage() {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [actionView, setActionView] = useState<ActionView>('pending');
   const [trace, setTrace] = useState<CalculationTrace | null>(null);
+  // Two-window triage: route action resolution surfaces into a separate
+  // pop-out window so the lanes keep driving on this monitor.
+  const [popOutResolution, setPopOutResolution] = useState(false);
+  const resolutionPopout = usePopoutHost('resolution');
+  const { open: openResolutionWindow } = resolutionPopout;
+
+  useEffect(() => {
+    setPopOutResolution(window.localStorage.getItem(RESOLUTION_POPOUT_PREF) === '1');
+  }, []);
+
+  const toggleResolutionPopout = useCallback(() => {
+    setPopOutResolution(current => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(RESOLUTION_POPOUT_PREF, next ? '1' : '0');
+      } catch {
+        // Preference persistence is best-effort.
+      }
+      return next;
+    });
+  }, []);
   const hasInitializedCardFocus = useRef(false);
   const pendingCardFocusIndex = useRef<number | null>(null);
   const shouldRevealFocusedCard = useRef(false);
@@ -574,11 +598,14 @@ export default function FinancialActionCenterPage() {
 
   const openOperation = useCallback(async (action: FinancialAction, href: string) => {
     if (familyScope && action.bookGuid !== activeBookGuid) {
+      // Cross-book resolution switches the shared session book, so it must
+      // reload this window; the pop-out window cannot host it safely.
       await switchBook(action.bookGuid, href);
       return;
     }
+    if (popOutResolution && openResolutionWindow(href, href)) return;
     router.push(href);
-  }, [activeBookGuid, familyScope, router, switchBook]);
+  }, [activeBookGuid, familyScope, router, switchBook, popOutResolution, openResolutionWindow]);
 
   const bookNameByGuid = useMemo(
     () => new Map(books.map(book => [book.guid, book.name])),
@@ -633,6 +660,19 @@ export default function FinancialActionCenterPage() {
             className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-foreground-secondary hover:border-primary/50 disabled:opacity-50"
           >
             Refresh
+          </button>
+          <button
+            type="button"
+            onClick={toggleResolutionPopout}
+            aria-pressed={popOutResolution}
+            title="Open action resolution surfaces in a separate window for two-monitor triage"
+            className={`hidden rounded-lg border px-3 py-2 text-xs font-medium sm:block ${
+              popOutResolution
+                ? 'border-primary/60 text-primary'
+                : 'border-border text-foreground-secondary hover:border-primary/50'
+            }`}
+          >
+            {popOutResolution ? 'Two-window: on' : 'Two-window: off'}
           </button>
         </div>
       </header>
