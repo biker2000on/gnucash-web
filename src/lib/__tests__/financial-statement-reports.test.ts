@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockAccountsFindMany = vi.fn();
 const mockAccountsFindFirst = vi.fn();
 const mockSplitsFindMany = vi.fn();
+// Serves the batched GROUP BY balance aggregates (sumSplitsByAccount in
+// reports/utils.ts). Rows have the shape
+// { account_guid, quantity_sum, value_sum }.
 const mockQueryRaw = vi.fn();
 
 vi.mock('../prisma', () => ({
@@ -35,13 +38,6 @@ import { generateCashFlow } from '../reports/cash-flow';
 
 // --- Helpers ----------------------------------------------------------------
 
-function qsplit(amount: number) {
-  return {
-    quantity_num: BigInt(Math.round(amount * 100)),
-    quantity_denom: 100n,
-  };
-}
-
 function vsplit(amount: number, extra: Record<string, unknown> = {}) {
   return {
     value_num: BigInt(Math.round(amount * 100)),
@@ -56,6 +52,11 @@ beforeEach(() => {
   mockSplitsFindMany.mockReset();
   mockQueryRaw.mockReset();
 });
+
+/** Grouped-aggregate row as returned by sumSplitsByAccount's GROUP BY query */
+function sumRow(accountGuid: string, quantitySum: number, valueSum = quantitySum) {
+  return { account_guid: accountGuid, quantity_sum: quantitySum, value_sum: valueSum };
+}
 
 // --- buildHierarchy: hidden-parent reattachment ------------------------------
 
@@ -128,28 +129,16 @@ describe('generateBalanceSheet', () => {
     ];
     mockAccountsFindMany.mockResolvedValue(accounts);
 
-    const splitsByAccount: Record<string, ReturnType<typeof qsplit>[]> = {
-      checking: [qsplit(1000)],
-      ar: [qsplit(500)],
-      'orphan-bank': [qsplit(100)],
-      cc: [qsplit(-200)],
-      'cc-overpaid': [qsplit(50)],
-      ap: [qsplit(-300)],
-      equity: [qsplit(-1150)],
-    };
-    mockSplitsFindMany.mockImplementation(async (args: { where: { account_guid: string } }) =>
-      splitsByAccount[args.where.account_guid] ?? []
-    );
-    mockQueryRaw.mockResolvedValue(
-      Object.entries(splitsByAccount).map(([account_guid, splits]) => ({
-        account_guid,
-        quantity_sum: splits.reduce(
-          (sum, split) => sum + Number(split.quantity_num) / Number(split.quantity_denom),
-          0,
-        ),
-        value_sum: 0,
-      })),
-    );
+    // Same fixture values as before, now served by the single GROUP BY query
+    mockQueryRaw.mockResolvedValue([
+      sumRow('checking', 1000),
+      sumRow('ar', 500),
+      sumRow('orphan-bank', 100),
+      sumRow('cc', -200),
+      sumRow('cc-overpaid', 50),
+      sumRow('ap', -300),
+      sumRow('equity', -1150),
+    ]);
 
     const report = await generateBalanceSheet({ startDate: null, endDate: '2026-06-30' });
 
@@ -187,30 +176,23 @@ describe('generateGeneralLedger', () => {
       { guid: 'checking', name: 'Checking', account_type: 'BANK', parent_guid: null },
     ]);
 
-    mockSplitsFindMany.mockImplementation(
-      async (args: { where: { transaction: { post_date: Record<string, unknown> } } }) => {
-        const dateFilter = args.where.transaction.post_date;
-        if ('lt' in dateFilter) {
-          // Opening splits (before startDate), raw value sums are debit-positive:
-          // income account has been credited 500 -> raw -500
-          // bank account has been debited 250 -> raw +250
-          return [
-            { account_guid: 'salary', ...vsplit(-500) },
-            { account_guid: 'checking', ...vsplit(250) },
-          ];
-        }
-        // Period splits: one paycheck of 100 (income credited, bank debited)
-        const tx = { transaction: { description: 'Paycheck', post_date: new Date('2026-03-15T12:00:00Z'), num: '' }, memo: '' };
-        return [
-          { account_guid: 'salary', ...vsplit(-100), ...tx },
-          { account_guid: 'checking', ...vsplit(100), ...tx },
-        ];
-      }
-    );
+    // Opening balances (before startDate) now come from the grouped
+    // aggregate; raw value sums are debit-positive:
+    // income account has been credited 500 -> raw -500
+    // bank account has been debited 250 -> raw +250
     mockQueryRaw.mockResolvedValue([
-      { account_guid: 'salary', quantity_sum: -500, value_sum: -500 },
-      { account_guid: 'checking', quantity_sum: 250, value_sum: 250 },
+      sumRow('salary', 0, -500),
+      sumRow('checking', 0, 250),
     ]);
+
+    // Period splits: one paycheck of 100 (income credited, bank debited)
+    mockSplitsFindMany.mockImplementation(async () => {
+      const tx = { transaction: { description: 'Paycheck', post_date: new Date('2026-03-15T12:00:00Z'), num: '' }, memo: '' };
+      return [
+        { account_guid: 'salary', ...vsplit(-100), ...tx },
+        { account_guid: 'checking', ...vsplit(100), ...tx },
+      ];
+    });
 
     const report = await generateGeneralLedger({ startDate: '2026-01-01', endDate: '2026-12-31' });
 
@@ -240,24 +222,12 @@ describe('generateCashFlow', () => {
       { guid: 'checking', name: 'Checking', account_type: 'BANK', parent_guid: null },
     ]);
 
-    const splitsByAccount: Record<string, ReturnType<typeof qsplit>[]> = {
-      salary: [qsplit(-1000)],   // income earned (credit) -> cash inflow of 1000
-      groceries: [qsplit(300)],  // expense (debit) -> cash outflow of 300
-      checking: [qsplit(700)],   // net cash change
-    };
-    mockSplitsFindMany.mockImplementation(async (args: { where: { account_guid: string } }) =>
-      splitsByAccount[args.where.account_guid] ?? []
-    );
-    mockQueryRaw.mockResolvedValue(
-      Object.entries(splitsByAccount).map(([account_guid, splits]) => ({
-        account_guid,
-        quantity_sum: splits.reduce(
-          (sum, split) => sum + Number(split.quantity_num) / Number(split.quantity_denom),
-          0,
-        ),
-        value_sum: 0,
-      })),
-    );
+    // Same fixture values as before, served by the single GROUP BY query
+    mockQueryRaw.mockResolvedValue([
+      sumRow('salary', -1000),   // income earned (credit) -> cash inflow of 1000
+      sumRow('groceries', 300),  // expense (debit) -> cash outflow of 300
+      sumRow('checking', 700),   // net cash change
+    ]);
 
     const report = await generateCashFlow({ startDate: '2026-01-01', endDate: '2026-12-31' });
 
