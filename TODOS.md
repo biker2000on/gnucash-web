@@ -772,6 +772,64 @@ and the Action Center.
 
 ---
 
+## P3 - Multi-Window / Multi-Monitor Pop-Out Panes
+
+**Status:** Proposed 2026-08-01.
+
+**Outcome:** The weekly close and other review-heavy workflows span two
+monitors: a driving list on one screen and the work surface on the other, so
+triage never bounces a single window between list and detail.
+
+**What:** Let selected panes pop out into separate same-origin browser
+windows with bidirectional state sync (BroadcastChannel or equivalent).
+Pop-outs are plain authenticated app routes — no new session or token
+machinery. This is a capability of the existing shared surfaces, not a new
+destination:
+
+- **Action Center triage:** the Fix/Decide/Do lanes on one monitor drive the
+  exact resolution surface (ledger, reconciliation, receipt match, report)
+  on the other; resolving an item advances the list without losing place.
+- **List-drives-detail (generalized):** any master list targets a companion
+  detail window — transaction journal → transaction detail, receipt inbox →
+  receipt image beside its candidate transaction, Money Timeline → the
+  event's source, statement lines → the ledger being reconciled.
+- **Report + drill-through:** a full-screen report or dashboard on one
+  monitor while "Explain this number" traces and source transactions open
+  on the other, keeping the report in view while auditing provenance.
+- **Operator / Ask Your Books + cited evidence:** the conversation on one
+  monitor while evidence links and previewed diffs render on the other, so
+  a proposed command's balanced diff is inspectable beside the request.
+
+**MVP:**
+
+1. Pop-out/re-dock affordance on the Action Center resolution pane, the
+   transaction detail pane, and report drill-through.
+2. Bidirectional selection/hover/scroll-position sync over a same-origin
+   channel with no perceptible lag.
+3. Closing (or crashing) a pop-out re-docks the pane into the main window
+   without losing state; pop-outs reuse existing data subscriptions rather
+   than duplicating polling.
+4. Window arrangement remembered per user and surface so a two-monitor
+   setup restores in one action.
+5. Everything remains fully usable single-window — pop-out is an
+   enhancement, never a requirement.
+
+**Integration:** Consumes existing `FinancialAction`, `EvidenceRef`, and
+`CalculationTrace` contracts unchanged; RBAC and book scope come from the
+existing authenticated routes. No new data model.
+
+**Checklist answers:** Improves the recurring weekly-close and
+reconciliation workflows (measure: time-to-tie-out and Action Center items
+resolved per session, both already tracked by Continuous Close). Emits
+nothing new — it is presentation over existing actions, traces, and events,
+which is why it must ship as a surface capability rather than an orphan
+page. Deterministic (window/state sync only), single- and cross-book alike,
+and preview/approve/undo semantics are inherited from the surfaces it hosts.
+
+**Effort:** M.
+
+---
+
 ## P3 - Payslip Structured-Source Follow-Up
 
 PDF/AI payslip extraction and employer templates are shipped. The remaining
