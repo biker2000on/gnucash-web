@@ -60,7 +60,7 @@ interface EditState {
 }
 
 const inputClass =
-    'w-full rounded-lg border border-border bg-input-bg px-2.5 py-1.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
+    'w-full rounded-lg border border-border bg-input-bg px-3 py-2.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
 const labelClass = 'block text-xs text-foreground-secondary mb-1';
 
 export default function EntityDocumentsPage() {
@@ -326,7 +326,7 @@ export default function EntityDocumentsPage() {
                             )}
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <div>
                                 <label className={labelClass}>Title</label>
                                 <input
@@ -523,7 +523,7 @@ export default function EntityDocumentsPage() {
                                                     </li>
                                                     {editingId === doc.id && edit && (
                                                         <li className="border-b border-border/30 bg-background-tertiary/30 px-4 py-3 last:border-b-0">
-                                                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                                                 <div>
                                                                     <label className={labelClass}>Title</label>
                                                                     <input

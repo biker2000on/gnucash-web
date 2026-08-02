@@ -16,6 +16,7 @@ import { ShareLinksSection } from '@/components/settings/ShareLinksSection';
 import { CalendarFeedSection } from '@/components/settings/CalendarFeedSection';
 import { EmailIngestSection } from '@/components/settings/EmailIngestSection';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Field, FieldGrid, INPUT, RecordCard } from '@/components/ui/form';
 import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/contexts/UserPreferencesContext';
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
@@ -747,58 +748,78 @@ export default function SettingsPage() {
               <label className="block text-sm text-foreground-secondary">
                 {entityMembersLabel(entity.entityType)}
               </label>
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {entity.members.map((member, index) => {
                   const age = computeMemberAge(member.birthday);
+                  const roleLabel =
+                    entityRoleOptions.find((o) => o.value === member.role)?.label ?? member.role;
                   return (
-                  <div
+                  <RecordCard
                     key={index}
-                    className="flex flex-wrap items-center gap-2 p-3 bg-background-tertiary rounded-lg"
+                    title={member.name.trim() || roleLabel}
+                    removeLabel="Remove"
+                    onRemove={() => handleRemoveEntityMember(index)}
                   >
-                    <select
-                      value={member.role}
-                      onChange={(e) => updateEntityMember(index, { role: e.target.value })}
-                      className="bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                      aria-label="Member role"
-                    >
-                      {!entityRoleOptions.some((o) => o.value === member.role) && (
-                        <option value={member.role}>{member.role}</option>
+                    <FieldGrid cols={3}>
+                      <Field label="Role">
+                        <select
+                          value={member.role}
+                          onChange={(e) => updateEntityMember(index, { role: e.target.value })}
+                          className={INPUT}
+                        >
+                          {!entityRoleOptions.some((o) => o.value === member.role) && (
+                            <option value={member.role}>{member.role}</option>
+                          )}
+                          {entityRoleOptions.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Name">
+                        <input
+                          type="text"
+                          value={member.name}
+                          onChange={(e) => updateEntityMember(index, { name: e.target.value })}
+                          placeholder="Name"
+                          className={INPUT}
+                        />
+                      </Field>
+                      <Field label="Birthday">
+                        <input
+                          type="date"
+                          value={member.birthday}
+                          onChange={(e) => updateEntityMember(index, { birthday: e.target.value })}
+                          className={INPUT}
+                        />
+                        <span
+                          className={`mt-1.5 inline-block text-xs ${
+                            age !== null ? 'text-foreground-secondary' : 'text-foreground-muted'
+                          }`}
+                        >
+                          {age !== null ? `Age ${age}` : 'No birthday set'}
+                        </span>
+                      </Field>
+                      {member.role === 'owner' && (
+                        <Field label="Ownership %">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            value={member.ownershipPercent}
+                            onChange={(e) =>
+                              updateEntityMember(index, { ownershipPercent: e.target.value })
+                            }
+                            placeholder="100"
+                            className={INPUT}
+                          />
+                        </Field>
                       )}
-                      {entityRoleOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={member.name}
-                      onChange={(e) => updateEntityMember(index, { name: e.target.value })}
-                      placeholder="Name"
-                      className="flex-1 min-w-32 bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                      aria-label="Member name"
-                    />
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-foreground-secondary shrink-0">Birthday</label>
-                      <input
-                        type="date"
-                        value={member.birthday}
-                        onChange={(e) => updateEntityMember(index, { birthday: e.target.value })}
-                        className="bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                        aria-label="Member birthday"
-                      />
-                      <span
-                        className={`text-xs rounded-full px-2 py-0.5 shrink-0 border ${
-                          age !== null
-                            ? 'font-medium text-foreground-secondary bg-surface-elevated border-border'
-                            : 'text-foreground-muted border-dashed border-border'
-                        }`}
-                      >
-                        {age !== null ? `Age ${age}` : 'No birthday'}
-                      </span>
-                    </div>
+                    </FieldGrid>
                     {(member.role === 'self' || member.role === 'spouse') && (
-                      <label className="flex items-center gap-1.5 cursor-pointer text-xs text-foreground-secondary">
+                      <label className="flex items-center gap-2 cursor-pointer text-sm text-foreground-secondary">
                         <input
                           type="checkbox"
                           checked={member.coveredByEmployerPlan}
@@ -810,35 +831,7 @@ export default function SettingsPage() {
                         Covered by employer plan
                       </label>
                     )}
-                    {member.role === 'owner' && (
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="0.01"
-                          value={member.ownershipPercent}
-                          onChange={(e) =>
-                            updateEntityMember(index, { ownershipPercent: e.target.value })
-                          }
-                          placeholder="100"
-                          className="w-20 bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
-                          aria-label="Ownership percent"
-                        />
-                        <span className="text-xs text-foreground-muted">%</span>
-                      </div>
-                    )}
-                    <button
-                      onClick={() => handleRemoveEntityMember(index)}
-                      className="ml-auto text-foreground-muted hover:text-rose-500 transition-colors p-1"
-                      aria-label="Remove member"
-                      title="Remove member"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
+                  </RecordCard>
                   );
                 })}
               </div>

@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { FuelProfile, MileageProfile, MileageTrip, MileageVehicle } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
 
 type Tab = 'log' | 'fuel';
 const uid = () => crypto.randomUUID();
@@ -188,14 +188,20 @@ export default function MileagePage() {
           </div>
           <Panel title="Vehicles" action={<button type="button" onClick={addVehicle} className="text-sm text-primary">Add vehicle</button>}>
             {mileage.profile.vehicles.length === 0 ? <Empty>Add a vehicle before recording a trip.</Empty> : (
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                 {mileage.profile.vehicles.map(vehicle => (
-                  <div key={vehicle.id} className="grid grid-cols-2 gap-2 rounded-md border border-border bg-background/50 p-3">
-                    <Field label="Vehicle" className="col-span-2"><input className={INPUT} value={vehicle.name} onChange={event => updateVehicle(vehicle.id, { name: event.target.value })} /></Field>
-                    <Field label="Year"><input type="number" className={`${INPUT} font-mono`} value={vehicle.year ?? ''} onChange={event => updateVehicle(vehicle.id, { year: event.target.value ? Number(event.target.value) : null })} /></Field>
-                    <Field label="Make / model"><input className={INPUT} value={[vehicle.make, vehicle.model].filter(Boolean).join(' ')} onChange={event => updateVehicle(vehicle.id, { make: event.target.value, model: '' })} /></Field>
-                    <button type="button" onClick={() => updateMileage({ ...mileage.profile, vehicles: mileage.profile.vehicles.filter(item => item.id !== vehicle.id), trips: mileage.profile.trips.filter(trip => trip.vehicleId !== vehicle.id) })} className="col-span-2 text-left text-xs text-foreground-muted hover:text-negative">Remove vehicle and trips</button>
-                  </div>
+                  <RecordCard
+                    key={vehicle.id}
+                    title={vehicle.name || 'Vehicle'}
+                    removeLabel="Remove vehicle and trips"
+                    onRemove={() => updateMileage({ ...mileage.profile, vehicles: mileage.profile.vehicles.filter(item => item.id !== vehicle.id), trips: mileage.profile.trips.filter(trip => trip.vehicleId !== vehicle.id) })}
+                  >
+                    <FieldGrid cols={2}>
+                      <Field label="Vehicle" className="sm:col-span-2"><input className={INPUT} value={vehicle.name} onChange={event => updateVehicle(vehicle.id, { name: event.target.value })} /></Field>
+                      <Field label="Year"><input type="number" className={`${INPUT} font-mono`} value={vehicle.year ?? ''} onChange={event => updateVehicle(vehicle.id, { year: event.target.value ? Number(event.target.value) : null })} /></Field>
+                      <Field label="Make / model"><input className={INPUT} value={[vehicle.make, vehicle.model].filter(Boolean).join(' ')} onChange={event => updateVehicle(vehicle.id, { make: event.target.value, model: '' })} /></Field>
+                    </FieldGrid>
+                  </RecordCard>
                 ))}
               </div>
             )}
@@ -206,16 +212,22 @@ export default function MileagePage() {
                 {mileage.profile.trips.map(trip => {
                   const calculated = mileage.summary.rows.find(row => row.id === trip.id);
                   return (
-                    <div key={trip.id} className="grid grid-cols-2 gap-2 rounded-md border border-border bg-background/50 p-3 md:grid-cols-[140px_1fr_140px_110px_100px_120px_auto]">
-                      <input type="date" className={`${INPUT} font-mono`} value={trip.date} onChange={event => updateTrip(trip.id, { date: event.target.value })} />
-                      <input className={INPUT} placeholder="Business purpose / destination" value={trip.description} onChange={event => updateTrip(trip.id, { description: event.target.value })} />
-                      <select className={INPUT} value={trip.vehicleId} onChange={event => updateTrip(trip.id, { vehicleId: event.target.value })}>{mileage.profile.vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>)}</select>
-                      <select className={INPUT} value={trip.purpose} onChange={event => updateTrip(trip.id, { purpose: event.target.value as MileageTrip['purpose'] })}>{['business','medical','charity','personal'].map(purpose => <option key={purpose}>{purpose}</option>)}</select>
-                      <select className={INPUT} value={trip.schedule} onChange={event => updateTrip(trip.id, { schedule: event.target.value as MileageTrip['schedule'] })}>{['C','E','F','none'].map(schedule => <option key={schedule}>{schedule}</option>)}</select>
-                      <div className="relative"><input type="number" min="0.01" step="0.1" className={`${INPUT} pr-10 font-mono`} value={trip.miles} onChange={event => updateTrip(trip.id, { miles: Number(event.target.value), startOdometer: null, endOdometer: null })} /><span className="absolute right-2 top-2 text-xs text-foreground-muted">mi</span></div>
-                      <button type="button" onClick={() => updateMileage({ ...mileage.profile, trips: mileage.profile.trips.filter(item => item.id !== trip.id) })} className="px-2 text-negative">×</button>
-                      {calculated && <p className="col-span-2 text-xs text-foreground-secondary md:col-span-7">{(calculated.rate * 100).toFixed(1)}¢/mile · <span className="font-mono text-positive" style={TNUM}>{formatCurrency(calculated.deduction)}</span> estimated deduction</p>}
-                    </div>
+                    <RecordCard
+                      key={trip.id}
+                      title={trip.description || 'Trip'}
+                      removeLabel="Remove trip"
+                      onRemove={() => updateMileage({ ...mileage.profile, trips: mileage.profile.trips.filter(item => item.id !== trip.id) })}
+                    >
+                      <FieldGrid>
+                        <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={trip.date} onChange={event => updateTrip(trip.id, { date: event.target.value })} /></Field>
+                        <Field label="Purpose / destination" className="sm:col-span-2 lg:col-span-2"><input className={INPUT} placeholder="Business purpose / destination" value={trip.description} onChange={event => updateTrip(trip.id, { description: event.target.value })} /></Field>
+                        <Field label="Vehicle"><select className={INPUT} value={trip.vehicleId} onChange={event => updateTrip(trip.id, { vehicleId: event.target.value })}>{mileage.profile.vehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>)}</select></Field>
+                        <Field label="Category"><select className={INPUT} value={trip.purpose} onChange={event => updateTrip(trip.id, { purpose: event.target.value as MileageTrip['purpose'] })}>{['business','medical','charity','personal'].map(purpose => <option key={purpose}>{purpose}</option>)}</select></Field>
+                        <Field label="Schedule"><select className={INPUT} value={trip.schedule} onChange={event => updateTrip(trip.id, { schedule: event.target.value as MileageTrip['schedule'] })}>{['C','E','F','none'].map(schedule => <option key={schedule}>{schedule}</option>)}</select></Field>
+                        <Field label="Miles"><div className="relative"><input type="number" min="0.01" step="0.1" className={`${INPUT} pr-10 font-mono`} value={trip.miles} onChange={event => updateTrip(trip.id, { miles: Number(event.target.value), startOdometer: null, endOdometer: null })} /><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-foreground-muted">mi</span></div></Field>
+                      </FieldGrid>
+                      {calculated && <p className="text-xs text-foreground-secondary">{(calculated.rate * 100).toFixed(1)}¢/mile · <span className="font-mono text-positive" style={TNUM}>{formatCurrency(calculated.deduction)}</span> estimated deduction</p>}
+                    </RecordCard>
                   );
                 })}
               </div>
@@ -228,18 +240,18 @@ export default function MileagePage() {
       {tab === 'fuel' && fuel && (
         <>
           <Panel title="Fuel Tracker connection" description="Read-only bearer token; credentials are encrypted and never returned to the browser.">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <FieldGrid>
               <Field label="Fuel Tracker URL"><input className={INPUT} placeholder="https://fuel.example.com" value={fuel.profile.baseUrl} onChange={event => updateFuel({ ...fuel.profile, baseUrl: event.target.value })} /></Field>
               <Field label={fuel.profile.hasToken ? 'Replace API token (optional)' : 'API token'}><input type="password" className={INPUT} value={token} onChange={event => { setToken(event.target.value); setFuelDirty(true); }} /></Field>
-              <label className="flex items-end gap-2 pb-2 text-sm text-foreground-secondary"><input type="checkbox" checked={fuel.profile.enabled} onChange={event => updateFuel({ ...fuel.profile, enabled: event.target.checked })} /> Nightly sync enabled</label>
-            </div>
+              <label className="flex items-end gap-2 pb-2.5 text-sm text-foreground-secondary"><input type="checkbox" checked={fuel.profile.enabled} onChange={event => updateFuel({ ...fuel.profile, enabled: event.target.checked })} /> Nightly sync enabled</label>
+            </FieldGrid>
             <p className="mt-3 text-xs text-foreground-muted">Last sync: {fuel.profile.lastSyncAt ? new Date(fuel.profile.lastSyncAt).toLocaleString() : 'Never'}</p>
           </Panel>
           {fuel.profile.vehicles.length > 0 && mileage && (
             <Panel title="Vehicle mapping" description="Map each Fuel Tracker vehicle once; fill-ups inherit the mapping.">
               <div className="space-y-2">
                 {fuel.profile.vehicles.map(vehicle => (
-                  <div key={vehicle.sourceId} className="grid grid-cols-2 items-center gap-3 border-b border-border/60 py-2 last:border-0">
+                  <div key={vehicle.sourceId} className="grid grid-cols-1 items-center gap-3 border-b border-border/60 py-2 last:border-0 sm:grid-cols-2">
                     <span className="text-sm text-foreground">{vehicle.year} {vehicle.make} {vehicle.model} · {vehicle.name}</span>
                     <select className={INPUT} value={vehicle.mappedVehicleId ?? ''} onChange={event => updateFuel({ ...fuel.profile, vehicles: fuel.profile.vehicles.map(item => item.sourceId === vehicle.sourceId ? { ...item, mappedVehicleId: event.target.value || null } : item) })}>
                       <option value="">Unmapped</option>

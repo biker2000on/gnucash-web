@@ -935,7 +935,7 @@ function InvoiceDetailContent() {
             {/* Header fields */}
             <div className="bg-surface border border-border rounded-lg p-4">
                 {isDraft ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         <div className="sm:col-span-2">
                             <label className={labelClass}>{kind === 'invoice' ? 'Customer' : 'Vendor'} *</label>
                             {isNew ? (
@@ -1434,7 +1434,7 @@ function InvoiceDetailContent() {
                             autoFocus
                         />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label className={labelClass}>Cadence</label>
                             <select

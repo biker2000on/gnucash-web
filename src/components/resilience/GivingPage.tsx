@@ -6,7 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { calculateGivingPlan } from '@/lib/resilience/giving-core';
 import type { Donation, GivingProfile, GivingSettings } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -158,28 +158,32 @@ export function GivingPage() {
             {state.profile.donations.slice().sort((a, b) => b.date.localeCompare(a.date)).map(donation => {
               const row = plan?.donations.find(item => item.id === donation.id);
               return (
-                <div key={donation.id} className="space-y-2 rounded-md border border-border p-3">
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-[140px_1fr_130px_130px_auto]">
-                    <input type="date" className={`${INPUT} font-mono`} value={donation.date} onChange={event => updateDonation(donation.id, { date: event.target.value })} />
-                    <input className={INPUT} placeholder="Charity" value={donation.charity} onChange={event => updateDonation(donation.id, { charity: event.target.value })} />
-                    <select className={INPUT} value={donation.kind} onChange={event => updateDonation(donation.id, { kind: event.target.value as Donation['kind'] })}>
-                      <option value="cash">Cash</option>
-                      <option value="noncash">Noncash (FMV)</option>
-                      <option value="qcd">QCD</option>
-                    </select>
-                    <input type="number" className={`${INPUT} font-mono`} value={donation.amount} onChange={event => updateDonation(donation.id, { amount: numberValue(event.target.value) })} />
-                    <button type="button" onClick={() => state.change({ ...state.profile, donations: state.profile.donations.filter(item => item.id !== donation.id) })} className="px-2 text-negative">×</button>
-                  </div>
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
-                    <input className={INPUT} placeholder="Description (what was donated)" value={donation.description ?? ''} onChange={event => updateDonation(donation.id, { description: event.target.value || null })} />
-                    <input className={INPUT} placeholder="Document reference (vault link or note)" value={donation.documentRef ?? ''} onChange={event => updateDonation(donation.id, { documentRef: event.target.value || null })} />
-                    <label className="flex items-center gap-2 text-xs text-foreground-secondary">
-                      <input type="checkbox" checked={donation.acknowledged} onChange={event => updateDonation(donation.id, { acknowledged: event.target.checked })} />
-                      Acknowledgment letter on file
-                    </label>
-                  </div>
+                <RecordCard
+                  key={donation.id}
+                  title={donation.charity || 'New donation'}
+                  removeLabel="Remove donation"
+                  onRemove={() => state.change({ ...state.profile, donations: state.profile.donations.filter(item => item.id !== donation.id) })}
+                >
+                  <FieldGrid>
+                    <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={donation.date} onChange={event => updateDonation(donation.id, { date: event.target.value })} /></Field>
+                    <Field label="Charity"><input className={INPUT} value={donation.charity} onChange={event => updateDonation(donation.id, { charity: event.target.value })} /></Field>
+                    <Field label="Kind">
+                      <select className={INPUT} value={donation.kind} onChange={event => updateDonation(donation.id, { kind: event.target.value as Donation['kind'] })}>
+                        <option value="cash">Cash</option>
+                        <option value="noncash">Noncash (FMV)</option>
+                        <option value="qcd">QCD</option>
+                      </select>
+                    </Field>
+                    <Field label="Amount"><input type="number" className={`${INPUT} font-mono`} value={donation.amount} onChange={event => updateDonation(donation.id, { amount: numberValue(event.target.value) })} /></Field>
+                    <Field label="Description"><input className={INPUT} placeholder="What was donated" value={donation.description ?? ''} onChange={event => updateDonation(donation.id, { description: event.target.value || null })} /></Field>
+                    <Field label="Document reference"><input className={INPUT} placeholder="Vault link or note" value={donation.documentRef ?? ''} onChange={event => updateDonation(donation.id, { documentRef: event.target.value || null })} /></Field>
+                  </FieldGrid>
+                  <label className="flex items-center gap-2 text-xs text-foreground-secondary">
+                    <input type="checkbox" checked={donation.acknowledged} onChange={event => updateDonation(donation.id, { acknowledged: event.target.checked })} />
+                    Acknowledgment letter on file
+                  </label>
                   <DonationFlags donation={row} />
-                </div>
+                </RecordCard>
               );
             })}
           </div>
@@ -247,7 +251,7 @@ export function GivingPage() {
       </Panel>
 
       <Panel title="Settings" description="Planning inputs for the deduction comparison and QCD eligibility.">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <FieldGrid>
           <Field label="Filing status">
             <select className={INPUT} value={state.profile.settings.filingStatus} onChange={event => updateSettings({ filingStatus: event.target.value as GivingSettings['filingStatus'] })}>
               <option value="single">Single</option>
@@ -262,7 +266,7 @@ export function GivingPage() {
           <Field label="Planned annual giving"><input type="number" className={`${INPUT} font-mono`} value={state.profile.settings.plannedAnnualGiving} onChange={event => updateSettings({ plannedAnnualGiving: numberValue(event.target.value) })} /></Field>
           <Field label="Other itemized (SALT, interest)"><input type="number" className={`${INPUT} font-mono`} value={state.profile.settings.otherItemizedAnnual} onChange={event => updateSettings({ otherItemizedAnnual: numberValue(event.target.value) })} /></Field>
           <Field label="Standard deduction override"><input type="number" className={`${INPUT} font-mono`} value={state.profile.settings.standardDeductionOverride ?? ''} onChange={event => updateSettings({ standardDeductionOverride: optionalNumber(event.target.value) })} /></Field>
-        </div>
+        </FieldGrid>
         {plan?.qcd.eligible && (
           <p className="mt-3 text-xs text-foreground-muted">
             QCD-eligible: up to {formatCurrency(plan.qcd.householdAnnualLimit)} per year can go directly from a traditional IRA to charity ({formatCurrency(plan.qcd.qcdThisYear)} used this year). Eligibility assumed once age 71 is reached by year end, since only birth years are on file.

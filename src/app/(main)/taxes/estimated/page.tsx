@@ -265,7 +265,7 @@ export default function EstimatedTaxPage() {
               onChange={e =>
                 setPriorYearTax(e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0))
               }
-              className="w-40 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className="w-40 bg-background-tertiary border border-border rounded-md px-3 py-2.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
@@ -279,13 +279,13 @@ export default function EstimatedTaxPage() {
               onChange={e =>
                 setPriorYearAgi(e.target.value === '' ? null : Math.max(0, parseFloat(e.target.value) || 0))
               }
-              className="w-40 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className="w-40 bg-background-tertiary border border-border rounded-md px-3 py-2.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
             />
           </label>
           <button
             onClick={savePriorYear}
             disabled={saveState === 'saving' || (priorYearTax === null && priorYearAgi === null)}
-            className="ml-auto px-3 py-1.5 text-sm rounded-md border border-border text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
+            className="ml-auto px-3 py-2.5 text-sm rounded-md border border-border text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
           >
             {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved ✓' : saveState === 'error' ? 'Save failed' : 'Save prior-year figures'}
           </button>

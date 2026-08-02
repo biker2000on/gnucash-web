@@ -109,7 +109,7 @@ export function DocumentLinkField(props: {
 
   return (
     <div>
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">{props.label}</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground-secondary">{props.label}</p>
       <input
         ref={fileInputRef}
         type="file"

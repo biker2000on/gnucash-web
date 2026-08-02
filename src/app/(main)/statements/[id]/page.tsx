@@ -812,7 +812,7 @@ function CreateRuleModal({
               setError(null);
             }}
             placeholder="e.g. starbucks"
-            className="w-full bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm font-mono text-foreground placeholder-foreground-muted focus:ring-2 focus:ring-primary/40 focus:outline-none"
+            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm font-mono text-foreground placeholder-foreground-muted focus:ring-2 focus:ring-primary/40 focus:outline-none"
           />
         </div>
 

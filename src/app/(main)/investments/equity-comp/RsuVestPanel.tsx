@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { FieldGrid } from '@/components/ui/form';
 import { toLocalDateString } from '@/lib/datePresets';
 import { formatCurrency } from '@/lib/format';
 import {
@@ -141,7 +142,7 @@ export function RsuVestPanel({ onPosted }: { onPosted: () => void }) {
                 />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <FieldGrid cols={2}>
                 <div>
                     <label className={LABEL_CLASS}>Vest Date</label>
                     <input
@@ -163,9 +164,9 @@ export function RsuVestPanel({ onPosted }: { onPosted: () => void }) {
                         className={`${INPUT_CLASS} font-mono`}
                     />
                 </div>
-            </div>
+            </FieldGrid>
 
-            <div className="grid grid-cols-2 gap-4">
+            <FieldGrid cols={2}>
                 <div>
                     <label className={LABEL_CLASS}>Shares Vested (gross)</label>
                     <input
@@ -190,7 +191,7 @@ export function RsuVestPanel({ onPosted }: { onPosted: () => void }) {
                         className={`${INPUT_CLASS} font-mono`}
                     />
                 </div>
-            </div>
+            </FieldGrid>
 
             <div>
                 <label className={LABEL_CLASS}>Compensation Income Account (W-2)</label>

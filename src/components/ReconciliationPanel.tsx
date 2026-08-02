@@ -198,9 +198,9 @@ export function ReconciliationPanel({
                 </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                    <label className="block text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
                         Statement Date
                     </label>
                     <input
@@ -218,11 +218,11 @@ export function ReconciliationPanel({
                             }
                         }}
                         placeholder="MM/DD/YYYY"
-                        className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:border-amber-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-amber-500/50"
                     />
                 </div>
                 <div>
-                    <label className="block text-[10px] text-foreground-muted uppercase tracking-wider mb-1">
+                    <label className="block text-xs text-foreground-secondary uppercase tracking-wider mb-1">
                         {isInvestment ? 'Share Balance' : 'Statement Balance'}
                     </label>
                     <input
@@ -234,10 +234,10 @@ export function ReconciliationPanel({
                             setStatementBalance(e.target.value);
                         }}
                         placeholder={isInvestment ? (0).toFixed(sharePrecision) : '0.00'}
-                        className="w-full bg-input-bg border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
                     />
                     {simpleFinBalance && (
-                        <p className="text-[9px] text-foreground-muted mt-0.5">
+                        <p className="text-xs text-foreground-muted mt-0.5">
                             from SimpleFin, synced {new Date(simpleFinBalance.balanceDate).toLocaleDateString()}
                         </p>
                     )}

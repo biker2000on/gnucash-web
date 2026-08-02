@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { FieldGrid } from '@/components/ui/form';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
@@ -432,7 +433,7 @@ export function MeetingsManager() {
                         <label className={labelClass}>Title *</label>
                         <input type="text" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} className={inputClass} placeholder="e.g. Monthly general meeting" />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <FieldGrid cols={2}>
                         <div>
                             <label className={labelClass}>Date *</label>
                             <input type="date" value={form.meetingDate} onChange={e => setForm({ ...form, meetingDate: e.target.value })} className={`${inputClass} font-mono`} />
@@ -441,7 +442,7 @@ export function MeetingsManager() {
                             <label className={labelClass}>Location</label>
                             <input type="text" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} className={inputClass} placeholder="Optional" />
                         </div>
-                    </div>
+                    </FieldGrid>
                     <div>
                         <label className={labelClass}>Notes</label>
                         <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} className={`${inputClass} resize-none`} placeholder="Agenda, minutes link..." />

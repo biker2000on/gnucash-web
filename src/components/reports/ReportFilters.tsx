@@ -144,7 +144,7 @@ function ReportFiltersForm({ filters, onChange, showCompare = true, showBasis = 
                 activeCount={showCompare && localFilters.compareToPrevious ? 1 : 0}
                 primary={
                     /* Date Range — always visible */
-                    <div className="grid grid-cols-2 gap-2 flex-1 min-w-0 md:flex md:flex-none md:gap-3">
+                    <div className="grid grid-cols-1 gap-2 flex-1 min-w-0 sm:grid-cols-2 md:flex md:flex-none md:gap-3">
                         <div className="min-w-0">
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 Start Date

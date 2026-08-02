@@ -8,6 +8,7 @@ import { BUDGETABLE_ACCOUNT_TYPES } from '@/lib/budget-constants';
 import { useToast } from '@/contexts/ToastContext';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { formatCurrency } from '@/lib/format';
+import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 
 type Source = 'history' | 'pct-of-income' | 'zero-based';
 
@@ -245,59 +246,56 @@ export default function NewBudgetPage() {
                         ))}
                     </div>
 
-                    <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-                        <label className="block">
-                            <span className="block text-xs text-foreground-secondary mb-1">Lookback</span>
+                    <FieldGrid className="p-4">
+                        <Field label="Lookback">
                             <select
                                 value={months}
                                 onChange={e => setMonths(parseInt(e.target.value, 10))}
-                                className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm"
+                                className={INPUT}
                             >
                                 <option value={3}>3 months</option>
                                 <option value={6}>6 months</option>
                                 <option value={12}>12 months</option>
                             </select>
-                        </label>
-                        <label className="block">
-                            <span className="block text-xs text-foreground-secondary mb-1">Statistic</span>
+                        </Field>
+                        <Field label="Statistic">
                             <select
                                 value={statistic}
                                 onChange={e => setStatistic(e.target.value as 'median' | 'mean')}
                                 disabled={source === 'zero-based'}
-                                className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm disabled:opacity-50"
+                                className={`${INPUT} disabled:opacity-50`}
                             >
                                 <option value="median">Median (resists one-offs)</option>
                                 <option value="mean">Mean (smears irregular)</option>
                             </select>
-                        </label>
-                        <label className="block">
-                            <span className="block text-xs text-foreground-secondary mb-1">Round to</span>
+                        </Field>
+                        <Field label="Round to">
                             <select
                                 value={roundTo}
                                 onChange={e => setRoundTo(parseFloat(e.target.value))}
                                 disabled={source === 'zero-based'}
-                                className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm disabled:opacity-50"
+                                className={`${INPUT} disabled:opacity-50`}
                             >
                                 <option value={1}>$1</option>
                                 <option value={5}>$5</option>
                                 <option value={10}>$10</option>
                                 <option value={25}>$25</option>
                             </select>
-                        </label>
-                        <label className="flex items-end gap-2 pb-1.5">
+                        </Field>
+                        <label className="flex items-center gap-2 self-end pb-2.5">
                             <input
                                 type="checkbox"
                                 checked={includeIncome}
                                 onChange={e => setIncludeIncome(e.target.checked)}
                                 className="accent-teal-500"
                             />
-                            <span className="text-xs text-foreground-secondary">Include income accounts</span>
+                            <span className="text-sm text-foreground-secondary">Include income accounts</span>
                         </label>
                         {source === 'pct-of-income' && (
-                            <label className="block col-span-2">
-                                <span className="block text-xs text-foreground-secondary mb-1">
-                                    Monthly income (blank = estimate from history)
-                                </span>
+                            <Field
+                                label="Monthly income (blank = estimate from history)"
+                                className="sm:col-span-2"
+                            >
                                 <input
                                     type="number"
                                     min={0}
@@ -305,11 +303,11 @@ export default function NewBudgetPage() {
                                     value={incomeOverride}
                                     onChange={e => setIncomeOverride(e.target.value)}
                                     placeholder="auto"
-                                    className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm font-mono tabular-nums text-right"
+                                    className={`${INPUT} font-mono tabular-nums text-right`}
                                 />
-                            </label>
+                            </Field>
                         )}
-                    </div>
+                    </FieldGrid>
                 </div>
             )}
 
@@ -408,8 +406,7 @@ export default function NewBudgetPage() {
             {/* ---- Step 3: name + periods ---- */}
             {step === 3 && (
                 <div className="bg-surface border border-border rounded-lg p-4 space-y-4 max-w-lg">
-                    <label className="block">
-                        <span className="block text-xs text-foreground-secondary mb-1">Budget name</span>
+                    <Field label="Budget name">
                         <input
                             type="text"
                             value={name}
@@ -421,31 +418,29 @@ export default function NewBudgetPage() {
                                 }
                             }}
                             autoFocus
-                            className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm"
+                            className={INPUT}
                         />
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                        <label className="block">
-                            <span className="block text-xs text-foreground-secondary mb-1">Periods (months)</span>
+                    </Field>
+                    <FieldGrid cols={2}>
+                        <Field label="Periods (months)">
                             <input
                                 type="number"
                                 min={1}
                                 max={60}
                                 value={numPeriods}
                                 onChange={e => setNumPeriods(Math.max(1, Math.min(60, parseInt(e.target.value, 10) || 12)))}
-                                className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm font-mono tabular-nums text-right"
+                                className={`${INPUT} font-mono tabular-nums text-right`}
                             />
-                        </label>
-                        <label className="block">
-                            <span className="block text-xs text-foreground-secondary mb-1">Start month</span>
+                        </Field>
+                        <Field label="Start month">
                             <input
                                 type="month"
                                 value={startMonth}
                                 onChange={e => setStartMonth(e.target.value)}
-                                className="w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm font-mono tabular-nums"
+                                className={`${INPUT} font-mono tabular-nums`}
                             />
-                        </label>
-                    </div>
+                        </Field>
+                    </FieldGrid>
                     <div className="text-xs text-foreground-muted">
                         {included.length} accounts · {formatCurrency(includedTotal)}/mo ·{' '}
                         <span className="font-mono tabular-nums">{formatCurrency(includedTotal * numPeriods)}</span> total over {numPeriods} periods

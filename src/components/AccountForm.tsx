@@ -618,7 +618,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                     ? 'self'
                                     : prev.owner,
                             }))}
-                            className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                            className="bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         >
                             <option value="">Select type...</option>
                             <option value="401k">401(k)</option>
@@ -660,7 +660,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                         ...prev,
                                         owner: OWNER_VALUES.has(e.target.value) ? e.target.value : 'self',
                                     }))}
-                                    className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                    className="bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 >
                                     <option value="self">{selfName ?? 'Self'}</option>
                                     <option value="spouse">{spouseName ?? 'Spouse'}</option>
@@ -675,7 +675,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                                         ...prev,
                                         owner: e.target.value || null,
                                     }))}
-                                    className="bg-input-bg border border-border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                    className="bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50"
                                 >
                                     <option value="">—</option>
                                     <option value="self">{selfName ?? 'Self'}</option>

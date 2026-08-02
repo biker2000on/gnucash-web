@@ -14,7 +14,7 @@ import type {
   FarmProductionSettings,
   FarmSale,
 } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -156,6 +156,10 @@ export function FarmProductionPage() {
     costs: [...state.profile.costs, { id: uid(), year: new Date().getUTCFullYear(), productId: null, label: '', amount: 0 }],
   });
 
+  /** Display name for a record's product; used in record card titles. */
+  const productName = (id: string) =>
+    state.profile.products.find(product => product.id === id)?.name || 'Unassigned product';
+
   const productSelect = (value: string, disabled: boolean, onChange: (next: string) => void) => (
     <select className={INPUT} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}>
       {!productIds.has(value) && <option value={value}>{value ? 'Unknown product' : 'Select product'}</option>}
@@ -206,15 +210,23 @@ export function FarmProductionPage() {
         {state.profile.products.length === 0 ? <Empty>Add each product first — honey, eggs, produce — then record harvests and sales against it.</Empty> : (
           <div className="space-y-2">
             {state.profile.products.map(product => (
-              <div key={product.id} className="grid grid-cols-2 gap-2 rounded-md border border-border p-3 md:grid-cols-[1fr_120px_160px_140px_auto]">
-                <input className={INPUT} placeholder="Product (e.g. Wildflower honey)" value={product.name} onChange={event => updateProduct(product.id, { name: event.target.value })} />
-                <input className={INPUT} placeholder="Unit (lb, dozen, jar)" value={product.unit} onChange={event => updateProduct(product.id, { unit: event.target.value })} />
-                <select className={INPUT} value={product.category} onChange={event => updateProduct(product.id, { category: event.target.value as FarmProduct['category'] })}>
-                  {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-                <input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Target price per unit" placeholder="Target price" value={product.targetPrice ?? ''} onChange={event => updateProduct(product.id, { targetPrice: event.target.value === '' ? null : numberValue(event.target.value) })} />
-                <button type="button" onClick={() => state.change({ ...state.profile, products: state.profile.products.filter(item => item.id !== product.id) })} className="px-2 text-negative">×</button>
-              </div>
+              <RecordCard
+                key={product.id}
+                title={product.name || 'New product'}
+                removeLabel="Remove product"
+                onRemove={() => state.change({ ...state.profile, products: state.profile.products.filter(item => item.id !== product.id) })}
+              >
+                <FieldGrid>
+                  <Field label="Product"><input className={INPUT} placeholder="e.g. Wildflower honey" value={product.name} onChange={event => updateProduct(product.id, { name: event.target.value })} /></Field>
+                  <Field label="Unit"><input className={INPUT} placeholder="lb, dozen, jar" value={product.unit} onChange={event => updateProduct(product.id, { unit: event.target.value })} /></Field>
+                  <Field label="Category">
+                    <select className={INPUT} value={product.category} onChange={event => updateProduct(product.id, { category: event.target.value as FarmProduct['category'] })}>
+                      {Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Target price per unit"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Target price per unit" value={product.targetPrice ?? ''} onChange={event => updateProduct(product.id, { targetPrice: event.target.value === '' ? null : numberValue(event.target.value) })} /></Field>
+                </FieldGrid>
+              </RecordCard>
             ))}
           </div>
         )}
@@ -230,16 +242,20 @@ export function FarmProductionPage() {
             {state.profile.harvests.slice().sort((a, b) => b.date.localeCompare(a.date)).map(harvest => {
               const locked = harvest.source !== 'manual';
               return (
-                <div key={harvest.id} className="space-y-2 rounded-md border border-border p-3">
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-[140px_1fr_120px_1fr_auto]">
-                    <input type="date" className={`${INPUT} font-mono`} disabled={locked} value={harvest.date} onChange={event => updateHarvest(harvest.id, { date: event.target.value })} />
-                    {productSelect(harvest.productId, locked, next => updateHarvest(harvest.id, { productId: next }))}
-                    <input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Quantity" disabled={locked} value={harvest.quantity} onChange={event => updateHarvest(harvest.id, { quantity: numberValue(event.target.value) })} />
-                    <input className={INPUT} placeholder="Notes (optional)" disabled={locked} value={harvest.notes ?? ''} onChange={event => updateHarvest(harvest.id, { notes: event.target.value || null })} />
-                    <button type="button" onClick={() => state.change({ ...state.profile, harvests: state.profile.harvests.filter(item => item.id !== harvest.id) })} className="px-2 text-negative">×</button>
-                  </div>
+                <RecordCard
+                  key={harvest.id}
+                  title={`Harvest — ${productName(harvest.productId)}`}
+                  removeLabel="Remove harvest"
+                  onRemove={() => state.change({ ...state.profile, harvests: state.profile.harvests.filter(item => item.id !== harvest.id) })}
+                >
+                  <FieldGrid>
+                    <Field label="Date"><input type="date" className={`${INPUT} font-mono`} disabled={locked} value={harvest.date} onChange={event => updateHarvest(harvest.id, { date: event.target.value })} /></Field>
+                    <Field label="Product">{productSelect(harvest.productId, locked, next => updateHarvest(harvest.id, { productId: next }))}</Field>
+                    <Field label="Quantity"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Quantity" disabled={locked} value={harvest.quantity} onChange={event => updateHarvest(harvest.id, { quantity: numberValue(event.target.value) })} /></Field>
+                    <Field label="Notes (optional)"><input className={INPUT} disabled={locked} value={harvest.notes ?? ''} onChange={event => updateHarvest(harvest.id, { notes: event.target.value || null })} /></Field>
+                  </FieldGrid>
                   <SourceBadge source={harvest.source} />
-                </div>
+                </RecordCard>
               );
             })}
           </div>
@@ -256,20 +272,26 @@ export function FarmProductionPage() {
             {state.profile.sales.slice().sort((a, b) => b.date.localeCompare(a.date)).map(sale => {
               const locked = sale.source !== 'manual';
               return (
-                <div key={sale.id} className="space-y-2 rounded-md border border-border p-3">
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-[140px_1fr_150px_100px_120px_1fr_auto]">
-                    <input type="date" className={`${INPUT} font-mono`} disabled={locked} value={sale.date} onChange={event => updateSale(sale.id, { date: event.target.value })} />
-                    {productSelect(sale.productId, locked, next => updateSale(sale.id, { productId: next }))}
-                    <select className={INPUT} disabled={locked} value={sale.channel} onChange={event => updateSale(sale.id, { channel: event.target.value as FarmSale['channel'] })}>
-                      {Object.entries(CHANNEL_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                    <input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Quantity" disabled={locked} value={sale.quantity} onChange={event => updateSale(sale.id, { quantity: numberValue(event.target.value) })} />
-                    <input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Total revenue" disabled={locked} value={sale.revenue} onChange={event => updateSale(sale.id, { revenue: numberValue(event.target.value) })} />
-                    <input className={`${INPUT} font-mono`} placeholder="Transaction GUID (optional)" maxLength={32} value={sale.transactionGuid ?? ''} onChange={event => updateSale(sale.id, { transactionGuid: event.target.value || null })} />
-                    <button type="button" onClick={() => state.change({ ...state.profile, sales: state.profile.sales.filter(item => item.id !== sale.id) })} className="px-2 text-negative">×</button>
-                  </div>
+                <RecordCard
+                  key={sale.id}
+                  title={`Sale — ${productName(sale.productId)}`}
+                  removeLabel="Remove sale"
+                  onRemove={() => state.change({ ...state.profile, sales: state.profile.sales.filter(item => item.id !== sale.id) })}
+                >
+                  <FieldGrid>
+                    <Field label="Date"><input type="date" className={`${INPUT} font-mono`} disabled={locked} value={sale.date} onChange={event => updateSale(sale.id, { date: event.target.value })} /></Field>
+                    <Field label="Product">{productSelect(sale.productId, locked, next => updateSale(sale.id, { productId: next }))}</Field>
+                    <Field label="Channel">
+                      <select className={INPUT} disabled={locked} value={sale.channel} onChange={event => updateSale(sale.id, { channel: event.target.value as FarmSale['channel'] })}>
+                        {Object.entries(CHANNEL_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Quantity"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Quantity" disabled={locked} value={sale.quantity} onChange={event => updateSale(sale.id, { quantity: numberValue(event.target.value) })} /></Field>
+                    <Field label="Total revenue"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Total revenue" disabled={locked} value={sale.revenue} onChange={event => updateSale(sale.id, { revenue: numberValue(event.target.value) })} /></Field>
+                    <Field label="Transaction GUID (optional)"><input className={`${INPUT} font-mono`} maxLength={32} value={sale.transactionGuid ?? ''} onChange={event => updateSale(sale.id, { transactionGuid: event.target.value || null })} /></Field>
+                  </FieldGrid>
                   <SourceBadge source={sale.source} />
-                </div>
+                </RecordCard>
               );
             })}
           </div>
@@ -284,13 +306,19 @@ export function FarmProductionPage() {
         {state.profile.adjustments.length === 0 ? <Empty>Record spoilage, breakage, home use, or count corrections so on-hand stays honest.</Empty> : (
           <div className="space-y-2">
             {state.profile.adjustments.slice().sort((a, b) => b.date.localeCompare(a.date)).map(adjustment => (
-              <div key={adjustment.id} className="grid grid-cols-2 gap-2 rounded-md border border-border p-3 md:grid-cols-[140px_1fr_120px_1fr_auto]">
-                <input type="date" className={`${INPUT} font-mono`} value={adjustment.date} onChange={event => updateAdjustment(adjustment.id, { date: event.target.value })} />
-                {productSelect(adjustment.productId, false, next => updateAdjustment(adjustment.id, { productId: next }))}
-                <input type="number" step={0.01} className={`${INPUT} font-mono`} title="Quantity delta (signed)" value={adjustment.quantityDelta} onChange={event => updateAdjustment(adjustment.id, { quantityDelta: numberValue(event.target.value) })} />
-                <input className={INPUT} placeholder="Reason (optional)" value={adjustment.reason ?? ''} onChange={event => updateAdjustment(adjustment.id, { reason: event.target.value || null })} />
-                <button type="button" onClick={() => state.change({ ...state.profile, adjustments: state.profile.adjustments.filter(item => item.id !== adjustment.id) })} className="px-2 text-negative">×</button>
-              </div>
+              <RecordCard
+                key={adjustment.id}
+                title={`Adjustment — ${productName(adjustment.productId)}`}
+                removeLabel="Remove adjustment"
+                onRemove={() => state.change({ ...state.profile, adjustments: state.profile.adjustments.filter(item => item.id !== adjustment.id) })}
+              >
+                <FieldGrid>
+                  <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={adjustment.date} onChange={event => updateAdjustment(adjustment.id, { date: event.target.value })} /></Field>
+                  <Field label="Product">{productSelect(adjustment.productId, false, next => updateAdjustment(adjustment.id, { productId: next }))}</Field>
+                  <Field label="Quantity delta (signed)"><input type="number" step={0.01} className={`${INPUT} font-mono`} title="Quantity delta (signed)" value={adjustment.quantityDelta} onChange={event => updateAdjustment(adjustment.id, { quantityDelta: numberValue(event.target.value) })} /></Field>
+                  <Field label="Reason (optional)"><input className={INPUT} value={adjustment.reason ?? ''} onChange={event => updateAdjustment(adjustment.id, { reason: event.target.value || null })} /></Field>
+                </FieldGrid>
+              </RecordCard>
             ))}
           </div>
         )}
@@ -304,16 +332,24 @@ export function FarmProductionPage() {
         {state.profile.costs.length === 0 ? <Empty>Add annual input costs per product, or whole-farm costs shared across everything.</Empty> : (
           <div className="space-y-2">
             {state.profile.costs.slice().sort((a, b) => b.year - a.year).map(cost => (
-              <div key={cost.id} className="grid grid-cols-2 gap-2 rounded-md border border-border p-3 md:grid-cols-[110px_1fr_1fr_140px_auto]">
-                <input type="number" min={1900} max={2300} className={`${INPUT} font-mono`} title="Year" value={cost.year} onChange={event => updateCost(cost.id, { year: numberValue(event.target.value) })} />
-                <select className={INPUT} value={cost.productId ?? ''} onChange={event => updateCost(cost.id, { productId: event.target.value || null })}>
-                  <option value="">Whole farm</option>
-                  {state.profile.products.map(product => <option key={product.id} value={product.id}>{product.name || 'Unnamed product'}</option>)}
-                </select>
-                <input className={INPUT} placeholder="Label (jars, feed, packaging)" value={cost.label} onChange={event => updateCost(cost.id, { label: event.target.value })} />
-                <input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Annual amount" value={cost.amount} onChange={event => updateCost(cost.id, { amount: numberValue(event.target.value) })} />
-                <button type="button" onClick={() => state.change({ ...state.profile, costs: state.profile.costs.filter(item => item.id !== cost.id) })} className="px-2 text-negative">×</button>
-              </div>
+              <RecordCard
+                key={cost.id}
+                title={cost.label || 'New cost'}
+                removeLabel="Remove cost"
+                onRemove={() => state.change({ ...state.profile, costs: state.profile.costs.filter(item => item.id !== cost.id) })}
+              >
+                <FieldGrid>
+                  <Field label="Year"><input type="number" min={1900} max={2300} className={`${INPUT} font-mono`} title="Year" value={cost.year} onChange={event => updateCost(cost.id, { year: numberValue(event.target.value) })} /></Field>
+                  <Field label="Applies to">
+                    <select className={INPUT} value={cost.productId ?? ''} onChange={event => updateCost(cost.id, { productId: event.target.value || null })}>
+                      <option value="">Whole farm</option>
+                      {state.profile.products.map(product => <option key={product.id} value={product.id}>{product.name || 'Unnamed product'}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Label"><input className={INPUT} placeholder="jars, feed, packaging" value={cost.label} onChange={event => updateCost(cost.id, { label: event.target.value })} /></Field>
+                  <Field label="Annual amount"><input type="number" min={0} step={0.01} className={`${INPUT} font-mono`} title="Annual amount" value={cost.amount} onChange={event => updateCost(cost.id, { amount: numberValue(event.target.value) })} /></Field>
+                </FieldGrid>
+              </RecordCard>
             ))}
           </div>
         )}

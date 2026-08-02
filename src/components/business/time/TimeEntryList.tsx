@@ -9,7 +9,8 @@ import { ProjectSelect } from './ProjectSelect';
 import type { TimeEntryDTO } from '@/lib/business/time-tracking.service';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
-const inputClass = 'bg-input-bg border border-border rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:border-primary/50 transition-colors duration-150';
+const inputClass = 'bg-input-bg border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 transition-colors duration-150';
+const filterLabelClass = 'block text-xs font-medium uppercase tracking-wider text-foreground-secondary mb-1';
 
 function toIso(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -117,25 +118,24 @@ export function TimeEntryList({ projects, canWrite, canSeeRates, canFilterUsers,
             {/* Filters */}
             <div className="flex flex-wrap items-end gap-2 border-b border-border px-4 py-2.5">
                 <div className="w-56">
-                    <label className="block text-[10px] font-medium uppercase tracking-wider text-foreground-muted mb-0.5">Project</label>
+                    <label className={filterLabelClass}>Project</label>
                     <ProjectSelect
                         projects={projects}
                         value={projectKey}
                         onChange={(key) => setProjectKey(key)}
                         placeholder="All projects"
-                        compact
                     />
                 </div>
                 <div>
-                    <label className="block text-[10px] font-medium uppercase tracking-wider text-foreground-muted mb-0.5">From</label>
+                    <label className={filterLabelClass}>From</label>
                     <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={`${inputClass} font-mono`} style={TNUM} />
                 </div>
                 <div>
-                    <label className="block text-[10px] font-medium uppercase tracking-wider text-foreground-muted mb-0.5">To</label>
+                    <label className={filterLabelClass}>To</label>
                     <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={`${inputClass} font-mono`} style={TNUM} />
                 </div>
                 <div>
-                    <label className="block text-[10px] font-medium uppercase tracking-wider text-foreground-muted mb-0.5">Billable</label>
+                    <label className={filterLabelClass}>Billable</label>
                     <select value={billableFilter} onChange={(e) => setBillableFilter(e.target.value as typeof billableFilter)} className={inputClass}>
                         <option value="all">All</option>
                         <option value="yes">Billable</option>
@@ -143,7 +143,7 @@ export function TimeEntryList({ projects, canWrite, canSeeRates, canFilterUsers,
                     </select>
                 </div>
                 <div>
-                    <label className="block text-[10px] font-medium uppercase tracking-wider text-foreground-muted mb-0.5">Invoiced</label>
+                    <label className={filterLabelClass}>Invoiced</label>
                     <select value={invoicedFilter} onChange={(e) => setInvoicedFilter(e.target.value as typeof invoicedFilter)} className={inputClass}>
                         <option value="all">All</option>
                         <option value="uninvoiced">Not invoiced</option>
@@ -152,7 +152,7 @@ export function TimeEntryList({ projects, canWrite, canSeeRates, canFilterUsers,
                 </div>
                 {canFilterUsers && userOptions.length > 0 && (
                     <div>
-                        <label className="block text-[10px] font-medium uppercase tracking-wider text-foreground-muted mb-0.5">User</label>
+                        <label className={filterLabelClass}>User</label>
                         <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className={inputClass}>
                             <option value="">All users</option>
                             {userOptions.map(([id, name]) => (
@@ -165,7 +165,7 @@ export function TimeEntryList({ projects, canWrite, canSeeRates, canFilterUsers,
                     type="button"
                     onClick={exportCsv}
                     disabled={filtered.length === 0}
-                    className="ml-auto px-3 py-1.5 text-xs rounded-md border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150 disabled:opacity-50"
+                    className="ml-auto px-3 py-2 text-sm rounded-md border border-border text-foreground-secondary hover:text-foreground hover:bg-surface-hover transition-colors duration-150 disabled:opacity-50"
                 >
                     Export CSV
                 </button>

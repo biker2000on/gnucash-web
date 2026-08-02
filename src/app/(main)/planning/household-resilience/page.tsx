@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { HealthcareClaim, HealthcarePlan, HealthcareProfile, PersonalPriceIndexItem } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
 
 type Tab = 'prices' | 'healthcare';
 const uid = () => crypto.randomUUID();
@@ -212,7 +212,7 @@ export default function HouseholdResiliencePage() {
               <div className="space-y-3">
                 {healthcare.profile.plans.map(plan => (
                   <div key={plan.id} className="rounded-md border border-border bg-background/50 p-4">
-                    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <FieldGrid>
                       <Field label="Plan"><input className={INPUT} value={plan.name} onChange={event => updatePlan(plan.id, { name: event.target.value })} /></Field>
                       {([
                         ['Annual premium', 'annualPremium'],
@@ -225,7 +225,7 @@ export default function HouseholdResiliencePage() {
                       ] as const).map(([label, key]) => (
                         <Field key={key} label={label}><input type="number" min="0" className={`${INPUT} font-mono`} value={plan[key]} onChange={event => updatePlan(plan.id, { [key]: Number(event.target.value) })} /></Field>
                       ))}
-                    </div>
+                    </FieldGrid>
                     <div className="mt-3 flex items-center justify-between">
                       <label className="flex items-center gap-2 text-sm text-foreground-secondary"><input type="checkbox" checked={plan.hsaEligible} onChange={event => updatePlan(plan.id, { hsaEligible: event.target.checked })} /> HSA eligible</label>
                       <div className="flex gap-3">
@@ -241,15 +241,21 @@ export default function HouseholdResiliencePage() {
 
           <Panel title="Actual claims" description="Use allowed amounts, not provider sticker prices." action={<button type="button" onClick={addClaim} className="text-sm text-primary">Add claim</button>}>
             {healthcare.profile.claims.length === 0 ? <Empty>Add claims or representative annual usage to compare plans.</Empty> : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {healthcare.profile.claims.map(claim => (
-                  <div key={claim.id} className="grid grid-cols-2 gap-2 rounded-md border border-border bg-background/50 p-3 sm:grid-cols-[140px_1fr_1fr_160px_auto]">
-                    <input type="date" className={`${INPUT} font-mono`} value={claim.date} onChange={event => updateClaim(claim.id, { date: event.target.value })} />
-                    <input className={INPUT} placeholder="Family member" value={claim.member} onChange={event => updateClaim(claim.id, { member: event.target.value })} />
-                    <input className={INPUT} placeholder="Category" value={claim.category} onChange={event => updateClaim(claim.id, { category: event.target.value })} />
-                    <input type="number" min="0" className={`${INPUT} font-mono`} value={claim.allowedAmount} onChange={event => updateClaim(claim.id, { allowedAmount: Number(event.target.value) })} />
-                    <button type="button" onClick={() => updateProfile({ ...healthcare.profile, claims: healthcare.profile.claims.filter(item => item.id !== claim.id) })} className="px-2 text-negative">×</button>
-                  </div>
+                  <RecordCard
+                    key={claim.id}
+                    title={claim.member || 'Claim'}
+                    removeLabel="Remove claim"
+                    onRemove={() => updateProfile({ ...healthcare.profile, claims: healthcare.profile.claims.filter(item => item.id !== claim.id) })}
+                  >
+                    <FieldGrid>
+                      <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={claim.date} onChange={event => updateClaim(claim.id, { date: event.target.value })} /></Field>
+                      <Field label="Family member"><input className={INPUT} placeholder="Family member" value={claim.member} onChange={event => updateClaim(claim.id, { member: event.target.value })} /></Field>
+                      <Field label="Category"><input className={INPUT} placeholder="Category" value={claim.category} onChange={event => updateClaim(claim.id, { category: event.target.value })} /></Field>
+                      <Field label="Allowed amount"><input type="number" min="0" className={`${INPUT} font-mono`} value={claim.allowedAmount} onChange={event => updateClaim(claim.id, { allowedAmount: Number(event.target.value) })} /></Field>
+                    </FieldGrid>
+                  </RecordCard>
                 ))}
               </div>
             )}

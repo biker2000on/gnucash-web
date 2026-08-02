@@ -10,7 +10,7 @@ import type {
   RetirementIncomeSettings,
   RetirementPerson,
 } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
 
 const uid = () => crypto.randomUUID();
 const numberValue = (value: string) => Number(value) || 0;
@@ -158,8 +158,13 @@ export function RetirementIncomePage() {
             {state.profile.people.map(person => {
               const row = analysis?.people.find(item => item.personId === person.id);
               return (
-                <div key={person.id} className="space-y-2 rounded-md border border-border p-3">
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-[1fr_120px_150px_150px_140px_auto]">
+                <RecordCard
+                  key={person.id}
+                  title={person.name || 'New person'}
+                  removeLabel="Remove person"
+                  onRemove={() => removePerson(person.id)}
+                >
+                  <FieldGrid>
                     <Field label="Name"><input className={INPUT} placeholder="Name" value={person.name} onChange={event => updatePerson(person.id, { name: event.target.value })} /></Field>
                     <Field label="Birth year"><input type="number" min={1900} max={2100} className={`${INPUT} font-mono`} value={person.birthYear} onChange={event => updatePerson(person.id, { birthYear: numberValue(event.target.value) })} /></Field>
                     <Field label="Monthly PIA at FRA"><input type="number" min={0} className={`${INPUT} font-mono`} value={person.pia} onChange={event => updatePerson(person.id, { pia: numberValue(event.target.value) })} /></Field>
@@ -169,8 +174,7 @@ export function RetirementIncomePage() {
                         {CLAIM_AGES.map(age => <option key={age} value={age}>{age}</option>)}
                       </select>
                     </Field>
-                    <button type="button" onClick={() => removePerson(person.id)} className="self-end px-2 pb-2 text-negative">×</button>
-                  </div>
+                  </FieldGrid>
                   {row && row.piaSource !== 'missing' && (
                     <p className="text-xs text-foreground-muted">
                       FRA {row.fraLabel} · PIA {formatCurrency(row.pia)}/mo ({row.piaSource === 'estimated' ? 'estimated from earnings' : 'entered'}) · planned benefit {formatCurrency(row.plannedMonthlyBenefit)}/mo at {row.plannedClaimAge}.
@@ -179,7 +183,7 @@ export function RetirementIncomePage() {
                   {row?.piaSource === 'missing' && (
                     <p className="text-xs text-warning">Enter a monthly PIA or annual earnings to compute this person&apos;s benefits.</p>
                   )}
-                </div>
+                </RecordCard>
               );
             })}
           </div>
@@ -188,16 +192,16 @@ export function RetirementIncomePage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Panel title="Balances" description="Household balances by tax bucket, in today's dollars.">
-          <div className="grid grid-cols-2 gap-3">
+          <FieldGrid cols={2}>
             <Field label="Taxable"><input type="number" min={0} className={`${INPUT} font-mono`} value={state.profile.balances.taxable} onChange={event => updateBalances({ taxable: numberValue(event.target.value) })} /></Field>
             <Field label="Traditional (pre-tax)"><input type="number" min={0} className={`${INPUT} font-mono`} value={state.profile.balances.traditional} onChange={event => updateBalances({ traditional: numberValue(event.target.value) })} /></Field>
             <Field label="Roth"><input type="number" min={0} className={`${INPUT} font-mono`} value={state.profile.balances.roth} onChange={event => updateBalances({ roth: numberValue(event.target.value) })} /></Field>
             <Field label="HSA"><input type="number" min={0} className={`${INPUT} font-mono`} value={state.profile.balances.hsa} onChange={event => updateBalances({ hsa: numberValue(event.target.value) })} /></Field>
-          </div>
+          </FieldGrid>
         </Panel>
 
         <Panel title="Settings" description="Filing status, spending, horizon, and return assumptions shared by every projection.">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <FieldGrid cols={2}>
             <Field label="Filing status">
               <select className={INPUT} value={state.profile.settings.filingStatus} onChange={event => updateSettings({ filingStatus: event.target.value as RetirementIncomeSettings['filingStatus'] })}>
                 <option value="single">Single</option>
@@ -213,7 +217,7 @@ export function RetirementIncomePage() {
                 {Object.entries(SEQUENCING_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </Field>
-          </div>
+          </FieldGrid>
         </Panel>
       </div>
 

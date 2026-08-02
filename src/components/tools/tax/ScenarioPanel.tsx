@@ -197,7 +197,7 @@ export default function ScenarioPanel({
                                 },
                               })
                             }
-                            className="w-28 bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-right font-mono text-foreground focus:outline-none focus:border-primary"
+                            className="w-28 bg-background-tertiary border border-border rounded-md px-2 py-2 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
                           />
                         </div>
                       );

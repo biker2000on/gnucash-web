@@ -70,7 +70,7 @@ function formFromRow(row: Vendor1099Row): EditFormState {
 }
 
 const inputClass =
-    'w-full rounded-lg border border-border bg-input-bg px-2.5 py-1.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
+    'w-full rounded-lg border border-border bg-input-bg px-3 py-2.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
 const labelClass = 'block text-xs text-foreground-secondary mb-1';
 
 export default function Nec1099Page() {

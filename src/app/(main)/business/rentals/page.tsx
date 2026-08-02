@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { RentalProperty, RentalsProfile, RentalUnit } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, TNUM } from '@/components/resilience/ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from '@/components/resilience/ui';
 
 interface RentRollRow {
   propertyId: string;
@@ -228,7 +228,7 @@ export default function RentalsPage() {
                   <h3 className="text-sm font-semibold text-foreground">{unit.name}</h3>
                   <button type="button" onClick={() => updateProperty(property.id, { units: property.units.filter(item => item.id !== unit.id) })} className="text-xs text-foreground-muted hover:text-negative">Remove unit</button>
                 </div>
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <FieldGrid>
                   <Field label="Unit"><input className={INPUT} value={unit.name} onChange={event => updateUnit(property.id, unit.id, { name: event.target.value })} /></Field>
                   <Field label="Tenant"><input className={INPUT} value={unit.tenantName} onChange={event => updateUnit(property.id, unit.id, { tenantName: event.target.value })} /></Field>
                   <Field label="Tenant email"><input type="email" className={INPUT} value={unit.tenantEmail ?? ''} onChange={event => updateUnit(property.id, unit.id, { tenantEmail: event.target.value })} /></Field>
@@ -239,13 +239,13 @@ export default function RentalsPage() {
                   <Field label="Annual escalation %"><input type="number" min="0" max="100" step="0.1" className={`${INPUT} font-mono`} value={unit.annualEscalationPercent} onChange={event => updateUnit(property.id, unit.id, { annualEscalationPercent: Number(event.target.value) })} /></Field>
                   <Field label="Security deposit"><input type="number" min="0" step="0.01" className={`${INPUT} font-mono`} value={unit.securityDeposit} onChange={event => updateUnit(property.id, unit.id, { securityDeposit: Number(event.target.value) })} /></Field>
                   <Field label="Late fee"><input type="number" min="0" step="0.01" className={`${INPUT} font-mono`} value={unit.lateFee} onChange={event => updateUnit(property.id, unit.id, { lateFee: Number(event.target.value) })} /></Field>
-                  <Field label="Record rent payment" className="col-span-2">
+                  <Field label="Record rent payment" className="sm:col-span-2">
                     <div className="flex gap-2">
                       <input type="number" min="0" step="0.01" className={`${INPUT} font-mono`} placeholder={String(unit.monthlyRent)} value={paymentAmounts[unit.id] ?? ''} onChange={event => setPaymentAmounts(current => ({ ...current, [unit.id]: event.target.value }))} />
                       <button type="button" onClick={() => addPayment(property.id, unit)} className="shrink-0 rounded-md border border-border px-3 text-sm text-primary hover:border-primary">Record</button>
                     </div>
                   </Field>
-                </div>
+                </FieldGrid>
                 {unit.payments.length > 0 && (
                   <div className="mt-3 flex items-center justify-between text-xs text-foreground-muted">
                     <span>{unit.payments.length} payment record{unit.payments.length === 1 ? '' : 's'} · latest {unit.payments.at(-1)?.date}</span>

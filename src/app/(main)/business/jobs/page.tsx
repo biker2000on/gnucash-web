@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
+import { Field, FieldGrid } from '@/components/ui/form';
 import { OwnerSelector } from '@/components/business/OwnerSelector';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import { useToast } from '@/contexts/ToastContext';
@@ -138,22 +139,34 @@ function JobReportPanel({ jobGuid, isReadonly }: { jobGuid: string; isReadonly: 
             </div>
 
             {addingCost && (
-                <div className="grid gap-2 rounded-lg border border-primary/30 bg-background-secondary p-3 sm:grid-cols-2 xl:grid-cols-6">
-                    <select value={sourceType} onChange={event => setSourceType(event.target.value as typeof sourceType)} className={inputClass}>
-                        <option value="manual">Manual</option>
-                        <option value="transaction">Transaction</option>
-                        <option value="voucher">Voucher</option>
-                        <option value="material">Material</option>
-                    </select>
-                    <input value={sourceId} onChange={event => setSourceId(event.target.value)} placeholder="Source GUID (optional)" className={`${inputClass} font-mono`} />
-                    <input value={costDescription} onChange={event => setCostDescription(event.target.value)} placeholder="Description" className={inputClass} />
-                    <input type="date" value={costDate} onChange={event => setCostDate(event.target.value)} className={`${inputClass} font-mono`} />
-                    <input type="number" min="0.01" step="0.01" value={costAmount} onChange={event => setCostAmount(event.target.value)} placeholder="Amount" className={`${inputClass} font-mono`} />
-                    <div className="flex items-center justify-between gap-2">
-                        <label className="flex items-center gap-1 text-xs text-foreground-secondary">
-                            <input type="checkbox" checked={billable} onChange={event => setBillable(event.target.checked)} /> Billable
+                <div className="space-y-3 rounded-lg border border-primary/30 bg-background-secondary p-3">
+                    <FieldGrid>
+                        <Field label="Source type">
+                            <select value={sourceType} onChange={event => setSourceType(event.target.value as typeof sourceType)} className={inputClass}>
+                                <option value="manual">Manual</option>
+                                <option value="transaction">Transaction</option>
+                                <option value="voucher">Voucher</option>
+                                <option value="material">Material</option>
+                            </select>
+                        </Field>
+                        <Field label="Source GUID">
+                            <input value={sourceId} onChange={event => setSourceId(event.target.value)} placeholder="Optional" className={`${inputClass} font-mono`} />
+                        </Field>
+                        <Field label="Description">
+                            <input value={costDescription} onChange={event => setCostDescription(event.target.value)} placeholder="Description" className={inputClass} />
+                        </Field>
+                        <Field label="Date">
+                            <input type="date" value={costDate} onChange={event => setCostDate(event.target.value)} className={`${inputClass} font-mono`} />
+                        </Field>
+                        <Field label="Amount">
+                            <input type="number" min="0.01" step="0.01" value={costAmount} onChange={event => setCostAmount(event.target.value)} placeholder="0.00" className={`${inputClass} font-mono`} />
+                        </Field>
+                    </FieldGrid>
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-3">
+                        <label className="flex items-center gap-2 text-sm text-foreground-secondary">
+                            <input type="checkbox" checked={billable} onChange={event => setBillable(event.target.checked)} className="accent-primary" /> Billable
                         </label>
-                        <button type="button" onClick={() => void saveCost()} disabled={savingCost || !(Number(costAmount) > 0)} className="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+                        <button type="button" onClick={() => void saveCost()} disabled={savingCost || !(Number(costAmount) > 0)} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
                             Add
                         </button>
                     </div>

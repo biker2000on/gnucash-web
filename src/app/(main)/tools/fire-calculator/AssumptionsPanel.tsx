@@ -146,7 +146,7 @@ export default function AssumptionsPanel({
                       value={a.fixedInflationPct}
                       step={0.1}
                       onChange={e => onChange({ fixedInflationPct: parseFloat(e.target.value) || 0 })}
-                      className="w-full bg-input-bg border border-border rounded-lg py-1.5 pl-3 pr-8 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                      className="w-full bg-input-bg border border-border rounded-lg py-2 pl-3 pr-8 text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                       aria-label="Fixed inflation rate"
                     />
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-muted text-sm pointer-events-none">%</span>
@@ -438,7 +438,7 @@ export default function AssumptionsPanel({
         <h3 className="text-xs font-semibold text-foreground-muted uppercase tracking-wider mb-3">
           Simulation
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
           <InputField
             label="Contribution Growth"
             value={a.contributionGrowthPct}

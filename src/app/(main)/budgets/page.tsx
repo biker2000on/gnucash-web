@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { RelatedLinks } from '@/components/RelatedLinks';
 import { useToast } from '@/contexts/ToastContext';
+import { INPUT } from '@/components/ui/form';
 
 interface Budget {
     guid: string;
@@ -201,8 +202,7 @@ export default function BudgetsPage() {
         }
     };
 
-    const inputClass =
-        'w-full px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm';
+    const inputClass = INPUT;
 
     return (
         <div className="space-y-6">

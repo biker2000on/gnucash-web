@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { FieldGrid } from '@/components/ui/form';
 import { toLocalDateString } from '@/lib/datePresets';
 import { formatCurrency } from '@/lib/format';
 import {
@@ -173,7 +174,7 @@ export function EsppPanel({ onPosted }: { onPosted: () => void }) {
                 />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <FieldGrid cols={2}>
                 <div>
                     <label className={LABEL_CLASS}>Purchase Date</label>
                     <input
@@ -195,9 +196,9 @@ export function EsppPanel({ onPosted }: { onPosted: () => void }) {
                         className={`${INPUT_CLASS} font-mono`}
                     />
                 </div>
-            </div>
+            </FieldGrid>
 
-            <div className="grid grid-cols-3 gap-4">
+            <FieldGrid>
                 <div>
                     <label className={LABEL_CLASS}>FMV per Share</label>
                     <input
@@ -237,7 +238,7 @@ export function EsppPanel({ onPosted }: { onPosted: () => void }) {
                         className={`${INPUT_CLASS} font-mono ${priceEdited ? 'border-primary/30' : ''}`}
                     />
                 </div>
-            </div>
+            </FieldGrid>
 
             <div>
                 <label className={LABEL_CLASS}>Cash Account (payroll deductions / brokerage cash)</label>

@@ -18,8 +18,11 @@ export const WARRANTY_WARNING_DAYS = 90;
 
 export const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
+// Padding matches the app-wide INPUT standard in components/ui/form.tsx —
+// edit-form controls stay comfortable even though the surrounding home views
+// are otherwise dense.
 export const inputClass =
-    'w-full rounded-lg border border-border bg-input-bg px-2.5 py-1.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
+    'w-full rounded-lg border border-border bg-input-bg px-3 py-2.5 text-sm text-foreground placeholder:text-foreground-muted focus:border-primary/50 focus:outline-none';
 export const labelClass = 'block text-xs text-foreground-secondary mb-1';
 
 export const CATEGORY_OPTIONS = ITEM_CATEGORIES.map((value) => ({

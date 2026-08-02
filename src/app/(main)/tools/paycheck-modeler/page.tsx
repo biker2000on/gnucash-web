@@ -107,9 +107,9 @@ function prefillFromPayslip(p: PayslipRow): Partial<OfferScenario> | null {
 /* ------------------------------------------------------------------ */
 
 const inputCls =
-  'bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary';
+  'bg-background-tertiary border border-border rounded-md px-2 py-2 text-sm text-foreground focus:outline-none focus:border-primary';
 const selectCls =
-  'bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary';
+  'bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary';
 
 function NumberField({
   label,
@@ -147,7 +147,7 @@ function NumberField({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <fieldset className="rounded-md border border-border p-3">
-      <legend className="px-1.5 text-[11px] uppercase tracking-wider text-foreground-muted">
+      <legend className="px-1.5 text-xs font-semibold uppercase tracking-wider text-foreground-secondary">
         {title}
       </legend>
       <div className="flex flex-wrap items-end gap-x-4 gap-y-3">{children}</div>

@@ -9,6 +9,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { INPUT } from '@/components/ui/form';
 
 type SettlementSource = 'stripe' | 'square' | 'paypal' | 'shopify';
 type SettlementRole = 'income' | 'fees' | 'clearing' | 'bank';
@@ -434,19 +435,19 @@ export default function SettlementImportPage() {
                                         .filter((r) => r.used)
                                         .map((r) => (
                                             <tr key={r.role} className="border-t border-border">
-                                                <td className="px-3 py-1.5 align-top">
+                                                <td className="px-3 py-2 align-top">
                                                     <div className="text-foreground">{ROLE_LABELS[r.role].title}</div>
-                                                    <div className="text-[11px] text-foreground-muted max-w-[20rem]">
+                                                    <div className="text-xs text-foreground-muted max-w-[20rem]">
                                                         {ROLE_LABELS[r.role].help}
                                                     </div>
                                                 </td>
-                                                <td className="px-3 py-1.5">
+                                                <td className="px-3 py-2">
                                                     <select
                                                         value={roleValue(r)}
                                                         onChange={(e) =>
                                                             setMappings((prev) => ({ ...prev, [r.role]: e.target.value }))
                                                         }
-                                                        className="w-full max-w-md bg-input-bg border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary/50"
+                                                        className={`${INPUT} max-w-md`}
                                                     >
                                                         <option value="new">
                                                             ＋ Create {r.isNew ? r.path : `new account`}

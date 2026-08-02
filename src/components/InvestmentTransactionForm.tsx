@@ -8,6 +8,7 @@ import { formatDateForDisplay, parseDateInput } from '@/lib/date-format';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { toLocalDateString } from '@/lib/datePresets';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { FieldGrid } from '@/components/ui/form';
 
 export type InvestmentAction = 'Buy' | 'Sell' | 'Dividend' | 'ReturnOfCapital' | 'Split';
 
@@ -622,7 +623,7 @@ export function InvestmentTransactionForm({
                 <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-2">
                     Transaction Type
                 </label>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                     {ACTION_OPTIONS.map(option => (
                         <button
                             key={option.value}
@@ -668,7 +669,7 @@ export function InvestmentTransactionForm({
             {/* Buy/Sell Fields */}
             {(form.action === 'Buy' || form.action === 'Sell') && (
                 <>
-                    <div className="grid grid-cols-3 gap-4">
+                    <FieldGrid>
                         <div>
                             <label className={`block text-xs uppercase tracking-wider mb-1 ${
                                 getCalculatedField() === 'shares'
@@ -750,9 +751,9 @@ export function InvestmentTransactionForm({
                                 } focus:border-primary/50`}
                             />
                         </div>
-                    </div>
+                    </FieldGrid>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <FieldGrid cols={2}>
                         <div>
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 Commission/Fees (optional)
@@ -778,7 +779,7 @@ export function InvestmentTransactionForm({
                                 accountTypes={['EXPENSE']}
                             />
                         </div>
-                    </div>
+                    </FieldGrid>
 
                     <div>
                         <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
@@ -812,7 +813,7 @@ export function InvestmentTransactionForm({
                         />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <FieldGrid cols={2}>
                         <div>
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 Cash Account
@@ -835,7 +836,7 @@ export function InvestmentTransactionForm({
                                 accountTypes={['INCOME']}
                             />
                         </div>
-                    </div>
+                    </FieldGrid>
                 </>
             )}
 

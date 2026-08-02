@@ -22,6 +22,7 @@ import {
 import { computeIraDeductionLimit, computeRothIraContributionLimit } from '@/lib/tax/phaseouts';
 import { resolveContributionActuals, summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
 import { MobileCard } from '@/components/ui/MobileCard';
@@ -691,7 +692,7 @@ export default function TaxEstimatorPage() {
                     setStateFlatRate(rate);
                     savePreferences({ flatRate: rate });
                   }}
-                  className="w-16 bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-right font-mono text-foreground focus:outline-none focus:border-primary"
+                  className="w-20 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
                 />
               </label>
             )}
@@ -712,7 +713,7 @@ export default function TaxEstimatorPage() {
                 <select
                   value={filersAge65Plus}
                   onChange={e => setFilersAge65Plus(parseInt(e.target.value, 10))}
-                  className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                  className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
                 >
                   <option value={0}>0</option>
                   <option value={1}>1</option>
@@ -793,7 +794,7 @@ export default function TaxEstimatorPage() {
                     // Spouse limits are resolved server-side from the birthday
                     fetchEstimate(year).then(setEstimate).catch(() => {});
                   }}
-                  className="bg-background-tertiary border border-border rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary"
+                  className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
                 />
               </label>
               <span className="text-[11px] text-foreground-muted">
@@ -1326,30 +1327,30 @@ export default function TaxEstimatorPage() {
           >
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="space-y-3">
-                <div className="flex flex-wrap gap-4">
-                  <label className="text-xs text-foreground-secondary">
-                    Prior-year total tax
+                <FieldGrid cols={2}>
+                  <Field label="Prior-year total tax">
                     <input
                       type="number"
                       min={0}
                       value={priorYearTax}
                       placeholder="e.g. 24000"
                       onChange={e => setPriorYearTax(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
-                      className="block mt-1 w-36 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-xs text-right font-mono text-foreground focus:outline-none focus:border-primary"
+                      className={`${INPUT} text-right font-mono`}
+                      style={{ fontFeatureSettings: "'tnum'" }}
                     />
-                  </label>
-                  <label className="text-xs text-foreground-secondary">
-                    Prior-year AGI
+                  </Field>
+                  <Field label="Prior-year AGI">
                     <input
                       type="number"
                       min={0}
                       value={priorYearAgi}
                       placeholder="e.g. 180000"
                       onChange={e => setPriorYearAgi(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
-                      className="block mt-1 w-36 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-xs text-right font-mono text-foreground focus:outline-none focus:border-primary"
+                      className={`${INPUT} text-right font-mono`}
+                      style={{ fontFeatureSettings: "'tnum'" }}
                     />
-                  </label>
-                </div>
+                  </Field>
+                </FieldGrid>
                 <dl className="space-y-1.5 font-mono text-xs" style={{ fontFeatureSettings: "'tnum'" }}>
                   <BreakdownRow label="90% of current-year tax" value={computed.safeHarbor.ninetyPercentCurrent} />
                   {computed.safeHarbor.priorYearSafeHarbor !== null && (

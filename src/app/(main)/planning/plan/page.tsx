@@ -10,6 +10,7 @@ import {
   type LivingPlan,
   type PlanGuardrails,
 } from '@/lib/planning/types';
+import { Field, FieldGrid, RecordCard } from '@/components/ui/form';
 
 const EVENT_LABELS: Record<LifeEventType, string> = {
   job_change: 'Job change',
@@ -292,19 +293,33 @@ export default function LivingPlanPage() {
         </div>
         <div className="mt-4 space-y-2">
           {lifeEvents.map((event, index) => (
-            <div key={event.id} className="grid gap-2 rounded-lg border border-border bg-surface p-3 md:grid-cols-[150px_1fr_150px_150px_auto]">
-              <select
-                value={event.type}
-                onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, type: e.target.value as LifeEventType } : item))}
-                className={INPUT}
-              >
-                {LIFE_EVENT_TYPES.map(type => <option key={type} value={type}>{EVENT_LABELS[type]}</option>)}
-              </select>
-              <input value={event.title} onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, title: e.target.value } : item))} className={INPUT} aria-label="Event title" />
-              <input type="date" value={event.date} onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, date: e.target.value } : item))} className={`${INPUT} font-mono`} />
-              <input type="number" value={event.cashImpact ?? ''} placeholder="Cash impact" onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, cashImpact: e.target.value === '' ? null : Number(e.target.value) } : item))} className={`${INPUT} font-mono`} />
-              <button type="button" onClick={() => setLifeEvents(items => items.filter((_, i) => i !== index))} className="px-2 text-xs text-foreground-muted hover:text-negative">Remove</button>
-            </div>
+            <RecordCard
+              key={event.id}
+              title={event.title || EVENT_LABELS[event.type]}
+              removeLabel="Remove"
+              onRemove={() => setLifeEvents(items => items.filter((_, i) => i !== index))}
+            >
+              <FieldGrid>
+                <Field label="Type">
+                  <select
+                    value={event.type}
+                    onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, type: e.target.value as LifeEventType } : item))}
+                    className={INPUT}
+                  >
+                    {LIFE_EVENT_TYPES.map(type => <option key={type} value={type}>{EVENT_LABELS[type]}</option>)}
+                  </select>
+                </Field>
+                <Field label="Title">
+                  <input value={event.title} onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, title: e.target.value } : item))} className={INPUT} />
+                </Field>
+                <Field label="Date">
+                  <input type="date" value={event.date} onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, date: e.target.value } : item))} className={`${INPUT} font-mono`} />
+                </Field>
+                <Field label="Cash impact">
+                  <input type="number" value={event.cashImpact ?? ''} placeholder="Cash impact" onChange={e => setLifeEvents(items => items.map((item, i) => i === index ? { ...item, cashImpact: e.target.value === '' ? null : Number(e.target.value) } : item))} className={`${INPUT} font-mono`} />
+                </Field>
+              </FieldGrid>
+            </RecordCard>
           ))}
           {lifeEvents.length === 0 && <p className="py-4 text-center text-sm text-foreground-muted">No dated life events yet.</p>}
         </div>

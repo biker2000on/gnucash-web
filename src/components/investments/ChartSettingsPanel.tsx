@@ -162,7 +162,7 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
             <select
               value={defaultPeriod}
               onChange={(e) => setDefaultPeriod(e.target.value)}
-              className="w-full px-2 py-1 text-sm bg-background-tertiary border border-border rounded text-foreground"
+              className="w-full px-3 py-2 text-sm bg-background-tertiary border border-border rounded text-foreground"
             >
               {PERIOD_OPTIONS.map(p => (
                 <option key={p} value={p}>{p}</option>

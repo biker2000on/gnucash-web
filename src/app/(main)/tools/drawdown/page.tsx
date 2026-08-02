@@ -29,6 +29,7 @@ import { FILING_STATUSES, FILING_STATUS_LABELS, type FilingStatus } from '@/lib/
 import { STATE_OPTIONS } from '@/lib/tax/state';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { INPUT, LABEL } from '@/components/ui/form';
 import DrawdownChart, { BUCKET_COLORS } from './DrawdownChart';
 import DrawdownTable from './DrawdownTable';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
@@ -182,15 +183,14 @@ interface PrefillData {
 /* Small form controls                                                 */
 /* ------------------------------------------------------------------ */
 
-const INPUT_CLASS =
-    'w-full bg-background-tertiary border border-border rounded-lg px-3 py-1.5 text-sm text-foreground font-mono focus:outline-none focus:border-primary/50';
+const INPUT_CLASS = `${INPUT} font-mono`;
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: React.ReactNode }) {
     return (
         <label className="block">
-            <span className="block text-xs font-medium text-foreground-secondary mb-1">{label}</span>
+            <span className={LABEL}>{label}</span>
             {children}
-            {hint && <span className="block mt-1 text-[11px] text-foreground-muted">{hint}</span>}
+            {hint && <span className="mt-1 block text-xs text-foreground-muted">{hint}</span>}
         </label>
     );
 }
@@ -575,7 +575,7 @@ export default function DrawdownPlannerPage() {
                 </div>
 
                 {/* Inputs */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 mb-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-4">
                     <NumField
                         label="Your PIA at FRA ($/mo)"
                         value={params.ssOpt.piaSelf}
@@ -734,7 +734,7 @@ export default function DrawdownPlannerPage() {
             >
                 <div className="space-y-5">
                     {/* Ages + filing */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <NumField
                             label="Current Age"
                             value={params.currentAge}
@@ -814,7 +814,7 @@ export default function DrawdownPlannerPage() {
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
                             Starting Balances {prefillState === 'loaded' ? '(prefilled from your book)' : ''}
                         </h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                             {BUCKETS.map(bucket => {
                                 const computed = prefill?.balances[bucket] ?? null;
                                 const override = params.balanceOverrides[bucket];
@@ -879,7 +879,7 @@ export default function DrawdownPlannerPage() {
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
                             Expected Nominal Return % per Bucket
                         </h3>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                             {BUCKETS.map(bucket => (
                                 <NumField
                                     key={bucket}
@@ -895,7 +895,7 @@ export default function DrawdownPlannerPage() {
                     </div>
 
                     {/* Social Security + withdrawal strategy */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <div className="space-y-2">
                             <Toggle
                                 checked={params.ssEnabled}
@@ -958,7 +958,7 @@ export default function DrawdownPlannerPage() {
                     </div>
 
                     {/* Conversions */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3 items-end">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 items-end">
                         <div className="space-y-2">
                             <Toggle
                                 checked={params.conversionsEnabled}

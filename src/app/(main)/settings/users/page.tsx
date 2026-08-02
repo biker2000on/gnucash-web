@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import { useBooks } from '@/contexts/BookContext';
+import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 
 interface BookUser {
     userId: number;
@@ -236,7 +237,7 @@ export default function UsersPage() {
                                             onChange={(e) => handleRoleChange(u.userId, e.target.value)}
                                             disabled={isLastAdmin}
                                             title={isLastAdmin ? 'Cannot demote the last admin' : undefined}
-                                            className="bg-input-bg border border-border rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-60 disabled:cursor-not-allowed"
+                                            className="bg-input-bg border border-border rounded-lg px-2.5 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-60 disabled:cursor-not-allowed"
                                         >
                                             {ROLE_OPTIONS.map((r) => (
                                                 <option key={r} value={r}>{r}</option>
@@ -258,51 +259,48 @@ export default function UsersPage() {
                         Generate an invitation link to share with others. They will need to create an account to accept.
                     </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div className="space-y-1">
-                            <label className="block text-sm text-foreground-secondary">Role</label>
+                    <FieldGrid cols={3}>
+                        <Field label="Role">
                             <select
                                 value={inviteRole}
                                 onChange={(e) => setInviteRole(e.target.value as 'readonly' | 'edit' | 'timekeeper')}
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                className={INPUT}
                             >
                                 <option value="readonly">Read Only</option>
                                 <option value="edit">Edit</option>
                                 <option value="timekeeper">Timekeeper</option>
                             </select>
                             {inviteRole === 'timekeeper' && (
-                                <p className="text-xs text-foreground-muted">
+                                <p className="mt-1.5 text-xs text-foreground-muted">
                                     Time tracking only — can log time against projects but cannot see books or financials.
                                 </p>
                             )}
-                        </div>
+                        </Field>
 
-                        <div className="space-y-1">
-                            <label className="block text-sm text-foreground-secondary">Expires</label>
+                        <Field label="Expires">
                             <select
                                 value={inviteExpiry}
                                 onChange={(e) => setInviteExpiry(Number(e.target.value))}
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                className={INPUT}
                             >
                                 {EXPIRY_OPTIONS.map(opt => (
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                                 ))}
                             </select>
-                        </div>
+                        </Field>
 
-                        <div className="space-y-1">
-                            <label className="block text-sm text-foreground-secondary">Max Uses</label>
+                        <Field label="Max Uses">
                             <select
                                 value={inviteMaxUses}
                                 onChange={(e) => setInviteMaxUses(Number(e.target.value))}
-                                className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                                className={INPUT}
                             >
                                 {MAX_USES_OPTIONS.map(opt => (
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                                 ))}
                             </select>
-                        </div>
-                    </div>
+                        </Field>
+                    </FieldGrid>
 
                     <button
                         onClick={handleCreateInvitation}

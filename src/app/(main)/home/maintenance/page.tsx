@@ -377,7 +377,7 @@ export default function HomeMaintenancePage() {
         submitLabel: string,
     ) => (
         <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="sm:col-span-2">
                     <label className={labelClass}>Task name *</label>
                     <input
@@ -561,7 +561,7 @@ export default function HomeMaintenancePage() {
                 <li className="border-b border-border/30 bg-background-tertiary/30 px-4 py-3 last:border-b-0">
                     {panel.kind === 'done' && (
                         <div className="space-y-3">
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                 <div>
                                     <label className={labelClass}>Date</label>
                                     <input
@@ -844,7 +844,7 @@ export default function HomeMaintenancePage() {
                                 <p className="text-xs font-medium uppercase tracking-wider text-foreground-muted">
                                     Log a service
                                 </p>
-                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                     <div>
                                         <label className={labelClass}>Date</label>
                                         <input

@@ -6,6 +6,7 @@
  * property tax + insurance + appreciating home value.
  */
 
+import { FieldGrid, INPUT, LABEL } from '@/components/ui/form';
 import { computeLoanSchedule } from '@/lib/scenario/engine';
 import {
     DELTA_KIND_LABELS,
@@ -15,8 +16,7 @@ import {
     type ScenarioDeltaKind,
 } from '@/lib/scenario/types';
 
-const INPUT_CLASS =
-    'w-full bg-background-tertiary border border-border rounded-lg px-3 py-1.5 text-sm text-foreground font-mono focus:outline-none focus:border-primary/50';
+const INPUT_CLASS = `${INPUT} font-mono`;
 
 const fmt = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -89,7 +89,7 @@ function houseTemplateDeltas(): ScenarioDelta[] {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <label className="block min-w-0">
-            <span className="block text-[11px] font-medium text-foreground-secondary mb-1">{label}</span>
+            <span className={LABEL}>{label}</span>
             {children}
         </label>
     );
@@ -168,7 +168,7 @@ function DeltaForm({ delta, onChange }: {
     switch (delta.kind) {
         case 'one_time':
             return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2">
+                <FieldGrid cols={2}>
                     <NumField
                         label="Amount ($, − = outflow)"
                         value={delta.amount}
@@ -180,11 +180,11 @@ function DeltaForm({ delta, onChange }: {
                         value={delta.startDate}
                         onChange={v => v && onChange({ ...delta, startDate: v })}
                     />
-                </div>
+                </FieldGrid>
             );
         case 'recurring':
             return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-3 gap-y-2">
+                <FieldGrid>
                     <NumField
                         label="Monthly ($, − = expense)"
                         value={delta.monthlyAmount}
@@ -222,13 +222,13 @@ function DeltaForm({ delta, onChange }: {
                             <option value="taxable_income">Taxable income</option>
                         </select>
                     </Field>
-                </div>
+                </FieldGrid>
             );
         case 'loan': {
             const schedule = computeLoanSchedule(delta.principal, delta.annualRatePct, delta.termMonths);
             return (
                 <div className="space-y-2">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2">
+                    <FieldGrid>
                         <NumField
                             label="Principal ($)"
                             value={delta.principal}
@@ -252,7 +252,7 @@ function DeltaForm({ delta, onChange }: {
                             value={delta.startDate}
                             onChange={v => v && onChange({ ...delta, startDate: v })}
                         />
-                    </div>
+                    </FieldGrid>
                     <div className="flex flex-wrap items-center gap-4">
                         <Checkbox
                             label="Interest is tax-deductible (mortgage)"
@@ -268,7 +268,7 @@ function DeltaForm({ delta, onChange }: {
         }
         case 'asset':
             return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2">
+                <FieldGrid>
                     <NumField
                         label="Value ($)"
                         value={delta.value}
@@ -286,11 +286,11 @@ function DeltaForm({ delta, onChange }: {
                         value={delta.startDate}
                         onChange={v => v && onChange({ ...delta, startDate: v })}
                     />
-                </div>
+                </FieldGrid>
             );
         case 'income_change':
             return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2">
+                <FieldGrid cols={2}>
                     <NumField
                         label="Annual gross change ($)"
                         value={delta.annualAmount}
@@ -302,11 +302,11 @@ function DeltaForm({ delta, onChange }: {
                         value={delta.startDate}
                         onChange={v => v && onChange({ ...delta, startDate: v })}
                     />
-                </div>
+                </FieldGrid>
             );
         case 'contribution_change':
             return (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2">
+                <FieldGrid cols={2}>
                     <NumField
                         label="Annual pre-tax deferral change ($)"
                         value={delta.annualAmount}
@@ -318,7 +318,7 @@ function DeltaForm({ delta, onChange }: {
                         value={delta.startDate}
                         onChange={v => v && onChange({ ...delta, startDate: v })}
                     />
-                </div>
+                </FieldGrid>
             );
     }
 }

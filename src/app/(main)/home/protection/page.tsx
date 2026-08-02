@@ -14,7 +14,7 @@ import type {
   LifePerson,
   LifeProfile,
 } from '@/lib/resilience/types';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
 import { DocumentChip, type VaultDocument } from '@/components/resilience/DocumentLinkField';
 
 type Tab = 'insurance' | 'capital' | 'life';
@@ -118,7 +118,7 @@ function RenewalChip(props: { date: string }) {
 function Stat(props: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">{props.label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">{props.label}</p>
       <p className="mt-0.5 font-mono text-sm text-foreground" style={TNUM}>{props.value}</p>
     </div>
   );
@@ -385,7 +385,7 @@ export default function ProtectionPage() {
         </div>
         {policy.sublimits.length > 0 && (
           <p className="mt-3 text-xs text-foreground-secondary">
-            <span className="font-semibold uppercase tracking-wider text-[10px] text-foreground-muted">Sub-limits </span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-foreground-muted">Sub-limits </span>
             {policy.sublimits.map(sublimit => `${sublimit.category} ${formatCurrency(sublimit.limit)}`).join(' · ')}
           </p>
         )}
@@ -404,11 +404,11 @@ export default function ProtectionPage() {
     const linkable = vaultDocs.filter(doc => !policy.documentIds.includes(doc.id));
     return (
       <div key={policy.id} className="rounded-md border border-primary/40 bg-background/50 p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Editing policy</span>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Editing policy</span>
           <button type="button" onClick={() => closeEditor(policy.id)} className={EDIT_BUTTON}>Done</button>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <FieldGrid>
           <Field label="Type"><select className={INPUT} value={policy.type} onChange={event => updatePolicy(policy.id, { type: event.target.value as InsurancePolicy['type'] })}>{(Object.keys(POLICY_TYPE_LABELS) as Array<InsurancePolicy['type']>).map(type => <option key={type} value={type}>{POLICY_TYPE_LABELS[type]}</option>)}</select></Field>
           <Field label="Provider"><input className={INPUT} value={policy.provider} onChange={event => updatePolicy(policy.id, { provider: event.target.value })} /></Field>
           <Field label="Covered entity"><input className={INPUT} value={policy.coveredEntity} onChange={event => updatePolicy(policy.id, { coveredEntity: event.target.value })} /></Field>
@@ -417,20 +417,30 @@ export default function ProtectionPage() {
           <Field label="Deductible"><input type="number" min="0" className={`${INPUT} font-mono`} value={policy.deductible} onChange={event => updatePolicy(policy.id, { deductible: Number(event.target.value) })} /></Field>
           <Field label="Annual premium"><input type="number" min="0" className={`${INPUT} font-mono`} value={policy.annualPremium} onChange={event => updatePolicy(policy.id, { annualPremium: Number(event.target.value) })} /></Field>
           <Field label="Renewal"><input type="date" className={`${INPUT} font-mono`} value={policy.renewalDate} onChange={event => updatePolicy(policy.id, { renewalDate: event.target.value })} /></Field>
-        </div>
-        <div className="mt-3 flex items-center justify-between">
+        </FieldGrid>
+        {policy.sublimits.length > 0 && (
+          <div className="mt-5 space-y-3 border-t border-border/60 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Category sub-limits</p>
+            {policy.sublimits.map(sublimit => (
+              <div key={sublimit.id} className="space-y-3 rounded-md border border-border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-foreground">{sublimit.category || 'New sub-limit'}</span>
+                  <button type="button" onClick={() => updatePolicy(policy.id, { sublimits: policy.sublimits.filter(item => item.id !== sublimit.id) })} className="text-xs text-foreground-muted transition-colors hover:text-negative">Remove sub-limit</button>
+                </div>
+                <FieldGrid cols={2}>
+                  <Field label="Category"><input className={INPUT} value={sublimit.category} onChange={event => updatePolicy(policy.id, { sublimits: policy.sublimits.map(item => item.id === sublimit.id ? { ...item, category: event.target.value } : item) })} /></Field>
+                  <Field label="Limit"><input type="number" min="0" className={`${INPUT} font-mono`} value={sublimit.limit} onChange={event => updatePolicy(policy.id, { sublimits: policy.sublimits.map(item => item.id === sublimit.id ? { ...item, limit: Number(event.target.value) } : item) })} /></Field>
+                </FieldGrid>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
           <button type="button" onClick={() => updatePolicy(policy.id, { sublimits: [...policy.sublimits, { id: uid(), category: 'Jewelry', limit: 0 }] })} className="text-xs text-primary">Add category sub-limit</button>
           <button type="button" onClick={() => removePolicy(policy.id)} className="text-xs text-foreground-muted hover:text-negative">Remove policy</button>
         </div>
-        {policy.sublimits.map(sublimit => (
-          <div key={sublimit.id} className="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2">
-            <input className={INPUT} value={sublimit.category} onChange={event => updatePolicy(policy.id, { sublimits: policy.sublimits.map(item => item.id === sublimit.id ? { ...item, category: event.target.value } : item) })} />
-            <input type="number" min="0" className={`${INPUT} font-mono`} value={sublimit.limit} onChange={event => updatePolicy(policy.id, { sublimits: policy.sublimits.map(item => item.id === sublimit.id ? { ...item, limit: Number(event.target.value) } : item) })} />
-            <button type="button" onClick={() => updatePolicy(policy.id, { sublimits: policy.sublimits.filter(item => item.id !== sublimit.id) })} className="px-2 text-negative">×</button>
-          </div>
-        ))}
-        <div className="mt-4 border-t border-border/60 pt-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Policy documents</p>
+        <div className="mt-5 border-t border-border/60 pt-4">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Policy documents</p>
           {policy.documentIds.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {policy.documentIds.map(id => (
@@ -516,11 +526,11 @@ export default function ProtectionPage() {
 
   const renderCapitalEdit = (asset: CapitalAsset, calculated: CapitalResponse['plan']['rows'][number] | undefined) => (
     <div key={asset.id} className="rounded-md border border-primary/40 bg-background/50 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Editing asset</span>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Editing asset</span>
         <button type="button" onClick={() => closeEditor(asset.id)} className={EDIT_BUTTON}>Done</button>
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <FieldGrid>
         <Field label="Asset"><input className={INPUT} value={asset.name} onChange={event => updateCapital(asset.id, { name: event.target.value })} /></Field>
         <Field label="Category"><input className={INPUT} value={asset.category} onChange={event => updateCapital(asset.id, { category: event.target.value })} /></Field>
         <Field label="Installed year"><input type="number" className={`${INPUT} font-mono`} value={asset.installedYear} onChange={event => updateCapital(asset.id, { installedYear: Number(event.target.value) })} /></Field>
@@ -528,14 +538,14 @@ export default function ProtectionPage() {
         <Field label="Cost today"><input type="number" min="0" className={`${INPUT} font-mono`} value={asset.currentReplacementCost} onChange={event => updateCapital(asset.id, { currentReplacementCost: Number(event.target.value) })} /></Field>
         <Field label="Inflation %"><input type="number" min="0" max="30" step="0.1" className={`${INPUT} font-mono`} value={asset.inflationRate} onChange={event => updateCapital(asset.id, { inflationRate: Number(event.target.value) })} /></Field>
         <Field label="Already funded"><input type="number" min="0" className={`${INPUT} font-mono`} value={asset.fundedAmount} onChange={event => updateCapital(asset.id, { fundedAmount: Number(event.target.value) })} /></Field>
-        <div className="flex items-end justify-between gap-3">
-          <span className="pb-2 font-mono text-xs text-foreground-secondary" style={TNUM}>{calculated ? `${calculated.replacementYear} · ${formatCurrency(calculated.monthlyFunding)}/mo` : 'Save to calculate'}</span>
-          <button type="button" onClick={() => {
-            if (!capital) return;
-            setCapital({ ...capital, profile: { assets: capital.profile.assets.filter(item => item.id !== asset.id) } });
-            setDirty(current => ({ ...current, capital: true }));
-          }} className="pb-2 text-xs text-foreground-muted hover:text-negative">Remove</button>
-        </div>
+      </FieldGrid>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <span className="font-mono text-xs text-foreground-secondary" style={TNUM}>{calculated ? `${calculated.replacementYear} · ${formatCurrency(calculated.monthlyFunding)}/mo` : 'Save to calculate'}</span>
+        <button type="button" onClick={() => {
+          if (!capital) return;
+          setCapital({ ...capital, profile: { assets: capital.profile.assets.filter(item => item.id !== asset.id) } });
+          setDirty(current => ({ ...current, capital: true }));
+        }} className="text-xs text-foreground-muted hover:text-negative">Remove asset</button>
       </div>
     </div>
   );
@@ -562,11 +572,11 @@ export default function ProtectionPage() {
 
   const renderPersonEdit = (person: LifePerson, analysis: LifeResponse['analyses'][number] | undefined) => (
     <div key={person.id} className="rounded-md border border-primary/40 bg-background/50 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Editing person</span>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Editing person</span>
         <button type="button" onClick={() => closeEditor(person.id)} className={EDIT_BUTTON}>Done</button>
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <FieldGrid>
         <Field label="Person"><input className={INPUT} value={person.name} onChange={event => updatePerson(person.id, { name: event.target.value })} /></Field>
         {([
           ['Annual income', 'annualIncome'],
@@ -581,8 +591,8 @@ export default function ProtectionPage() {
         ] as const).map(([label, key]) => (
           <Field key={key} label={label}><input type="number" min="0" className={`${INPUT} font-mono`} value={person[key]} onChange={event => updatePerson(person.id, { [key]: Number(event.target.value) })} /></Field>
         ))}
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      </FieldGrid>
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Metric label="DIME gap" value={analysis ? formatCurrency(analysis.dimeGap) : 'Save'} />
         <Metric label="Survivor gap" value={analysis ? formatCurrency(analysis.survivorGap) : 'Save'} />
         <Metric label="Recommended coverage" value={analysis ? formatCurrency(analysis.recommendedCoverage) : 'Save'} tone={analysis && analysis.recommendedCoverage > 0 ? 'warning' : 'positive'} />
@@ -591,7 +601,7 @@ export default function ProtectionPage() {
         if (!life) return;
         setLife({ ...life, profile: { people: life.profile.people.filter(item => item.id !== person.id) } });
         setDirty(current => ({ ...current, life: true }));
-      }} className="mt-3 text-xs text-foreground-muted hover:text-negative">Remove person</button>
+      }} className="mt-4 text-xs text-foreground-muted hover:text-negative">Remove person</button>
     </div>
   );
 

@@ -164,7 +164,7 @@ export default function RetirementPlannerPage() {
             <select
               value={year}
               onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
-              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              className="bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
             >
               {SUPPORTED_TAX_YEARS.map(y => (
                 <option key={y} value={y}>{y}</option>
@@ -181,7 +181,7 @@ export default function RetirementPlannerPage() {
                 placeholder={data?.salary != null ? String(Math.round(data.salary)) : 'auto'}
                 value={salary}
                 onChange={e => setSalary(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
-                className="w-32 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+                className="w-36 bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
               />
             </label>
           )}

@@ -14,6 +14,7 @@ import {
 import type { WithholdingCheckupPayload } from '@/lib/withholding';
 import WithholdingHeadline from './WithholdingHeadline';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -192,80 +193,76 @@ export default function WithholdingCheckupPage() {
 
       {/* Inputs */}
       <div className="rounded-lg border border-border bg-surface/30 p-4">
-        <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Tax year
+        <FieldGrid>
+          <Field label="Tax year">
             <select
               value={year}
               onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
-              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              className={INPUT}
             >
               {SUPPORTED_TAX_YEARS.map(y => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Filing status
+          </Field>
+          <Field label="Filing status">
             <select
               value={filingStatus}
               onChange={e => setFilingStatus(e.target.value as FilingStatus)}
-              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              className={INPUT}
             >
               {FILING_STATUSES.map(fs => (
                 <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Filers 65+
+          </Field>
+          <Field label="Filers 65+">
             <select
               value={filersAge65Plus}
               onChange={e => setFilersAge65Plus(parseInt(e.target.value, 10))}
-              className="bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              className={INPUT}
             >
               <option value={0}>0</option>
               <option value={1}>1</option>
               <option value={2}>2</option>
             </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Pay frequency
+          </Field>
+          <Field label="Pay frequency">
             <select
               value={String(payFrequency)}
               onChange={e => setPayFrequency(e.target.value === 'auto' ? 'auto' : parseInt(e.target.value, 10))}
-              className="bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              className={INPUT}
             >
               <option value="auto">Auto{meta ? ` (${meta.payPeriodsPerYear}/yr)` : ''}</option>
               {PAY_FREQUENCIES.map(f => (
                 <option key={f.value} value={f.value}>{f.label}</option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Prior-year tax
+          </Field>
+          <Field label="Prior-year tax">
             <input
               type="number"
               min={0}
               placeholder="optional"
               value={priorYearTax}
               onChange={e => setPriorYearTax(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-32 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className={`${INPUT} text-right font-mono`}
+              style={MONO}
             />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Prior-year AGI
+          </Field>
+          <Field label="Prior-year AGI">
             <input
               type="number"
               min={0}
               placeholder="optional"
               value={priorYearAgi}
               onChange={e => setPriorYearAgi(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-32 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className={`${INPUT} text-right font-mono`}
+              style={MONO}
             />
-          </label>
+          </Field>
           {isCurrentYear && (
-            <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer pb-1.5">
+            <label className="flex cursor-pointer items-center gap-2 pb-2.5 text-sm text-foreground-secondary sm:self-end">
               <input
                 type="checkbox"
                 checked={annualize}
@@ -275,7 +272,7 @@ export default function WithholdingCheckupPage() {
               Annualize YTD
             </label>
           )}
-        </div>
+        </FieldGrid>
         <p className="mt-3 text-[11px] text-foreground-muted">
           Prior-year figures enable the 100%/110% prior-year safe harbor. Income, withholding, and
           estimated payments come from your tax-category mappings — set them up in the{' '}

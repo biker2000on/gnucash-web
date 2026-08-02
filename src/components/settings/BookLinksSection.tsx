@@ -248,7 +248,7 @@ export function BookLinksSection() {
                     onChange={(e) => updatePercent(link.householdBookGuid, e.target.value)}
                     disabled={!isAdmin || saving}
                     placeholder="100"
-                    className="w-20 bg-input-bg border border-border rounded-lg px-2 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="w-24 bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50 disabled:opacity-60 disabled:cursor-not-allowed"
                     aria-label={`Ownership percent for ${link.name || 'household book'}`}
                   />
                   <span className="text-xs text-foreground-muted">%</span>

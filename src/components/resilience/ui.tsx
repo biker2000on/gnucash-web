@@ -2,35 +2,22 @@
 
 import type { ReactNode } from 'react';
 
-export const INPUT =
-  'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-primary';
-export const LABEL = 'mb-1 block text-[10px] font-semibold uppercase tracking-wider text-foreground-muted';
-export const TNUM = { fontFeatureSettings: "'tnum'" };
-
-export function Field(props: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <label className={props.className}>
-      <span className={LABEL}>{props.label}</span>
-      {props.children}
-    </label>
-  );
-}
+// The form primitives are app-wide (see components/ui/form.tsx); they are
+// re-exported here so the resilience pages keep a single import site.
+export { INPUT, LABEL, TNUM, FieldGrid, RecordCard, Field } from '@/components/ui/form';
+import { TNUM } from '@/components/ui/form';
 
 export function Panel(props: { title: string; description?: string; children: ReactNode; action?: ReactNode }) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-background-secondary/30">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">{props.title}</h2>
-          {props.description && <p className="mt-0.5 text-xs text-foreground-muted">{props.description}</p>}
+          <h2 className="text-base font-semibold text-foreground">{props.title}</h2>
+          {props.description && <p className="mt-1 text-xs text-foreground-muted">{props.description}</p>}
         </div>
         {props.action}
       </div>
-      <div className="p-4">{props.children}</div>
+      <div className="p-5">{props.children}</div>
     </section>
   );
 }
@@ -45,7 +32,7 @@ export function Metric(props: { label: string; value: ReactNode; tone?: 'positiv
         : 'text-foreground';
   return (
     <div className="rounded-lg border border-border bg-background-secondary/30 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">{props.label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">{props.label}</p>
       <p className={`mt-1 font-mono text-xl font-semibold ${tone}`} style={TNUM}>{props.value}</p>
     </div>
   );

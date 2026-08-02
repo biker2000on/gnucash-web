@@ -16,7 +16,7 @@ import type {
   EstateSettings,
 } from '@/lib/resilience/types';
 import { DocumentChip, DocumentLinkField, type VaultDocument } from './DocumentLinkField';
-import { Empty, Field, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
+import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -139,6 +139,9 @@ function useSection<P, R extends { profile: P }>(section: string, initial: P) {
  * The roster has no stable per-member id, so the name is stored alongside the
  * role — which also lets a record name someone who is not on the roster (an
  * aging parent, for example) under the 'dependent' role.
+ *
+ * Renders two labelled fields so each control gets a full column of a
+ * `FieldGrid` rather than being squeezed into half of one.
  */
 function MemberField(props: {
   role: EstateMemberRole;
@@ -150,36 +153,40 @@ function MemberField(props: {
   const rosterNames = props.members.map(member => member.name).filter(Boolean);
   return (
     <>
-      <select
-        className={INPUT}
-        aria-label="Belongs to"
-        value={props.role}
-        onChange={event => {
-          const memberRole = event.target.value as EstateMemberRole;
-          // Prefill the name from the roster when the new role has exactly one match.
-          const matches = props.members.filter(member => member.role === memberRole && member.name);
-          const memberName = memberRole === 'household'
-            ? ''
-            : matches.length === 1 ? matches[0].name : props.name;
-          props.onChange({ memberRole, memberName });
-        }}
-      >
-        {MEMBER_ROLE_ORDER.map(role => (
-          <option key={role} value={role}>{MEMBER_ROLE_LABELS[role]}</option>
-        ))}
-      </select>
-      <input
-        className={INPUT}
-        aria-label="Member name"
-        list={listId}
-        placeholder={props.role === 'household' ? 'Joint — no single owner' : 'Name'}
-        disabled={props.role === 'household'}
-        value={props.name}
-        onChange={event => props.onChange({ memberRole: props.role, memberName: event.target.value })}
-      />
-      <datalist id={listId}>
-        {rosterNames.map(name => <option key={name} value={name} />)}
-      </datalist>
+      <Field label="Belongs to">
+        <select
+          className={INPUT}
+          aria-label="Belongs to"
+          value={props.role}
+          onChange={event => {
+            const memberRole = event.target.value as EstateMemberRole;
+            // Prefill the name from the roster when the new role has exactly one match.
+            const matches = props.members.filter(member => member.role === memberRole && member.name);
+            const memberName = memberRole === 'household'
+              ? ''
+              : matches.length === 1 ? matches[0].name : props.name;
+            props.onChange({ memberRole, memberName });
+          }}
+        >
+          {MEMBER_ROLE_ORDER.map(role => (
+            <option key={role} value={role}>{MEMBER_ROLE_LABELS[role]}</option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Member name">
+        <input
+          className={INPUT}
+          aria-label="Member name"
+          list={listId}
+          placeholder={props.role === 'household' ? 'Joint — no single owner' : 'Name'}
+          disabled={props.role === 'household'}
+          value={props.name}
+          onChange={event => props.onChange({ memberRole: props.role, memberName: event.target.value })}
+        />
+        <datalist id={listId}>
+          {rosterNames.map(name => <option key={name} value={name} />)}
+        </datalist>
+      </Field>
     </>
   );
 }
@@ -340,32 +347,28 @@ export function EstatePage() {
 
   const renderDocumentEdit = (document: EstateDocument) => (
     <div key={document.id} className="rounded-md border border-primary/40 bg-background/50 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-muted">Editing document</span>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="text-xs font-semibold uppercase tracking-wider text-foreground-secondary">Editing document</span>
         <button type="button" onClick={() => setEditingDocuments(current => current.filter(item => item !== document.id))} className={EDIT_BUTTON}>Done</button>
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <FieldGrid>
         <Field label="Document">
           <select className={INPUT} value={document.kind} onChange={event => updateDocument(document.id, { kind: event.target.value as EstateDocument['kind'] })}>
             {Object.entries(DOCUMENT_KIND_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </Field>
-        <Field label="Belongs to">
-          <div className="grid grid-cols-2 gap-2">
-            <MemberField
-              role={document.memberRole ?? 'household'}
-              name={document.memberName ?? ''}
-              members={householdMembers}
-              onChange={patch => updateDocument(document.id, patch)}
-            />
-          </div>
-        </Field>
+        <MemberField
+          role={document.memberRole ?? 'household'}
+          name={document.memberName ?? ''}
+          members={householdMembers}
+          onChange={patch => updateDocument(document.id, patch)}
+        />
         <Field label="Label (optional)"><input className={INPUT} value={document.label ?? ''} onChange={event => updateDocument(document.id, { label: event.target.value || null })} /></Field>
         <Field label="Location"><input className={INPUT} placeholder="Safe, attorney, vault" value={document.location} onChange={event => updateDocument(document.id, { location: event.target.value })} /></Field>
         <Field label="Last updated"><input type="date" className={`${INPUT} font-mono`} value={document.lastUpdatedDate} onChange={event => updateDocument(document.id, { lastUpdatedDate: event.target.value })} /></Field>
         <Field label="Review cycle (years)"><input type="number" min={1} max={10} className={`${INPUT} font-mono`} value={document.reviewCycleYears} onChange={event => updateDocument(document.id, { reviewCycleYears: numberValue(event.target.value) })} /></Field>
-      </div>
-      <div className="mt-4 border-t border-border/60 pt-3">
+      </FieldGrid>
+      <div className="mt-5 border-t border-border/60 pt-4">
         <DocumentLinkField
           label="Vault document"
           value={document.documentId ? [document.documentId] : []}
@@ -407,7 +410,7 @@ export function EstatePage() {
           state.change({ ...state.profile, documents: state.profile.documents.filter(item => item.id !== document.id) });
           setEditingDocuments(current => current.filter(item => item !== document.id));
         }}
-        className="mt-3 text-xs text-foreground-muted hover:text-negative"
+        className="mt-4 text-xs text-foreground-muted hover:text-negative"
       >
         Remove document
       </button>
@@ -469,23 +472,36 @@ export function EstatePage() {
             {state.profile.designations.map(designation => {
               const row = readiness?.designations.find(item => item.id === designation.id);
               return (
-                <div key={designation.id} className="space-y-2 rounded-md border border-border p-3">
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-[1fr_150px_150px_150px_1fr_1fr_140px_auto]">
-                    <input className={INPUT} placeholder="Account (e.g. Fidelity 401k)" value={designation.accountLabel} onChange={event => updateDesignation(designation.id, { accountLabel: event.target.value })} />
-                    <select className={INPUT} value={designation.accountType} onChange={event => updateDesignation(designation.id, { accountType: event.target.value as EstateDesignation['accountType'] })}>
-                      {Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
+                <div key={designation.id} className="space-y-3 rounded-md border border-border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-foreground">
+                      {designation.accountLabel || 'New designation'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => state.change({ ...state.profile, designations: state.profile.designations.filter(item => item.id !== designation.id) })}
+                      className="text-xs text-foreground-muted transition-colors hover:text-negative"
+                    >
+                      Remove designation
+                    </button>
+                  </div>
+                  <FieldGrid>
+                    <Field label="Account"><input className={INPUT} placeholder="e.g. Fidelity 401k" value={designation.accountLabel} onChange={event => updateDesignation(designation.id, { accountLabel: event.target.value })} /></Field>
+                    <Field label="Account type">
+                      <select className={INPUT} value={designation.accountType} onChange={event => updateDesignation(designation.id, { accountType: event.target.value as EstateDesignation['accountType'] })}>
+                        {Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    </Field>
                     <MemberField
                       role={designation.memberRole ?? 'household'}
                       name={designation.memberName ?? ''}
                       members={householdMembers}
                       onChange={patch => updateDesignation(designation.id, patch)}
                     />
-                    <input className={INPUT} placeholder="Primary beneficiary" value={designation.primaryBeneficiary} onChange={event => updateDesignation(designation.id, { primaryBeneficiary: event.target.value })} />
-                    <input className={INPUT} placeholder="Contingent beneficiary" value={designation.contingentBeneficiary ?? ''} onChange={event => updateDesignation(designation.id, { contingentBeneficiary: event.target.value || null })} />
-                    <input type="date" className={`${INPUT} font-mono`} value={designation.lastReviewedDate} onChange={event => updateDesignation(designation.id, { lastReviewedDate: event.target.value })} />
-                    <button type="button" onClick={() => state.change({ ...state.profile, designations: state.profile.designations.filter(item => item.id !== designation.id) })} className="px-2 text-negative">×</button>
-                  </div>
+                    <Field label="Primary beneficiary"><input className={INPUT} placeholder="Primary beneficiary" value={designation.primaryBeneficiary} onChange={event => updateDesignation(designation.id, { primaryBeneficiary: event.target.value })} /></Field>
+                    <Field label="Contingent beneficiary"><input className={INPUT} placeholder="Contingent beneficiary" value={designation.contingentBeneficiary ?? ''} onChange={event => updateDesignation(designation.id, { contingentBeneficiary: event.target.value || null })} /></Field>
+                    <Field label="Last reviewed"><input type="date" className={`${INPUT} font-mono`} value={designation.lastReviewedDate} onChange={event => updateDesignation(designation.id, { lastReviewedDate: event.target.value })} /></Field>
+                  </FieldGrid>
                   <DesignationFlags row={row} />
                 </div>
               );
@@ -523,13 +539,26 @@ export function EstatePage() {
         {state.profile.lifeEvents.length === 0 ? <Empty>Record life events so reviews done before them are flagged automatically.</Empty> : (
           <div className="space-y-2">
             {state.profile.lifeEvents.slice().sort((a, b) => b.date.localeCompare(a.date)).map(event => (
-              <div key={event.id} className="grid grid-cols-2 gap-2 rounded-md border border-border p-3 md:grid-cols-[140px_200px_1fr_auto]">
-                <input type="date" className={`${INPUT} font-mono`} value={event.date} onChange={changeEvent => updateLifeEvent(event.id, { date: changeEvent.target.value })} />
-                <select className={INPUT} value={event.kind} onChange={changeEvent => updateLifeEvent(event.id, { kind: changeEvent.target.value as EstateLifeEvent['kind'] })}>
-                  {Object.entries(LIFE_EVENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-                <input className={INPUT} placeholder="Description (optional)" value={event.description ?? ''} onChange={changeEvent => updateLifeEvent(event.id, { description: changeEvent.target.value || null })} />
-                <button type="button" onClick={() => state.change({ ...state.profile, lifeEvents: state.profile.lifeEvents.filter(item => item.id !== event.id) })} className="px-2 text-negative">×</button>
+              <div key={event.id} className="space-y-3 rounded-md border border-border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-foreground">{LIFE_EVENT_LABELS[event.kind]}</span>
+                  <button
+                    type="button"
+                    onClick={() => state.change({ ...state.profile, lifeEvents: state.profile.lifeEvents.filter(item => item.id !== event.id) })}
+                    className="text-xs text-foreground-muted transition-colors hover:text-negative"
+                  >
+                    Remove event
+                  </button>
+                </div>
+                <FieldGrid>
+                  <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={event.date} onChange={changeEvent => updateLifeEvent(event.id, { date: changeEvent.target.value })} /></Field>
+                  <Field label="Event">
+                    <select className={INPUT} value={event.kind} onChange={changeEvent => updateLifeEvent(event.id, { kind: changeEvent.target.value as EstateLifeEvent['kind'] })}>
+                      {Object.entries(LIFE_EVENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Description (optional)"><input className={INPUT} placeholder="Description (optional)" value={event.description ?? ''} onChange={changeEvent => updateLifeEvent(event.id, { description: changeEvent.target.value || null })} /></Field>
+                </FieldGrid>
               </div>
             ))}
           </div>
@@ -555,7 +584,7 @@ export function EstatePage() {
       </Panel>
 
       <Panel title="Settings & survivor runbook" description="Household inputs and the runbook survivors would follow first.">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <FieldGrid>
           <Field label="Estimated gross estate"><input type="number" className={`${INPUT} font-mono`} value={state.profile.settings.estimatedGrossEstate} onChange={event => updateSettings({ estimatedGrossEstate: numberValue(event.target.value) })} /></Field>
           <Field label="Marital status">
             <select className={INPUT} value={state.profile.settings.maritalStatus} onChange={event => updateSettings({ maritalStatus: event.target.value as EstateSettings['maritalStatus'] })}>
@@ -565,9 +594,9 @@ export function EstatePage() {
           </Field>
           <Field label="State"><input className={`${INPUT} font-mono uppercase`} maxLength={2} value={state.profile.settings.state} onChange={event => updateSettings({ state: event.target.value.toUpperCase() })} /></Field>
           <Field label="Default review cycle (years)"><input type="number" min={1} max={10} className={`${INPUT} font-mono`} value={state.profile.settings.reviewCycleYearsDefault} onChange={event => updateSettings({ reviewCycleYearsDefault: numberValue(event.target.value) })} /></Field>
-          <Field label="Survivor runbook location" className="col-span-2"><input className={INPUT} placeholder="e.g. Fireproof safe + shared vault folder" value={state.profile.settings.survivorRunbookLocation ?? ''} onChange={event => updateSettings({ survivorRunbookLocation: event.target.value || null })} /></Field>
+          <Field label="Survivor runbook location" className="sm:col-span-2"><input className={INPUT} placeholder="e.g. Fireproof safe + shared vault folder" value={state.profile.settings.survivorRunbookLocation ?? ''} onChange={event => updateSettings({ survivorRunbookLocation: event.target.value || null })} /></Field>
           <Field label="Runbook last updated"><input type="date" className={`${INPUT} font-mono`} value={state.profile.settings.survivorRunbookUpdatedDate ?? ''} onChange={event => updateSettings({ survivorRunbookUpdatedDate: event.target.value || null })} /></Field>
-        </div>
+        </FieldGrid>
         {readiness && (
           <p className={`mt-3 text-xs ${readiness.runbook.current ? 'text-foreground-muted' : 'text-warning'}`}>
             {readiness.runbook.current

@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 import { FILING_STATUS_LABELS } from '@/lib/tax/types';
 import {
     DEFAULT_SCENARIO_ASSUMPTIONS,
@@ -76,8 +77,7 @@ function fmtShift(years: number | null): string {
     return `${years > 0 ? '+' : '−'}${abs} yr${abs === 1 ? '' : 's'} ${years > 0 ? 'later' : 'earlier'}`;
 }
 
-const INPUT_CLASS =
-    'w-full bg-background-tertiary border border-border rounded-lg px-3 py-1.5 text-sm text-foreground font-mono focus:outline-none focus:border-primary/50';
+const INPUT_CLASS = `${INPUT} font-mono`;
 
 /* ------------------------------------------------------------------ */
 /* Tax comparison card                                                 */
@@ -627,33 +627,28 @@ export default function ScenarioSandboxPage() {
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground-muted mb-2">
                             Model Parameters
                         </h3>
-                        <div className="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-3">
-                            <label className="block">
-                                <span className="block text-xs font-medium text-foreground-secondary mb-1">Cash-flow horizon (months)</span>
+                        <FieldGrid>
+                            <Field label="Cash-flow horizon (months)">
                                 <input type="number" className={INPUT_CLASS} value={assumptions.cashFlowMonths} step={12}
                                     onChange={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) patchAssumptions({ cashFlowMonths: v }); }} />
-                            </label>
-                            <label className="block">
-                                <span className="block text-xs font-medium text-foreground-secondary mb-1">Net-worth horizon (years)</span>
+                            </Field>
+                            <Field label="Net-worth horizon (years)">
                                 <input type="number" className={INPUT_CLASS} value={assumptions.netWorthYears} step={5}
                                     onChange={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) patchAssumptions({ netWorthYears: v }); }} />
-                            </label>
-                            <label className="block">
-                                <span className="block text-xs font-medium text-foreground-secondary mb-1">Invested return %/yr</span>
+                            </Field>
+                            <Field label="Invested return %/yr">
                                 <input type="number" className={INPUT_CLASS} value={assumptions.investedReturnPct} step={0.5}
                                     onChange={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) patchAssumptions({ investedReturnPct: v }); }} />
-                            </label>
-                            <label className="block">
-                                <span className="block text-xs font-medium text-foreground-secondary mb-1">FIRE real return %/yr</span>
+                            </Field>
+                            <Field label="FIRE real return %/yr">
                                 <input type="number" className={INPUT_CLASS} value={assumptions.fireRealReturnPct} step={0.5}
                                     onChange={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) patchAssumptions({ fireRealReturnPct: v }); }} />
-                            </label>
-                            <label className="block">
-                                <span className="block text-xs font-medium text-foreground-secondary mb-1">Safe withdrawal rate %</span>
+                            </Field>
+                            <Field label="Safe withdrawal rate %">
                                 <input type="number" className={INPUT_CLASS} value={assumptions.swrPct} step={0.25}
                                     onChange={e => { const v = parseFloat(e.target.value); if (Number.isFinite(v)) patchAssumptions({ swrPct: v }); }} />
-                            </label>
-                        </div>
+                            </Field>
+                        </FieldGrid>
                     </div>
                 </div>
             </CollapsibleConfigSection>

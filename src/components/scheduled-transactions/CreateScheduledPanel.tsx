@@ -400,7 +400,7 @@ export function CreateScheduledPanel({
                   <button
                     type="button"
                     onClick={() => removeSplit(idx)}
-                    className="mt-6 p-1.5 rounded-lg text-foreground-muted hover:text-red-400 hover:bg-surface-hover transition-colors"
+                    className="mt-6 p-1.5 rounded-lg text-foreground-muted hover:text-negative hover:bg-surface-hover transition-colors"
                     aria-label="Remove split"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

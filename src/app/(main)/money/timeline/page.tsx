@@ -284,7 +284,7 @@ export default function MoneyTimelinePage() {
                   min={0}
                   step={1000}
                   onChange={event => setMinimumCash(Number(event.target.value) || 0)}
-                  className="w-28 rounded-lg border border-border bg-background-tertiary px-2 py-1.5 font-mono text-foreground"
+                  className="w-28 rounded-lg border border-border bg-background-tertiary px-3 py-2 font-mono text-sm text-foreground"
                 />
               </label>
             </div>

@@ -137,7 +137,7 @@ function ComparePageInner() {
     }, [detailA, detailB]);
 
     const selectClass =
-        'px-2 py-1.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm min-w-0 max-w-full';
+        'px-3 py-2.5 bg-background-tertiary border border-border rounded-md text-foreground text-sm min-w-0 max-w-full';
 
     return (
         <div className="space-y-4 max-w-4xl">

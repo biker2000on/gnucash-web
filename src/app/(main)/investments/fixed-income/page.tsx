@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { Modal } from '@/components/ui/Modal';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { FieldGrid, INPUT, LABEL } from '@/components/ui/form';
 import { formatCurrency } from '@/lib/format';
 import type {
     FixedIncomeSummary,
@@ -179,10 +180,8 @@ function PositionModal({
         }
     }, [isOpen, initial]);
 
-    const inputClass =
-        'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground ' +
-        'placeholder-foreground-muted focus:outline-none focus:border-primary/60';
-    const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
+    const inputClass = `${INPUT} placeholder-foreground-muted`;
+    const labelClass = LABEL;
 
     const save = async () => {
         setError(null);
@@ -248,7 +247,7 @@ function PositionModal({
                     )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <FieldGrid cols={2}>
                     <div>
                         <label className={labelClass}>Kind</label>
                         <select
@@ -284,7 +283,7 @@ function PositionModal({
                             placeholder="4.25 (0 for zero-coupon)"
                         />
                     </div>
-                    <div className="flex items-end pb-2">
+                    <div className="flex items-end pb-2.5">
                         <label className="flex items-center gap-2 text-sm text-foreground-secondary cursor-pointer">
                             <input
                                 type="checkbox"
@@ -315,7 +314,7 @@ function PositionModal({
                             style={TNUM}
                         />
                     </div>
-                </div>
+                </FieldGrid>
 
                 {error && <p className="text-sm text-negative">{error}</p>}
 

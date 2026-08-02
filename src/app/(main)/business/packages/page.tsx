@@ -302,7 +302,7 @@ function SellPackageModal({
                     <label className={labelClass}>Client</label>
                     <input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Client name (optional)" className={inputClass} />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                         <label className={labelClass}>Sessions</label>
                         <input type="number" min={1} step={1} value={sessionsTotal} onChange={(e) => setSessionsTotal(e.target.value)} className={inputClass} />
@@ -312,7 +312,7 @@ function SellPackageModal({
                         <input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" className={inputClass} />
                     </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                         <label className={labelClass}>Sold date</label>
                         <input type="date" value={soldDate} onChange={(e) => setSoldDate(e.target.value)} className={inputClass} />

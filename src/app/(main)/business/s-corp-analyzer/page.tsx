@@ -378,7 +378,7 @@ export default function SCorpAnalyzerPage() {
             <select
               value={year}
               onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
-              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+              className="bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary"
             >
               {SUPPORTED_TAX_YEARS.map(y => (
                 <option key={y} value={y}>{y}</option>
@@ -393,7 +393,7 @@ export default function SCorpAnalyzerPage() {
               step={1000}
               value={effSalary}
               onChange={e => setSalary(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-32 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className="w-36 bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
@@ -404,7 +404,7 @@ export default function SCorpAnalyzerPage() {
               step={50}
               value={payrollCost ?? data?.inputs.payrollCost ?? 600}
               onChange={e => setPayrollCost(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-28 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className="w-36 bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
@@ -415,7 +415,7 @@ export default function SCorpAnalyzerPage() {
               step={50}
               value={prepCost ?? data?.inputs.prepCost ?? 800}
               onChange={e => setPrepCost(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-28 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className="w-36 bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
@@ -426,13 +426,13 @@ export default function SCorpAnalyzerPage() {
               step={50}
               value={franchiseTax ?? data?.inputs.franchiseTax ?? 200}
               onChange={e => setFranchiseTax(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-28 bg-background-tertiary border border-border rounded-md px-2 py-1.5 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
+              className="w-36 bg-background-tertiary border border-border rounded-md px-3 py-2 text-sm text-right font-mono text-foreground focus:outline-none focus:border-primary"
             />
           </label>
           <button
             onClick={pinInputs}
             disabled={pinState === 'saving' || !data}
-            className="ml-auto px-3 py-1.5 text-sm rounded-md border border-border text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
+            className="ml-auto px-3 py-2 text-sm rounded-md border border-border text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
           >
             {pinState === 'saving' ? 'Pinning…' : pinState === 'saved' ? 'Pinned ✓' : pinState === 'error' ? 'Pin failed' : 'Pin these inputs'}
           </button>

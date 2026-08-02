@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/Modal';
 import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { FilterBar } from '@/components/ui/FilterBar';
+import { FieldGrid } from '@/components/ui/form';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
@@ -257,8 +258,8 @@ function RecordPaymentForm({ member, types, onRecorded }: {
 
     return (
         <div className="bg-background-tertiary border border-border rounded-lg p-3 space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div className="col-span-2">
+            <FieldGrid>
+                <div>
                     <label className={labelClass}>Type</label>
                     <select value={typeId ?? ''} onChange={e => handleTypeChange(e.target.value)} className={inputClass}>
                         {typeId == null && <option value="">Choose...</option>}
@@ -281,11 +282,11 @@ function RecordPaymentForm({ member, types, onRecorded }: {
                         {PAYMENT_METHODS.map(m => <option key={m} value={m}>{METHOD_LABELS[m]}</option>)}
                     </select>
                 </div>
-                <div className="col-span-2 sm:col-span-3">
+                <div className="sm:col-span-2">
                     <label className={labelClass}>Reference</label>
                     <input type="text" value={reference} onChange={e => setReference(e.target.value)} className={inputClass} placeholder="Check #, receipt..." />
                 </div>
-            </div>
+            </FieldGrid>
 
             {!override && preview && (
                 <p className="text-xs text-foreground-secondary">
@@ -474,8 +475,8 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
                         <h3 className="text-sm font-semibold text-foreground">
                             {editingId != null ? 'Edit type' : 'New type'}
                         </h3>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            <div className="col-span-2">
+                        <FieldGrid cols={2}>
+                            <div className="sm:col-span-2">
                                 <label className={labelClass}>Name *</label>
                                 <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className={inputClass} placeholder="e.g. Individual" />
                             </div>
@@ -487,7 +488,7 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
                                 <label className={labelClass}>Grace days</label>
                                 <input type="number" min="0" step="1" value={form.graceDays} onChange={e => setForm({ ...form, graceDays: e.target.value })} className={`${inputClass} font-mono`} />
                             </div>
-                            <div className="col-span-2 sm:col-span-3">
+                            <div className="sm:col-span-2">
                                 <label className={labelClass}>Renewal mode</label>
                                 <select value={form.renewalMode} onChange={e => setForm({ ...form, renewalMode: e.target.value as RenewalMode })} className={inputClass}>
                                     {RENEWAL_MODES.map(m => <option key={m} value={m}>{RENEWAL_MODE_LABELS[m]}</option>)}
@@ -497,7 +498,7 @@ function TypesModal({ isOpen, onClose, types, onChanged }: {
                                 <input type="checkbox" checked={form.active} onChange={e => setForm({ ...form, active: e.target.checked })} className="accent-primary" />
                                 Active
                             </label>
-                        </div>
+                        </FieldGrid>
                         <div className="flex justify-end gap-3">
                             {editingId != null && (
                                 <button type="button" onClick={resetForm} className="px-3 py-2 text-sm text-foreground-secondary hover:text-foreground transition-colors">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { useToast } from '@/contexts/ToastContext';
+import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 
 interface BackupItem {
     id: number;
@@ -116,35 +117,32 @@ export function BackupsSection() {
                     </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <label className="block">
-                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Frequency</span>
+                <FieldGrid cols={3}>
+                    <Field label="Frequency">
                         <select
                             value={settings.frequency}
                             disabled={savingSettings}
                             onChange={e => void saveSettings({ ...settings, frequency: e.target.value as BackupSettingsState['frequency'] })}
-                            className="mt-1 block w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground"
+                            className={INPUT}
                         >
                             <option value="daily">Daily</option>
                             <option value="weekly">Weekly (Sundays)</option>
                             <option value="monthly">Monthly (the 1st)</option>
                         </select>
-                    </label>
-                    <label className="block">
-                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Time (UTC)</span>
+                    </Field>
+                    <Field label="Time (UTC)">
                         <select
                             value={settings.hourUtc}
                             disabled={savingSettings}
                             onChange={e => void saveSettings({ ...settings, hourUtc: parseInt(e.target.value, 10) })}
-                            className="mt-1 block w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground font-mono"
+                            className={`${INPUT} font-mono`}
                         >
                             {Array.from({ length: 24 }, (_, h) => (
                                 <option key={h} value={h}>{String(h).padStart(2, '0')}:30</option>
                             ))}
                         </select>
-                    </label>
-                    <label className="block">
-                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Keep per book</span>
+                    </Field>
+                    <Field label="Keep per book">
                         <input
                             type="number"
                             min={1}
@@ -153,10 +151,10 @@ export function BackupsSection() {
                             disabled={savingSettings}
                             onChange={e => setSettings({ ...settings, retention: parseInt(e.target.value, 10) || 1 })}
                             onBlur={() => void saveSettings(settings)}
-                            className="mt-1 block w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground font-mono"
+                            className={`${INPUT} font-mono`}
                         />
-                    </label>
-                </div>
+                    </Field>
+                </FieldGrid>
 
                 {!loaded ? (
                     <p className="text-sm text-foreground-tertiary">Loading…</p>
