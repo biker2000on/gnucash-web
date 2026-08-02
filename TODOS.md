@@ -1061,6 +1061,34 @@ without client-side root stripping.
 
 ---
 
+## P4 - Canonical Document Platform Follow-Ups
+
+Harden the shared document store now used by feature packs without creating
+another document silo:
+
+1. Make the `LinkedDocumentsPanel` picker use search-backed pagination so every
+   authorized document remains discoverable beyond the newest 100 results.
+2. Resolve linked documents in batches, replacing per-record lookups that cause
+   N+1 query amplification on list and report surfaces.
+3. Add an OCR fallback for scanned and image-only PDFs when ordinary text
+   extraction produces no usable content.
+4. When a Family Office document result belongs to another authorized book,
+   switch the active book before opening its source so navigation never lands in
+   the wrong book context.
+
+**Acceptance:** Picker search and paging return authorized results without a
+100-document ceiling; linked-document lists use a bounded number of queries;
+scanned-PDF content enters the existing parse/search pipeline with explicit
+failure state; and cross-book document results open in the owning authorized
+book while preserving RBAC boundaries.
+
+**Depends on:** Canonical document store and typed links, document parsing and
+search, Family Office authorization graph, and active-book session switching.
+
+**Effort:** M.
+
+---
+
 ## P4 - Receipt AI Re-Extraction Batch Job
 
 **Status:** Implemented 2026-07-26.
