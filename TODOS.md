@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-08-01.
+Updated 2026-08-02.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -1127,6 +1127,56 @@ targets.
 ---
 
 # Correctness and reliability backlog
+
+## P4 - Semantic Color Token Pass
+
+**Status:** Proposed 2026-08-02.
+
+DESIGN.md defines the palette as semantic tokens (`--positive`, `--negative`,
+`--warning`, `--primary`, `--foreground`), but several components still use raw
+Tailwind palette classes, so they do not follow the light/dark themes and drift
+from the design system.
+
+Known offenders found during the 2026-08-02 form audit:
+
+- `src/components/ledger/LotViewer.tsx` — `text-emerald-400`, `text-rose-400`
+- `src/components/TransactionEditModal.tsx` — delete button `bg-rose-600`,
+  `text-white`
+- `src/components/AccountHierarchy.tsx` — `bg-amber-500/10`, `text-amber-400`
+- `src/app/(main)/scheduled-transactions/page.tsx` — `bg-gray-600/50`, `amber-*`
+
+Sweep for raw palette classes (`emerald-`, `rose-`, `amber-`, `gray-`, `white`)
+outside `ThemeToggle.tsx`, which intentionally hardcodes light-mode colors, and
+map each to its semantic equivalent. Presentation only.
+
+**Effort:** S.
+
+---
+
+## P4 - Test Suite Flakiness
+
+**Status:** Proposed 2026-08-02.
+
+Two suites fail intermittently under parallel load and pass in isolation, which
+produces false alarms on every full run and erodes trust in the suite:
+
+- `src/lib/__tests__/pdf-text-extract.test.ts` — "extracts real PDF text
+  repeatedly when PDF.js remains external" times out at ~5s; passes alone in
+  about 1s. Observed failing at least three times on 2026-08-01/02. Hoist the
+  expensive PDF parse out of the timed path or give it an explicit, commented
+  timeout rather than raising limits blindly.
+- `src/app/(main)/actions/page.test.tsx` — the focus-management tests ("keeps
+  focus in the same Fix/Decide slot…") fail order-dependently in full runs and
+  pass when the file runs alone, so they likely leak focus or timer state
+  between cases.
+
+Both must keep guarding what they currently guard: that PDF.js stays external
+and repeated extraction works, and that Action Center keyboard focus survives a
+card leaving its lane.
+
+**Effort:** S.
+
+---
 
 ## Completed - Farm Correctness and Follow-Ups
 
