@@ -18,6 +18,7 @@ import {
   type PayoffStrategy,
 } from '@/lib/mortgage-schedule';
 import { MortgageCharts } from '@/components/mortgage/MortgageCharts';
+import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 
 const PAYOFF_STRATEGY_OPTIONS: { value: PayoffStrategyType; label: string }[] = [
   { value: 'fixed_monthly', label: 'Fixed extra / month' },
@@ -219,6 +220,9 @@ export default function MortgageCalculatorPage() {
   // ---- Account balance state ----
   const [accountBalance, setAccountBalance] = useState<number | null>(null);
   const [loadingBalance, setLoadingBalance] = useState(false);
+  const [balanceTraceId, setBalanceTraceId] = useState<string | null>(null);
+  const [detectionTraceId, setDetectionTraceId] = useState<string | null>(null);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
 
   // ---- Payoff mode ----
   const [payoffMode, setPayoffMode] = useState<'extra-to-date' | 'date-to-payment'>('extra-to-date');
@@ -269,6 +273,7 @@ export default function MortgageCalculatorPage() {
   useEffect(() => {
     if (!accountGuid) {
       setAccountBalance(null);
+      setBalanceTraceId(null);
       return;
     }
 
@@ -281,6 +286,7 @@ export default function MortgageCalculatorPage() {
           const data = await res.json();
           // Liability balances are typically negative in GnuCash; show absolute value
           setAccountBalance(Math.abs(parseFloat(data.total_balance) || 0));
+          setBalanceTraceId(data.trace?.traceId ?? null);
         }
       } catch (err) {
         console.error('Failed to fetch account balance:', err);
@@ -384,6 +390,7 @@ export default function MortgageCalculatorPage() {
         .then(data => {
           if (data?.paymentHistory) {
             setPaymentHistory(data.paymentHistory);
+            setDetectionTraceId(data.trace?.traceId ?? null);
           }
         })
         .catch(() => { /* ignore */ });
@@ -426,6 +433,10 @@ export default function MortgageCalculatorPage() {
     setAccountGuid(result.accountGuid);
     setInterestAccountGuid(result.interestAccountGuid);
     setPaymentHistory(result.paymentHistory || []);
+    fetch(`/api/tools/mortgage/detect?accountGuid=${result.accountGuid}&interestAccountGuid=${result.interestAccountGuid}`)
+      .then(response => response.ok ? response.json() : null)
+      .then(data => setDetectionTraceId(data?.trace?.traceId ?? null))
+      .catch(() => setDetectionTraceId(null));
 
     if (result.monthlyPayment > 0) {
       setExtraPayment('0');
@@ -624,11 +635,35 @@ export default function MortgageCalculatorPage() {
 
   return (
     <div className="space-y-8">
-      <header>
-        <h1 className="text-3xl font-bold text-foreground">Mortgage Calculator</h1>
-        <p className="text-foreground-muted mt-1">
-          Calculate mortgage payments, track your loan, and estimate payoff with extra payments.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Mortgage Calculator</h1>
+          <p className="text-foreground-muted mt-1">
+            Calculate mortgage payments, track your loan, and estimate payoff with extra payments.
+          </p>
+        </div>
+        {(detectionTraceId || balanceTraceId) && (
+          <div className="flex flex-wrap gap-2">
+            {detectionTraceId && (
+              <button
+                type="button"
+                onClick={() => setSelectedTraceId(detectionTraceId)}
+                className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-colors hover:border-primary/50 hover:text-primary-hover"
+              >
+                Explain detected values
+              </button>
+            )}
+            {balanceTraceId && (
+              <button
+                type="button"
+                onClick={() => setSelectedTraceId(balanceTraceId)}
+                className="rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground-secondary transition-colors hover:border-border-hover hover:text-foreground"
+              >
+                Explain balance
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {/* ============================================================ */}
@@ -1197,6 +1232,11 @@ export default function MortgageCalculatorPage() {
           </div>
         )}
       </section>
+      <ProvenanceModal
+        traceId={selectedTraceId}
+        isOpen={selectedTraceId !== null}
+        onClose={() => setSelectedTraceId(null)}
+      />
     </div>
   );
 }

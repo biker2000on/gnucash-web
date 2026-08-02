@@ -7,6 +7,15 @@ import { formatCurrency } from '@/lib/format';
 import type { calculateGivingPlan } from '@/lib/resilience/giving-core';
 import type { Donation, GivingProfile, GivingSettings } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
+import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+
+const GIVING_DOCUMENT_ROLES = [
+  { value: 'acknowledgment', label: 'Acknowledgment' },
+  { value: 'appraisal', label: 'Qualified appraisal' },
+  { value: 'form_8283', label: 'Form 8283' },
+  { value: 'noncash_receipt', label: 'Noncash receipt' },
+  { value: 'qcd_confirmation', label: 'QCD confirmation' },
+] as const;
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -176,8 +185,26 @@ export function GivingPage() {
                     </Field>
                     <Field label="Amount"><input type="number" className={`${INPUT} font-mono`} value={donation.amount} onChange={event => updateDonation(donation.id, { amount: numberValue(event.target.value) })} /></Field>
                     <Field label="Description"><input className={INPUT} placeholder="What was donated" value={donation.description ?? ''} onChange={event => updateDonation(donation.id, { description: event.target.value || null })} /></Field>
-                    <Field label="Document reference"><input className={INPUT} placeholder="Vault link or note" value={donation.documentRef ?? ''} onChange={event => updateDonation(donation.id, { documentRef: event.target.value || null })} /></Field>
                   </FieldGrid>
+                  {donation.documentRef && (
+                    <p className="rounded-md border border-border bg-background-tertiary/40 px-3 py-2 text-xs text-foreground-secondary">
+                      Legacy document note (read only): <span className="text-foreground">{donation.documentRef}</span>. It was not converted into a document link automatically.
+                    </p>
+                  )}
+                  {state.response?.profile.donations.some(saved => saved.id === donation.id) ? (
+                    <LinkedDocumentsPanel
+                      targetType="giving_donation"
+                      targetId={donation.id}
+                      roles={GIVING_DOCUMENT_ROLES}
+                      readonly={state.dirty}
+                      title="Donation substantiation"
+                    />
+                  ) : (
+                    <p className="text-xs text-foreground-muted">Save this donation before attaching substantiation.</p>
+                  )}
+                  {state.dirty && state.response?.profile.donations.some(saved => saved.id === donation.id) && (
+                    <p className="text-xs text-foreground-muted">Save donation changes to attach or unlink documents.</p>
+                  )}
                   <label className="flex items-center gap-2 text-xs text-foreground-secondary">
                     <input type="checkbox" checked={donation.acknowledged} onChange={event => updateDonation(donation.id, { acknowledged: event.target.checked })} />
                     Acknowledgment letter on file

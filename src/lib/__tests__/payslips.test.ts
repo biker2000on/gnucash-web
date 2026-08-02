@@ -24,6 +24,8 @@ const mockPrisma = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/prisma', () => ({ default: mockPrisma }));
+const deleteCanonical = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/documents', () => ({ deleteDocumentBySource: deleteCanonical }));
 
 import {
   listPayslips,
@@ -40,6 +42,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deleteCanonical.mockResolvedValue(true);
 });
 
 describe('listPayslips', () => {
@@ -266,7 +269,26 @@ describe('deletePayslip', () => {
     expect(mockPrisma.gnucash_web_payslips.delete).toHaveBeenCalledWith({
       where: { id: 1, book_guid: 'book1' },
     });
+    expect(deleteCanonical).toHaveBeenCalledWith('book1', 'payslip', '1');
+    expect(mockPrisma.gnucash_web_payslips.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      deleteCanonical.mock.invocationCallOrder[0],
+    );
     expect(result).toEqual(deleted);
+  });
+
+  it('keeps authoritative delete success when canonical cleanup fails', async () => {
+    const deleted = { id: 1, book_guid: 'book1' };
+    mockPrisma.gnucash_web_payslips.delete.mockResolvedValue(deleted);
+    deleteCanonical.mockRejectedValueOnce(new Error('canonical database unavailable'));
+
+    await expect(deletePayslip(1, 'book1')).resolves.toEqual(deleted);
+  });
+
+  it('does not remove canonical links when authoritative deletion fails', async () => {
+    mockPrisma.gnucash_web_payslips.delete.mockRejectedValueOnce(new Error('payslip delete failed'));
+
+    await expect(deletePayslip(1, 'book1')).rejects.toThrow('payslip delete failed');
+    expect(deleteCanonical).not.toHaveBeenCalled();
   });
 });
 

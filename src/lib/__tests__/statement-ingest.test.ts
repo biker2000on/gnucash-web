@@ -5,6 +5,7 @@ import { getStorageBackend } from '../storage/storage-backend';
 import { getAiConfig } from '../ai-config';
 import { extractTextFromPdf } from '../pdf-text-extract';
 import { extractStatementFromText } from '../statement-parse/ai-extract';
+import { upsertDocument } from '../documents';
 
 // Mock the service (DB) layer — we assert on how the orchestrator calls it.
 vi.mock('../services/statement.service', () => ({
@@ -25,6 +26,10 @@ vi.mock('../storage/storage-backend', () => ({
 vi.mock('../ai-config', () => ({ getAiConfig: vi.fn() }));
 vi.mock('../pdf-text-extract', () => ({ extractTextFromPdf: vi.fn() }));
 vi.mock('../statement-parse/ai-extract', () => ({ extractStatementFromText: vi.fn() }));
+vi.mock('../documents', () => ({
+  upsertDocument: vi.fn().mockResolvedValue({ id: 91 }),
+  linkDocument: vi.fn().mockResolvedValue({ id: 92 }),
+}));
 
 const batchBase = {
   id: 1,
@@ -218,5 +223,19 @@ describe('runStatementExtraction — resilience', () => {
     const last = calls[calls.length - 1];
     expect(last[1]).toBe('error');
     expect(String(last[2]?.error)).toContain('storage down');
+  });
+
+  it('keeps a parsed batch successful when canonical indexing is unavailable', async () => {
+    vi.mocked(statementService.getBatch).mockResolvedValue({ ...batchBase, source: 'csv' });
+    storageGet.mockResolvedValue(Buffer.from(
+      'Date,Description,Amount\n2024-03-01,Paycheck,2500.00\n',
+      'utf-8',
+    ));
+    vi.mocked(upsertDocument).mockRejectedValueOnce(new Error('canonical database unavailable'));
+
+    await expect(runStatementExtraction(1, 'book1', '[test]')).resolves.toBeUndefined();
+
+    const statuses = vi.mocked(statementService.setBatchStatus).mock.calls.map((call) => call[1]);
+    expect(statuses).toEqual(['parsing', 'parsed']);
   });
 });

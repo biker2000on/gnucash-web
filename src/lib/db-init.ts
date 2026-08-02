@@ -7,6 +7,10 @@ import {
     FAMILY_OFFICE_SCHEMA_SQL,
     LIVING_PLAN_SCHEMA_SQL,
 } from './planning/schema';
+import {
+    CANONICAL_DOCUMENT_SCHEMA_SQL,
+    LEGACY_DOCUMENT_BACKFILL_SQL,
+} from './documents/schema';
 
 /**
  * Creates the account_hierarchy view if it doesn't exist.
@@ -2012,6 +2016,8 @@ async function createExtensionTables() {
         await query(homeTablesDDL);
         await query(homeItemPhotosTableDDL);
         await query(homeItemPhotosBackfillDDL);
+        await query(CANONICAL_DOCUMENT_SCHEMA_SQL);
+        await query(LEGACY_DOCUMENT_BACKFILL_SQL);
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

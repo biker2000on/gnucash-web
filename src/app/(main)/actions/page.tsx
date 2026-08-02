@@ -36,6 +36,7 @@ const COMPLETED_STATES = new Set<FinancialActionState>(['resolved', 'dismissed',
 const ORIGIN_LABELS: Record<FinancialAction['origin'], string> = {
   transaction_review: 'Transaction review',
   receipt_inbox: 'Receipt',
+  payslip: 'Payslip',
   statement_reconciliation: 'Statement',
   data_health: 'Data Health',
   insight: 'Insight',

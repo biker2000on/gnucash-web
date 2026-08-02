@@ -7,8 +7,9 @@ import type { DocSearchResults, DocSearchHit, SearchSnippet, DocSearchGroup } fr
 const MIN_QUERY_LENGTH = 3;
 const DEBOUNCE_MS = 300;
 
-const GROUP_ORDER: Array<{ key: DocSearchGroup; label: string }> = [
+export const SEARCH_GROUP_ORDER: Array<{ key: DocSearchGroup; label: string }> = [
     { key: 'transactions', label: 'Transactions' },
+    { key: 'documents', label: 'Documents' },
     { key: 'receipts', label: 'Receipts' },
     { key: 'statements', label: 'Statements' },
     { key: 'payslips', label: 'Payslips' },
@@ -99,8 +100,8 @@ export default function DocumentSearchPage() {
             <div>
                 <h1 className="text-2xl font-semibold text-foreground">Search documents</h1>
                 <p className="text-sm text-foreground-secondary mt-1">
-                    Search receipts (OCR text), statement lines, payslips, and transaction
-                    descriptions and memos in the active book.
+                    Search vault documents, receipts (OCR text), statement lines, payslips,
+                    and transaction descriptions and memos in the active book.
                 </p>
             </div>
 
@@ -110,7 +111,7 @@ export default function DocumentSearchPage() {
                 data-search-input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Search receipts, statements, payslips, transactions…"
+                placeholder="Search documents, receipts, statements, payslips, transactions…"
                 className="w-full px-4 py-2.5 bg-surface border border-border rounded-lg text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:border-primary transition-colors"
             />
 
@@ -143,13 +144,14 @@ export default function DocumentSearchPage() {
 
             {isQueryLongEnough && results && results.totalHits > 0 && (
                 <div className={`space-y-6 ${isLoading ? 'opacity-60' : ''}`}>
-                    {GROUP_ORDER.map(({ key, label }) => {
+                    {SEARCH_GROUP_ORDER.map(({ key, label }) => {
                         const hits = results[key];
                         if (hits.length === 0) return null;
                         return (
                             <section key={key} className="bg-surface border border-border rounded-lg overflow-hidden">
                                 <h2 className="px-4 py-2 text-xs uppercase tracking-wider text-foreground-muted font-medium border-b border-border bg-background-tertiary/50">
                                     {label}
+                                    {' '}
                                     <span className="ml-2 font-mono tabular-nums">{hits.length}</span>
                                 </h2>
                                 <div>

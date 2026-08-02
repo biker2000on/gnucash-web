@@ -786,6 +786,14 @@ export async function deleteMeeting(bookGuid: string, id: number): Promise<{ del
     });
     if (!existing || existing.book_guid !== bookGuid) return null;
     await prisma.gnucash_web_meetings.delete({ where: { id } });
+    try {
+        const { unlinkDocumentLinksForTarget } = await import('@/lib/services/document-link-targets.service');
+        await unlinkDocumentLinksForTarget(bookGuid, 'membership_meeting', String(id));
+    } catch (cleanupError) {
+        // The meeting is authoritative. Canonical cleanup is recoverable and
+        // the document bootstrap sweep prunes this stale target on a later run.
+        console.warn(`Failed to clean document links for deleted meeting ${id}:`, cleanupError);
+    }
     return { deleted: true };
 }
 

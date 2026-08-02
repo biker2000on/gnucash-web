@@ -31,13 +31,69 @@ import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
 import { getResilienceProfile, loadResilienceActions } from '@/lib/resilience/service';
 import { analyzeRetirementIncome } from '@/lib/resilience/retirement-income-core';
 import type { RetirementIncomeProfile } from '@/lib/resilience/types';
+import {
+  getDocumentBySource,
+  listLinkedDocuments,
+  type DocumentLinkRole,
+  type LinkedDocument,
+} from '@/lib/documents';
 import type {
+  EvidenceKind,
   EvidenceRef,
   FinancialActionCandidate,
   FinancialActionSeverity,
 } from './types';
 
 const DAY_MS = 86_400_000;
+
+function linkedDocumentEvidence(
+  linked: LinkedDocument[],
+  kind: EvidenceKind,
+  href: string,
+): EvidenceRef[] {
+  return linked.map(({ document, link }) => ({
+    kind,
+    id: String(document.id),
+    label: document.title || document.filename,
+    source: 'manual',
+    href,
+    observedAt: document.updatedAt.toISOString(),
+    verified: true,
+    metadata: {
+      documentId: document.id,
+      documentRole: link.role,
+      filename: document.filename,
+      sourceKind: document.sourceKind,
+    },
+  }));
+}
+
+function hasDocumentRole(linked: LinkedDocument[], role: DocumentLinkRole): boolean {
+  return linked.some(({ link }) => link.role === role);
+}
+
+async function linkedDocumentsForType(
+  bookGuid: string,
+  targetType: 'vendor_1099' | 'compliance_item',
+): Promise<Map<string, LinkedDocument[]>> {
+  const grouped = new Map<string, LinkedDocument[]>();
+  try {
+    for (const linked of await listLinkedDocuments({ bookGuid, targetType })) {
+      const current = grouped.get(linked.link.targetId) ?? [];
+      current.push(linked);
+      grouped.set(linked.link.targetId, current);
+    }
+  } catch (error) {
+    console.warn(`Financial Action ${targetType} document evidence failed:`, error);
+  }
+  return grouped;
+}
+
+function requiredComplianceRole(severity: 'filing' | 'payment' | 'admin'): DocumentLinkRole {
+  if (severity === 'payment') return 'payment_confirmation';
+  if (severity === 'admin') return 'certificate';
+  return 'filed_return';
+}
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -183,6 +239,88 @@ async function receiptActions(bookGuid: string): Promise<FinancialActionCandidat
   });
 }
 
+/** Payslips that still need extraction repair, account mapping, matching, or posting. */
+export async function payslipActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  const rows = await prisma.gnucash_web_payslips.findMany({
+    where: { book_guid: bookGuid, status: { not: 'posted' } },
+    orderBy: { updated_at: 'desc' },
+    take: 100,
+  });
+  const now = Date.now();
+
+  return rows.flatMap(row => {
+    const staleProcessing = row.status === 'processing'
+      && now - row.updated_at.getTime() >= 60 * 60 * 1_000;
+    if (row.status === 'processing' && !staleProcessing) return [];
+
+    const failed = row.status === 'error' || staleProcessing;
+    const needsMapping = row.status === 'needs_mapping';
+    const unmatched = !row.transaction_guid;
+    const state = failed ? 'failed' : needsMapping ? 'unmatched' : 'unposted';
+    const title = failed
+      ? `Payslip processing failed: ${row.employer_name}`
+      : needsMapping
+        ? `Map payslip accounts: ${row.employer_name}`
+        : unmatched
+          ? `Match and post payslip: ${row.employer_name}`
+          : `Post payslip: ${row.employer_name}`;
+    const summary = failed
+      ? row.error_message || 'This payslip has been processing for over an hour and needs review.'
+      : needsMapping
+        ? 'One or more extracted pay lines need ledger account mappings before this payslip can be posted.'
+        : unmatched
+          ? 'The extracted payslip is not linked to a ledger transaction and has not been posted.'
+          : 'The payslip is linked to a transaction but is not marked as posted.';
+
+    return [sourceAction({
+      stableKey: `payslip:${row.id}:${state}`,
+      lane: 'fix',
+      origin: 'payslip',
+      sourceId: String(row.id),
+      severity: failed ? 'critical' : needsMapping ? 'warning' : 'info',
+      title,
+      summary,
+      dueDate: null,
+      impact: null,
+      confidence: 1,
+      operations: [
+        {
+          id: failed ? 'review' : needsMapping ? 'map' : 'post',
+          label: failed ? 'Review payslip' : needsMapping ? 'Map accounts' : 'Review and post',
+          kind: 'link',
+          href: '/payslips',
+          primary: true,
+        },
+        { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+      ],
+      asOfDate: row.pay_date.toISOString().slice(0, 10),
+      traceResult: state,
+      evidence: [{
+        kind: 'payslip',
+        id: String(row.id),
+        label: `${row.employer_name} payslip for ${row.pay_date.toISOString().slice(0, 10)}`,
+        source: 'payslip',
+        href: '/payslips',
+        observedAt: row.updated_at.toISOString(),
+        verified: false,
+        stale: staleProcessing,
+        metadata: {
+          status: row.status,
+          grossPay: row.gross_pay === null ? null : Number(row.gross_pay),
+          netPay: row.net_pay === null ? null : Number(row.net_pay),
+          transactionGuid: row.transaction_guid,
+        },
+      }],
+      metadata: {
+        payslipId: row.id,
+        status: row.status,
+        unmatched,
+        transactionGuid: row.transaction_guid,
+      },
+    })];
+  });
+}
+
 async function statementActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
   await ensureStatementTables();
   const batches = (await listBatches(bookGuid)).slice(0, 100);
@@ -306,7 +444,7 @@ async function insightActions(bookGuid: string): Promise<FinancialActionCandidat
   }));
 }
 
-async function complianceActions(
+export async function complianceActions(
   userId: number,
   bookGuid: string,
 ): Promise<FinancialActionCandidate[]> {
@@ -321,10 +459,27 @@ async function complianceActions(
     where: { book_guid: bookGuid },
   });
   const done = new Set(statuses.map(row => complianceStatusKey(row.item_key, row.period)));
-  const standard = items
+  const linkedByTarget = await linkedDocumentsForType(bookGuid, 'compliance_item');
+  const pendingItems = items
     .filter(item => !done.has(complianceStatusKey(item.key, item.period)))
-    .filter(item => daysUntil(item.dueDate, now) <= 60)
-    .map(item => sourceAction({
+    .filter(item => daysUntil(item.dueDate, now) <= 60);
+  const standard = await Promise.all(pendingItems.map(async item => {
+    const href = `/taxes/compliance?year=${item.dueDate.slice(0, 4)}`;
+    const targetId = `${item.key}:${item.period}`;
+    const requiredRole = requiredComplianceRole(item.severity);
+    const linked = linkedByTarget.get(targetId) ?? [];
+    const verified = hasDocumentRole(linked, requiredRole);
+    const evidence: EvidenceRef[] = [{
+      kind: 'tax_table',
+      id: targetId,
+      label: item.title,
+      source: 'system',
+      href,
+      observedAt: isoDate(now),
+      verified,
+      metadata: { requiredDocumentRole: requiredRole },
+    }, ...linkedDocumentEvidence(linked, 'tax_table', href)];
+    return sourceAction({
       stableKey: `compliance:${item.key}:${item.period}`,
       lane: 'do',
       origin: 'compliance',
@@ -336,51 +491,77 @@ async function complianceActions(
       impact: null,
       confidence: 1,
       operations: [
-        { id: 'open', label: 'Open compliance calendar', kind: 'link', href: `/taxes/compliance?year=${item.dueDate.slice(0, 4)}`, primary: true },
+        { id: 'open', label: 'Open compliance calendar', kind: 'link', href, primary: true },
         { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
       ],
-      evidence: [{
-        kind: 'tax_table',
-        id: `${item.key}:${item.period}`,
-        label: item.title,
-        source: 'system',
-        href: `/taxes/compliance?year=${item.dueDate.slice(0, 4)}`,
-        observedAt: isoDate(now),
-        verified: false,
-      }],
-    }));
+      evidence,
+      metadata: {
+        requiredDocumentRole: requiredRole,
+        linkedDocumentCount: linked.length,
+        linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+      },
+    });
+  }));
   const certificateObligations = await getFarmCertificateObligations(bookGuid);
-  const certificates = certificateObligations
+  const certificates = await Promise.all(certificateObligations
     .filter(item => daysUntil(item.dueDate, now) <= 90)
-    .map(item => sourceAction({
-      stableKey: item.key,
-      lane: 'do',
-      origin: 'compliance',
-      sourceId: item.key,
-      severity: severityFromDueDate(item.dueDate),
-      title: item.title,
-      summary: item.description,
-      dueDate: item.dueDate,
-      impact: null,
-      confidence: 1,
-      operations: [
-        { id: 'open', label: 'Open certificate', kind: 'link', href: '/business/documents', primary: true },
-        { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
-      ],
-      evidence: [{
+    .map(async item => {
+      let canonical: Awaited<ReturnType<typeof getDocumentBySource>> = null;
+      try {
+        canonical = await getDocumentBySource(bookGuid, 'entity_document', String(item.documentId));
+      } catch (error) {
+        console.warn(`Farm certificate document evidence failed for ${item.documentId}:`, error);
+      }
+      const evidence: EvidenceRef[] = [{
         kind: 'rule',
         id: item.key,
         label: item.certificateType,
         source: 'manual',
         href: '/business/documents',
         observedAt: isoDate(now),
-        verified: true,
-      }],
-      metadata: {
-        documentId: item.documentId,
-        certificateType: item.certificateType,
-        obligationKind: item.kind,
-      },
+        verified: canonical !== null,
+        metadata: { requiredDocumentRole: 'certificate' },
+      }];
+      if (canonical) {
+        evidence.push({
+          kind: 'rule',
+          id: String(canonical.id),
+          label: canonical.title || canonical.filename,
+          source: 'manual',
+          href: '/business/documents',
+          observedAt: canonical.updatedAt.toISOString(),
+          verified: true,
+          metadata: {
+            documentId: canonical.id,
+            documentRole: 'certificate',
+            sourceKind: canonical.sourceKind,
+          },
+        });
+      }
+      return sourceAction({
+        stableKey: item.key,
+        lane: 'do',
+        origin: 'compliance',
+        sourceId: item.key,
+        severity: severityFromDueDate(item.dueDate),
+        title: item.title,
+        summary: item.description,
+        dueDate: item.dueDate,
+        impact: null,
+        confidence: 1,
+        operations: [
+          { id: 'open', label: 'Open certificate', kind: 'link', href: '/business/documents', primary: true },
+          { id: 'resolve', label: 'Mark resolved', kind: 'state', targetState: 'resolved' },
+        ],
+        evidence,
+        metadata: {
+          documentId: item.documentId,
+          canonicalDocumentId: canonical?.id ?? null,
+          requiredDocumentRole: 'certificate',
+          certificateType: item.certificateType,
+          obligationKind: item.kind,
+        },
+      });
     }));
   return [...standard, ...certificates];
 }
@@ -666,6 +847,7 @@ export async function vendor1099ComplianceActions(
   const now = new Date();
   const currentYear = now.getUTCFullYear();
   const actions: FinancialActionCandidate[] = [];
+  const linkedByTarget = await linkedDocumentsForType(bookGuid, 'vendor_1099');
 
   for (const taxYear of [currentYear - 1, currentYear]) {
     const compliance = await get1099Compliance(bookGuid, bookAccountGuids, taxYear, now);
@@ -675,6 +857,8 @@ export async function vendor1099ComplianceActions(
     for (const row of compliance.rows) {
       if (!row.requiresFiling || row.filedDate) continue;
       const paid = row.totalPaid.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      const targetId = `${row.vendorGuid}:${taxYear}`;
+      const linked = linkedByTarget.get(targetId) ?? [];
       const evidence: EvidenceRef[] = [{
         kind: 'vendor',
         id: row.vendorGuid,
@@ -683,9 +867,11 @@ export async function vendor1099ComplianceActions(
         href,
         observedAt: isoDate(now),
         verified: false,
-      }];
+      }, ...linkedDocumentEvidence(linked, 'vendor', href)];
 
       if (row.w9State !== 'received') {
+        evidence[0].verified = hasDocumentRole(linked, 'w9');
+        evidence[0].metadata = { requiredDocumentRole: 'w9' };
         const stableKey = `vendor-1099:w9:${row.vendorGuid}:${taxYear}`;
         actions.push({
           stableKey,
@@ -710,13 +896,29 @@ export async function vendor1099ComplianceActions(
             result: row.totalPaid,
             unit: 'currency',
             evidence,
-            metadata: { taxYear, w9State: row.w9State, daysUntilDue: row.daysUntilDue },
+            metadata: {
+              taxYear,
+              w9State: row.w9State,
+              daysUntilDue: row.daysUntilDue,
+              requiredDocumentRole: 'w9',
+              linkedDocumentCount: linked.length,
+            },
           }),
-          metadata: { vendorGuid: row.vendorGuid, taxYear, w9State: row.w9State },
+          metadata: {
+            vendorGuid: row.vendorGuid,
+            taxYear,
+            w9State: row.w9State,
+            requiredDocumentRole: 'w9',
+            linkedDocumentCount: linked.length,
+            linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+          },
         });
       }
 
       if (taxYear < currentYear) {
+        const filingEvidence = evidence.map(item => ({ ...item }));
+        filingEvidence[0].verified = hasDocumentRole(linked, 'filing_proof');
+        filingEvidence[0].metadata = { requiredDocumentRole: 'filing_proof' };
         const stableKey = `vendor-1099:filing:${row.vendorGuid}:${taxYear}`;
         actions.push({
           stableKey,
@@ -742,10 +944,22 @@ export async function vendor1099ComplianceActions(
             asOfDate: isoDate(now),
             result: row.totalPaid,
             unit: 'currency',
-            evidence,
-            metadata: { taxYear, daysUntilDue: row.daysUntilDue },
+            evidence: filingEvidence,
+            metadata: {
+              taxYear,
+              daysUntilDue: row.daysUntilDue,
+              requiredDocumentRole: 'filing_proof',
+              linkedDocumentCount: linked.length,
+            },
           }),
-          metadata: { vendorGuid: row.vendorGuid, taxYear, daysUntilDue: row.daysUntilDue },
+          metadata: {
+            vendorGuid: row.vendorGuid,
+            taxYear,
+            daysUntilDue: row.daysUntilDue,
+            requiredDocumentRole: 'filing_proof',
+            linkedDocumentCount: linked.length,
+            linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+          },
         });
       }
     }
@@ -961,6 +1175,7 @@ export async function loadSourceActions(input: {
   const results = await Promise.all([
     safeActionSource('Transaction review', () => transactionReviewActions(bookAccountGuids)),
     safeActionSource('Receipt inbox', () => receiptActions(bookGuid)),
+    safeActionSource('Payslips', () => payslipActions(bookGuid)),
     safeActionSource('Statement reconciliation', () => statementActions(bookGuid)),
     safeActionSource('Continuous Close', () => continuousCloseActions(bookGuid)),
     safeActionSource('Data Health', () => dataHealthActions(bookAccountGuids)),

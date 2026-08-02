@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import { SUPPORTED_TAX_YEARS, isSupportedTaxYear, type TaxYear } from '@/lib/tax/types';
 import type { QuarterStatus } from '@/lib/tax/estimated-quarters';
 
@@ -50,6 +51,7 @@ interface TrackerResponse {
     list: Array<{ date: string; amount: number; description: string | null; quarter: number | null }>;
   };
   quarters: QuarterStatus[];
+  trace: { traceId: string; href: string };
 }
 
 interface NotApplicableResponse {
@@ -128,6 +130,7 @@ export default function EstimatedTaxPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const seededRef = useRef(false);
 
   useEffect(() => {
@@ -237,18 +240,29 @@ export default function EstimatedTaxPage() {
             the safe-harbor payment target, and tracks each quarterly voucher against it.
           </p>
         </div>
-        <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-          Tax year
-          <select
-            value={year}
-            onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
-            className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
-          >
-            {SUPPORTED_TAX_YEARS.map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
-        </label>
+        <div className="flex items-end gap-3">
+          {data?.trace && (
+            <button
+              type="button"
+              onClick={() => setSelectedTraceId(data.trace.traceId)}
+              className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-colors hover:border-primary/50 hover:text-primary-hover"
+            >
+              Explain projection
+            </button>
+          )}
+          <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
+            Tax year
+            <select
+              value={year}
+              onChange={e => setYear(parseInt(e.target.value, 10) as TaxYear)}
+              className="bg-background-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:border-primary"
+            >
+              {SUPPORTED_TAX_YEARS.map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </label>
+        </div>
       </header>
 
       {/* Prior-year inputs */}
@@ -420,6 +434,11 @@ export default function EstimatedTaxPage() {
           </section>
         </>
       )}
+      <ProvenanceModal
+        traceId={selectedTraceId}
+        isOpen={selectedTraceId !== null}
+        onClose={() => setSelectedTraceId(null)}
+      />
     </div>
   );
 }

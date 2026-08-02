@@ -640,6 +640,64 @@ model gnucash_web_transaction_types {
   @@map("gnucash_web_transaction_types")
 }
 
+// Shared metadata/search index for every stored file. Specialised records
+// (receipts, statement batches, payslips, entity documents, and home photos)
+// remain in their existing tables and identify their canonical row through
+// (book_guid, source_kind, source_id).
+model gnucash_web_documents {
+  id                  Int       @id @default(autoincrement())
+  book_guid           String    @db.VarChar(32)
+  owner_user_id       Int?
+  title               String?   @db.VarChar(255)
+  storage_key         String?   @db.VarChar(500)
+  filename            String    @db.VarChar(255)
+  mime_type           String?   @db.VarChar(100)
+  size_bytes          BigInt?
+  content_hash        String?   @db.VarChar(128)
+  dedupe_key          String?   @db.VarChar(255)
+  extraction_status   String    @default("pending") @db.VarChar(24)
+  extracted_text      String?   @db.Text
+  extraction_metadata Json?     @db.JsonB
+  extraction_error    String?   @db.Text
+  extracted_at        DateTime? @db.Timestamp(6)
+  source_kind         String    @db.VarChar(40)
+  source_id           String?   @db.VarChar(255)
+  created_at          DateTime  @default(now()) @db.Timestamp(6)
+  updated_at          DateTime  @default(now()) @updatedAt @db.Timestamp(6)
+
+  links gnucash_web_document_links[]
+
+  @@unique([book_guid, source_kind, source_id], map: "uq_documents_source")
+  @@unique([id, book_guid], map: "uq_documents_id_book")
+  @@index([book_guid, created_at(sort: Desc)], map: "idx_documents_book_created")
+  @@index([book_guid, source_kind, source_id], map: "idx_documents_book_source")
+  @@index([book_guid, extraction_status], map: "idx_documents_book_extraction")
+  // DB-only: partial idx_documents_book_hash / idx_documents_book_dedupe and
+  // generated search_tsvector + GIN idx_documents_search_fts (db-init).
+  @@map("gnucash_web_documents")
+}
+
+// Typed many-to-many edges from a canonical file to domain objects. The
+// composite relation makes cross-book links impossible at the database layer.
+model gnucash_web_document_links {
+  id          Int      @id @default(autoincrement())
+  book_guid   String   @db.VarChar(32)
+  document_id Int
+  target_type String   @db.VarChar(40)
+  target_id   String   @db.VarChar(255)
+  role        String   @default("attachment") @db.VarChar(40)
+  metadata    Json     @default("{}") @db.JsonB
+  created_by  Int?
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  document gnucash_web_documents @relation(fields: [document_id, book_guid], references: [id, book_guid], onDelete: Cascade)
+
+  @@unique([document_id, target_type, target_id, role], map: "uq_document_links_edge")
+  @@index([book_guid, document_id], map: "idx_document_links_document")
+  @@index([book_guid, target_type, target_id], map: "idx_document_links_target")
+  @@map("gnucash_web_document_links")
+}
+
 model gnucash_web_receipts {
   id               Int       @id @default(autoincrement())
   book_guid        String    @db.VarChar(32)

@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
     findManyCalls: [] as { model: string; args: unknown }[],
     rawStatements: [] as string[],
     transactionOps: 0,
+    findManyRows: {} as Record<string, Array<Record<string, string | null>>>,
 }));
 
 vi.mock('@/lib/prisma', () => {
@@ -28,7 +29,7 @@ vi.mock('@/lib/prisma', () => {
         },
         findMany: (args: unknown) => {
             state.findManyCalls.push({ model, args });
-            return Promise.resolve([]);
+            return Promise.resolve(state.findManyRows[model] ?? []);
         },
     });
 
@@ -72,6 +73,7 @@ vi.mock('@/lib/storage/storage-backend', () => ({
 
 import {
     deleteBookExtensionData,
+    collectBookStorageKeys,
     COVERED_BOOK_GUID_MODELS,
     EXCLUDED_BOOK_GUID_MODELS,
     ACCOUNT_KEYED_MODELS,
@@ -104,6 +106,7 @@ beforeEach(() => {
     state.findManyCalls = [];
     state.rawStatements = [];
     state.transactionOps = 0;
+    state.findManyRows = {};
     storageDelete.mockClear();
 });
 
@@ -240,16 +243,58 @@ describe('deleteBookExtensionData', () => {
         }
     });
 
-    it('deletes stored files for receipts, payslips, entity documents, and home item photos', async () => {
+    it('deletes stored files for canonical docs, receipts, payslips, entity documents, and home item photos', async () => {
         await deleteBookExtensionData(BOOK, ACCOUNTS);
 
         const queriedModels = new Set(state.findManyCalls.map((c) => c.model));
         expect(queriedModels.has('gnucash_web_receipts')).toBe(true);
         expect(queriedModels.has('gnucash_web_payslips')).toBe(true);
+        expect(queriedModels.has('gnucash_web_documents')).toBe(true);
         expect(queriedModels.has('gnucash_web_entity_documents')).toBe(true);
         expect(queriedModels.has('gnucash_web_home_item_photos')).toBe(true);
         // findMany returns [] in this mock, so nothing to delete
         expect(storageDelete).not.toHaveBeenCalled();
+    });
+
+    it('dedupes storage keys shared by canonical and specialised rows', async () => {
+        state.findManyRows = {
+            gnucash_web_receipts: [{ storage_key: 'shared', thumbnail_key: 'thumb' }],
+            gnucash_web_payslips: [{ storage_key: 'pay', thumbnail_key: null }],
+            gnucash_web_documents: [{ storage_key: 'shared' }, { storage_key: 'pay' }],
+            gnucash_web_entity_documents: [{ file_key: 'entity' }],
+            gnucash_web_home_item_photos: [{ photo_key: 'shared' }],
+        };
+
+        await expect(collectBookStorageKeys(BOOK)).resolves.toEqual([
+            'shared', 'thumb', 'pay', 'entity',
+        ]);
+    });
+
+    it('deletes canonical edges and metadata before typed targets and source rows', async () => {
+        await deleteBookExtensionData(BOOK, ACCOUNTS);
+        const order = state.deleteManyCalls.map(call => call.model);
+        const links = order.indexOf('gnucash_web_document_links');
+        const documents = order.indexOf('gnucash_web_documents');
+
+        expect(links).toBe(0);
+        expect(documents).toBe(1);
+        for (const targetOrSource of [
+            'gnucash_web_meetings',
+            'gnucash_web_home_items',
+            'gnucash_web_receipts',
+            'gnucash_web_entity_documents',
+        ]) {
+            expect(documents).toBeLessThan(order.indexOf(targetOrSource));
+        }
+    });
+
+    it('does not claim ledger-only backups archive app-owned document blobs', () => {
+        const source = fs.readFileSync(
+            path.join(process.cwd(), 'src', 'lib', 'services', 'book-cleanup.service.ts'),
+            'utf8',
+        );
+        expect(source).toContain('ledger-only backup');
+        expect(source).toContain('outside this cleanup service\'s scope');
     });
 
     it('skips account/split-keyed deletes when the account list is empty without throwing', async () => {

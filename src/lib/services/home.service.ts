@@ -9,6 +9,7 @@
  */
 
 import type { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import prisma from '@/lib/prisma';
 import {
     getStorageBackend,
@@ -19,6 +20,14 @@ import {
     detectReceiptMimeType,
     sanitizeFilename,
 } from '@/lib/services/document-intake';
+import {
+    deleteDocumentBySource,
+    getDocumentBySource,
+    linkDocument,
+    listDocumentLinks,
+    unlinkDocument,
+    upsertDocument,
+} from '@/lib/documents';
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                            */
@@ -709,6 +718,68 @@ async function assertReceiptOwned(bookGuid: string, receiptId: number): Promise<
     }
 }
 
+function canonicalSyncError(error: unknown): string {
+    return (error instanceof Error ? error.message : String(error)).slice(0, 300);
+}
+
+async function reconcileItemReceiptLink(
+    bookGuid: string,
+    itemId: number,
+    receiptId: number | null,
+): Promise<void> {
+    const links = await listDocumentLinks({
+        bookGuid,
+        targetType: 'home_item',
+        targetId: String(itemId),
+    });
+    const automaticLinks = links.filter((link) => link.role === 'purchase_receipt'
+        && (link.metadata.autoSource === 'home_item.receipt_id'
+            || Object.hasOwn(link.metadata, 'legacy_receipt_id')));
+    await Promise.all(automaticLinks.map((link) => unlinkDocument({
+        bookGuid,
+        documentId: link.documentId,
+        targetType: 'home_item',
+        targetId: String(itemId),
+        role: 'purchase_receipt',
+    })));
+
+    if (receiptId === null) return;
+    const document = await getDocumentBySource(bookGuid, 'receipt', String(receiptId));
+    if (!document) return;
+    await linkDocument({
+        bookGuid,
+        documentId: document.id,
+        targetType: 'home_item',
+        targetId: String(itemId),
+        role: 'purchase_receipt',
+        metadata: { autoSource: 'home_item.receipt_id', receiptId },
+    });
+}
+
+async function reconcileItemReceiptLinkBestEffort(
+    bookGuid: string,
+    itemId: number,
+    receiptId: number | null,
+): Promise<void> {
+    try {
+        await reconcileItemReceiptLink(bookGuid, itemId, receiptId);
+    } catch (error) {
+        console.warn(`Failed to synchronize home item receipt link: ${canonicalSyncError(error)}`);
+    }
+}
+
+async function deleteCanonicalSourceBestEffort(
+    bookGuid: string,
+    sourceKind: 'home_item_photo',
+    sourceId: string,
+): Promise<void> {
+    try {
+        await deleteDocumentBySource(bookGuid, sourceKind, sourceId);
+    } catch (error) {
+        console.warn(`Failed to clean up canonical home document: ${canonicalSyncError(error)}`);
+    }
+}
+
 export async function createItem(bookGuid: string, input: ItemInput): Promise<HomeItem> {
     if (input.roomId === undefined || !Number.isInteger(input.roomId)) {
         throw new HomeValidationError('roomId is required');
@@ -734,6 +805,9 @@ export async function createItem(bookGuid: string, input: ItemInput): Promise<Ho
         },
         include: ITEM_PHOTO_INCLUDE,
     });
+    if (row.receipt_id !== null) {
+        await reconcileItemReceiptLinkBestEffort(bookGuid, row.id, row.receipt_id);
+    }
     return mapItem(row);
 }
 
@@ -794,6 +868,9 @@ export async function updateItem(
         data,
         include: ITEM_PHOTO_INCLUDE,
     });
+    if (input.receiptId !== undefined) {
+        await reconcileItemReceiptLinkBestEffort(bookGuid, id, row.receipt_id);
+    }
     return mapItem(row);
 }
 
@@ -801,10 +878,23 @@ export async function deleteItem(bookGuid: string, id: number): Promise<void> {
     await getOwnedItem(bookGuid, id);
     const photos = await prisma.gnucash_web_home_item_photos.findMany({
         where: { item_id: id },
-        select: { photo_key: true },
+        select: { id: true, photo_key: true },
     });
-    await deletePhotoFiles(photos.map((p) => p.photo_key));
+    // Preserve all document links and blobs if the authoritative delete fails.
+    // Once it succeeds, sidecar cleanup is best effort and bootstrap-repairable.
     await prisma.gnucash_web_home_items.delete({ where: { id } });
+    await Promise.all(photos.map((photo) => deleteCanonicalSourceBestEffort(
+        bookGuid,
+        'home_item_photo',
+        String(photo.id),
+    )));
+    try {
+        const { unlinkDocumentLinksForTarget } = await import('@/lib/services/document-link-targets.service');
+        await unlinkDocumentLinksForTarget(bookGuid, 'home_item', String(id));
+    } catch (error) {
+        console.warn(`Failed to clean up home item document links: ${canonicalSyncError(error)}`);
+    }
+    await deletePhotoFiles(photos.map((p) => p.photo_key));
 }
 
 /* ------------------------------------------------------------------ */
@@ -820,7 +910,7 @@ export async function addItemPhoto(
     itemId: number,
     file: { buffer: Buffer; filename: string },
 ): Promise<HomeItem> {
-    await getOwnedItem(bookGuid, itemId);
+    const item = await getOwnedItem(bookGuid, itemId);
 
     const { buffer, filename } = file;
     if (buffer.byteLength === 0) throw new HomeValidationError('Empty file');
@@ -841,12 +931,13 @@ export async function addItemPhoto(
     });
     const sortOrder = (maxOrder._max.sort_order ?? -1) + 1;
 
-    const photoKey = HOME_PHOTO_KEY_PREFIX + generateStorageKey(sanitizeFilename(filename));
+    const storedFilename = sanitizeFilename(filename);
+    const photoKey = HOME_PHOTO_KEY_PREFIX + generateStorageKey(storedFilename);
     const storage = await getStorageBackend();
     await storage.put(photoKey, buffer, mimeType);
 
     try {
-        await prisma.gnucash_web_home_item_photos.create({
+        const photo = await prisma.gnucash_web_home_item_photos.create({
             data: {
                 book_guid: bookGuid,
                 item_id: itemId,
@@ -858,6 +949,34 @@ export async function addItemPhoto(
             where: { id: itemId },
             data: { updated_at: new Date() },
         });
+
+        try {
+            const canonical = await upsertDocument({
+                bookGuid,
+                title: item.name.trim() || 'Home item photo',
+                storageKey: photoKey,
+                filename: storedFilename,
+                mimeType,
+                sizeBytes: buffer.byteLength,
+                contentHash: createHash('sha256').update(buffer).digest('hex'),
+                extractionStatus: 'not_applicable',
+                extractionMetadata: { itemId, sortOrder },
+                sourceKind: 'home_item_photo',
+                sourceId: String(photo.id),
+            });
+            await linkDocument({
+                bookGuid,
+                documentId: canonical.id,
+                targetType: 'home_item',
+                targetId: String(itemId),
+                role: 'photo',
+                metadata: { autoSource: 'home_item_photo', photoId: photo.id },
+            });
+        } catch (error) {
+            // The photo is authoritative and remains usable; idempotent
+            // bootstrap backfill repairs a transient sidecar failure.
+            console.warn(`Failed to synchronize home item photo: ${canonicalSyncError(error)}`);
+        }
     } catch (error) {
         // Roll back the orphaned file if the row insert failed (non-fatal).
         try {
@@ -903,8 +1022,11 @@ export async function deleteItemPhoto(
     photoId: number,
 ): Promise<HomeItem> {
     const photo = await getOwnedPhoto(bookGuid, itemId, photoId);
-    await deletePhotoFiles([photo.photo_key]);
+    // A failed authoritative delete leaves canonical metadata, manual links,
+    // and the blob intact. Orphan sidecars are repaired on bootstrap.
     await prisma.gnucash_web_home_item_photos.delete({ where: { id: photoId } });
+    await deleteCanonicalSourceBestEffort(bookGuid, 'home_item_photo', String(photoId));
+    await deletePhotoFiles([photo.photo_key]);
     await prisma.gnucash_web_home_items.update({
         where: { id: itemId },
         data: { updated_at: new Date() },

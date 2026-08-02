@@ -19,6 +19,13 @@ import {
     sanitizeFilename,
 } from '@/lib/services/document-intake';
 import { DOCUMENT_TYPE_VALUES } from '@/lib/entity-document-context';
+import { createHash } from 'node:crypto';
+import { enqueueJob } from '@/lib/queue/queues';
+import {
+    deleteDocumentBySource,
+    getDocumentBySource,
+    upsertDocument,
+} from '@/lib/documents';
 
 /* ------------------------------------------------------------------ */
 /* Constants + pure helpers                                             */
@@ -77,6 +84,8 @@ export interface EntityDocument {
     uploadedAt: string;
     /** Negative = expired, null = no expiry set. */
     daysUntilExpiry: number | null;
+    /** Present on a newly-created row; existing clients can keep using `id`. */
+    canonicalDocumentId?: number;
 }
 
 interface DocDbRow {
@@ -112,6 +121,40 @@ function mapDocument(row: DocDbRow, today: Date = new Date()): EntityDocument {
         uploadedAt: row.uploaded_at.toISOString(),
         daysUntilExpiry: daysUntilExpiry(row.expires_on, today),
     };
+}
+
+async function syncEntityDocumentIndex(
+    row: DocDbRow,
+    contentHash?: string,
+    ownerUserId?: number | null,
+): Promise<number> {
+    const existing = await getDocumentBySource(row.book_guid, 'entity_document', String(row.id));
+    const canonical = await upsertDocument({
+        bookGuid: row.book_guid,
+        ownerUserId: ownerUserId ?? existing?.ownerUserId ?? null,
+        title: row.title,
+        storageKey: row.file_key,
+        filename: row.file_name ?? row.title,
+        mimeType: row.mime_type,
+        sizeBytes: row.size_bytes,
+        contentHash: contentHash ?? existing?.contentHash ?? null,
+        dedupeKey: existing?.dedupeKey ?? null,
+        extractionStatus: (existing?.extractionStatus as 'pending' | 'processing' | 'completed' | 'failed' | 'skipped' | 'not_applicable' | undefined) ?? 'pending',
+        extractedText: existing?.extractedText ?? row.notes,
+        extractionMetadata: {
+            docType: row.doc_type,
+            expiresOn: row.expires_on?.toISOString().slice(0, 10) ?? null,
+            issuedOn: row.issued_on?.toISOString().slice(0, 10) ?? null,
+            returnCopyDueOn: row.return_copy_due_on?.toISOString().slice(0, 10) ?? null,
+            notes: row.notes,
+        },
+        extractionError: existing?.extractionError ?? null,
+        extractedAt: existing?.extractedAt ?? null,
+        sourceKind: 'entity_document',
+        sourceId: String(row.id),
+        preserveExtractionOnConflict: true,
+    });
+    return canonical.id;
 }
 
 function parseDate(value: string | null | undefined, field: string): Date | null {
@@ -153,6 +196,8 @@ export interface CreateEntityDocumentInput {
     issuedOn?: string | null;
     returnCopyDueOn?: string | null;
     notes?: string | null;
+    /** Authenticated uploader; used only for ownership and their AI config. */
+    ownerUserId?: number | null;
     file: { buffer: Buffer; filename: string };
 }
 
@@ -208,8 +253,41 @@ export async function createEntityDocument(
                 notes: input.notes?.trim() || null,
             },
         });
-        return mapDocument(row);
+        const canonicalDocumentId = await syncEntityDocumentIndex(
+            row,
+            createHash('sha256').update(buffer).digest('hex'),
+            input.ownerUserId,
+        );
+
+        const jobId = await enqueueJob('extract-entity-document', {
+            documentId: row.id,
+            bookGuid,
+            ownerUserId: input.ownerUserId ?? null,
+        });
+        if (!jobId) {
+            try {
+                const { runEntityDocumentExtraction } = await import('@/lib/documents/entity-extraction');
+                await runEntityDocumentExtraction(row.id, bookGuid, `[inline-entity-doc-${row.id}]`);
+            } catch (extractError) {
+                console.error(`Inline entity-document extraction failed for ${row.id}:`, extractError);
+            }
+        }
+
+        return { ...mapDocument(row), canonicalDocumentId };
     } catch (error) {
+        // The specialised row must not survive if canonical registration
+        // failed; otherwise callers cannot resolve the just-uploaded file.
+        try {
+            const created = await prisma.gnucash_web_entity_documents.findFirst({
+                where: { book_guid: bookGuid, file_key: fileKey },
+                select: { id: true },
+            });
+            if (created) {
+                await prisma.gnucash_web_entity_documents.delete({ where: { id: created.id } });
+            }
+        } catch (rowCleanupErr) {
+            console.warn('Failed to clean up orphan document row:', rowCleanupErr);
+        }
         // Don't strand an orphan file when the DB insert fails.
         try {
             await storage.delete(fileKey);
@@ -284,12 +362,24 @@ export async function updateEntityDocument(
     }
 
     const row = await prisma.gnucash_web_entity_documents.update({ where: { id }, data });
+    await syncEntityDocumentIndex(row);
     return mapDocument(row);
 }
 
 /** Delete the metadata row AND the stored file (file failure is non-fatal). */
 export async function deleteEntityDocument(bookGuid: string, id: number): Promise<void> {
     const row = await getOwnedDocument(bookGuid, id);
+
+    // Delete the authoritative source first. If it fails, canonical metadata,
+    // manual links, and the blob remain intact. Sidecar cleanup is best effort;
+    // bootstrap prunes any orphan left by a transient canonical failure.
+    await prisma.gnucash_web_entity_documents.delete({ where: { id } });
+    try {
+        await deleteDocumentBySource(bookGuid, 'entity_document', String(id));
+    } catch (error) {
+        const message = (error instanceof Error ? error.message : String(error)).slice(0, 300);
+        console.warn(`Failed to clean up canonical entity document: ${message}`);
+    }
 
     if (row.file_key) {
         try {
@@ -299,8 +389,6 @@ export async function deleteEntityDocument(bookGuid: string, id: number): Promis
             console.warn('Failed to delete document file:', err);
         }
     }
-
-    await prisma.gnucash_web_entity_documents.delete({ where: { id } });
 }
 
 export interface EntityDocumentFile {

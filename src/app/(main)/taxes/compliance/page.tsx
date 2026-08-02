@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
 import {
   COMPLIANCE_SEVERITY_LABELS,
   ENTITY_RULESET_LABELS,
@@ -35,6 +36,14 @@ const STATUS_CHIP_CLASS: Record<ComplianceStatus, string> = {
   dismissed: 'text-foreground-muted border-border bg-background-tertiary',
 };
 
+const COMPLIANCE_DOCUMENT_ROLES = [
+  { value: 'filed_return', label: 'Filed return' },
+  { value: 'payment_confirmation', label: 'Payment confirmation' },
+  { value: 'government_notice', label: 'Government notice' },
+  { value: 'certificate', label: 'Certificate' },
+  { value: 'supporting_workpaper', label: 'Supporting workpaper' },
+] as const;
+
 function formatDue(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', {
@@ -61,79 +70,101 @@ function ItemRow({
   item,
   today,
   busy,
+  expanded,
+  onToggleDocuments,
   onSetStatus,
 }: {
   item: ComplianceItemWithStatus;
   today: string;
   busy: boolean;
+  expanded: boolean;
+  onToggleDocuments: () => void;
   onSetStatus: (item: ComplianceItemWithStatus, status: ComplianceStatus | null) => void;
 }) {
   const overdue = item.status === 'pending' && item.dueDate < today;
   return (
-    <div className="flex flex-wrap items-start gap-x-4 gap-y-2 border-b border-border/60 py-3 last:border-0">
-      <div className="w-28 shrink-0">
-        <div
-          className={`font-mono text-sm ${overdue ? 'text-negative' : 'text-foreground'}`}
-          style={MONO}
-        >
-          {formatDue(item.dueDate)}
+    <div className="border-b border-border/60 py-3 last:border-0">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <div className="w-28 shrink-0">
+          <div
+            className={`font-mono text-sm ${overdue ? 'text-negative' : 'text-foreground'}`}
+            style={MONO}
+          >
+            {formatDue(item.dueDate)}
+          </div>
+          <div className={`text-[11px] ${overdue ? 'text-negative' : 'text-foreground-muted'}`}>
+            {relativeLabel(today, item.dueDate)}
+          </div>
         </div>
-        <div className={`text-[11px] ${overdue ? 'text-negative' : 'text-foreground-muted'}`}>
-          {relativeLabel(today, item.dueDate)}
-        </div>
-      </div>
-      <div className="flex-1 min-w-[240px]">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`text-sm font-medium ${item.status === 'dismissed' ? 'text-foreground-muted line-through' : 'text-foreground'}`}>
-            {item.title}
-          </span>
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${SEVERITY_CHIP_CLASS[item.severity]}`}>
-            {COMPLIANCE_SEVERITY_LABELS[item.severity]}
-          </span>
-          {item.status !== 'pending' && (
-            <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${STATUS_CHIP_CLASS[item.status]}`}>
-              {item.status === 'done' ? 'Done' : 'Dismissed'}
+        <div className="flex-1 min-w-[240px]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`text-sm font-medium ${item.status === 'dismissed' ? 'text-foreground-muted line-through' : 'text-foreground'}`}>
+              {item.title}
             </span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${SEVERITY_CHIP_CLASS[item.severity]}`}>
+              {COMPLIANCE_SEVERITY_LABELS[item.severity]}
+            </span>
+            {item.status !== 'pending' && (
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${STATUS_CHIP_CLASS[item.status]}`}>
+                {item.status === 'done' ? 'Done' : 'Dismissed'}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-foreground-muted max-w-[720px]">{item.description}</p>
+          {item.href && (
+            <Link
+              href={item.href}
+              className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:text-primary-hover transition-colors"
+            >
+              Open related tool <span aria-hidden>&rarr;</span>
+            </Link>
           )}
         </div>
-        <p className="mt-1 text-xs text-foreground-muted max-w-[720px]">{item.description}</p>
-        {item.href && (
-          <Link
-            href={item.href}
-            className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:text-primary-hover transition-colors"
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onToggleDocuments}
+            className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
           >
-            Open related tool <span aria-hidden>&rarr;</span>
-          </Link>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {item.status === 'pending' ? (
-          <>
+            {expanded ? 'Hide documents' : 'Documents'}
+          </button>
+          {item.status === 'pending' ? (
+            <>
+              <button
+                onClick={() => onSetStatus(item, 'done')}
+                disabled={busy}
+                className="rounded-md border border-positive/40 px-2.5 py-1 text-xs text-positive hover:bg-positive/10 transition-colors disabled:opacity-50"
+              >
+                Mark done
+              </button>
+              <button
+                onClick={() => onSetStatus(item, 'dismissed')}
+                disabled={busy}
+                className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
+              >
+                Dismiss
+              </button>
+            </>
+          ) : (
             <button
-              onClick={() => onSetStatus(item, 'done')}
-              disabled={busy}
-              className="rounded-md border border-positive/40 px-2.5 py-1 text-xs text-positive hover:bg-positive/10 transition-colors disabled:opacity-50"
-            >
-              Mark done
-            </button>
-            <button
-              onClick={() => onSetStatus(item, 'dismissed')}
+              onClick={() => onSetStatus(item, null)}
               disabled={busy}
               className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
             >
-              Dismiss
+              Reopen
             </button>
-          </>
-        ) : (
-          <button
-            onClick={() => onSetStatus(item, null)}
-            disabled={busy}
-            className="rounded-md border border-border px-2.5 py-1 text-xs text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors disabled:opacity-50"
-          >
-            Reopen
-          </button>
-        )}
+          )}
+        </div>
       </div>
+      {expanded && (
+        <LinkedDocumentsPanel
+          className="ml-0 mt-3 sm:ml-32"
+          targetType="compliance_item"
+          targetId={`${item.key}:${item.period}`}
+          roles={COMPLIANCE_DOCUMENT_ROLES}
+          title="Compliance evidence"
+        />
+      )}
     </div>
   );
 }
@@ -144,6 +175,8 @@ function Group({
   items,
   today,
   busyKey,
+  expandedKey,
+  onToggleDocuments,
   onSetStatus,
 }: {
   title: string;
@@ -151,6 +184,8 @@ function Group({
   items: ComplianceItemWithStatus[];
   today: string;
   busyKey: string | null;
+  expandedKey: string | null;
+  onToggleDocuments: (key: string) => void;
   onSetStatus: (item: ComplianceItemWithStatus, status: ComplianceStatus | null) => void;
 }) {
   if (items.length === 0) return null;
@@ -169,6 +204,8 @@ function Group({
             item={item}
             today={today}
             busy={busyKey === `${item.key}|${item.period}`}
+            expanded={expandedKey === `${item.key}:${item.period}`}
+            onToggleDocuments={() => onToggleDocuments(`${item.key}:${item.period}`)}
             onSetStatus={onSetStatus}
           />
         ))}
@@ -185,6 +222,7 @@ export default function ComplianceCalendarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -332,10 +370,10 @@ export default function ComplianceCalendarPage() {
 
       {data && groups && (
         <>
-          <Group title="Overdue" tone="negative" items={groups.overdue} today={data.today} busyKey={busyKey} onSetStatus={setStatus} />
-          <Group title="Next 30 days" items={groups.next30} today={data.today} busyKey={busyKey} onSetStatus={setStatus} />
-          <Group title="Later" items={groups.later} today={data.today} busyKey={busyKey} onSetStatus={setStatus} />
-          <Group title="Resolved earlier" items={groups.resolved} today={data.today} busyKey={busyKey} onSetStatus={setStatus} />
+          <Group title="Overdue" tone="negative" items={groups.overdue} today={data.today} busyKey={busyKey} expandedKey={expandedKey} onToggleDocuments={key => setExpandedKey(current => current === key ? null : key)} onSetStatus={setStatus} />
+          <Group title="Next 30 days" items={groups.next30} today={data.today} busyKey={busyKey} expandedKey={expandedKey} onToggleDocuments={key => setExpandedKey(current => current === key ? null : key)} onSetStatus={setStatus} />
+          <Group title="Later" items={groups.later} today={data.today} busyKey={busyKey} expandedKey={expandedKey} onToggleDocuments={key => setExpandedKey(current => current === key ? null : key)} onSetStatus={setStatus} />
+          <Group title="Resolved earlier" items={groups.resolved} today={data.today} busyKey={busyKey} expandedKey={expandedKey} onToggleDocuments={key => setExpandedKey(current => current === key ? null : key)} onSetStatus={setStatus} />
 
           {data.items.length === 0 && (
             <div className="rounded-lg border border-border bg-surface/30 p-6 text-sm text-foreground-secondary">

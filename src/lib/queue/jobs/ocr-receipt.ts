@@ -3,6 +3,53 @@ import { execSync } from 'child_process';
 import { updateOcrResults } from '@/lib/receipts';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
 import { query } from '@/lib/db';
+import { createHash } from 'node:crypto';
+import { linkDocument, upsertDocument } from '@/lib/documents';
+
+interface ReceiptDocumentRow {
+  id: number;
+  book_guid: string;
+  transaction_guid: string | null;
+  filename: string;
+  storage_key: string;
+  mime_type: string;
+  file_size: number;
+  created_by: number | null;
+}
+
+async function syncReceiptDocument(
+  receipt: ReceiptDocumentRow,
+  buffer: Buffer,
+  text: string | null,
+  metadata: Record<string, unknown> | null,
+): Promise<void> {
+  const canonical = await upsertDocument({
+    bookGuid: receipt.book_guid,
+    ownerUserId: receipt.created_by,
+    title: receipt.filename,
+    storageKey: receipt.storage_key,
+    filename: receipt.filename,
+    mimeType: receipt.mime_type,
+    sizeBytes: receipt.file_size,
+    contentHash: createHash('sha256').update(buffer).digest('hex'),
+    extractionStatus: 'completed',
+    extractedText: text,
+    extractionMetadata: metadata,
+    extractedAt: new Date(),
+    sourceKind: 'receipt',
+    sourceId: String(receipt.id),
+  });
+  if (receipt.transaction_guid) {
+    await linkDocument({
+      bookGuid: receipt.book_guid,
+      documentId: canonical.id,
+      targetType: 'transaction',
+      targetId: receipt.transaction_guid,
+      role: 'receipt',
+      metadata: { autoSource: 'gnucash_web_receipts.transaction_guid' },
+    });
+  }
+}
 
 // Cache tesseract availability check at module level (checked once per worker process)
 let _systemTesseractAvailable: boolean | null = null;
@@ -18,7 +65,7 @@ function isSystemTesseractAvailable(): boolean {
   return _systemTesseractAvailable;
 }
 
-async function extractTextFromImage(buffer: Buffer): Promise<string> {
+export async function extractTextFromImage(buffer: Buffer): Promise<string> {
   if (isSystemTesseractAvailable()) {
     try {
       // node-tesseract-ocr expects a file path, not a buffer — write to temp file
@@ -88,7 +135,7 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
       'SELECT * FROM gnucash_web_receipts WHERE id = $1',
       [receiptId]
     );
-    const receipt = result.rows[0];
+    const receipt = result.rows[0] as ReceiptDocumentRow | undefined;
     if (!receipt) {
       console.warn(`[Job ${job.id}] Receipt ${receiptId} not found, skipping OCR`);
       return;
@@ -109,7 +156,8 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
     console.log(`[Job ${job.id}] OCR complete for receipt ${receiptId}: ${extractedText?.length ?? 0} chars extracted`);
 
     // Run structured extraction on the OCR text
-    try {
+    let structuredData: Record<string, unknown> | null = null;
+    if (receipt.created_by != null) try {
       const { getAiConfig } = await import('@/lib/ai-config');
       const { extractReceiptData } = await import('@/lib/receipt-extraction');
       const { updateExtractedData } = await import('@/lib/receipts');
@@ -117,9 +165,26 @@ export async function handleOcrReceipt(job: Job): Promise<void> {
       const aiConfig = await getAiConfig(receipt.created_by);
       const extractedData = await extractReceiptData(extractedText || '', aiConfig);
       await updateExtractedData(receiptId, extractedData as unknown as Record<string, unknown>);
+      structuredData = extractedData as unknown as Record<string, unknown>;
       console.log(`[Job ${job.id}] Extraction complete: ${JSON.stringify({ amount: extractedData.amount, vendor: extractedData.vendor, method: extractedData.extraction_method })}`);
     } catch (extractErr) {
       console.error(`[Job ${job.id}] Extraction failed (OCR succeeded):`, extractErr);
+      structuredData = {
+        structuredExtractionError: extractErr instanceof Error ? extractErr.message : String(extractErr),
+      };
+    } else {
+      structuredData = { structuredExtractionSkipped: 'missing_owner' };
+    }
+
+    try {
+      await syncReceiptDocument(receipt, buffer, extractedText, structuredData);
+    } catch (canonicalError) {
+      const detail = canonicalError instanceof Error
+        ? canonicalError.message.slice(0, 500)
+        : String(canonicalError).slice(0, 500);
+      console.warn(
+        `[Job ${job.id}] Canonical receipt sync deferred for receipt ${receiptId}: ${detail}`,
+      );
     }
 
     // Bill capture via email: if this receipt arrived through the "bill"

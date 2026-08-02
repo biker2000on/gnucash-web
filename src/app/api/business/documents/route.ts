@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     try {
         const roleResult = await requireRole('edit');
         if (roleResult instanceof NextResponse) return roleResult;
-        const { bookGuid } = roleResult;
+        const { bookGuid, user } = roleResult;
 
         const formData = await request.formData();
         const file = formData.get('file');
@@ -59,6 +59,7 @@ export async function POST(request: Request) {
             issuedOn,
             returnCopyDueOn,
             notes,
+            ownerUserId: user.id,
             file: { buffer, filename: file.name },
         });
 

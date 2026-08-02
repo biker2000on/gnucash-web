@@ -10,6 +10,7 @@ import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import { HouseholdBookBanner } from '@/components/business/HouseholdBookBanner';
 import type { AttendanceStatus } from '@/lib/membership';
 import type { MeetingDTO, MeetingDetailDTO } from '@/lib/services/membership.service';
+import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
 
 const inputClass = 'w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-primary/50 transition-all';
 const labelClass = 'block text-xs font-medium text-foreground-secondary mb-1';
@@ -32,6 +33,14 @@ const STATUS_BUTTONS: Array<{ value: AttendanceStatus; label: string; activeClas
     { value: 'absent', label: 'Absent', activeClass: 'bg-negative/10 text-negative border-negative/40' },
     { value: 'excused', label: 'Excused', activeClass: 'bg-warning/10 text-warning border-warning/40' },
 ];
+
+const MEETING_DOCUMENT_ROLES = [
+    { value: 'agenda', label: 'Agenda' },
+    { value: 'minutes', label: 'Minutes' },
+    { value: 'resolution', label: 'Resolution' },
+    { value: 'packet', label: 'Meeting packet' },
+    { value: 'recording_transcript', label: 'Recording transcript' },
+] as const;
 
 function attendancePct(present: number, total: number): string {
     if (total === 0) return '—';
@@ -150,6 +159,14 @@ function RollCallModal({ meetingId, onClose, onSaved }: {
                                 Mark all present
                             </button>
                         </div>
+
+                        <LinkedDocumentsPanel
+                            targetType="membership_meeting"
+                            targetId={String(meetingId)}
+                            roles={MEETING_DOCUMENT_ROLES}
+                            title="Meeting record"
+                            readonly={isReadonly}
+                        />
 
                         {detail.roster.length === 0 ? (
                             <p className="text-sm text-foreground-muted py-4 text-center">

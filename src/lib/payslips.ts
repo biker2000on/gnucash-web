@@ -134,9 +134,19 @@ export async function upsertMapping(data: MappingData) {
  * Delete a payslip by id, scoped to a book_guid.
  */
 export async function deletePayslip(id: number, bookGuid: string) {
-  return prisma.gnucash_web_payslips.delete({
+  const deleted = await prisma.gnucash_web_payslips.delete({
     where: { id, book_guid: bookGuid },
   });
+  try {
+    const { deleteDocumentBySource } = await import('@/lib/documents');
+    await deleteDocumentBySource(bookGuid, 'payslip', String(id));
+  } catch (canonicalError) {
+    const detail = canonicalError instanceof Error
+      ? canonicalError.message.slice(0, 500)
+      : String(canonicalError).slice(0, 500);
+    console.warn(`Canonical payslip cleanup deferred for deleted payslip ${id}: ${detail}`);
+  }
+  return deleted;
 }
 
 export interface TemplateLineItem {

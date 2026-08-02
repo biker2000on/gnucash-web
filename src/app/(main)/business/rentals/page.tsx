@@ -6,6 +6,15 @@ import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import type { RentalProperty, RentalsProfile, RentalUnit } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from '@/components/resilience/ui';
+import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
+
+const RENTAL_DOCUMENT_ROLES = [
+  { value: 'lease', label: 'Lease' },
+  { value: 'lease_addendum', label: 'Lease addendum' },
+  { value: 'move_in_inspection', label: 'Move-in inspection' },
+  { value: 'tenant_notice', label: 'Tenant notice' },
+  { value: 'rent_statement', label: 'Rent statement' },
+] as const;
 
 interface RentRollRow {
   propertyId: string;
@@ -246,6 +255,17 @@ export default function RentalsPage() {
                     </div>
                   </Field>
                 </FieldGrid>
+                {data?.profile.properties.some(savedProperty => savedProperty.units.some(savedUnit => savedUnit.id === unit.id)) ? (
+                  <LinkedDocumentsPanel
+                    className="mt-3"
+                    targetType="rental_unit"
+                    targetId={unit.id}
+                    roles={RENTAL_DOCUMENT_ROLES}
+                    title="Lease and tenant documents"
+                  />
+                ) : (
+                  <p className="mt-3 text-xs text-foreground-muted">Save this unit before attaching lease documents.</p>
+                )}
                 {unit.payments.length > 0 && (
                   <div className="mt-3 flex items-center justify-between text-xs text-foreground-muted">
                     <span>{unit.payments.length} payment record{unit.payments.length === 1 ? '' : 's'} · latest {unit.payments.at(-1)?.date}</span>

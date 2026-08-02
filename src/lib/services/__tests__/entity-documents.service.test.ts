@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { docsModel, storageMock } = vi.hoisted(() => ({
     docsModel: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         findMany: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
@@ -43,12 +44,28 @@ vi.mock('@/lib/services/document-intake', () => ({
             : null,
 }));
 
+const canonicalMocks = vi.hoisted(() => ({
+    getBySource: vi.fn(),
+    upsert: vi.fn(),
+    remove: vi.fn(),
+    enqueue: vi.fn(),
+}));
+
+vi.mock('@/lib/documents', () => ({
+    getDocumentBySource: canonicalMocks.getBySource,
+    upsertDocument: canonicalMocks.upsert,
+    deleteDocumentBySource: canonicalMocks.remove,
+}));
+
+vi.mock('@/lib/queue/queues', () => ({ enqueueJob: canonicalMocks.enqueue }));
+
 import {
     DOC_TYPES,
     daysUntilExpiry,
     isValidDocType,
     createEntityDocument,
     updateEntityDocument,
+    deleteEntityDocument,
     EntityDocumentValidationError,
 } from '../entity-documents.service';
 
@@ -57,6 +74,10 @@ const PDF = Buffer.from('%PDF-1.4 fake');
 
 beforeEach(() => {
     vi.clearAllMocks();
+    canonicalMocks.getBySource.mockResolvedValue(null);
+    canonicalMocks.upsert.mockResolvedValue({ id: 88 });
+    canonicalMocks.remove.mockResolvedValue(true);
+    canonicalMocks.enqueue.mockResolvedValue('job-1');
 });
 
 describe('daysUntilExpiry', () => {
@@ -151,7 +172,7 @@ describe('createEntityDocument', () => {
             uploaded_at: new Date('2026-07-14T00:00:00Z'),
         });
 
-        const doc = await createEntityDocument(BOOK, baseInput);
+        const doc = await createEntityDocument(BOOK, { ...baseInput, ownerUserId: 23 });
 
         expect(storageMock.put).toHaveBeenCalledWith(
             'entity-documents/2026/07/uuid.pdf',
@@ -159,8 +180,20 @@ describe('createEntityDocument', () => {
             'application/pdf',
         );
         expect(doc.id).toBe(7);
+        expect(doc.canonicalDocumentId).toBe(88);
         expect(doc.sizeBytes).toBe(PDF.byteLength);
         expect(doc.daysUntilExpiry).toBeNull();
+        expect(canonicalMocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            bookGuid: BOOK,
+            ownerUserId: 23,
+            sourceKind: 'entity_document',
+            sourceId: '7',
+        }));
+        expect(canonicalMocks.enqueue).toHaveBeenCalledWith('extract-entity-document', {
+            documentId: 7,
+            bookGuid: BOOK,
+            ownerUserId: 23,
+        });
     });
 
     it('cleans up the stored file when the DB insert fails', async () => {
@@ -168,6 +201,55 @@ describe('createEntityDocument', () => {
 
         await expect(createEntityDocument(BOOK, baseInput)).rejects.toThrow('db down');
         expect(storageMock.delete).toHaveBeenCalledWith('entity-documents/2026/07/uuid.pdf');
+    });
+});
+
+describe('deleteEntityDocument', () => {
+    it('removes the source row before canonical metadata and the blob', async () => {
+        const order: string[] = [];
+        docsModel.findUnique.mockResolvedValue({
+            id: 12, book_guid: BOOK, title: 'Policy', doc_type: 'insurance',
+            file_key: 'entity-documents/policy.pdf', file_name: 'policy.pdf', mime_type: 'application/pdf',
+            size_bytes: 100n, expires_on: null, issued_on: null,
+            return_copy_due_on: null, notes: null, uploaded_at: new Date(),
+        });
+        canonicalMocks.remove.mockImplementation(async () => { order.push('canonical'); return true; });
+        docsModel.delete.mockImplementation(async () => { order.push('source'); return { id: 12 }; });
+        storageMock.delete.mockImplementation(async () => { order.push('blob'); });
+
+        await deleteEntityDocument(BOOK, 12);
+
+        expect(docsModel.delete).toHaveBeenCalledWith({ where: { id: 12 } });
+        expect(canonicalMocks.remove).toHaveBeenCalledWith(BOOK, 'entity_document', '12');
+        expect(order).toEqual(['source', 'canonical', 'blob']);
+    });
+
+    it('leaves canonical metadata and the blob intact when source deletion fails', async () => {
+        docsModel.findUnique.mockResolvedValue({
+            id: 12, book_guid: BOOK, title: 'Policy', doc_type: 'insurance',
+            file_key: 'entity-documents/policy.pdf', file_name: 'policy.pdf', mime_type: 'application/pdf',
+            size_bytes: 100n, expires_on: null, issued_on: null,
+            return_copy_due_on: null, notes: null, uploaded_at: new Date(),
+        });
+        docsModel.delete.mockRejectedValue(new Error('source unavailable'));
+
+        await expect(deleteEntityDocument(BOOK, 12)).rejects.toThrow('source unavailable');
+        expect(canonicalMocks.remove).not.toHaveBeenCalled();
+        expect(storageMock.delete).not.toHaveBeenCalled();
+    });
+
+    it('keeps a successful source deletion successful when canonical cleanup fails', async () => {
+        docsModel.findUnique.mockResolvedValue({
+            id: 12, book_guid: BOOK, title: 'Policy', doc_type: 'insurance',
+            file_key: 'entity-documents/policy.pdf', file_name: 'policy.pdf', mime_type: 'application/pdf',
+            size_bytes: 100n, expires_on: null, issued_on: null,
+            return_copy_due_on: null, notes: null, uploaded_at: new Date(),
+        });
+        docsModel.delete.mockResolvedValue({ id: 12 });
+        canonicalMocks.remove.mockRejectedValue(new Error('canonical unavailable'));
+
+        await expect(deleteEntityDocument(BOOK, 12)).resolves.toBeUndefined();
+        expect(storageMock.delete).toHaveBeenCalledWith('entity-documents/policy.pdf');
     });
 });
 
@@ -200,5 +282,65 @@ describe('updateEntityDocument', () => {
             title: 'Updated imported record',
             docType: 'legacy_import',
         });
+    });
+
+    it('preserves completed OCR and AI suggestions while updating source metadata', async () => {
+        const row = {
+            id: 11,
+            book_guid: BOOK,
+            title: 'Policy',
+            doc_type: 'insurance',
+            file_key: 'entity-documents/policy.pdf',
+            file_name: 'policy.pdf',
+            mime_type: 'application/pdf',
+            size_bytes: BigInt(PDF.byteLength),
+            expires_on: new Date('2026-12-31T00:00:00Z'),
+            issued_on: new Date('2026-01-01T00:00:00Z'),
+            return_copy_due_on: null,
+            notes: 'Old note',
+            uploaded_at: new Date('2026-07-14T00:00:00Z'),
+        };
+        const extractedAt = new Date('2026-07-15T00:00:00Z');
+        docsModel.findUnique.mockResolvedValue(row);
+        docsModel.update.mockResolvedValue({
+            ...row,
+            expires_on: new Date('2027-12-31T00:00:00Z'),
+            notes: 'Renewed policy',
+        });
+        canonicalMocks.getBySource.mockResolvedValue({
+            id: 88,
+            ownerUserId: 23,
+            contentHash: 'hash',
+            dedupeKey: 'content:hash',
+            extractionStatus: 'completed',
+            extractedText: 'OCR policy text',
+            extractionMetadata: {
+                extraction: 'ocr',
+                suggestionKind: 'insurance_policy',
+                suggestions: { carrier: 'Acme' },
+            },
+            extractionError: null,
+            extractedAt,
+        });
+
+        await updateEntityDocument(BOOK, 11, {
+            expiresOn: '2027-12-31',
+            notes: 'Renewed policy',
+        });
+
+        expect(canonicalMocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            extractionStatus: 'completed',
+            extractedText: 'OCR policy text',
+            extractionMetadata: {
+                docType: 'insurance',
+                expiresOn: '2027-12-31',
+                issuedOn: '2026-01-01',
+                returnCopyDueOn: null,
+                notes: 'Renewed policy',
+            },
+            extractionError: null,
+            extractedAt,
+            preserveExtractionOnConflict: true,
+        }));
     });
 });

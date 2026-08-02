@@ -12,6 +12,10 @@ vi.mock('../services/statement.service', () => ({
     ensureStatementTables: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../documents', () => ({
+    ensureCanonicalDocumentPlatform: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
     validateSearchQuery,
     escapeLike,
@@ -136,6 +140,7 @@ function installQueryRouter(data: {
     receipts?: unknown[];
     statements?: unknown[];
     payslips?: unknown[];
+    documents?: unknown[];
     transactions?: unknown[];
 }) {
     mockQueryRaw.mockImplementation((strings: TemplateStringsArray) => {
@@ -143,6 +148,7 @@ function installQueryRouter(data: {
         if (sql.includes('gnucash_web_receipts')) return Promise.resolve(data.receipts ?? []);
         if (sql.includes('gnucash_web_statement_lines')) return Promise.resolve(data.statements ?? []);
         if (sql.includes('gnucash_web_payslips')) return Promise.resolve(data.payslips ?? []);
+        if (sql.includes('gnucash_web_documents')) return Promise.resolve(data.documents ?? []);
         if (sql.includes('FROM transactions')) return Promise.resolve(data.transactions ?? []);
         return Promise.resolve([]);
     });
@@ -168,6 +174,9 @@ describe('searchDocuments', () => {
             payslips: [
                 { id: 9, employer_name: 'Costco Inc', pay_date: new Date('2026-05-15T00:00:00Z'), line_items_text: '[{"label":"Gross"}]' },
             ],
+            documents: [
+                { id: 13, title: 'Costco warranty', filename: 'warranty.pdf', mime_type: 'application/pdf', extracted_text: 'Costco appliance coverage', source_kind: 'entity_document', source_id: '5', created_at: new Date('2026-05-16T00:00:00Z') },
+            ],
             transactions: [
                 { guid: 'tx1', description: 'Costco run', post_date: new Date('2026-05-03T10:59:00Z'), matched_memo: null },
             ],
@@ -175,7 +184,7 @@ describe('searchDocuments', () => {
 
         const results = await searchDocuments(['a1', 'a2'], 'book1', 'costco');
 
-        expect(results.totalHits).toBe(4);
+        expect(results.totalHits).toBe(5);
         expect(results.receipts).toHaveLength(1);
         expect(results.receipts[0].href).toBe('/receipts');
         expect(results.receipts[0].snippet.text).toContain('COSTCO');
@@ -185,6 +194,12 @@ describe('searchDocuments', () => {
 
         expect(results.payslips[0].href).toBe('/payslips');
         expect(results.payslips[0].title).toBe('Costco Inc');
+
+        expect(results.documents[0]).toMatchObject({
+            group: 'documents',
+            href: '/business/documents',
+            title: 'Costco warranty',
+        });
 
         expect(results.transactions[0].href).toBe('/ledger?search=costco');
         expect(results.transactions[0].date).toBe('2026-05-03');
@@ -206,6 +221,7 @@ describe('searchDocuments', () => {
         const results = await searchDocuments(['a1'], 'book1', 'costco', { limit: 5 });
         expect(results.transactions).toHaveLength(5);
         expect(results.receipts).toHaveLength(0);
+        expect(results.documents).toHaveLength(0);
     });
 
     it('never exceeds MAX_GROUP_RESULTS even when a larger limit is requested', async () => {
@@ -231,6 +247,22 @@ describe('searchDocuments', () => {
         const results = await searchDocuments(['a1'], 'book1', 'running');
         expect(results.receipts[0].snippet.highlightStart).toBe(-1);
         expect(results.receipts[0].snippet.text).toContain('errands');
+    });
+
+    it('routes canonical home photos to inventory and excludes specialised sources in SQL', async () => {
+        installQueryRouter({
+            documents: [
+                { id: 8, title: 'Costco freezer', filename: 'freezer.jpg', mime_type: 'image/jpeg', extracted_text: null, source_kind: 'home_item_photo', source_id: '20', created_at: null },
+            ],
+        });
+        const results = await searchDocuments(['a1'], 'book1', 'costco');
+        expect(results.documents[0].href).toBe('/home/inventory');
+
+        const canonicalCall = mockQueryRaw.mock.calls.find(([strings]) =>
+            Array.isArray(strings) && strings.join('?').includes('gnucash_web_documents'));
+        expect(canonicalCall).toBeDefined();
+        expect((canonicalCall![0] as TemplateStringsArray).join('?'))
+            .toContain("source_kind NOT IN ('receipt', 'statement_batch', 'payslip')");
     });
 
     it('flattens grouped results into palette entries', async () => {

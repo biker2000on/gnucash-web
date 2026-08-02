@@ -1,4 +1,4 @@
-import { Queue } from 'bullmq';
+import { Queue, type JobsOptions } from 'bullmq';
 import { getBullMQConnection } from '../redis';
 
 let jobQueue: Queue | null = null;
@@ -30,6 +30,8 @@ export interface ExtractStatementJobData {
   batchId: number;
   bookGuid?: string;
   userId?: number;
+  autoRecoveryAttempt?: number;
+  preserveRecoveryAttempt?: number;
 }
 
 /**
@@ -38,15 +40,20 @@ export interface ExtractStatementJobData {
  */
 export async function enqueueExtractStatement(
   data: ExtractStatementJobData,
+  options: Pick<JobsOptions, 'delay' | 'jobId'> = {},
 ): Promise<string | undefined> {
-  return enqueueJob('extract-statement', data as unknown as Record<string, unknown>);
+  return enqueueJob('extract-statement', data as unknown as Record<string, unknown>, options);
 }
 
 /**
  * Enqueue an immediate one-off job.
  * Returns undefined (triggering direct fallback) if Redis is unavailable.
  */
-export async function enqueueJob(name: string, data: Record<string, unknown> = {}): Promise<string | undefined> {
+export async function enqueueJob(
+  name: string,
+  data: Record<string, unknown> = {},
+  options: Pick<JobsOptions, 'delay' | 'jobId'> = {},
+): Promise<string | undefined> {
   const queue = getJobQueue();
   if (!queue) return undefined;
   try {
@@ -54,6 +61,7 @@ export async function enqueueJob(name: string, data: Record<string, unknown> = {
       queue.add(name, data, {
         removeOnComplete: 100,
         removeOnFail: 50,
+        ...options,
       }),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Redis enqueue timeout')), 5000)

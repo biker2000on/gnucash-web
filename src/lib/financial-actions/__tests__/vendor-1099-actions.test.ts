@@ -13,9 +13,15 @@ import { summarizeVendor1099Compliance, type Vendor1099ComplianceInput } from '@
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { vendor1099ComplianceActions } from '../sources';
 
+const listLinkedDocuments = vi.hoisted(() => vi.fn());
+
 vi.mock('@/lib/prisma', () => ({ default: {} }));
 vi.mock('@/lib/business/vendor-1099.service', () => ({
   get1099Compliance: vi.fn(),
+}));
+vi.mock('@/lib/documents', () => ({
+  listLinkedDocuments,
+  getDocumentBySource: vi.fn(async () => null),
 }));
 
 const G_LANDSCAPER = 'a'.repeat(32);
@@ -56,6 +62,7 @@ describe('vendor1099ComplianceActions', () => {
       async (_bookGuid, _guids, taxYear, asOf) =>
         summarizeVendor1099Compliance(taxYear, VENDORS_BY_YEAR[taxYear] ?? [], asOf),
     );
+    listLinkedDocuments.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -67,6 +74,11 @@ describe('vendor1099ComplianceActions', () => {
     await vendor1099ComplianceActions('book-1', ['acct-1']);
     const years = vi.mocked(get1099Compliance).mock.calls.map(call => call[2]);
     expect(years).toEqual([2025, 2026]);
+    expect(listLinkedDocuments).toHaveBeenCalledTimes(1);
+    expect(listLinkedDocuments).toHaveBeenCalledWith({
+      bookGuid: 'book-1',
+      targetType: 'vendor_1099',
+    });
   });
 
   it('emits W-9 and filing candidates with the documented lanes and severities', async () => {
@@ -125,5 +137,47 @@ describe('vendor1099ComplianceActions', () => {
         summarizeVendor1099Compliance(taxYear, [vendor({ totalPaid: 100 })], asOf),
     );
     await expect(vendor1099ComplianceActions('book-1', ['acct-1'])).resolves.toEqual([]);
+  });
+
+  it('attaches role-specific evidence without resolving source-status actions', async () => {
+    const targetId = `${G_LANDSCAPER}:2025`;
+    const updatedAt = new Date('2026-02-01T00:00:00Z');
+    listLinkedDocuments.mockResolvedValue([
+      {
+        document: {
+          id: 41,
+          title: 'Signed W-9',
+          filename: 'w9.pdf',
+          sourceKind: 'upload',
+          updatedAt,
+        },
+        link: { targetId, role: 'w9' },
+      },
+      {
+        document: {
+          id: 42,
+          title: 'IRS filing receipt',
+          filename: 'filing.pdf',
+          sourceKind: 'upload',
+          updatedAt,
+        },
+        link: { targetId, role: 'filing_proof' },
+      },
+    ]);
+
+    const actions = await vendor1099ComplianceActions('book-1', ['acct-1']);
+    const w9 = actions.find(action => action.stableKey === `vendor-1099:w9:${G_LANDSCAPER}:2025`)!;
+    const filing = actions.find(action => action.stableKey === `vendor-1099:filing:${G_LANDSCAPER}:2025`)!;
+
+    expect(w9.trace.evidence[0]).toMatchObject({ verified: true, metadata: { requiredDocumentRole: 'w9' } });
+    expect(filing.trace.evidence[0]).toMatchObject({
+      verified: true,
+      metadata: { requiredDocumentRole: 'filing_proof' },
+    });
+    expect(filing.trace.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: '42', verified: true, metadata: expect.objectContaining({ documentRole: 'filing_proof' }) }),
+    ]));
+    expect(actions.some(action => action.stableKey.includes(G_LANDSCAPER))).toBe(true);
+    expect(listLinkedDocuments).toHaveBeenCalledTimes(1);
   });
 });

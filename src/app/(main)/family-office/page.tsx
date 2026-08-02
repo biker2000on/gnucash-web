@@ -283,13 +283,13 @@ export default function FamilyOfficePage() {
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-foreground">Global document search</h2>
-                <p className="mt-1 text-xs text-foreground-muted">Entity vault documents and receipt OCR across the authorized graph.</p>
+                <p className="mt-1 text-xs text-foreground-muted">All documents you can access across authorized books, including receipts, statements, payslips, and vault files.</p>
               </div>
               <input
                 type="search"
                 value={query}
                 onChange={event => setQuery(event.target.value)}
-                placeholder="Search filenames, notes, OCR…"
+                placeholder="Search titles, filenames, and extracted text…"
                 className="w-full max-w-sm rounded-lg border border-border bg-background-tertiary px-3 py-2 text-sm text-foreground focus:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/60"
               />
             </div>

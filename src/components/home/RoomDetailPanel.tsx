@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, Fragment } from 'react';
 import type { HomeRoom, HomeItem } from '@/lib/services/home.service';
 import { formatCurrency } from '@/lib/format';
 import { useToast } from '@/contexts/ToastContext';
+import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
 import {
     CATEGORY_OPTIONS,
     categoryLabel,
@@ -14,6 +15,15 @@ import {
     TNUM,
     WarrantyBadge,
 } from './home-shared';
+
+const HOME_ITEM_DOCUMENT_ROLES = [
+    { value: 'purchase_receipt', label: 'Purchase receipt' },
+    { value: 'warranty', label: 'Warranty' },
+    { value: 'manual', label: 'Manual' },
+    { value: 'appraisal', label: 'Appraisal' },
+    { value: 'serial_photo', label: 'Serial-number photo' },
+    { value: 'claim_evidence', label: 'Claim evidence' },
+] as const;
 
 interface ReceiptOption {
     id: number;
@@ -698,6 +708,13 @@ export function RoomDetailPanel({
                                                 showMoveRoom: true,
                                                 item,
                                             })}
+                                            <LinkedDocumentsPanel
+                                                className="mt-4"
+                                                targetType="home_item"
+                                                targetId={String(item.id)}
+                                                roles={HOME_ITEM_DOCUMENT_ROLES}
+                                                title="Item documents"
+                                            />
                                             <div className="mt-3 flex flex-wrap items-center gap-3">
                                                 <button
                                                     type="button"

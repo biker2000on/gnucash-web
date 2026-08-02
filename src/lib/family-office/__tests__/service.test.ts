@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { ownershipByBook, resolveConnectedBookGuids } from '../service';
+import {
+  familyDocumentPresentation,
+  ownershipByBook,
+  resolveConnectedBookGuids,
+} from '../service';
 
 describe('Family Office permission boundary', () => {
   it('never expands through a link to an unauthorized book', () => {
@@ -48,5 +52,18 @@ describe('Family Office permission boundary', () => {
     expect(ownership.get('household')).toBe(100);
     expect(ownership.get('holding')).toBe(80);
     expect(ownership.get('operating')).toBe(40);
+  });
+});
+
+describe('Family Office canonical document source mapping', () => {
+  it.each([
+    ['receipt', 'receipt', '/receipts'],
+    ['statement_batch', 'statement', '/statements'],
+    ['payslip', 'payslip', '/payslips'],
+    ['home_item_photo', 'home_photo', '/home/inventory'],
+    ['entity_document', 'entity_document', '/business/documents'],
+    ['upload', 'document', '/business/documents'],
+  ])('maps %s to its compatible result kind and destination', (source, kind, href) => {
+    expect(familyDocumentPresentation(source)).toEqual({ kind, href });
   });
 });

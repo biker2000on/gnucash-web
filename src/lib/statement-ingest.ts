@@ -14,7 +14,9 @@
  */
 
 import type { ParsedStatement } from './statement-parse/csv-ofx';
-import type { BatchStatusPatch, StatementLineInput } from './services/statement.service';
+import type { BatchStatusPatch, StatementBatch, StatementLineInput } from './services/statement.service';
+import { createHash } from 'node:crypto';
+import { linkDocument, upsertDocument } from './documents';
 
 function toLineInputs(parsed: ParsedStatement): StatementLineInput[] {
   return parsed.lines.map((l) => ({
@@ -39,8 +41,9 @@ export async function runStatementExtraction(
     getMappedAccountGuid,
   } = await import('./services/statement.service');
 
+  let batch: StatementBatch | null = null;
   try {
-    const batch = await getBatch(batchId);
+    batch = await getBatch(batchId);
     if (!batch) {
       console.warn(`${logPrefix} Statement batch ${batchId} not found, skipping`);
       return;
@@ -139,6 +142,54 @@ export async function runStatementExtraction(
 
     await setBatchStatus(batchId, 'parsed', parsedPatch);
 
+    try {
+      const canonical = await upsertDocument({
+        bookGuid: batch.bookGuid,
+        ownerUserId: userId ?? null,
+        title: batch.originalFilename.slice(0, 255),
+        storageKey: batch.storageKey,
+        filename: batch.originalFilename.slice(0, 255),
+        mimeType: batch.source === 'pdf'
+          ? 'application/pdf'
+          : batch.source === 'csv'
+            ? 'text/csv'
+            : 'application/x-ofx',
+        sizeBytes: buffer.byteLength,
+        contentHash: createHash('sha256').update(buffer).digest('hex'),
+        extractionStatus: 'completed',
+        extractedText: lines.map((line) => line.description).join('\n'),
+        extractionMetadata: {
+          source: batch.source,
+          lineCount: lines.length,
+          statementStartDate: parsed.startDate ?? null,
+          statementEndDate: parsed.endDate ?? null,
+          openingBalance: parsed.openingBalance ?? null,
+          closingBalance: parsed.closingBalance ?? null,
+          currency: parsed.currency ?? null,
+        },
+        extractedAt: new Date(),
+        sourceKind: 'statement_batch',
+        sourceId: String(batch.id),
+      });
+
+      const accountGuid = parsedPatch.accountGuid ?? batch.accountGuid;
+      if (accountGuid) {
+        await linkDocument({
+          bookGuid: batch.bookGuid,
+          documentId: canonical.id,
+          targetType: 'account',
+          targetId: accountGuid,
+          role: 'statement',
+          metadata: { autoSource: 'gnucash_web_statement_batches.account_guid' },
+        });
+      }
+    } catch (canonicalError) {
+      const detail = canonicalError instanceof Error
+        ? canonicalError.message.slice(0, 500)
+        : String(canonicalError).slice(0, 500);
+      console.warn(`${logPrefix} Canonical statement sync deferred for batch ${batchId}: ${detail}`);
+    }
+
     console.log(`${logPrefix} Parsed ${lines.length} line(s) from ${batch.source} batch ${batchId}`);
   } catch (err) {
     console.error(`${logPrefix} Statement extraction failed:`, err);
@@ -148,6 +199,28 @@ export async function runStatementExtraction(
       });
     } catch (statusErr) {
       console.error(`${logPrefix} Failed to record error status:`, statusErr);
+    }
+    if (batch) {
+      try {
+        await upsertDocument({
+          bookGuid: batch.bookGuid,
+          ownerUserId: userId ?? null,
+          title: batch.originalFilename.slice(0, 255),
+          storageKey: batch.storageKey,
+          filename: batch.originalFilename.slice(0, 255),
+          mimeType: batch.source === 'pdf'
+            ? 'application/pdf'
+            : batch.source === 'csv'
+              ? 'text/csv'
+              : 'application/x-ofx',
+          extractionStatus: 'failed',
+          extractionError: err instanceof Error ? err.message : String(err),
+          sourceKind: 'statement_batch',
+          sourceId: String(batch.id),
+        });
+      } catch (indexError) {
+        console.error(`${logPrefix} Failed to sync canonical document error state:`, indexError);
+      }
     }
     // Deliberately do NOT rethrow — the worker treats this as handled.
   }

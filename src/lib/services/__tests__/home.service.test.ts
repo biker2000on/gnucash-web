@@ -6,7 +6,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { roomsModel, itemsModel, itemPhotosModel, tasksModel, serviceLogModel, storageMock } =
+const {
+    roomsModel,
+    itemsModel,
+    itemPhotosModel,
+    tasksModel,
+    serviceLogModel,
+    receiptsModel,
+    storageMock,
+    canonicalMocks,
+    targetMocks,
+} =
     vi.hoisted(() => ({
     roomsModel: {
         findUnique: vi.fn(),
@@ -51,12 +61,22 @@ const { roomsModel, itemsModel, itemPhotosModel, tasksModel, serviceLogModel, st
         update: vi.fn(),
         delete: vi.fn(),
     },
+    receiptsModel: { findUnique: vi.fn() },
     storageMock: {
         put: vi.fn(),
         get: vi.fn(),
         delete: vi.fn(),
         getUrl: vi.fn(),
     },
+    canonicalMocks: {
+        remove: vi.fn(),
+        getBySource: vi.fn(),
+        link: vi.fn(),
+        listLinks: vi.fn(),
+        unlink: vi.fn(),
+        upsert: vi.fn(),
+    },
+    targetMocks: { unlinkForTarget: vi.fn() },
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -66,8 +86,21 @@ vi.mock('@/lib/prisma', () => ({
         gnucash_web_home_item_photos: itemPhotosModel,
         gnucash_web_home_tasks: tasksModel,
         gnucash_web_home_service_log: serviceLogModel,
-        gnucash_web_receipts: { findUnique: vi.fn() },
+        gnucash_web_receipts: receiptsModel,
     },
+}));
+
+vi.mock('@/lib/documents', () => ({
+    deleteDocumentBySource: canonicalMocks.remove,
+    getDocumentBySource: canonicalMocks.getBySource,
+    linkDocument: canonicalMocks.link,
+    listDocumentLinks: canonicalMocks.listLinks,
+    unlinkDocument: canonicalMocks.unlink,
+    upsertDocument: canonicalMocks.upsert,
+}));
+
+vi.mock('@/lib/services/document-link-targets.service', () => ({
+    unlinkDocumentLinksForTarget: targetMocks.unlinkForTarget,
 }));
 
 vi.mock('@/lib/storage/storage-backend', () => ({
@@ -97,6 +130,8 @@ import {
     seedDefaultRooms,
     createServiceEntry,
     addItemPhoto,
+    deleteItemPhoto,
+    deleteItem,
     createItem,
     updateItem,
     listDraftItems,
@@ -112,6 +147,13 @@ const TODAY = new Date('2026-07-16T12:00:00.000Z');
 
 beforeEach(() => {
     vi.clearAllMocks();
+    canonicalMocks.remove.mockResolvedValue(true);
+    canonicalMocks.getBySource.mockResolvedValue(null);
+    canonicalMocks.link.mockResolvedValue({ id: 1 });
+    canonicalMocks.listLinks.mockResolvedValue([]);
+    canonicalMocks.unlink.mockResolvedValue(true);
+    canonicalMocks.upsert.mockResolvedValue({ id: 88 });
+    targetMocks.unlinkForTarget.mockResolvedValue(0);
 });
 
 /* ------------------------------------------------------------------ */
@@ -471,7 +513,166 @@ describe('addItemPhoto', () => {
                 sort_order: 0,
             },
         });
+        expect(canonicalMocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            bookGuid: BOOK,
+            storageKey: 'home-items/2026/07/uuid.jpg',
+            filename: 'tv.jpg',
+            mimeType: 'image/jpeg',
+            sourceKind: 'home_item_photo',
+            sourceId: '42',
+            extractionStatus: 'not_applicable',
+        }));
+        expect(canonicalMocks.link).toHaveBeenCalledWith(expect.objectContaining({
+            bookGuid: BOOK,
+            documentId: 88,
+            targetType: 'home_item',
+            targetId: '5',
+            role: 'photo',
+        }));
         expect(item.photos).toEqual([{ id: 42 }]);
+    });
+
+    it('deletes the photo row before canonical metadata and the blob', async () => {
+        const order: string[] = [];
+        itemPhotosModel.findUnique.mockResolvedValue({
+            id: 42, book_guid: BOOK, item_id: 5, photo_key: 'home-items/tv.jpg', sort_order: 0,
+        });
+        itemsModel.findUnique.mockResolvedValue(itemRow());
+        canonicalMocks.remove.mockImplementation(async () => { order.push('canonical'); return true; });
+        itemPhotosModel.delete.mockImplementation(async () => { order.push('source'); return { id: 42 }; });
+        storageMock.delete.mockImplementation(async () => { order.push('blob'); });
+        itemsModel.update.mockResolvedValue(itemRow());
+
+        await deleteItemPhoto(BOOK, 5, 42);
+
+        expect(canonicalMocks.remove).toHaveBeenCalledWith(BOOK, 'home_item_photo', '42');
+        expect(order).toEqual(['source', 'canonical', 'blob']);
+    });
+
+    it('does not remove canonical metadata or the blob when photo deletion fails', async () => {
+        itemPhotosModel.findUnique.mockResolvedValue({
+            id: 42, book_guid: BOOK, item_id: 5, photo_key: 'home-items/tv.jpg', sort_order: 0,
+        });
+        itemPhotosModel.delete.mockRejectedValue(new Error('source unavailable'));
+
+        await expect(deleteItemPhoto(BOOK, 5, 42)).rejects.toThrow('source unavailable');
+        expect(canonicalMocks.remove).not.toHaveBeenCalled();
+        expect(storageMock.delete).not.toHaveBeenCalled();
+    });
+
+    it('keeps a successful photo deletion successful when canonical cleanup fails', async () => {
+        itemPhotosModel.findUnique.mockResolvedValue({
+            id: 42, book_guid: BOOK, item_id: 5, photo_key: 'home-items/tv.jpg', sort_order: 0,
+        });
+        itemPhotosModel.delete.mockResolvedValue({ id: 42 });
+        canonicalMocks.remove.mockRejectedValue(new Error('canonical unavailable'));
+        itemsModel.update.mockResolvedValue(itemRow());
+        itemsModel.findUnique.mockResolvedValue(itemRow());
+
+        await expect(deleteItemPhoto(BOOK, 5, 42)).resolves.toMatchObject({ id: 5 });
+        expect(storageMock.delete).toHaveBeenCalledWith('home-items/tv.jpg');
+    });
+});
+
+describe('home item document lifecycle', () => {
+    const itemRow = (receiptId: number | null, photos: Array<{ id: number }> = []) => ({
+        id: 5,
+        book_guid: BOOK,
+        room_id: 1,
+        name: 'TV',
+        category: 'electronics',
+        est_value: 800,
+        purchase_date: null,
+        receipt_id: receiptId,
+        photo_key: null,
+        warranty_expires: null,
+        serial: null,
+        notes: null,
+        photos,
+    });
+
+    it('links a book-owned canonical receipt when creating an item', async () => {
+        roomsModel.findUnique.mockResolvedValue({ id: 1, book_guid: BOOK });
+        receiptsModel.findUnique.mockResolvedValue({ book_guid: BOOK });
+        itemsModel.create.mockResolvedValue(itemRow(10));
+        canonicalMocks.getBySource.mockResolvedValue({ id: 110 });
+
+        await createItem(BOOK, { roomId: 1, name: 'TV', receiptId: 10 });
+
+        expect(canonicalMocks.getBySource).toHaveBeenCalledWith(BOOK, 'receipt', '10');
+        expect(canonicalMocks.link).toHaveBeenCalledWith(expect.objectContaining({
+            bookGuid: BOOK,
+            documentId: 110,
+            targetType: 'home_item',
+            targetId: '5',
+            role: 'purchase_receipt',
+            metadata: { autoSource: 'home_item.receipt_id', receiptId: 10 },
+        }));
+    });
+
+    it('replaces only stale automatic receipt edges and preserves manual links', async () => {
+        itemsModel.findUnique.mockResolvedValue(itemRow(10));
+        receiptsModel.findUnique.mockResolvedValue({ book_guid: BOOK });
+        itemsModel.update.mockResolvedValue(itemRow(20));
+        canonicalMocks.listLinks.mockResolvedValue([
+            {
+                documentId: 110, role: 'purchase_receipt',
+                metadata: { autoSource: 'home_item.receipt_id', receiptId: 10 },
+            },
+            { documentId: 999, role: 'purchase_receipt', metadata: { label: 'manual evidence' } },
+        ]);
+        canonicalMocks.getBySource.mockResolvedValue({ id: 120 });
+
+        await updateItem(BOOK, 5, { receiptId: 20 });
+
+        expect(canonicalMocks.unlink).toHaveBeenCalledTimes(1);
+        expect(canonicalMocks.unlink).toHaveBeenCalledWith(expect.objectContaining({
+            documentId: 110, targetId: '5', role: 'purchase_receipt',
+        }));
+        expect(canonicalMocks.link).toHaveBeenCalledWith(expect.objectContaining({
+            documentId: 120, targetId: '5', role: 'purchase_receipt',
+        }));
+    });
+
+    it('removes the automatic receipt edge when receiptId is cleared', async () => {
+        itemsModel.findUnique.mockResolvedValue(itemRow(10));
+        itemsModel.update.mockResolvedValue(itemRow(null));
+        canonicalMocks.listLinks.mockResolvedValue([{
+            documentId: 110,
+            role: 'purchase_receipt',
+            metadata: { legacy_receipt_id: 10 },
+        }]);
+
+        await updateItem(BOOK, 5, { receiptId: null });
+
+        expect(canonicalMocks.unlink).toHaveBeenCalledWith(expect.objectContaining({
+            documentId: 110, targetId: '5', role: 'purchase_receipt',
+        }));
+        expect(canonicalMocks.getBySource).not.toHaveBeenCalled();
+        expect(canonicalMocks.link).not.toHaveBeenCalled();
+    });
+
+    it('removes every photo sidecar before deleting a whole item and its blobs', async () => {
+        const order: string[] = [];
+        itemsModel.findUnique.mockResolvedValue(itemRow(null));
+        itemPhotosModel.findMany.mockResolvedValue([
+            { id: 41, photo_key: 'home-items/a.jpg' },
+            { id: 42, photo_key: 'home-items/b.jpg' },
+        ]);
+        canonicalMocks.remove.mockImplementation(async (_book: string, _kind: string, id: string) => {
+            order.push(`canonical:${id}`);
+            return true;
+        });
+        targetMocks.unlinkForTarget.mockImplementation(async () => { order.push('links'); return 1; });
+        itemsModel.delete.mockImplementation(async () => { order.push('source'); return { id: 5 }; });
+        storageMock.delete.mockImplementation(async (key: string) => { order.push(`blob:${key}`); });
+
+        await deleteItem(BOOK, 5);
+
+        expect(order).toEqual([
+            'source', 'canonical:41', 'canonical:42', 'links',
+            'blob:home-items/a.jpg', 'blob:home-items/b.jpg',
+        ]);
     });
 });
 

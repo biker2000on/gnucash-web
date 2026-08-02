@@ -16,6 +16,32 @@ import { assertNotLocked, assertTxnMutable } from '@/lib/services/period-lock.se
 export type { PayslipSplit } from '@/lib/payslip-splits';
 export { validatePayslipBalance, buildSplitsFromLineItems } from '@/lib/payslip-splits';
 
+async function linkPostedPayslip(
+  bookGuid: string,
+  payslipId: number,
+  transactionGuid: string,
+): Promise<void> {
+  try {
+    const { getDocumentBySource, linkDocument } = await import('@/lib/documents');
+    const document = await getDocumentBySource(bookGuid, 'payslip', String(payslipId));
+    if (document) {
+      await linkDocument({
+        bookGuid,
+        documentId: document.id,
+        targetType: 'transaction',
+        targetId: transactionGuid,
+        role: 'payslip',
+        metadata: { autoSource: 'gnucash_web_payslips.transaction_guid' },
+      });
+    }
+  } catch (canonicalError) {
+    const detail = canonicalError instanceof Error
+      ? canonicalError.message.slice(0, 500)
+      : String(canonicalError).slice(0, 500);
+    console.warn(`Canonical payslip link deferred for payslip ${payslipId}: ${detail}`);
+  }
+}
+
 /**
  * Find an existing transaction that matches the payslip splits.
  *
@@ -208,6 +234,7 @@ export async function postPayslipTransaction(
     }));
     await upsertTemplate(bookGuid, employerName, templateItems);
 
+    await linkPostedPayslip(bookGuid, payslipId, existingGuid);
     return existingGuid;
   }
 
@@ -215,7 +242,7 @@ export async function postPayslipTransaction(
   if (simpleFinMatch) {
     // Period lock: the matched deposit's own date may differ from payDate
     await assertTxnMutable(bookGuid, simpleFinMatch);
-    return await prisma.$transaction(async (tx) => {
+    const transactionGuid = await prisma.$transaction(async (tx) => {
       // Delete the old lump-sum splits
       await tx.$executeRaw`DELETE FROM splits WHERE tx_guid = ${simpleFinMatch}`;
 
@@ -266,10 +293,12 @@ export async function postPayslipTransaction(
 
       return simpleFinMatch;
     });
+    await linkPostedPayslip(bookGuid, payslipId, transactionGuid);
+    return transactionGuid;
   }
 
   // No match — create new transaction
-  return await prisma.$transaction(async (tx) => {
+  const transactionGuid = await prisma.$transaction(async (tx) => {
     const transactionGuid = generateGuid();
     const postDate = new Date(payDate + 'T12:00:00Z');
     const enterDate = new Date();
@@ -320,4 +349,6 @@ export async function postPayslipTransaction(
 
     return transactionGuid;
   });
+  await linkPostedPayslip(bookGuid, payslipId, transactionGuid);
+  return transactionGuid;
 }

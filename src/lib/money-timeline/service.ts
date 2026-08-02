@@ -23,10 +23,77 @@ import {
 import { ENTITY_TYPES } from '@/lib/services/entity.service';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { loadResilienceEvents } from '@/lib/resilience/service';
+import {
+  listLinkedDocuments,
+  type DocumentLinkRole,
+  type DocumentTargetType,
+  type LinkedDocument,
+} from '@/lib/documents';
 import { buildMoneyTimeline, eventStatus, isoDate } from './core';
 import type { FinancialEvent, FinancialEventDomain, MoneyTimeline } from './types';
+import type { EvidenceKind, EvidenceRef } from '@/lib/financial-actions/types';
 
 const DEFAULT_HORIZON_DAYS = 365;
+
+function groupLinkedDocuments(linked: LinkedDocument[]): Map<string, LinkedDocument[]> {
+  const grouped = new Map<string, LinkedDocument[]>();
+  for (const item of linked) {
+    const current = grouped.get(item.link.targetId) ?? [];
+    current.push(item);
+    grouped.set(item.link.targetId, current);
+  }
+  return grouped;
+}
+
+async function linkedDocumentsForType(
+  bookGuid: string,
+  targetType: DocumentTargetType,
+): Promise<Map<string, LinkedDocument[]>> {
+  try {
+    return groupLinkedDocuments(await listLinkedDocuments({ bookGuid, targetType }));
+  } catch (error) {
+    console.warn(`Money Timeline ${targetType} document evidence failed:`, error);
+    return new Map();
+  }
+}
+
+function linkedEventEvidence(
+  linked: LinkedDocument[],
+  kind: EvidenceKind,
+  href: string,
+): EvidenceRef[] {
+  return linked.map(({ document, link }) => ({
+    kind,
+    id: String(document.id),
+    label: document.title || document.filename,
+    source: 'manual',
+    href,
+    observedAt: document.updatedAt.toISOString(),
+    verified: true,
+    metadata: {
+      documentId: document.id,
+      documentRole: link.role,
+      filename: document.filename,
+      sourceKind: document.sourceKind,
+    },
+  }));
+}
+
+function requiredComplianceRole(severity: 'filing' | 'payment' | 'admin'): DocumentLinkRole {
+  if (severity === 'payment') return 'payment_confirmation';
+  if (severity === 'admin') return 'certificate';
+  return 'filed_return';
+}
+
+function uniqueLinkedDocuments(linked: LinkedDocument[]): LinkedDocument[] {
+  const seen = new Set<string>();
+  return linked.filter(({ document, link }) => {
+    const key = `${document.id}:${link.role}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
@@ -254,14 +321,42 @@ export async function collectFinancialEventsForBook(
       select: { item_key: true, period: true },
     });
     const resolved = new Set(statusRows.map(row => `${row.item_key}|${row.period}`));
-    events.push(...fromIcs(
+    const deadlineEvents = complianceDeadlineEvents(items, resolved, now);
+    const mapped = fromIcs(
       bookGuid,
       currency,
       'compliance',
-      complianceDeadlineEvents(items, resolved, now),
+      deadlineEvents,
       '/taxes/compliance',
       now,
-    ));
+    );
+    const itemBySourceId = new Map(items.map(item => [
+      `compliance-${item.key}-${item.period}`,
+      item,
+    ]));
+    const linkedByTarget = await linkedDocumentsForType(bookGuid, 'compliance_item');
+    for (const event of mapped) {
+      const item = itemBySourceId.get(event.sourceId);
+      if (!item) continue;
+      const targetId = `${item.key}:${item.period}`;
+      const linked = linkedByTarget.get(targetId) ?? [];
+      const requiredRole = requiredComplianceRole(item.severity);
+      const verified = linked.some(({ link }) => link.role === requiredRole);
+      if (event.evidence[0]) {
+        event.evidence[0].verified = verified;
+        event.evidence[0].metadata = { requiredDocumentRole: requiredRole };
+      }
+      event.evidence.push(...linkedEventEvidence(linked, 'tax_table', event.href!));
+      event.metadata = {
+        ...event.metadata,
+        targetId,
+        requiredDocumentRole: requiredRole,
+        linkedDocumentCount: linked.length,
+        linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+        evidenceHref: event.href,
+      };
+    }
+    events.push(...mapped);
   } catch (error) {
     console.warn('Money Timeline compliance source failed:', error);
   }
@@ -271,6 +366,7 @@ export async function collectFinancialEventsForBook(
   // reportable vendor has a filed date recorded.
   try {
     const currentYear = now.getUTCFullYear();
+    const linkedByTarget = await linkedDocumentsForType(bookGuid, 'vendor_1099');
     for (const taxYear of [currentYear - 1, currentYear]) {
       const compliance = await get1099Compliance(bookGuid, accountGuids, taxYear, now);
       if (compliance.reportableCount === 0) continue;
@@ -278,6 +374,9 @@ export async function collectFinancialEventsForBook(
       // Fully-filed past deadlines are finished business — keep the timeline clean.
       if (allFiled && compliance.filingDueDate < isoDate(now)) continue;
       const href = `/business/reports/1099?year=${taxYear}`;
+      const linked = uniqueLinkedDocuments(compliance.rows
+        .filter(row => row.requiresFiling)
+        .flatMap(row => linkedByTarget.get(`${row.vendorGuid}:${taxYear}`) ?? []));
       events.push({
         id: `${bookGuid}:vendor-1099:${taxYear}`,
         bookGuid,
@@ -296,22 +395,30 @@ export async function collectFinancialEventsForBook(
         sourceId: `vendor-1099:${taxYear}`,
         actionId: null,
         planId: null,
-        evidence: compliance.rows
+        evidence: [...compliance.rows
           .filter(row => row.requiresFiling && !row.filedDate)
           .slice(0, 10)
-          .map(row => ({
-            kind: 'vendor' as const,
-            id: row.vendorGuid,
-            label: row.name,
-            source: 'system' as const,
-            href,
-            observedAt: now.toISOString(),
-          })),
+          .map(row => {
+            const vendorLinked = linkedByTarget.get(`${row.vendorGuid}:${taxYear}`) ?? [];
+            return {
+              kind: 'vendor' as const,
+              id: row.vendorGuid,
+              label: row.name,
+              source: 'system' as const,
+              href,
+              observedAt: now.toISOString(),
+              verified: vendorLinked.some(({ link }) => link.role === 'filing_proof'),
+              metadata: { requiredDocumentRole: 'filing_proof' },
+            };
+          }), ...linkedEventEvidence(linked, 'vendor', href)],
         metadata: {
           taxYear,
           reportableCount: compliance.reportableCount,
           unfiledCount: compliance.unfiledCount,
           missingW9Count: compliance.missingW9Count,
+          linkedDocumentCount: linked.length,
+          linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+          evidenceHref: href,
         },
       });
     }
@@ -350,6 +457,7 @@ export async function collectFinancialEventsForBook(
       import('@/lib/services/home.service'),
       listTasks(bookGuid),
     ]);
+    const linkedByTarget = await linkedDocumentsForType(bookGuid, 'home_item');
     for (const task of tasks) {
       if (!task.nextDue) continue;
       events.push({
@@ -374,6 +482,8 @@ export async function collectFinancialEventsForBook(
     }
     for (const item of await listItems(bookGuid)) {
       if (!item.warrantyExpires) continue;
+      const linked = linkedByTarget.get(String(item.id)) ?? [];
+      const warrantyLinked = linked.filter(({ link }) => link.role === 'warranty');
       events.push({
         id: `${bookGuid}:home-warranty:${item.id}:${item.warrantyExpires}`,
         bookGuid,
@@ -390,8 +500,23 @@ export async function collectFinancialEventsForBook(
         sourceId: `warranty:${item.id}`,
         actionId: null,
         planId: null,
-        evidence: [{ kind: 'assumption', id: String(item.id), label: 'Recorded warranty date', source: 'manual' }],
-        metadata: { itemId: item.id, eventType: 'warranty' },
+        evidence: [{
+          kind: 'assumption',
+          id: String(item.id),
+          label: 'Recorded warranty date',
+          source: 'manual',
+          href: '/home/inventory',
+          verified: warrantyLinked.length > 0,
+          metadata: { requiredDocumentRole: 'warranty' },
+        }, ...linkedEventEvidence(warrantyLinked, 'home_item', '/home/inventory')],
+        metadata: {
+          itemId: item.id,
+          eventType: 'warranty',
+          requiredDocumentRole: 'warranty',
+          linkedDocumentCount: linked.length,
+          linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+          evidenceHref: '/home/inventory',
+        },
       });
     }
   } catch (error) {

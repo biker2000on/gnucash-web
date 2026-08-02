@@ -3,6 +3,65 @@
  * Called by both the BullMQ job handler (worker) and the upload route (inline fallback).
  */
 
+import { createHash } from 'node:crypto';
+import { linkDocument, upsertDocument } from '@/lib/documents';
+
+async function syncPayslipDocument(
+  payslipId: number,
+  bookGuid: string,
+  buffer: Buffer | null,
+  extractedText: string | null,
+  extractionError?: string | null,
+): Promise<void> {
+  try {
+    const prisma = (await import('@/lib/prisma')).default;
+    const row = await prisma.gnucash_web_payslips.findFirst({
+      where: { id: payslipId, book_guid: bookGuid },
+    });
+    if (!row) return;
+    const canonical = await upsertDocument({
+      bookGuid,
+      ownerUserId: row.created_by,
+      title: row.employer_name,
+      storageKey: row.storage_key,
+      filename: `payslip-${payslipId}.pdf`,
+      mimeType: row.storage_key ? 'application/pdf' : null,
+      sizeBytes: buffer?.byteLength ?? null,
+      contentHash: buffer ? createHash('sha256').update(buffer).digest('hex') : null,
+      extractionStatus: extractionError ? 'failed' : 'completed',
+      extractedText,
+      extractionMetadata: {
+        employerName: row.employer_name,
+        payDate: row.pay_date?.toISOString().slice(0, 10) ?? null,
+        payPeriodStart: row.pay_period_start?.toISOString().slice(0, 10) ?? null,
+        payPeriodEnd: row.pay_period_end?.toISOString().slice(0, 10) ?? null,
+        lineItems: row.line_items,
+        rawResponse: row.raw_response,
+        status: row.status,
+      },
+      extractionError: extractionError ?? null,
+      extractedAt: extractionError ? null : new Date(),
+      sourceKind: 'payslip',
+      sourceId: String(payslipId),
+    });
+    if (row.transaction_guid) {
+      await linkDocument({
+        bookGuid,
+        documentId: canonical.id,
+        targetType: 'transaction',
+        targetId: row.transaction_guid,
+        role: 'payslip',
+        metadata: { autoSource: 'gnucash_web_payslips.transaction_guid' },
+      });
+    }
+  } catch (canonicalError) {
+    const detail = canonicalError instanceof Error
+      ? canonicalError.message.slice(0, 500)
+      : String(canonicalError).slice(0, 500);
+    console.warn(`[payslip ${payslipId}] Canonical sync deferred: ${detail}`);
+  }
+}
+
 async function checkMappingsAndSetReady(
   payslipId: number,
   bookGuid: string,
@@ -25,6 +84,8 @@ export async function runPayslipExtraction(
   logPrefix: string = '[extract]'
 ): Promise<void> {
   const { updatePayslipStatus, updatePayslipLineItems } = await import('@/lib/payslips');
+  let resolvedBookGuid = bookGuid;
+  let sourceBuffer: Buffer | null = null;
 
   try {
     await updatePayslipStatus(payslipId, 'processing');
@@ -46,12 +107,13 @@ export async function runPayslipExtraction(
       throw new Error(`Payslip ${payslipId} has no storage_key`);
     }
 
-    const resolvedBookGuid = bookGuid ?? payslip.book_guid;
+    resolvedBookGuid = bookGuid ?? payslip.book_guid;
 
     // Get PDF from storage
     const { getStorageBackend } = await import('@/lib/storage/storage-backend');
     const storage = await getStorageBackend();
     const buffer = await storage.get(payslip.storage_key);
+    sourceBuffer = buffer;
 
     // Get AI config
     const { getAiConfig } = await import('@/lib/ai-config');
@@ -86,6 +148,12 @@ export async function runPayslipExtraction(
         console.log(`${logPrefix} Tier 1 (AI) complete: ${extractedData.line_items.length} line items, employer: ${extractedData.employer_name}`);
 
         await checkMappingsAndSetReady(payslipId, resolvedBookGuid, extractedData.employer_name, extractedData.line_items);
+        await syncPayslipDocument(
+          payslipId,
+          resolvedBookGuid,
+          buffer,
+          JSON.stringify(extractedData),
+        );
         return;
       } catch (aiErr) {
         console.warn(`${logPrefix} Tier 1 (AI) failed, falling through to Tier 2:`, aiErr);
@@ -147,6 +215,7 @@ export async function runPayslipExtraction(
       console.log(`${logPrefix} Tier 2 (template+regex) complete: ${appliedLineItems.length} line items, employer: ${resolvedEmployer}`);
 
       await checkMappingsAndSetReady(payslipId, resolvedBookGuid, resolvedEmployer, appliedLineItems);
+      await syncPayslipDocument(payslipId, resolvedBookGuid, buffer, ocrText);
       return;
     }
 
@@ -163,11 +232,23 @@ export async function runPayslipExtraction(
     });
 
     console.log(`${logPrefix} Tier 3 (regex-only) complete: no template found, user will manually add line items`);
+    await syncPayslipDocument(payslipId, resolvedBookGuid, buffer, ocrText);
   } catch (err) {
     console.error(`${logPrefix} Payslip extraction failed:`, err);
     await updatePayslipStatus(payslipId, 'error', {
       error_message: err instanceof Error ? err.message : String(err),
     });
+    if (resolvedBookGuid) {
+      try {
+        await syncPayslipDocument(
+          payslipId,
+          resolvedBookGuid,
+          sourceBuffer,
+          null,
+          err instanceof Error ? err.message : String(err),
+        );
+      } catch { /* syncPayslipDocument is best effort */ }
+    }
     throw err;
   }
 }

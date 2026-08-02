@@ -3,6 +3,10 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getBatch } from '@/lib/services/statement.service';
 import { enqueueExtractStatement } from '@/lib/queue/queues';
+import {
+  parseStatementRecoveryState,
+  recordStatementRecoveryFailure,
+} from '@/lib/queue/statement-recovery';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -25,12 +29,21 @@ export async function POST(_request: Request, { params }: RouteParams) {
       return NextResponse.json({ error: 'Statement not found' }, { status: 404 });
     }
 
-    const jobId = await enqueueExtractStatement({ batchId, bookGuid, userId: user.id });
+    const priorRecoveryAttempt = parseStatementRecoveryState(batch.error).attempt;
+    const jobId = await enqueueExtractStatement({
+      batchId,
+      bookGuid,
+      userId: user.id,
+      preserveRecoveryAttempt: priorRecoveryAttempt,
+    });
     if (!jobId) {
       // Redis unavailable — run extraction inline.
       try {
         const { runStatementExtraction } = await import('@/lib/statement-ingest');
         await runStatementExtraction(batchId, bookGuid, `[reparse-${batchId}]`, user.id);
+        if (priorRecoveryAttempt > 0) {
+          await recordStatementRecoveryFailure(batchId, priorRecoveryAttempt);
+        }
       } catch (extractErr) {
         console.error(`Inline statement re-parse failed for batch ${batchId}:`, extractErr);
         return NextResponse.json({ error: 'Extraction failed' }, { status: 500 });

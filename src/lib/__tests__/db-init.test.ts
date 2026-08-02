@@ -198,4 +198,22 @@ describe('initializeDatabase', () => {
         expect(ddl).toContain('REFERENCES budgets(guid)');
         expect(ddl).toContain('ON DELETE CASCADE');
     });
+
+    it('installs and non-destructively backfills the canonical document platform', async () => {
+        await initializeDatabase();
+        const sqls = mocks.query.mock.calls.map((call) => String(call[0]));
+        const schema = sqls.find((sql) => sql.includes('gnucash_web_canonical_documents_schema'));
+        const backfill = sqls.find((sql) => sql.includes("'home_item_photo'")
+            && sql.includes('INSERT INTO gnucash_web_documents'));
+
+        expect(schema).toContain('CREATE TABLE IF NOT EXISTS gnucash_web_documents');
+        expect(schema).toContain('CREATE TABLE IF NOT EXISTS gnucash_web_document_links');
+        expect(schema).toContain('FOREIGN KEY (document_id, book_guid)');
+        expect(schema).toContain('idx_documents_search_fts');
+        expect(backfill).toContain("'purchase_receipt'");
+        expect(backfill).toContain("to_regclass('gnucash_web_statement_batches')");
+        expect(backfill).not.toMatch(
+            /DELETE FROM gnucash_web_(receipts|payslips|entity_documents|home_item_photos)/,
+        );
+    });
 });

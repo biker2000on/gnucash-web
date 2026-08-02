@@ -6,6 +6,7 @@ import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { getUserBooks, roleAtLeast } from '@/lib/services/permission.service';
 import { FinancialSummaryService, type FinancialSummary } from '@/lib/services/financial-summary.service';
 import { getMoneyTimeline } from '@/lib/money-timeline/service';
+import { ensureCanonicalDocumentPlatform } from '@/lib/documents';
 import type { FinancialEvent, TimelineConflict } from '@/lib/money-timeline/types';
 
 export interface FamilyOfficeEntity {
@@ -535,11 +536,28 @@ export interface FamilyDocumentResult {
   id: string;
   bookGuid: string;
   bookName: string;
-  kind: 'entity_document' | 'receipt';
+  kind: 'entity_document' | 'receipt' | 'statement' | 'payslip' | 'home_photo' | 'document';
   title: string;
   detail: string | null;
   date: string;
   href: string;
+}
+
+export function familyDocumentPresentation(sourceKind: string): Pick<FamilyDocumentResult, 'kind' | 'href'> {
+  switch (sourceKind) {
+    case 'receipt':
+      return { kind: 'receipt', href: '/receipts' };
+    case 'statement_batch':
+      return { kind: 'statement', href: '/statements' };
+    case 'payslip':
+      return { kind: 'payslip', href: '/payslips' };
+    case 'home_item_photo':
+      return { kind: 'home_photo', href: '/home/inventory' };
+    case 'entity_document':
+      return { kind: 'entity_document', href: '/business/documents' };
+    default:
+      return { kind: 'document', href: '/business/documents' };
+  }
 }
 
 export async function searchFamilyDocuments(
@@ -551,36 +569,43 @@ export async function searchFamilyDocuments(
   if (graph.entities.length === 0) return [];
   const guids = graph.entities.map(entity => entity.bookGuid);
   const needle = `%${query.trim().replace(/[%_]/g, '\\$&')}%`;
-  type Row = { id: number; book_guid: string; title: string; detail: string | null; date: Date; kind: string };
+  await ensureCanonicalDocumentPlatform();
+  type Row = {
+    id: number;
+    book_guid: string;
+    title: string;
+    detail: string | null;
+    date: Date;
+    source_kind: string;
+  };
   const rows = await prisma.$queryRaw<Row[]>`
-    SELECT id, book_guid, title, detail, date, kind
-    FROM (
-      SELECT id, book_guid, title, COALESCE(notes, file_name) AS detail,
-             uploaded_at AS date, 'entity_document' AS kind
-      FROM gnucash_web_entity_documents
-      WHERE book_guid IN (${Prisma.join(guids)})
-        AND (${query.trim() === ''} OR title ILIKE ${needle} OR notes ILIKE ${needle} OR file_name ILIKE ${needle})
-      UNION ALL
-      SELECT id, book_guid, filename AS title, LEFT(ocr_text, 240) AS detail,
-             created_at AS date, 'receipt' AS kind
-      FROM gnucash_web_receipts
-      WHERE book_guid IN (${Prisma.join(guids)})
-        AND (${query.trim() === ''} OR filename ILIKE ${needle} OR ocr_text ILIKE ${needle})
-    ) docs
-    ORDER BY date DESC
+    SELECT id, book_guid, COALESCE(title, filename) AS title,
+           COALESCE(LEFT(extracted_text, 240), filename) AS detail,
+           created_at AS date, source_kind
+    FROM gnucash_web_documents
+    WHERE book_guid IN (${Prisma.join(guids)})
+      AND (
+        ${query.trim() === ''}
+        OR title ILIKE ${needle}
+        OR filename ILIKE ${needle}
+        OR extracted_text ILIKE ${needle}
+      )
+    ORDER BY created_at DESC
     LIMIT 100
   `;
   const nameOf = new Map(graph.entities.map(entity => [entity.bookGuid, entity.name]));
-  return rows.map(row => ({
-    id: `${row.kind}:${row.id}`,
-    bookGuid: row.book_guid,
-    bookName: nameOf.get(row.book_guid) ?? row.book_guid,
-    kind: row.kind === 'receipt' ? 'receipt' : 'entity_document',
-    title: row.title,
-    detail: row.detail,
-    date: row.date.toISOString(),
-    href: row.kind === 'receipt' ? '/receipts' : '/business/documents',
-  }));
+  return rows.map(row => {
+    const presentation = familyDocumentPresentation(row.source_kind);
+    return {
+      id: `${presentation.kind}:${row.id}`,
+      bookGuid: row.book_guid,
+      bookName: nameOf.get(row.book_guid) ?? row.book_guid,
+      ...presentation,
+      title: row.title,
+      detail: row.detail,
+      date: row.date.toISOString(),
+    };
+  });
 }
 
 export async function getFamilyTimeline(

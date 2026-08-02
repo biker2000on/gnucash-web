@@ -8,6 +8,11 @@ import { validateWebhookUrl } from '@/lib/webhooks';
 import { createCalculationTrace } from '@/lib/provenance';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import {
+  listLinkedDocuments,
+  type DocumentLinkRole,
+  type LinkedDocument,
+} from '@/lib/documents';
+import {
   buildPersonalPriceIndex,
   calculateCapitalPlan,
   calculateCoverageGap,
@@ -645,6 +650,92 @@ function parseSection<S extends ResilienceSection>(section: S, data: unknown): z
   return result.data as z.infer<(typeof schemas)[S]>;
 }
 
+const GNUCASH_GUID = /^[0-9a-f]{32}$/;
+
+/**
+ * Return farm-sale transaction links that do not resolve to a transaction in
+ * the active book. A transaction belongs to a book when at least one of its
+ * splits posts to an account in that book.
+ */
+export async function getInvalidFarmTransactionGuids(
+  bookGuid: string,
+  profile: FarmProductionProfile,
+): Promise<string[]> {
+  const linked = [...new Set(profile.sales
+    .map(sale => sale.transactionGuid?.trim() ?? '')
+    .filter(Boolean))];
+  if (linked.length === 0) return [];
+
+  const malformed = linked.filter(guid => !GNUCASH_GUID.test(guid));
+  const candidates = linked.filter(guid => GNUCASH_GUID.test(guid));
+  if (candidates.length === 0) return malformed;
+
+  const accountGuids = await getAccountGuidsForBook(bookGuid);
+  if (accountGuids.length === 0) return linked;
+
+  const result = await query(
+    `SELECT DISTINCT t.guid
+       FROM transactions t
+       JOIN splits s ON s.tx_guid = t.guid
+      WHERE t.guid = ANY($1::text[])
+        AND s.account_guid = ANY($2::text[])`,
+    [candidates, accountGuids],
+  );
+  const valid = new Set((result.rows as Array<{ guid: string }>).map(row => row.guid));
+  return [...malformed, ...candidates.filter(guid => !valid.has(guid))];
+}
+
+async function sanitizeFarmTransactionLinks(
+  bookGuid: string,
+  profile: FarmProductionProfile,
+): Promise<FarmProductionProfile> {
+  const invalid = new Set(await getInvalidFarmTransactionGuids(bookGuid, profile));
+  if (invalid.size === 0) return profile;
+  return {
+    ...profile,
+    sales: profile.sales.map(sale => sale.transactionGuid && invalid.has(sale.transactionGuid.trim())
+      ? { ...sale, transactionGuid: null }
+      : sale),
+  };
+}
+
+function rentalUnitIds(profile: RentalsProfile): Set<string> {
+  return new Set(profile.properties.flatMap(property => property.units.map(unit => unit.id)));
+}
+
+function givingDonationIds(profile: GivingProfile): Set<string> {
+  return new Set(profile.donations.map(donation => donation.id));
+}
+
+async function cleanupRemovedResilienceDocumentLinks(
+  bookGuid: string,
+  section: ResilienceSection,
+  after: unknown,
+): Promise<void> {
+  let targetType: 'rental_unit' | 'giving_donation' | null = null;
+  let afterIds = new Set<string>();
+  if (section === 'rentals') {
+    targetType = 'rental_unit';
+    afterIds = rentalUnitIds(after as RentalsProfile);
+  } else if (section === 'giving') {
+    targetType = 'giving_donation';
+    afterIds = givingDonationIds(after as GivingProfile);
+  }
+  if (!targetType) return;
+
+  // Sweep canonical targets rather than relying only on the before/after diff.
+  // If unlinking fails after persistence, the next save sees and retries the
+  // dangling edge even though the removed item is no longer in the profile.
+  const linked = await listLinkedDocuments({ bookGuid, targetType });
+  const removedIds = [...new Set(linked.map(item => item.link.targetId))]
+    .filter(targetId => !afterIds.has(targetId));
+  if (removedIds.length === 0) return;
+  // Dynamic import avoids the validator -> resilience service import cycle.
+  const { unlinkDocumentLinksForTarget } = await import('@/lib/services/document-link-targets.service');
+  await Promise.all(removedIds.map(targetId =>
+    unlinkDocumentLinksForTarget(bookGuid, targetType, targetId)));
+}
+
 export async function getResilienceProfile<S extends ResilienceSection>(
   bookGuid: string,
   section: S,
@@ -656,6 +747,12 @@ export async function getResilienceProfile<S extends ResilienceSection>(
   );
   const row = result.rows[0] as ProfileRow | undefined;
   const parsed = parseSection(section, row?.data ?? defaults[section]);
+  if (section === 'farm_production') {
+    return await sanitizeFarmTransactionLinks(
+      bookGuid,
+      parsed as FarmProductionProfile,
+    ) as z.infer<(typeof schemas)[S]>;
+  }
   if (section === 'fuel') {
     return {
       ...(parsed as z.infer<typeof fuelSchema>),
@@ -675,6 +772,17 @@ export async function saveResilienceProfile<S extends ResilienceSection>(input: 
   await ensureResilienceTable();
   const before = await getResilienceProfile(input.bookGuid, input.section);
   const parsed = parseSection(input.section, input.data);
+  if (input.section === 'farm_production') {
+    const invalid = await getInvalidFarmTransactionGuids(
+      input.bookGuid,
+      parsed as FarmProductionProfile,
+    );
+    if (invalid.length > 0) {
+      throw new ResilienceValidationError(
+        `Farm sale transaction link${invalid.length === 1 ? '' : 's'} must belong to the active book: ${invalid.join(', ')}`,
+      );
+    }
+  }
   if (input.section === 'fuel') {
     const fuel = parsed as z.infer<typeof fuelSchema>;
     if (fuel.baseUrl) {
@@ -708,6 +816,13 @@ export async function saveResilienceProfile<S extends ResilienceSection>(input: 
     [input.bookGuid, input.section, JSON.stringify(stored), secret, input.userId],
   );
   const after = await getResilienceProfile(input.bookGuid, input.section);
+  try {
+    await cleanupRemovedResilienceDocumentLinks(input.bookGuid, input.section, after);
+  } catch (cleanupError) {
+    // The profile row is authoritative and already committed. The target sweep
+    // is idempotent, so a later save retries any dangling rental/giving edges.
+    console.warn(`Resilience ${input.section} document-link cleanup failed:`, cleanupError);
+  }
   await logAudit(
     'UPDATE',
     'RESILIENCE',
@@ -1262,6 +1377,62 @@ function action(input: Omit<FinancialActionCandidate, 'trace'> & {
   };
 }
 
+function linkedEvidence(
+  linked: LinkedDocument[],
+  kind: 'lease' | 'donation',
+  href: string,
+): EvidenceRef[] {
+  return linked.map(({ document, link }) => ({
+    kind,
+    id: String(document.id),
+    label: document.title || document.filename,
+    source: 'manual',
+    href,
+    observedAt: document.updatedAt.toISOString(),
+    verified: true,
+    metadata: {
+      documentId: document.id,
+      documentRole: link.role,
+      filename: document.filename,
+      sourceKind: document.sourceKind,
+    },
+  }));
+}
+
+function hasLinkedRole(linked: LinkedDocument[], role: DocumentLinkRole): boolean {
+  return linked.some(({ link }) => link.role === role);
+}
+
+function uniqueLinkedDocuments(linked: LinkedDocument[]): LinkedDocument[] {
+  const seen = new Set<string>();
+  return linked.filter(({ document, link }) => {
+    const key = `${document.id}:${link.role}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function linkedDocumentsByTarget(
+  bookGuid: string,
+  targetType: 'rental_unit' | 'giving_donation',
+  targetIds: string[],
+): Promise<Map<string, LinkedDocument[]>> {
+  const expected = new Set(targetIds);
+  const grouped = new Map<string, LinkedDocument[]>();
+  try {
+    for (const linked of await listLinkedDocuments({ bookGuid, targetType })) {
+      if (!expected.has(linked.link.targetId)) continue;
+      const current = grouped.get(linked.link.targetId) ?? [];
+      current.push(linked);
+      grouped.set(linked.link.targetId, current);
+    }
+  } catch (error) {
+    console.warn(`Resilience ${targetType} document evidence failed:`, error);
+  }
+  return grouped;
+}
+
 export async function loadResilienceActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
   const [
     rentals,
@@ -1301,8 +1472,28 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
     listItems(bookGuid),
   ]);
   const actions: FinancialActionCandidate[] = [];
-  const rentRoll = calculateRentRoll((rentals as RentalsProfile).properties);
+  const rentalProfile = rentals as RentalsProfile;
+  const givingProfile = giving as GivingProfile;
+  const [rentalDocuments, givingDocuments] = await Promise.all([
+    linkedDocumentsByTarget(
+      bookGuid,
+      'rental_unit',
+      rentalProfile.properties.flatMap(property => property.units.map(unit => unit.id)),
+    ),
+    linkedDocumentsByTarget(
+      bookGuid,
+      'giving_donation',
+      givingProfile.donations.map(donation => donation.id),
+    ),
+  ]);
+  const rentRoll = calculateRentRoll(rentalProfile.properties);
   for (const row of rentRoll.rows) {
+    const linked = rentalDocuments.get(row.unitId) ?? [];
+    const rentalEvidence = linkedEvidence(
+      linked.filter(({ link }) => ['lease', 'lease_addendum', 'tenant_notice', 'rent_statement'].includes(link.role)),
+      'lease',
+      '/business/rentals',
+    );
     if (row.overdue) {
       actions.push(action({
         stableKey: `rental-overdue:${row.unitId}:${row.dueDate}`,
@@ -1317,7 +1508,20 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
         confidence: 1,
         operations: [{ id: 'open', label: 'Open rent roll', kind: 'link', href: '/business/rentals', primary: true }],
         result: row.balance,
-        evidence: [{ kind: 'lease', id: row.unitId, label: `${row.propertyName} — ${row.unitName}`, source: 'manual', href: '/business/rentals', verified: true }],
+        evidence: [{
+          kind: 'lease',
+          id: row.unitId,
+          label: `${row.propertyName} — ${row.unitName}`,
+          source: 'manual',
+          href: '/business/rentals',
+          verified: hasLinkedRole(linked, 'lease'),
+          metadata: { requiredDocumentRole: 'lease' },
+        }, ...rentalEvidence],
+        metadata: {
+          requiredDocumentRole: 'lease',
+          linkedDocumentCount: linked.length,
+          linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+        },
       }));
     }
     if (row.daysToRenewal != null && row.daysToRenewal >= 0 && row.daysToRenewal <= 90) {
@@ -1333,7 +1537,21 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
         impact: { low: row.monthlyRent, high: row.monthlyRent * 12, period: 'annual' },
         confidence: 1,
         operations: [{ id: 'open', label: 'Review lease', kind: 'link', href: '/business/rentals', primary: true }],
-        evidence: [{ kind: 'lease', id: row.unitId, label: `${row.propertyName} — ${row.unitName}`, source: 'manual', href: '/business/rentals', verified: true }],
+        evidence: [{
+          kind: 'lease',
+          id: row.unitId,
+          label: `${row.propertyName} — ${row.unitName}`,
+          source: 'manual',
+          href: '/business/rentals',
+          verified: hasLinkedRole(linked, 'lease'),
+          metadata: { requiredDocumentRole: 'lease', supportingDocumentRole: 'tenant_notice' },
+        }, ...rentalEvidence],
+        metadata: {
+          requiredDocumentRole: 'lease',
+          supportingDocumentRole: 'tenant_notice',
+          linkedDocumentCount: linked.length,
+          linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+        },
       }));
     }
   }
@@ -1618,13 +1836,14 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   }
   // --- Charitable giving section (actions) ---
   const givingPlan = calculateGivingPlan(
-    giving as GivingProfile,
+    givingProfile,
     charityMileageContext(mileageProfile, now),
     now,
   );
   const currentGivingYear = givingPlan.currentYear;
   const charityRate = mileageRate(`${currentGivingYear}-12-31`, 'charity');
   for (const donation of givingPlan.donations) {
+    const linked = givingDocuments.get(donation.id) ?? [];
     if (donation.needsAcknowledgment) {
       actions.push(action({
         stableKey: `giving:ack:${donation.id}`,
@@ -1640,7 +1859,24 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
         operations: [{ id: 'open', label: 'Open giving log', kind: 'link', href: '/planning/giving', primary: true }],
         result: donation.amount,
         assumptions: ['Donations of $250 or more require a contemporaneous written acknowledgment.'],
-        evidence: [{ kind: 'donation', id: donation.id, label: `${donation.charity} — ${donation.date}`, source: 'manual', href: '/planning/giving', verified: false }],
+        evidence: [{
+          kind: 'donation',
+          id: donation.id,
+          label: `${donation.charity} — ${donation.date}`,
+          source: 'manual',
+          href: '/planning/giving',
+          verified: hasLinkedRole(linked, 'acknowledgment'),
+          metadata: { requiredDocumentRole: 'acknowledgment' },
+        }, ...linkedEvidence(
+          linked.filter(({ link }) => link.role === 'acknowledgment'),
+          'donation',
+          '/planning/giving',
+        )],
+        metadata: {
+          requiredDocumentRole: 'acknowledgment',
+          linkedDocumentCount: linked.length,
+          linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+        },
       }));
     }
     if (donation.needsAppraisal) {
@@ -1658,12 +1894,33 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
         operations: [{ id: 'open', label: 'Open giving log', kind: 'link', href: '/planning/giving', primary: true }],
         result: donation.amount,
         assumptions: ['Noncash donations above $5,000 require a qualified appraisal and Form 8283 Section B.'],
-        evidence: [{ kind: 'donation', id: donation.id, label: `${donation.charity} — ${donation.date}`, source: 'manual', href: '/planning/giving', verified: false }],
+        evidence: [{
+          kind: 'donation',
+          id: donation.id,
+          label: `${donation.charity} — ${donation.date}`,
+          source: 'manual',
+          href: '/planning/giving',
+          verified: hasLinkedRole(linked, 'appraisal'),
+          metadata: { requiredDocumentRole: 'appraisal' },
+        }, ...linkedEvidence(
+          linked.filter(({ link }) => ['appraisal', 'form_8283'].includes(link.role)),
+          'donation',
+          '/planning/giving',
+        )],
+        metadata: {
+          requiredDocumentRole: 'appraisal',
+          supportingDocumentRole: 'form_8283',
+          linkedDocumentCount: linked.length,
+          linkedDocumentRoles: [...new Set(linked.map(({ link }) => link.role))],
+        },
       }));
     }
   }
   for (const yearRow of givingPlan.yearTotals) {
     if (!yearRow.form8283Required || yearRow.taxYear < currentGivingYear - 1) continue;
+    const yearLinked = uniqueLinkedDocuments(givingPlan.donations
+      .filter(donation => donation.taxYear === yearRow.taxYear && donation.kind === 'noncash')
+      .flatMap(donation => givingDocuments.get(donation.id) ?? []));
     actions.push(action({
       stableKey: `giving:8283:${yearRow.taxYear}`,
       lane: 'fix',
@@ -1678,7 +1935,24 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       operations: [{ id: 'open', label: 'Open giving log', kind: 'link', href: '/planning/giving', primary: true }],
       result: yearRow.noncashTotal,
       assumptions: ['Form 8283 is required when total noncash donations for the year exceed $500.'],
-      evidence: [{ kind: 'donation', id: String(yearRow.taxYear), label: `${yearRow.taxYear} noncash donations`, source: 'manual', href: '/planning/giving', verified: false }],
+      evidence: [{
+        kind: 'donation',
+        id: String(yearRow.taxYear),
+        label: `${yearRow.taxYear} noncash donations`,
+        source: 'manual',
+        href: '/planning/giving',
+        verified: hasLinkedRole(yearLinked, 'form_8283'),
+        metadata: { requiredDocumentRole: 'form_8283' },
+      }, ...linkedEvidence(
+        yearLinked.filter(({ link }) => link.role === 'form_8283'),
+        'donation',
+        '/planning/giving',
+      )],
+      metadata: {
+        requiredDocumentRole: 'form_8283',
+        linkedDocumentCount: yearLinked.length,
+        linkedDocumentRoles: [...new Set(yearLinked.map(({ link }) => link.role))],
+      },
     }));
   }
   if (givingPlan.bunching.estimatedTaxSavings >= 250) {

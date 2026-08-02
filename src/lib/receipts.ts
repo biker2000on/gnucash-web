@@ -57,15 +57,77 @@ export async function deleteReceipt(id: number, bookGuid: string): Promise<boole
     `DELETE FROM gnucash_web_receipts WHERE id = $1 AND book_guid = $2 RETURNING id`,
     [id, bookGuid]
   );
-  return (result.rowCount ?? 0) > 0;
+  const deleted = (result.rowCount ?? 0) > 0;
+  if (deleted) {
+    try {
+      const { deleteDocumentBySource } = await import('@/lib/documents');
+      await deleteDocumentBySource(bookGuid, 'receipt', String(id));
+    } catch (canonicalError) {
+      const detail = canonicalError instanceof Error
+        ? canonicalError.message.slice(0, 500)
+        : String(canonicalError).slice(0, 500);
+      console.warn(`Canonical receipt cleanup deferred for deleted receipt ${id}: ${detail}`);
+    }
+  }
+  return deleted;
 }
 
 export async function linkReceipt(id: number, bookGuid: string, transactionGuid: string | null): Promise<Receipt | null> {
+  const previous = await query(
+    `SELECT transaction_guid FROM gnucash_web_receipts WHERE id = $1 AND book_guid = $2`,
+    [id, bookGuid],
+  );
   const result = await query(
     `UPDATE gnucash_web_receipts SET transaction_guid = $1, updated_at = NOW() WHERE id = $2 AND book_guid = $3 RETURNING *`,
     [transactionGuid, id, bookGuid]
   );
-  return result.rows[0] || null;
+  const receipt = result.rows[0] || null;
+  if (receipt) {
+    try {
+      const { getDocumentBySource, linkDocument, unlinkDocument } = await import('@/lib/documents');
+      const document = await getDocumentBySource(bookGuid, 'receipt', String(id));
+      const priorGuid = previous.rows[0]?.transaction_guid as string | null | undefined;
+      if (document && priorGuid && priorGuid !== transactionGuid) {
+        try {
+          await unlinkDocument({
+            bookGuid,
+            documentId: document.id,
+            targetType: 'transaction',
+            targetId: priorGuid,
+            role: 'receipt',
+          });
+        } catch (canonicalError) {
+          const detail = canonicalError instanceof Error
+            ? canonicalError.message.slice(0, 500)
+            : String(canonicalError).slice(0, 500);
+          console.warn(`Canonical receipt unlink deferred for receipt ${id}: ${detail}`);
+        }
+      }
+      if (document && transactionGuid && priorGuid !== transactionGuid) {
+        try {
+          await linkDocument({
+            bookGuid,
+            documentId: document.id,
+            targetType: 'transaction',
+            targetId: transactionGuid,
+            role: 'receipt',
+            metadata: { autoSource: 'gnucash_web_receipts.transaction_guid' },
+          });
+        } catch (canonicalError) {
+          const detail = canonicalError instanceof Error
+            ? canonicalError.message.slice(0, 500)
+            : String(canonicalError).slice(0, 500);
+          console.warn(`Canonical receipt link deferred for receipt ${id}: ${detail}`);
+        }
+      }
+    } catch (canonicalError) {
+      const detail = canonicalError instanceof Error
+        ? canonicalError.message.slice(0, 500)
+        : String(canonicalError).slice(0, 500);
+      console.warn(`Canonical receipt lookup deferred for receipt ${id}: ${detail}`);
+    }
+  }
+  return receipt;
 }
 
 export async function updateOcrResults(id: number, ocrText: string | null, status: string): Promise<void> {

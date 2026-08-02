@@ -5,6 +5,7 @@ import { formatCurrency } from '@/lib/format';
 import type { ForecastWarning } from '@/lib/forecast';
 import { COMBINED_GUID } from '@/lib/forecast';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import ForecastChart from './ForecastChart';
 
 const HORIZON_OPTIONS = [30, 60, 90, 180] as const;
@@ -32,6 +33,7 @@ interface ForecastData {
     availableAccounts: Array<{ guid: string; name: string; accountType: string }>;
     runRateNote: string;
     lookbackDays: number;
+    trace: { traceId: string; href: string };
 }
 
 function useDebounced<T>(value: T, ms: number): T {
@@ -67,6 +69,7 @@ export default function CashFlowForecastPage() {
     const [data, setData] = useState<ForecastData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
 
     const debouncedThreshold = useDebounced(thresholdInput, 400);
 
@@ -143,12 +146,23 @@ export default function CashFlowForecastPage() {
 
     return (
         <div className="space-y-8">
-            <header>
-                <h1 className="text-3xl font-bold text-foreground">Cash Flow Forecast</h1>
-                <p className="text-foreground-muted mt-1">
-                    Projects cash account balances forward using upcoming scheduled transactions
-                    and your historical daily spending rate.
-                </p>
+            <header className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h1 className="text-3xl font-bold text-foreground">Cash Flow Forecast</h1>
+                    <p className="text-foreground-muted mt-1">
+                        Projects cash account balances forward using upcoming scheduled transactions
+                        and your historical daily spending rate.
+                    </p>
+                </div>
+                {data?.trace && (
+                    <button
+                        type="button"
+                        onClick={() => setSelectedTraceId(data.trace.traceId)}
+                        className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-colors hover:border-primary/50 hover:text-primary-hover"
+                    >
+                        Explain projection
+                    </button>
+                )}
             </header>
 
             {/* Controls */}
@@ -378,6 +392,11 @@ export default function CashFlowForecastPage() {
                     <p className="text-xs text-foreground-muted">{data.runRateNote}</p>
                 </>
             )}
+            <ProvenanceModal
+                traceId={selectedTraceId}
+                isOpen={selectedTraceId !== null}
+                onClose={() => setSelectedTraceId(null)}
+            />
         </div>
     );
 }

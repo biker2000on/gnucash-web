@@ -39,6 +39,7 @@ const JOB_LABELS: Record<string, string> = {
   'reextract-receipts': 'Receipt AI re-extraction',
   'extract-payslip': 'Payslip extraction',
   'extract-statement': 'Statement extraction',
+  'extract-entity-document': 'Document text extraction',
   'run-backups': 'Backup run',
   'check-price-alerts': 'Price alert check',
   'poll-email-ingest': 'Email ingest poll',
@@ -512,6 +513,11 @@ async function main() {
         case 'extract-statement': {
           const { handleExtractStatement } = await import('./src/lib/queue/jobs/extract-statement');
           await handleExtractStatement(job);
+          break;
+        }
+        case 'extract-entity-document': {
+          const { handleExtractEntityDocument } = await import('./src/lib/queue/jobs/extract-entity-document');
+          await handleExtractEntityDocument(job);
           break;
         }
         case 'check-limit-coverage': {

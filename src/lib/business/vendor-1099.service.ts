@@ -18,6 +18,7 @@
  */
 
 import prisma from '@/lib/prisma';
+import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { OWNER_TYPE_JOB, OWNER_TYPE_VENDOR } from '@/lib/business/business-reports';
 import {
     NEC_THRESHOLD,
@@ -291,10 +292,10 @@ export async function get1099Summary(
     const [taxRows, filingRows] = guids.length
         ? await Promise.all([
               prisma.gnucash_web_vendor_tax_info.findMany({
-                  where: { vendor_guid: { in: guids } },
+                  where: { vendor_guid: { in: guids }, book_guid: bookGuid },
               }),
               prisma.gnucash_web_vendor_1099_filings.findMany({
-                  where: { vendor_guid: { in: guids }, tax_year: year },
+                  where: { vendor_guid: { in: guids }, tax_year: year, book_guid: bookGuid },
               }),
           ])
         : [[], []];
@@ -361,12 +362,7 @@ export async function setVendor1099Filing(
     taxYear: number,
     filedDate: string | null,
 ): Promise<{ vendorGuid: string; taxYear: number; filedDate: string | null }> {
-    const vendor = await prisma.$queryRaw<{ guid: string }[]>`
-        SELECT guid FROM vendors WHERE guid = ${vendorGuid}
-    `;
-    if (vendor.length === 0) {
-        throw new Vendor1099NotFoundError('Vendor not found');
-    }
+    await assertVendor1099BookScope(bookGuid, vendorGuid);
     if (!Number.isInteger(taxYear) || taxYear < 1990 || taxYear > 2100) {
         throw new Vendor1099ValidationError('Invalid tax year');
     }
@@ -382,24 +378,67 @@ export async function setVendor1099Filing(
         }
     }
 
+    const ownership = await prisma.gnucash_web_vendor_1099_filings.findUnique({
+        where: { vendor_guid_tax_year: { vendor_guid: vendorGuid, tax_year: taxYear } },
+        select: { book_guid: true },
+    });
+    if (ownership && ownership.book_guid !== bookGuid) {
+        throw new Vendor1099NotFoundError('Vendor filing not found in this book');
+    }
+
     if (filed === null) {
         await prisma.gnucash_web_vendor_1099_filings.deleteMany({
-            where: { vendor_guid: vendorGuid, tax_year: taxYear },
+            where: { vendor_guid: vendorGuid, tax_year: taxYear, book_guid: bookGuid },
         });
         return { vendorGuid, taxYear, filedDate: null };
     }
 
-    const row = await prisma.gnucash_web_vendor_1099_filings.upsert({
-        where: { vendor_guid_tax_year: { vendor_guid: vendorGuid, tax_year: taxYear } },
-        create: {
+    const row = ownership
+        ? await prisma.gnucash_web_vendor_1099_filings.update({
+            where: { vendor_guid_tax_year: { vendor_guid: vendorGuid, tax_year: taxYear } },
+            data: { filed_1099_nec: filed, updated_at: new Date() },
+        })
+        : await prisma.gnucash_web_vendor_1099_filings.create({
+          data: {
             vendor_guid: vendorGuid,
             tax_year: taxYear,
             book_guid: bookGuid,
             filed_1099_nec: filed,
-        },
-        update: { book_guid: bookGuid, filed_1099_nec: filed, updated_at: new Date() },
-    });
+          },
+        });
     return { vendorGuid, taxYear, filedDate: toIsoDate(row.filed_1099_nec) };
+}
+
+/**
+ * A vendor GUID is global in the GnuCash schema, so its bare existence cannot
+ * authorize a book-scoped 1099 mutation. A vendor is eligible here only when
+ * it owns a posted bill in one of the active book's accounts.
+ */
+export async function assertVendor1099BookScope(
+    bookGuid: string,
+    vendorGuid: string,
+): Promise<void> {
+    const bookAccountGuids = await getAccountGuidsForBook(bookGuid);
+    if (bookAccountGuids.length === 0) {
+        throw new Vendor1099NotFoundError('Vendor not found in this book');
+    }
+
+    const vendor = await prisma.$queryRaw<{ guid: string }[]>`
+        SELECT DISTINCT v.guid
+        FROM invoices i
+        LEFT JOIN jobs j ON i.owner_type = ${OWNER_TYPE_JOB} AND j.guid = i.owner_guid
+        JOIN vendors v ON v.guid = (
+            CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_guid ELSE i.owner_guid END
+        )
+        WHERE i.post_txn IS NOT NULL
+          AND i.post_acc = ANY(${bookAccountGuids}::text[])
+          AND (CASE WHEN i.owner_type = ${OWNER_TYPE_JOB} THEN j.owner_type ELSE i.owner_type END) = ${OWNER_TYPE_VENDOR}
+          AND v.guid = ${vendorGuid}
+        LIMIT 1
+    `;
+    if (vendor.length === 0) {
+        throw new Vendor1099NotFoundError('Vendor not found in this book');
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -431,12 +470,7 @@ export async function upsertVendorTaxInfo(
     vendorGuid: string,
     input: UpsertVendorTaxInfoInput,
 ): Promise<VendorTaxInfo> {
-    const vendor = await prisma.$queryRaw<{ guid: string }[]>`
-        SELECT guid FROM vendors WHERE guid = ${vendorGuid}
-    `;
-    if (vendor.length === 0) {
-        throw new Vendor1099NotFoundError('Vendor not found');
-    }
+    await assertVendor1099BookScope(bookGuid, vendorGuid);
 
     if (
         input.taxClassification !== undefined &&
@@ -466,9 +500,21 @@ export async function upsertVendorTaxInfo(
     const w9Date = parseIsoDateInput(input.w9ReceivedDate, 'w9ReceivedDate');
     const w9Requested = parseIsoDateInput(input.w9RequestedDate, 'w9RequestedDate');
 
-    const existing = await prisma.gnucash_web_vendor_tax_info.findUnique({
+    // Read ownership only before touching sensitive metadata. A legacy/global
+    // row or a row owned by another book must never be adopted or overwritten.
+    const ownership = await prisma.gnucash_web_vendor_tax_info.findUnique({
         where: { vendor_guid: vendorGuid },
+        select: { book_guid: true },
     });
+    if (ownership && ownership.book_guid !== bookGuid) {
+        throw new Vendor1099NotFoundError('Vendor tax info not found in this book');
+    }
+    const existing = ownership
+        ? await prisma.gnucash_web_vendor_tax_info.findUnique({
+            where: { vendor_guid: vendorGuid },
+            select: { tax_classification: true, tax_id_masked: true },
+        })
+        : null;
 
     // Masked TIN: recompute from last-4 when provided; re-mask the stored
     // last-4 when only the classification changes (style differs by type).
@@ -487,7 +533,6 @@ export async function upsertVendorTaxInfo(
     }
 
     const data = {
-        book_guid: bookGuid,
         ...(input.legalName !== undefined && { legal_name: input.legalName }),
         ...(input.taxClassification !== undefined && { tax_classification: input.taxClassification }),
         ...(taxIdMasked !== undefined && { tax_id_masked: taxIdMasked }),
@@ -500,11 +545,16 @@ export async function upsertVendorTaxInfo(
         updated_at: new Date(),
     };
 
-    const row = await prisma.gnucash_web_vendor_tax_info.upsert({
-        where: { vendor_guid: vendorGuid },
-        create: { vendor_guid: vendorGuid, ...data },
-        update: data,
-    });
+    // Avoid upsert-by-global-vendor: create can fail on a concurrent owner,
+    // but it can never silently rewrite that owner's book_guid.
+    const row = ownership
+        ? await prisma.gnucash_web_vendor_tax_info.update({
+            where: { vendor_guid: vendorGuid },
+            data,
+        })
+        : await prisma.gnucash_web_vendor_tax_info.create({
+            data: { vendor_guid: vendorGuid, book_guid: bookGuid, ...data },
+        });
 
     return mapTaxInfo(row);
 }

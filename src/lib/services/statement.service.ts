@@ -361,6 +361,7 @@ export async function setBatchStatus(
   patch: BatchStatusPatch = {},
 ): Promise<StatementBatch | null> {
   await ensureStatementTables();
+  const prior = 'accountGuid' in patch ? await getBatch(id) : null;
 
   const sets: string[] = ['status = $1', 'updated_at = now()'];
   const params: unknown[] = [status];
@@ -390,13 +391,75 @@ export async function setBatchStatus(
     `,
     ...params,
   );
-  return rows[0] ? mapBatchRow(rows[0]) : null;
+  const updated = rows[0] ? mapBatchRow(rows[0]) : null;
+  if (updated && 'accountGuid' in patch && prior?.accountGuid !== updated.accountGuid) {
+    try {
+      const { getDocumentBySource, linkDocument, unlinkDocument } = await import('@/lib/documents');
+      const document = await getDocumentBySource(
+        updated.bookGuid,
+        'statement_batch',
+        String(id),
+      );
+      if (document && prior?.accountGuid) {
+        try {
+          await unlinkDocument({
+            bookGuid: updated.bookGuid,
+            documentId: document.id,
+            targetType: 'account',
+            targetId: prior.accountGuid,
+            role: 'statement',
+          });
+        } catch (canonicalError) {
+          const detail = canonicalError instanceof Error
+            ? canonicalError.message.slice(0, 500)
+            : String(canonicalError).slice(0, 500);
+          console.warn(`Canonical statement unlink deferred for batch ${id}: ${detail}`);
+        }
+      }
+      if (document && updated.accountGuid) {
+        try {
+          await linkDocument({
+            bookGuid: updated.bookGuid,
+            documentId: document.id,
+            targetType: 'account',
+            targetId: updated.accountGuid,
+            role: 'statement',
+            metadata: { autoSource: 'gnucash_web_statement_batches.account_guid' },
+          });
+        } catch (canonicalError) {
+          const detail = canonicalError instanceof Error
+            ? canonicalError.message.slice(0, 500)
+            : String(canonicalError).slice(0, 500);
+          console.warn(`Canonical statement link deferred for batch ${id}: ${detail}`);
+        }
+      }
+    } catch (canonicalError) {
+      const detail = canonicalError instanceof Error
+        ? canonicalError.message.slice(0, 500)
+        : String(canonicalError).slice(0, 500);
+      console.warn(`Canonical statement lookup deferred for batch ${id}: ${detail}`);
+    }
+  }
+  return updated;
 }
 
 export async function deleteBatch(id: number): Promise<void> {
   await ensureStatementTables();
-  await prisma.$executeRaw`DELETE FROM gnucash_web_statement_lines WHERE batch_id = ${id}`;
-  await prisma.$executeRaw`DELETE FROM gnucash_web_statement_batches WHERE id = ${id}`;
+  const batch = await getBatch(id);
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`DELETE FROM gnucash_web_statement_lines WHERE batch_id = ${id}`;
+    await tx.$executeRaw`DELETE FROM gnucash_web_statement_batches WHERE id = ${id}`;
+  });
+  if (!batch) return;
+  try {
+    const { deleteDocumentBySource } = await import('@/lib/documents');
+    await deleteDocumentBySource(batch.bookGuid, 'statement_batch', String(id));
+  } catch (canonicalError) {
+    const detail = canonicalError instanceof Error
+      ? canonicalError.message.slice(0, 500)
+      : String(canonicalError).slice(0, 500);
+    console.warn(`Canonical statement cleanup deferred for deleted batch ${id}: ${detail}`);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useToast } from '@/contexts/ToastContext';
+import { LinkedDocumentsPanel } from '@/components/documents/LinkedDocumentsPanel';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -34,6 +35,13 @@ const STATUS_META: Record<Vendor1099Status, { label: string; className: string }
         className: 'bg-background-tertiary text-foreground-muted border-border',
     },
 };
+
+const VENDOR_DOCUMENT_ROLES = [
+    { value: 'w9', label: 'W-9' },
+    { value: 'form_1099_nec', label: '1099-NEC form' },
+    { value: 'filing_proof', label: 'Filing proof' },
+    { value: 'correspondence', label: 'Correspondence' },
+] as const;
 
 function Chip({ label, className }: { label: string; className: string }) {
     return (
@@ -553,6 +561,13 @@ export default function Nec1099Page() {
                                                                         />
                                                                     </div>
                                                                 </div>
+                                                                <LinkedDocumentsPanel
+                                                                    className="mt-4"
+                                                                    targetType="vendor_1099"
+                                                                    targetId={`${row.vendorGuid}:${year}`}
+                                                                    roles={VENDOR_DOCUMENT_ROLES}
+                                                                    title={`${year} vendor documents`}
+                                                                />
                                                                 <div className="mt-4 flex items-center gap-3">
                                                                     <button
                                                                         type="button"

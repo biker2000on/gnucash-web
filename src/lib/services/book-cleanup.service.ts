@@ -44,6 +44,8 @@ export const COVERED_BOOK_GUID_MODELS = [
     'gnucash_web_vendor_1099_filings',
     'gnucash_web_packages',
     'gnucash_web_funds',
+    'gnucash_web_documents',
+    'gnucash_web_document_links',
     'gnucash_web_entity_documents',
     'gnucash_web_membership_types',
     'gnucash_web_members',
@@ -154,7 +156,7 @@ export async function collectBookStorageKeys(
     db: BookCleanupClient = prisma,
 ): Promise<string[]> {
     try {
-        const [receipts, payslips, documents, homePhotos] = await Promise.all([
+        const [receipts, payslips, entityDocuments, homePhotos] = await Promise.all([
             db.gnucash_web_receipts.findMany({
                 where: { book_guid: bookGuid },
                 select: { storage_key: true, thumbnail_key: true },
@@ -172,12 +174,25 @@ export async function collectBookStorageKeys(
                 select: { photo_key: true },
             }),
         ]);
-        return [
+        // Canonical metadata was introduced after the specialised tables. A
+        // partially upgraded installation may not have it yet, so preserve
+        // legacy key enumeration even when this one optional read fails.
+        let canonicalDocuments: Array<{ storage_key: string | null }> = [];
+        try {
+            canonicalDocuments = await db.gnucash_web_documents.findMany({
+                where: { book_guid: bookGuid },
+                select: { storage_key: true },
+            });
+        } catch (err) {
+            console.warn('[book-cleanup] canonical document keys unavailable, continuing:', err);
+        }
+        return [...new Set([
             ...collectKeys(receipts),
             ...collectKeys(payslips),
-            ...collectKeys(documents),
+            ...collectKeys(canonicalDocuments),
+            ...collectKeys(entityDocuments),
             ...collectKeys(homePhotos),
-        ];
+        ])];
     } catch (err) {
         console.warn('[book-cleanup] failed to enumerate stored files, skipping file deletion:', err);
         return [];
@@ -200,7 +215,7 @@ export async function deleteStoredFileKeys(keys: string[]): Promise<void> {
         return;
     }
 
-    for (const key of keys) {
+    for (const key of new Set(keys)) {
         try {
             await storage.delete(key);
         } catch (err) {
@@ -285,6 +300,12 @@ export async function deleteBookExtensionRows(
 
     const hasAccounts = accountGuids.length > 0;
     const ops: Prisma.PrismaPromise<unknown>[] = [
+        // Remove canonical edges before any typed targets, then metadata before
+        // specialised source rows. This also protects installations whose
+        // raw-DDL foreign keys predate the current cascade definitions.
+        db.gnucash_web_document_links.deleteMany({ where: { book_guid: bookGuid } }),
+        db.gnucash_web_documents.deleteMany({ where: { book_guid: bookGuid } }),
+
         // Membership module (attendance → payments → members/types/meetings)
         db.gnucash_web_meeting_attendance.deleteMany({
             where: {
@@ -357,7 +378,7 @@ export async function deleteBookExtensionRows(
         }),
         db.gnucash_web_tags.deleteMany({ where: { book_guid: bookGuid } }),
 
-        // Documents / receipts / payslips (files already deleted above)
+        // Specialised document sources (storage keys were collected above).
         db.gnucash_web_receipts.deleteMany({ where: { book_guid: bookGuid } }),
         db.gnucash_web_payslips.deleteMany({ where: { book_guid: bookGuid } }),
         db.gnucash_web_payslip_mappings.deleteMany({ where: { book_guid: bookGuid } }),
@@ -457,6 +478,9 @@ export async function deleteBookExtensionData(
     bookGuid: string,
     accountGuids: string[],
 ): Promise<void> {
+    // This removes app-owned blobs referenced by the deleted book. Producing a
+    // durable blob archive (or claiming the ledger-only backup contains those
+    // blobs) is intentionally outside this cleanup service's scope.
     // 1. Stored files first (needs the DB rows to find the keys). Best-effort.
     await deleteStoredFilesBestEffort(bookGuid);
 

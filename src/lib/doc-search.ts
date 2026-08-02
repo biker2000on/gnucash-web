@@ -16,6 +16,9 @@
  *                     ensureStatementTables() before touching them.
  *   - payslips      → gnucash_web_payslips.employer_name + line_items JSONB
  *                     rendered as text (short text: ILIKE)
+ *   - documents     → canonical vault filename/title + extracted text.
+ *                     Receipt/statement/payslip source rows are omitted here
+ *                     because their specialised groups already render them.
  *   - transactions  → transactions.description + splits.memo, book-scoped via
  *                     the account GUID list (short text: ILIKE)
  *
@@ -30,12 +33,13 @@
 
 import prisma from '@/lib/prisma';
 import { ensureStatementTables } from '@/lib/services/statement.service';
+import { ensureCanonicalDocumentPlatform } from '@/lib/documents';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type DocSearchGroup = 'receipts' | 'statements' | 'payslips' | 'transactions';
+export type DocSearchGroup = 'documents' | 'receipts' | 'statements' | 'payslips' | 'transactions';
 
 export interface SearchSnippet {
     /** Snippet text (may start/end with an ellipsis character). */
@@ -65,6 +69,7 @@ export interface DocSearchResults {
     receipts: DocSearchHit[];
     statements: DocSearchHit[];
     payslips: DocSearchHit[];
+    documents: DocSearchHit[];
     transactions: DocSearchHit[];
     totalHits: number;
 }
@@ -176,7 +181,7 @@ function isoDate(value: Date | string | null | undefined): string | null {
 export function toPaletteEntries(
     results: DocSearchResults,
 ): Array<{ label: string; href: string; group: DocSearchGroup }> {
-    const groups: DocSearchGroup[] = ['transactions', 'receipts', 'statements', 'payslips'];
+    const groups: DocSearchGroup[] = ['transactions', 'documents', 'receipts', 'statements', 'payslips'];
     const entries: Array<{ label: string; href: string; group: DocSearchGroup }> = [];
     for (const group of groups) {
         for (const hit of results[group]) {
@@ -213,6 +218,17 @@ interface PayslipRow {
     line_items_text: string | null;
 }
 
+interface CanonicalDocumentRow {
+    id: number;
+    title: string | null;
+    filename: string;
+    mime_type: string | null;
+    extracted_text: string | null;
+    source_kind: string;
+    source_id: string | null;
+    created_at: Date | null;
+}
+
 interface TransactionRow {
     guid: string;
     description: string | null;
@@ -243,10 +259,12 @@ export async function searchDocuments(
     const cap = Math.min(Math.max(1, Math.floor(options.limit ?? MAX_GROUP_RESULTS)), MAX_GROUP_RESULTS);
     const pattern = `%${escapeLike(q)}%`;
 
-    // Statement tables are lazy — make sure they exist before SELECTing.
+    // Create the lazy statement tables before the canonical one-process
+    // backfill so statement batches can be indexed during the same bootstrap.
     await ensureStatementTables();
+    await ensureCanonicalDocumentPlatform();
 
-    const [receiptRows, statementRows, payslipRows, transactionRows] = await Promise.all([
+    const [receiptRows, statementRows, payslipRows, documentRows, transactionRows] = await Promise.all([
         // Receipts: FTS over the generated ocr_tsvector (GIN-indexed) plus a
         // literal ILIKE so exact tokens stemming would drop still match.
         prisma.$queryRaw<ReceiptRow[]>`
@@ -280,6 +298,21 @@ export async function searchDocuments(
                 OR line_items::text ILIKE ${pattern}
               )
             ORDER BY pay_date DESC
+            LIMIT ${cap}
+        `,
+        prisma.$queryRaw<CanonicalDocumentRow[]>`
+            SELECT id, title, filename, mime_type, extracted_text,
+                   source_kind, source_id, created_at
+            FROM gnucash_web_documents
+            WHERE book_guid = ${bookGuid}
+              AND source_kind NOT IN ('receipt', 'statement_batch', 'payslip')
+              AND (
+                search_tsvector @@ websearch_to_tsquery('english', ${q})
+                OR title ILIKE ${pattern}
+                OR filename ILIKE ${pattern}
+                OR extracted_text ILIKE ${pattern}
+              )
+            ORDER BY created_at DESC NULLS LAST
             LIMIT ${cap}
         `,
         prisma.$queryRaw<TransactionRow[]>`
@@ -346,6 +379,22 @@ export async function searchDocuments(
         };
     });
 
+    const documents: DocSearchHit[] = documentRows.slice(0, cap).map((row) => {
+        const title = row.title || row.filename;
+        const titleMatch = extractSnippet(title, q);
+        return {
+            group: 'documents',
+            id: String(row.id),
+            title,
+            date: isoDate(row.created_at),
+            snippet: titleMatch ?? snippetFor(row.extracted_text || row.filename, q),
+            href: row.source_kind === 'home_item_photo'
+                ? '/home/inventory'
+                : '/business/documents',
+            meta: row.mime_type ? `Document · ${row.mime_type}` : 'Document',
+        };
+    });
+
     const transactions: DocSearchHit[] = transactionRows.slice(0, cap).map((row) => {
         const description = row.description || '(no description)';
         const descriptionMatch = extractSnippet(description, q);
@@ -365,7 +414,9 @@ export async function searchDocuments(
         receipts,
         statements,
         payslips,
+        documents,
         transactions,
-        totalHits: receipts.length + statements.length + payslips.length + transactions.length,
+        totalHits: receipts.length + statements.length + payslips.length
+            + documents.length + transactions.length,
     };
 }
