@@ -1463,7 +1463,10 @@ async function createExtensionTables() {
     // - a non-empty budget is assigned only when every referenced account
     //   resolves to one book and all accounts resolve to the same book;
     // - an empty budget is assigned only when the database contains one book;
-    // - ambiguous or unmapped budgets remain unowned and invisible.
+    // - ambiguous or unmapped budgets remain unowned and invisible;
+    // - budget_amounts rows whose budget no longer exists (orphaned by a
+    //   deleted budget) are ignored so the insert cannot violate the
+    //   budgets(guid) foreign key.
     const budgetOwnershipTableDDL = `
         DO $$
         BEGIN
@@ -1525,6 +1528,8 @@ async function createExtensionTables() {
                 COUNT(DISTINCT ar.book_guid)
                     FILTER (WHERE ar.book_count = 1) AS resolved_book_count
             FROM budget_amounts ba
+            JOIN budgets bu
+                ON bu.guid = ba.budget_guid
             LEFT JOIN account_resolution ar
                 ON ar.account_guid = ba.account_guid
             GROUP BY ba.budget_guid
