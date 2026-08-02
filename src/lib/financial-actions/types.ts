@@ -27,6 +27,11 @@ export type FinancialActionOrigin =
   | 'family'
   | 'trip'
   | 'vehicle'
+  | 'vendor_1099'
+  | 'giving'
+  | 'estate'
+  | 'farm'
+  | 'retirement'
   | 'opportunity';
 
 export type EvidenceKind =
@@ -52,7 +57,12 @@ export type EvidenceKind =
   | 'utility_bill'
   | 'family_ledger'
   | 'trip'
-  | 'vehicle';
+  | 'vehicle'
+  | 'vendor'
+  | 'donation'
+  | 'estate_document'
+  | 'beneficiary'
+  | 'farm_record';
 
 export type EvidenceSource =
   | 'manual'

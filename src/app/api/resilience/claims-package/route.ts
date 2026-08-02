@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
 import { getResilienceProfile } from '@/lib/resilience/service';
+import { getEntityDocumentFile } from '@/lib/services/entity-documents.service';
 import type { InsuranceProfile } from '@/lib/resilience/types';
 
 function csvCell(value: unknown): string {
@@ -73,6 +74,18 @@ export async function GET() {
             warnings.push(`Receipt ${receipt.id} for item ${item.id} could not be read.`);
           }
         }
+      }
+    }
+    // Linked policy documents from the entity document vault (book-scoped by
+    // the service). Failures are non-fatal — noted in the README instead.
+    const linkedDocumentIds = [...new Set(profile.policies.flatMap(policy => policy.documentIds ?? []))];
+    for (const documentId of linkedDocumentIds) {
+      try {
+        const file = await getEntityDocumentFile(auth.bookGuid, documentId);
+        const safeName = file.fileName.replace(/[^A-Za-z0-9._-]+/g, '_');
+        files[`policy-documents/document-${documentId}-${safeName}`] = new Uint8Array(file.buffer);
+      } catch {
+        warnings.push(`Linked policy document ${documentId} could not be read.`);
       }
     }
     files['README.txt'] = strToU8([

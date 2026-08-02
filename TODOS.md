@@ -728,7 +728,7 @@ Action Center with calculation provenance.
 
 ### Charitable Giving and Deduction Bunching
 
-**Status:** Proposed 2026-08-01.
+**Status:** Implemented 2026-08-01.
 
 **What:** Track cash and non-cash donations with fair-market-value evidence
 (photos, receipts, and acknowledgment letters through the document vault),
@@ -748,9 +748,18 @@ Living Plan scenario.
 
 **Effort:** M.
 
+**Delivered:** A book-scoped giving profile tracks cash, non-cash, and QCD
+donations with substantiation flags (acknowledgment letters at $250, Form
+8283 at $500, appraisals at $5,000), charity mileage from the existing
+mileage log at the IRS charity rate, QCD eligibility by age, and a
+deterministic two-year bunching comparison using the repo's standard
+deduction figures. Substantiation gaps and bunching/QCD decisions feed the
+Action Center with formulas and traces; year-end and acknowledgment dates
+feed the Money Timeline at `/planning/giving`.
+
 ### 1099 Contractor Compliance
 
-**Status:** Proposed 2026-08-01.
+**Status:** Implemented 2026-08-01.
 
 **What:** Detect vendors paid over the reporting threshold from ledger history,
 track W-9 collection status in the document vault, generate 1099-NEC/MISC
@@ -767,11 +776,18 @@ box amount traces to its source payments.
 
 **Effort:** S-M.
 
+**Delivered:** Extends the existing 1099 worksheet with W-9 request/receipt
+tracking, per-year filing status (`gnucash_web_vendor_1099_filings`), a pure
+compliance engine (Jan 31 due dates, threshold detection), missing-W-9 and
+unfiled-1099 Action Center items that escalate as the deadline approaches,
+filing-deadline Timeline events, and W-9/filing columns in the CSV export.
+TINs remain masked everywhere.
+
 ---
 
 ## P2 - Farm Production and Direct-Sales COGS Pack
 
-**Status:** Proposed 2026-08-01.
+**Status:** Implemented 2026-08-01 (Beez Trackz connector held in reserve).
 
 **What:** Track production (honey, eggs, produce) from harvest through
 inventory to sale: harvest/production logs with quantities, per-unit cost
@@ -803,11 +819,21 @@ connection pattern, and Action Center.
 
 **Effort:** M-L (plus coordinated Beez Trackz API work).
 
+**Delivered:** Products, harvests, sales by channel, inventory adjustments,
+and annual input costs produce per-product on-hand quantities, allocated
+unit costs, channel revenue, gross margin, COGS estimate, and inventory
+value, with negative-stock, unlinked-revenue, and low-margin signals in the
+Action Center, market-day Timeline events, and a Schedule F context panel at
+`/business/farm-production`. Every harvest and sale carries
+`source`/`sourceId` seam fields (`manual` today, `beez_trackz` reserved) so
+the future connector can sync and dedupe without schema changes. The Beez
+Trackz API connector itself remains open, pending that app's readiness.
+
 ---
 
 ## P3 - Estate and Beneficiary Readiness Pack
 
-**Status:** Proposed 2026-08-01.
+**Status:** Implemented 2026-08-01.
 
 **What:** Track per-account beneficiary designations with staleness detection
 keyed to Living Plan life events (marriage, birth, death, divorce), monitor
@@ -825,11 +851,19 @@ carries calculation provenance; estate events become Living Plan stress tests.
 
 **Effort:** S-M.
 
+**Delivered:** Beneficiary designations with life-event and age staleness
+detection, will/POA/directive freshness with review cycles, a core-document
+coverage checklist, survivor runbook tracking, federal exemption exposure
+(2026 OBBBA figure with portability assumption), and a 0-100 readiness
+score at `/planning/estate`. Stale designations, document gaps, exposure,
+and runbook staleness feed the Action Center; document review dates feed
+the Money Timeline.
+
 ---
 
 ## P3 - Retirement Income Sequencing and Social Security Optimizer
 
-**Status:** Proposed 2026-08-01.
+**Status:** Implemented 2026-08-01.
 
 **What:** Deterministic claiming-age comparison per spouse (including survivor
 and spousal benefits), withdrawal-order modeling across taxable, tax-deferred,
@@ -848,6 +882,16 @@ against actual benefits and withdrawals.
 Plan.
 
 **Effort:** M-L.
+
+**Delivered:** Per-person claiming comparison at 62/FRA/70 using the
+existing SSA parameter and PIA engines (monthly, lifetime with COLA,
+breakevens, recommendation), a sequencing comparison run through the real
+drawdown engine (taxable-first vs traditional-first with ending value and
+total taxes), IRMAA tier headroom from the 2026 tables, and RMD start
+context at `/planning/retirement-income`. Claiming, sequencing, and IRMAA
+decisions feed the Action Center; a ninth Opportunity Engine pack ranks
+claiming-delay and sequencing value in Next Best Dollar; age-62/FRA/70/RMD
+milestones feed the Money Timeline.
 
 ---
 

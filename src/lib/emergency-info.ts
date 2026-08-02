@@ -22,12 +22,22 @@ import { fetchAccountCurrentValues } from '@/lib/account-current-value';
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-/** Account types included in the emergency package. */
+/**
+ * Account types whose balances feed the emergency package. STOCK/MUTUAL
+ * (per-security commodity accounts) contribute their market value but are
+ * never listed individually — a survivor needs the parent investment account
+ * at the institution, not per-security holdings. Their value rolls up to the
+ * nearest non-security ancestor instead.
+ */
 export const EMERGENCY_ACCOUNT_TYPES = [
     'ASSET', 'BANK', 'LIABILITY', 'STOCK', 'MUTUAL', 'CREDIT',
 ] as const;
 
+/** Per-security commodity account types (rolled up, never listed). */
+export const EMERGENCY_SECURITY_TYPES = ['STOCK', 'MUTUAL'] as const;
+
 const EMERGENCY_TYPE_SET = new Set<string>(EMERGENCY_ACCOUNT_TYPES);
+const SECURITY_TYPE_SET = new Set<string>(EMERGENCY_SECURITY_TYPES);
 const LIABILITY_TYPES = new Set(['LIABILITY', 'CREDIT']);
 
 export interface AccountEmergencyInfo {
@@ -310,11 +320,17 @@ export interface AssembleEmergencyPackageInput {
 /**
  * Assemble the emergency package (pure).
  *
- * Candidate accounts: non-hidden, non-placeholder accounts of the
- * EMERGENCY_ACCOUNT_TYPES. A candidate is *included* in the printed package
- * when it has a non-zero current balance OR has any emergency metadata
- * recorded (so a recently-emptied account with beneficiary info still
- * prints). All candidates are returned in `accounts` for the edit view.
+ * Candidate accounts: non-hidden accounts of the EMERGENCY_ACCOUNT_TYPES,
+ * excluding per-security STOCK/MUTUAL commodity accounts. Placeholders are
+ * excluded unless they hold security children (a placeholder "Brokerage"
+ * parent of AAPL/VTSAX accounts is exactly what a survivor needs to see).
+ * Security account market values roll up into the balance of their nearest
+ * non-security ancestor.
+ *
+ * A candidate is *included* in the printed package when it has a non-zero
+ * current balance OR has any emergency metadata recorded (so a
+ * recently-emptied account with beneficiary info still prints). All
+ * candidates are returned in `accounts` for the edit view.
  *
  * Institution grouping: explicit metadata institution wins; otherwise the
  * account's top-level parent (the ancestor directly under the book root).
@@ -323,6 +339,28 @@ export function assembleEmergencyPackage(input: AssembleEmergencyPackageInput): 
     const { accounts, values, metadata, sections, asOf } = input;
 
     const byGuid = new Map(accounts.map(a => [a.guid, a]));
+
+    /**
+     * Roll each non-hidden security (STOCK/MUTUAL) account's market value up
+     * to its nearest non-security ancestor. The map also marks which parents
+     * hold securities, so placeholder parents still surface as candidates.
+     */
+    const securityRollup = new Map<string, number>();
+    for (const account of accounts) {
+        if (!SECURITY_TYPE_SET.has(account.account_type)) continue;
+        if (account.hidden !== 0) continue;
+
+        let parent = account.parent_guid ? byGuid.get(account.parent_guid) : undefined;
+        const seen = new Set<string>([account.guid]);
+        while (parent && SECURITY_TYPE_SET.has(parent.account_type) && !seen.has(parent.guid)) {
+            seen.add(parent.guid);
+            parent = parent.parent_guid ? byGuid.get(parent.parent_guid) : undefined;
+        }
+        if (!parent || parent.account_type === 'ROOT') continue;
+
+        const value = values.get(account.guid) ?? 0;
+        securityRollup.set(parent.guid, (securityRollup.get(parent.guid) ?? 0) + value);
+    }
 
     /** Names from the account up to (not including) ROOT, root-first. */
     function pathParts(account: EmergencyAccountRow): string[] {
@@ -341,9 +379,14 @@ export function assembleEmergencyPackage(input: AssembleEmergencyPackageInput): 
 
     for (const account of accounts) {
         if (!EMERGENCY_TYPE_SET.has(account.account_type)) continue;
-        if (account.hidden !== 0 || account.placeholder !== 0) continue;
+        // Per-security accounts are never listed; their value rolled up above.
+        if (SECURITY_TYPE_SET.has(account.account_type)) continue;
+        if (account.hidden !== 0) continue;
+        // Placeholders are listed only when they hold security children.
+        const rolledSecurities = securityRollup.get(account.guid);
+        if (account.placeholder !== 0 && rolledSecurities === undefined) continue;
 
-        const balance = round2(values.get(account.guid) ?? 0);
+        const balance = round2((values.get(account.guid) ?? 0) + (rolledSecurities ?? 0));
         const info = metadata.get(account.guid);
         const included = Math.abs(balance) >= 0.005 || hasAnyMetadata(info);
 
@@ -448,8 +491,12 @@ export async function buildEmergencyPackage(
         commodity_namespace: a.commodity?.namespace ?? null,
     }));
 
+    // Fetch values/metadata for placeholders too: a placeholder parent of
+    // security accounts is listed (with its children's value rolled up).
+    // Security accounts themselves are fetched for their market value but
+    // are never listed individually.
     const candidateGuids = rows
-        .filter(r => EMERGENCY_TYPE_SET.has(r.account_type) && r.hidden === 0 && r.placeholder === 0)
+        .filter(r => EMERGENCY_TYPE_SET.has(r.account_type) && r.hidden === 0)
         .map(r => r.guid);
 
     const [currentValues, metadata, sections] = await Promise.all([

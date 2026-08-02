@@ -7,6 +7,7 @@ import type {
     Vendor1099Row,
     Vendor1099Status,
 } from '@/lib/business/vendor-1099.service';
+import { daysUntilFilingDue, filingDueDate } from '@/lib/business/vendor-1099-compliance';
 import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
@@ -50,6 +51,7 @@ interface EditFormState {
     tinLast4: string;
     w9Received: boolean;
     w9ReceivedDate: string;
+    w9RequestedDate: string;
     exemptFrom1099: boolean;
     address: string;
 }
@@ -61,6 +63,7 @@ function formFromRow(row: Vendor1099Row): EditFormState {
         tinLast4: '',
         w9Received: row.taxInfo?.w9Received ?? false,
         w9ReceivedDate: row.taxInfo?.w9ReceivedDate ?? '',
+        w9RequestedDate: row.taxInfo?.w9RequestedDate ?? '',
         exemptFrom1099: row.taxInfo?.exemptFrom1099 ?? false,
         address: row.taxInfo?.address ?? '',
     };
@@ -72,10 +75,21 @@ const labelClass = 'block text-xs text-foreground-secondary mb-1';
 
 export default function Nec1099Page() {
     const currentYear = new Date().getUTCFullYear();
-    const years = Array.from({ length: 6 }, (_, i) => currentYear - i);
-
     const toast = useToast();
-    const [year, setYear] = useState(currentYear);
+    // Deep links from the Action Center / Timeline carry ?year=<taxYear>.
+    const [year, setYear] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const fromUrl = parseInt(
+                new URLSearchParams(window.location.search).get('year') ?? '',
+                10,
+            );
+            if (Number.isInteger(fromUrl) && fromUrl >= 1990 && fromUrl <= 2100) return fromUrl;
+        }
+        return currentYear;
+    });
+    const years = Array.from(
+        new Set([year, ...Array.from({ length: 6 }, (_, i) => currentYear - i)]),
+    ).sort((a, b) => b - a);
     const [summary, setSummary] = useState<Vendor1099Summary | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -144,6 +158,7 @@ export default function Nec1099Page() {
                 ...(form.tinLast4 ? { tinLast4: form.tinLast4 } : {}),
                 w9Received: form.w9Received,
                 w9ReceivedDate: form.w9Received && form.w9ReceivedDate ? form.w9ReceivedDate : null,
+                w9RequestedDate: form.w9RequestedDate || null,
                 exemptFrom1099: form.exemptFrom1099,
                 address: form.address.trim() || null,
             });
@@ -169,7 +184,37 @@ export default function Nec1099Page() {
         }
     };
 
+    const handleFilingToggle = async (row: Vendor1099Row) => {
+        const marking = row.filedDate === null;
+        try {
+            const res = await fetch(`/api/business/1099/vendor/${row.vendorGuid}/filing`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    taxYear: year,
+                    filedDate: marking ? new Date().toISOString().slice(0, 10) : null,
+                }),
+            });
+            if (!res.ok) {
+                const json = await res.json().catch(() => null);
+                throw new Error(json?.error ?? 'Save failed');
+            }
+            toast.success(marking ? `1099-NEC marked filed for ${year}` : 'Filing status cleared');
+            await load(year);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Failed to update filing status');
+        }
+    };
+
     const isCorp = form?.taxClassification === 'c_corp' || form?.taxClassification === 's_corp';
+
+    const dueDate = filingDueDate(year);
+    const daysLeft = daysUntilFilingDue(year);
+    const reportableRows = (summary?.vendors ?? []).filter(
+        (row) => row.crosses600 && row.status !== 'exempt',
+    );
+    const unfiledCount = reportableRows.filter((row) => !row.filedDate).length;
+    const filedCount = reportableRows.length - unfiledCount;
 
     return (
         <div className="space-y-6">
@@ -202,9 +247,27 @@ export default function Nec1099Page() {
                 }
             />
 
-            <div className="border border-secondary/30 bg-secondary-light rounded-xl px-4 py-3 text-sm text-foreground-secondary">
-                <span className="font-medium text-foreground">January 31, {year + 1} deadline:</span>{' '}
-                1099-NEC forms are due to both recipients and the IRS. Collect W-9s before year-end —{' '}
+            <div
+                className={`rounded-xl border px-4 py-3 text-sm text-foreground-secondary ${
+                    unfiledCount > 0 && daysLeft < 0
+                        ? 'border-error/30 bg-surface/30'
+                        : 'border-secondary/30 bg-secondary-light'
+                }`}
+            >
+                <span className="font-medium text-foreground">
+                    January 31, {year + 1} deadline
+                    {daysLeft >= 0
+                        ? ` — ${daysLeft} day${daysLeft === 1 ? '' : 's'} away:`
+                        : ` — ${Math.abs(daysLeft)} day${Math.abs(daysLeft) === 1 ? '' : 's'} past:`}
+                </span>{' '}
+                1099-NEC forms are due to both recipients and the IRS.{' '}
+                {!loading && summary && reportableRows.length > 0 && (
+                    <span className={unfiledCount > 0 && daysLeft < 0 ? 'text-error' : undefined}>
+                        {filedCount} of {reportableRows.length} reportable vendor
+                        {reportableRows.length === 1 ? '' : 's'} filed.{' '}
+                    </span>
+                )}
+                Collect W-9s before year-end —{' '}
                 <Link href="/taxes/compliance" className="text-primary hover:text-primary-hover transition-colors">
                     see the compliance calendar
                 </Link>
@@ -228,7 +291,7 @@ export default function Nec1099Page() {
 
             {!loading && !error && summary && (
                 <>
-                    <StatGrid cols={3}>
+                    <StatGrid cols={4}>
                         <StatCard
                             label={`Vendors ≥ $600 in ${summary.year}`}
                             value={summary.totals.reportableCount}
@@ -245,6 +308,18 @@ export default function Nec1099Page() {
                             value={formatCurrency(summary.totals.reportableTotal)}
                             size="compact"
                         />
+                        <StatCard
+                            label={`1099s filed (due ${dueDate})`}
+                            value={`${filedCount} / ${reportableRows.length}`}
+                            tone={
+                                unfiledCount > 0 && daysLeft < 0
+                                    ? 'negative'
+                                    : unfiledCount > 0 && daysLeft <= 60
+                                        ? 'warning'
+                                        : 'default'
+                            }
+                            size="compact"
+                        />
                     </StatGrid>
 
                     {summary.vendors.length === 0 ? (
@@ -257,7 +332,7 @@ export default function Nec1099Page() {
                     ) : (
                         <div className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-xl overflow-hidden">
                             <div className="overflow-x-auto">
-                                <table className="w-full min-w-[720px] text-sm">
+                                <table className="w-full min-w-[840px] text-sm">
                                     <thead>
                                         <tr className="text-xs text-foreground-muted uppercase tracking-wider border-b border-border">
                                             <th className="px-4 py-3 text-left">Vendor</th>
@@ -265,6 +340,7 @@ export default function Nec1099Page() {
                                             <th className="px-4 py-3 text-left">Threshold</th>
                                             <th className="px-4 py-3 text-left">W-9</th>
                                             <th className="px-4 py-3 text-left">Status</th>
+                                            <th className="px-4 py-3 text-left">Filed</th>
                                             <th className="px-4 py-3 text-center">Exempt</th>
                                         </tr>
                                     </thead>
@@ -318,6 +394,32 @@ export default function Nec1099Page() {
                                                             <Chip label={status.label} className={status.className} />
                                                         </td>
                                                         <td
+                                                            className="px-4 py-2.5"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            {row.filedDate ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleFilingToggle(row)}
+                                                                    title="Clear filing status"
+                                                                    className="font-mono text-xs text-positive hover:text-foreground transition-colors"
+                                                                    style={TNUM}
+                                                                >
+                                                                    ✓ {row.filedDate}
+                                                                </button>
+                                                            ) : row.crosses600 && row.status !== 'exempt' ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleFilingToggle(row)}
+                                                                    className="rounded-lg border border-border px-2 py-0.5 text-xs text-foreground-secondary hover:text-foreground hover:border-border-hover transition-colors"
+                                                                >
+                                                                    Mark filed
+                                                                </button>
+                                                            ) : (
+                                                                <span className="text-xs text-foreground-muted">—</span>
+                                                            )}
+                                                        </td>
+                                                        <td
                                                             className="px-4 py-2.5 text-center"
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
@@ -332,7 +434,7 @@ export default function Nec1099Page() {
                                                     </tr>
                                                     {isOpen && form && (
                                                         <tr className="border-b border-border/30 bg-background-tertiary/30">
-                                                            <td colSpan={6} className="px-6 py-4">
+                                                            <td colSpan={7} className="px-6 py-4">
                                                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                                                                     <div>
                                                                         <label className={labelClass}>Legal name (as on W-9)</label>
@@ -399,6 +501,20 @@ export default function Nec1099Page() {
                                                                         />
                                                                         <p className="mt-1 text-[11px] text-foreground-muted">
                                                                             Only a masked form is stored — never enter the full TIN.
+                                                                        </p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className={labelClass}>W-9 requested date</label>
+                                                                        <input
+                                                                            type="date"
+                                                                            value={form.w9RequestedDate}
+                                                                            onChange={(e) =>
+                                                                                setForm({ ...form, w9RequestedDate: e.target.value })
+                                                                            }
+                                                                            className={`${inputClass} font-mono`}
+                                                                        />
+                                                                        <p className="mt-1 text-[11px] text-foreground-muted">
+                                                                            When you asked the vendor for a W-9 (leave blank if not yet requested).
                                                                         </p>
                                                                     </div>
                                                                     <div className="flex items-end gap-4">

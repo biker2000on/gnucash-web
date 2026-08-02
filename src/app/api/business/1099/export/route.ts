@@ -47,6 +47,8 @@ export async function GET(request: NextRequest) {
                 'Recipient Address',
                 'Box 1 Nonemployee Compensation',
                 'W-9 Received',
+                'W-9 Requested Date',
+                'Filed 1099-NEC Date',
                 'Status',
             ].map(escapeCSVField).join(','),
         ];
@@ -63,6 +65,8 @@ export async function GET(request: NextRequest) {
                     (info?.address ?? '').replace(/\r?\n/g, ', '),
                     vendor.totalPaid.toFixed(2),
                     info?.w9Received ? 'yes' : 'no',
+                    info?.w9RequestedDate ?? '',
+                    vendor.filedDate ?? '',
                     vendor.status,
                 ].map(escapeCSVField).join(',')
             );

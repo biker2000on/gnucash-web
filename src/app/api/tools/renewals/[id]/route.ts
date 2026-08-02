@@ -20,7 +20,8 @@ function parseId(idParam: string): number | null {
  * Body variants:
  *   { action: 'renew' }                    — advance renewal_date by the cadence
  *   { action: 'dismiss', until: 'YYYY-MM-DD' } — suppress reminders through a date
- *   { name?, renewalDate?, amount?, ... }  — partial field edit
+ *   { name?, renewalDate?, amount?, documentId?, ... } — partial field edit
+ *     (documentId links a vault document from the same book; null clears it)
  */
 export async function PATCH(
     request: Request,

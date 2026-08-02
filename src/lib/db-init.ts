@@ -1092,6 +1092,21 @@ async function createExtensionTables() {
             notes TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        ALTER TABLE gnucash_web_vendor_tax_info
+          ADD COLUMN IF NOT EXISTS w9_requested_date DATE;
+
+        -- Per-vendor-year 1099-NEC filing status (dates only; no TINs here).
+        CREATE TABLE IF NOT EXISTS gnucash_web_vendor_1099_filings (
+            vendor_guid VARCHAR(32) NOT NULL,
+            tax_year INTEGER NOT NULL,
+            book_guid VARCHAR(32),
+            filed_1099_nec DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (vendor_guid, tax_year)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vendor_1099_filings_book
+            ON gnucash_web_vendor_1099_filings(book_guid);
 
         CREATE TABLE IF NOT EXISTS gnucash_web_packages (
             id SERIAL PRIMARY KEY,
@@ -1605,6 +1620,8 @@ async function createExtensionTables() {
         );
         CREATE INDEX IF NOT EXISTS idx_renewals_book_date
             ON gnucash_web_renewals(book_guid, renewal_date);
+        ALTER TABLE gnucash_web_renewals
+          ADD COLUMN IF NOT EXISTS document_id INTEGER;
         END $$;
     `;
 

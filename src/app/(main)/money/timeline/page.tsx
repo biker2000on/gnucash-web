@@ -32,6 +32,10 @@ const DOMAIN_LABELS: Record<FinancialEventDomain, string> = {
   family: 'Family banking',
   trip: 'Trips',
   vehicle: 'Vehicles',
+  giving: 'Charitable giving',
+  estate: 'Estate',
+  farm: 'Farm',
+  retirement: 'Retirement',
 };
 
 const DOMAIN_COLORS: Record<FinancialEventDomain, string> = {
@@ -57,6 +61,10 @@ const DOMAIN_COLORS: Record<FinancialEventDomain, string> = {
   family: 'border-primary/40 text-primary',
   trip: 'border-secondary/40 text-secondary',
   vehicle: 'border-secondary/40 text-secondary',
+  giving: 'border-positive/40 text-positive',
+  estate: 'border-secondary/40 text-secondary',
+  farm: 'border-positive/40 text-positive',
+  retirement: 'border-primary/40 text-primary',
 };
 
 type ViewMode = 'day' | 'month' | 'year';

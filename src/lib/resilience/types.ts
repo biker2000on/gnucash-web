@@ -10,7 +10,11 @@ export type ResilienceSection =
   | 'utilities'
   | 'family_banking'
   | 'trips'
-  | 'vehicle_tco';
+  | 'vehicle_tco'
+  | 'giving'
+  | 'estate'
+  | 'farm_production'
+  | 'retirement_income';
 
 export interface RentalPayment {
   id: string;
@@ -348,4 +352,237 @@ export interface VehicleTcoAsset {
 
 export interface VehicleTcoProfile {
   vehicles: VehicleTcoAsset[];
+}
+
+export type DonationKind = 'cash' | 'noncash' | 'qcd';
+
+export interface Donation {
+  id: string;
+  date: string;
+  charity: string;
+  kind: DonationKind;
+  /** Cash amount, or fair market value for noncash donations. */
+  amount: number;
+  description?: string | null;
+  /** Written acknowledgment letter on file. */
+  acknowledged: boolean;
+  /** Free-text pointer or URL to the vault document. */
+  documentRef?: string | null;
+}
+
+export interface GivingSettings {
+  filingStatus: 'single' | 'married_joint';
+  marginalRatePct: number;
+  stateRatePct?: number | null;
+  agiEstimate?: number | null;
+  birthYear?: number | null;
+  spouseBirthYear?: number | null;
+  plannedAnnualGiving: number;
+  standardDeductionOverride?: number | null;
+  /** SALT, mortgage interest, and other non-charitable itemized deductions per year. */
+  otherItemizedAnnual: number;
+}
+
+export interface GivingProfile {
+  donations: Donation[];
+  settings: GivingSettings;
+}
+
+export type EstateAccountType =
+  | 'retirement'
+  | 'life_insurance'
+  | 'tod_investment'
+  | 'pod_bank'
+  | 'annuity'
+  | 'hsa'
+  | 'other';
+
+export interface EstateDesignation {
+  id: string;
+  /** Free text, e.g. "Fidelity 401k". */
+  accountLabel: string;
+  accountType: EstateAccountType;
+  primaryBeneficiary: string;
+  contingentBeneficiary?: string | null;
+  lastReviewedDate: string;
+}
+
+export type EstateDocumentKind =
+  | 'will'
+  | 'revocable_trust'
+  | 'financial_poa'
+  | 'healthcare_poa'
+  | 'healthcare_directive'
+  | 'guardianship_letter'
+  | 'beneficiary_letter'
+  | 'other';
+
+export interface EstateDocument {
+  id: string;
+  kind: EstateDocumentKind;
+  label?: string | null;
+  /** Free text: safe, attorney, vault link. */
+  location: string;
+  lastUpdatedDate: string;
+  reviewCycleYears: number;
+}
+
+export type EstateLifeEventKind =
+  | 'marriage'
+  | 'divorce'
+  | 'birth'
+  | 'death'
+  | 'move'
+  | 'major_asset_change';
+
+export interface EstateLifeEvent {
+  id: string;
+  date: string;
+  kind: EstateLifeEventKind;
+  description?: string | null;
+}
+
+export interface EstateSettings {
+  estimatedGrossEstate: number;
+  maritalStatus: 'single' | 'married';
+  /** Two-letter state code. */
+  state: string;
+  reviewCycleYearsDefault: number;
+  survivorRunbookLocation?: string | null;
+  survivorRunbookUpdatedDate?: string | null;
+}
+
+export interface EstateProfile {
+  designations: EstateDesignation[];
+  documents: EstateDocument[];
+  lifeEvents: EstateLifeEvent[];
+  settings: EstateSettings;
+}
+
+/**
+ * Where a farm record came from. 'beez_trackz' is reserved for a future sync
+ * connector; sourced records carry an immutable external sourceId and are
+ * treated as read-only except delete in the UI.
+ */
+export type FarmRecordSource = 'manual' | 'beez_trackz';
+
+export type FarmProductCategory =
+  | 'honey'
+  | 'eggs'
+  | 'produce'
+  | 'meat'
+  | 'value_added'
+  | 'other';
+
+export type FarmSalesChannel =
+  | 'farmers_market'
+  | 'wholesale'
+  | 'direct'
+  | 'csa'
+  | 'other';
+
+export interface FarmProduct {
+  id: string;
+  name: string;
+  /** Free text: 'lb', 'dozen', 'jar', … */
+  unit: string;
+  category: FarmProductCategory;
+  /** Target sale price per unit. */
+  targetPrice?: number | null;
+}
+
+export interface FarmHarvest {
+  id: string;
+  date: string;
+  productId: string;
+  quantity: number;
+  notes?: string | null;
+  source: FarmRecordSource;
+  /** Immutable external id when source is not manual. */
+  sourceId?: string | null;
+}
+
+export interface FarmSale {
+  id: string;
+  date: string;
+  productId: string;
+  channel: FarmSalesChannel;
+  quantity: number;
+  /** Total money received for the sale, not a per-unit price. */
+  revenue: number;
+  /** Optional link to the GnuCash transaction that recorded the revenue. */
+  transactionGuid?: string | null;
+  source: FarmRecordSource;
+  /** Immutable external id when source is not manual. */
+  sourceId?: string | null;
+}
+
+export interface FarmAdjustment {
+  id: string;
+  date: string;
+  productId: string;
+  /** Signed: spoilage negative, found stock positive. */
+  quantityDelta: number;
+  reason?: string | null;
+}
+
+export interface FarmCost {
+  id: string;
+  year: number;
+  /** null = whole-farm cost allocated across products. */
+  productId?: string | null;
+  label: string;
+  /** Annual direct input cost (jars, feed, packaging). */
+  amount: number;
+}
+
+export interface FarmProductionSettings {
+  scheduleFNotes?: string | null;
+  /** 0-6 weekday number (Sunday = 0) or null when no regular market day. */
+  defaultMarketDay?: number | null;
+}
+
+export interface FarmProductionProfile {
+  products: FarmProduct[];
+  harvests: FarmHarvest[];
+  sales: FarmSale[];
+  adjustments: FarmAdjustment[];
+  costs: FarmCost[];
+  settings: FarmProductionSettings;
+}
+
+export interface RetirementPerson {
+  id: string;
+  name: string;
+  birthYear: number;
+  /**
+   * Monthly primary insurance amount at full retirement age, user-entered.
+   * When 0 and annualEarnings is provided, the engine estimates it via the
+   * existing SSA benefit estimator (constant real earnings assumption).
+   */
+  pia: number;
+  /** Current gross annual covered earnings used to estimate the PIA when pia is 0. */
+  annualEarnings?: number | null;
+  /** Planned Social Security claiming age in whole years (62-70). */
+  plannedClaimAge: number;
+}
+
+export type RetirementSequencingPreference = 'taxable_first' | 'traditional_first' | 'proportional';
+
+export interface RetirementIncomeSettings {
+  filingStatus: 'single' | 'married_joint';
+  annualSpending: number;
+  /** Last modeled age for the primary person (inclusive). */
+  horizonAge: number;
+  /** Social Security COLA / inflation assumption, percent per year. */
+  colaPct: number;
+  /** Real (after-inflation) portfolio return assumption, percent per year. */
+  realReturnPct: number;
+  sequencingPreference: RetirementSequencingPreference;
+}
+
+export interface RetirementIncomeProfile {
+  people: RetirementPerson[];
+  balances: { taxable: number; traditional: number; roth: number; hsa: number };
+  settings: RetirementIncomeSettings;
 }

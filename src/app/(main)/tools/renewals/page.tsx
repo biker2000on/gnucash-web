@@ -21,6 +21,16 @@ interface Renewal {
     source: string;
     notes: string | null;
     dismissedUntil: string | null;
+    documentId: number | null;
+    documentTitle: string | null;
+    documentFileName: string | null;
+}
+
+/** Entry from the household document vault, offered in the link picker. */
+interface VaultDocument {
+    id: number;
+    title: string;
+    docType: string;
 }
 
 interface ImportResult {
@@ -62,6 +72,8 @@ interface RenewalDraft {
     cadenceMonths: string;
     remindDays: string;
     notes: string;
+    /** Vault document id as a string, '' = no linked document. */
+    documentId: string;
 }
 
 const EMPTY_DRAFT: RenewalDraft = {
@@ -71,6 +83,7 @@ const EMPTY_DRAFT: RenewalDraft = {
     cadenceMonths: '12',
     remindDays: '30',
     notes: '',
+    documentId: '',
 };
 
 function draftFromRenewal(r: Renewal): RenewalDraft {
@@ -81,6 +94,7 @@ function draftFromRenewal(r: Renewal): RenewalDraft {
         cadenceMonths: String(r.cadenceMonths),
         remindDays: String(r.remindDays),
         notes: r.notes ?? '',
+        documentId: r.documentId != null ? String(r.documentId) : '',
     };
 }
 
@@ -123,6 +137,7 @@ export default function RenewalsPage() {
     const [editorOpen, setEditorOpen] = useState(false);
     const [editing, setEditing] = useState<Renewal | null>(null);
     const [draft, setDraft] = useState<RenewalDraft>(EMPTY_DRAFT);
+    const [documents, setDocuments] = useState<VaultDocument[]>([]);
     const [saving, setSaving] = useState(false);
     const [importing, setImporting] = useState(false);
     const [busyId, setBusyId] = useState<number | null>(null);
@@ -149,6 +164,24 @@ export default function RenewalsPage() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    // Vault documents for the link picker; a failure just leaves the picker empty.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch('/api/business/documents');
+                if (!res.ok) return;
+                const payload = (await res.json()) as { documents?: VaultDocument[] };
+                if (!cancelled && Array.isArray(payload.documents)) {
+                    setDocuments(payload.documents);
+                }
+            } catch {
+                // Non-fatal: the renewals list works without the picker.
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
 
     const sorted = useMemo(
         () => [...renewals].sort((a, b) => a.renewalDate.localeCompare(b.renewalDate)),
@@ -183,6 +216,7 @@ export default function RenewalsPage() {
                 cadenceMonths: parseInt(draft.cadenceMonths, 10) || 12,
                 remindDays: parseInt(draft.remindDays, 10) || 0,
                 notes: draft.notes.trim() || null,
+                documentId: draft.documentId === '' ? null : parseInt(draft.documentId, 10),
             };
             const res = await fetch(
                 editing ? `/api/tools/renewals/${editing.id}` : '/api/tools/renewals',
@@ -384,6 +418,20 @@ export default function RenewalsPage() {
                                                                 Muted until {r.dismissedUntil}
                                                             </span>
                                                         )}
+                                                        {r.documentId != null && (
+                                                            <a
+                                                                href={`/api/business/documents/${r.documentId}/download`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                title={r.documentTitle ? `Open document: ${r.documentTitle}` : 'Open linked document'}
+                                                                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/40 text-primary hover:bg-primary-light transition-colors"
+                                                            >
+                                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3" aria-hidden="true">
+                                                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+                                                                </svg>
+                                                                Doc
+                                                            </a>
+                                                        )}
                                                     </div>
                                                     <p className="text-xs text-foreground-muted mt-0.5">
                                                         <span className="font-mono" style={TNUM}>{r.renewalDate}</span>
@@ -556,6 +604,34 @@ export default function RenewalsPage() {
                             placeholder="Policy number, agent contact, cancellation deadline…"
                             className="w-full bg-input-bg border border-border rounded-lg py-2 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50"
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs uppercase tracking-wider text-foreground-muted mb-1">Linked document</label>
+                        <select
+                            value={draft.documentId}
+                            onChange={e => setDraft(prev => ({ ...prev, documentId: e.target.value }))}
+                            className="w-full bg-input-bg border border-border rounded-lg py-2 px-3 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                        >
+                            <option value="">None</option>
+                            {/* Keep a stale/unlisted link selectable so opening the editor doesn't silently clear it. */}
+                            {draft.documentId !== '' && !documents.some(d => String(d.id) === draft.documentId) && (
+                                <option value={draft.documentId}>
+                                    {editing?.documentTitle ?? `Document #${draft.documentId}`}
+                                </option>
+                            )}
+                            {documents.map(d => (
+                                <option key={d.id} value={String(d.id)}>
+                                    {d.title} ({d.docType})
+                                </option>
+                            ))}
+                        </select>
+                        <p className="text-xs text-foreground-muted mt-1">
+                            Attach the contract or policy from{' '}
+                            <Link href="/business/documents" className="text-primary hover:text-primary-hover underline underline-offset-2">
+                                Household Documents
+                            </Link>.
+                        </p>
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2 border-t border-border">

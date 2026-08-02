@@ -26,6 +26,7 @@ const taxInfo = (overrides: Partial<VendorTaxInfo> = {}): VendorTaxInfo => ({
     taxIdMasked: null,
     w9Received: false,
     w9ReceivedDate: null,
+    w9RequestedDate: null,
     exemptFrom1099: false,
     address: null,
     notes: null,

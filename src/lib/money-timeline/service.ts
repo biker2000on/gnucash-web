@@ -21,6 +21,7 @@ import {
   schedulableReportLabel,
 } from '@/lib/report-scheduler';
 import { ENTITY_TYPES } from '@/lib/services/entity.service';
+import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { loadResilienceEvents } from '@/lib/resilience/service';
 import { buildMoneyTimeline, eventStatus, isoDate } from './core';
 import type { FinancialEvent, FinancialEventDomain, MoneyTimeline } from './types';
@@ -263,6 +264,59 @@ export async function collectFinancialEventsForBook(
     ));
   } catch (error) {
     console.warn('Money Timeline compliance source failed:', error);
+  }
+
+  // Vendor-data-driven 1099-NEC filing deadlines: one Jan 31 event per tax
+  // year that actually has over-threshold contractors, complete once every
+  // reportable vendor has a filed date recorded.
+  try {
+    const currentYear = now.getUTCFullYear();
+    for (const taxYear of [currentYear - 1, currentYear]) {
+      const compliance = await get1099Compliance(bookGuid, accountGuids, taxYear, now);
+      if (compliance.reportableCount === 0) continue;
+      const allFiled = compliance.unfiledCount === 0;
+      // Fully-filed past deadlines are finished business — keep the timeline clean.
+      if (allFiled && compliance.filingDueDate < isoDate(now)) continue;
+      const href = `/business/reports/1099?year=${taxYear}`;
+      events.push({
+        id: `${bookGuid}:vendor-1099:${taxYear}`,
+        bookGuid,
+        domain: 'compliance',
+        title: `1099-NEC filing for ${taxYear}`,
+        description: allFiled
+          ? `All ${compliance.reportableCount} reportable contractor${compliance.reportableCount === 1 ? '' : 's'} filed.`
+          : `${compliance.unfiledCount} of ${compliance.reportableCount} reportable contractor${compliance.reportableCount === 1 ? '' : 's'} still need${compliance.unfiledCount === 1 ? 's' : ''} a 1099-NEC.`,
+        date: compliance.filingDueDate,
+        endDate: null,
+        cashImpact: 0,
+        currency,
+        confidence: 1,
+        status: allFiled ? 'complete' : eventStatus(compliance.filingDueDate, true, now),
+        href,
+        sourceId: `vendor-1099:${taxYear}`,
+        actionId: null,
+        planId: null,
+        evidence: compliance.rows
+          .filter(row => row.requiresFiling && !row.filedDate)
+          .slice(0, 10)
+          .map(row => ({
+            kind: 'vendor' as const,
+            id: row.vendorGuid,
+            label: row.name,
+            source: 'system' as const,
+            href,
+            observedAt: now.toISOString(),
+          })),
+        metadata: {
+          taxYear,
+          reportableCount: compliance.reportableCount,
+          unfiledCount: compliance.unfiledCount,
+          missingW9Count: compliance.missingW9Count,
+        },
+      });
+    }
+  } catch (error) {
+    console.warn('Money Timeline vendor 1099 source failed:', error);
   }
 
   try {

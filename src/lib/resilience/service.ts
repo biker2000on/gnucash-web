@@ -14,9 +14,26 @@ import {
   calculateLifeNeeds,
   calculateRentRoll,
   compareHealthPlans,
+  mileageRate,
   parseReceiptPriceLines,
   summarizeMileage,
 } from './core';
+import { calculateGivingPlan, type GivingContext } from './giving-core';
+import { CORE_DOCUMENT_KINDS as CORE_ESTATE_DOCUMENT_KINDS, calculateEstateReadiness } from './estate-core';
+import {
+  MARGIN_ALERT_PERCENT,
+  MARGIN_ALERT_REVENUE_THRESHOLD,
+  UNLINKED_REVENUE_ACTION_THRESHOLD,
+  UNLINKED_REVENUE_WARNING_THRESHOLD,
+  calculateFarmProduction,
+} from './farm-production-core';
+import {
+  CLAIMING_DELTA_ACTION_THRESHOLD,
+  EARLIEST_CLAIM_AGE,
+  LATEST_CLAIM_AGE,
+  SEQUENCING_DELTA_ACTION_THRESHOLD,
+  analyzeRetirementIncome,
+} from './retirement-income-core';
 import {
   calculateEducationPlan,
   calculateFamilyBanking,
@@ -29,15 +46,20 @@ import {
 import type {
   CapitalProfile,
   EducationProfile,
+  EstateDocument,
+  EstateProfile,
   FamilyBankingProfile,
+  FarmProductionProfile,
   FuelFillup,
   FuelProfile,
+  GivingProfile,
   HealthcareProfile,
   InsuranceProfile,
   LifeProfile,
   MileageProfile,
   RentalsProfile,
   ResilienceSection,
+  RetirementIncomeProfile,
   TripsProfile,
   UtilitiesProfile,
   VehicleTcoProfile,
@@ -98,7 +120,9 @@ const insuranceSchema = z.object({
       category: z.string().trim().min(1).max(120),
       limit: money,
     })).max(200),
-    documentIds: z.array(z.number().int().positive()).max(200),
+    // Vault document links (gnucash_web_entity_documents ids). Defaulted so
+    // profiles saved before document linking existed still parse.
+    documentIds: z.array(z.number().int().positive()).max(200).default([]),
   })).max(500),
 });
 
@@ -316,6 +340,149 @@ const vehicleTcoSchema = z.object({
   })).max(200),
 });
 
+// --- Charitable giving section (schema) ---
+const givingSchema = z.object({
+  donations: z.array(z.object({
+    id,
+    date,
+    charity: z.string().trim().min(1).max(200),
+    kind: z.enum(['cash', 'noncash', 'qcd']),
+    amount: money,
+    description: z.string().max(500).nullable().optional(),
+    acknowledged: z.boolean(),
+    documentRef: z.string().max(500).nullable().optional(),
+  })).max(10_000),
+  settings: z.object({
+    filingStatus: z.enum(['single', 'married_joint']),
+    marginalRatePct: percent,
+    stateRatePct: percent.nullable().optional(),
+    agiEstimate: money.nullable().optional(),
+    birthYear: z.number().int().min(1900).max(2300).nullable().optional(),
+    spouseBirthYear: z.number().int().min(1900).max(2300).nullable().optional(),
+    plannedAnnualGiving: money,
+    standardDeductionOverride: money.nullable().optional(),
+    otherItemizedAnnual: money,
+  }),
+});
+// --- End charitable giving section (schema) ---
+
+// --- Estate readiness section (schema) ---
+const estateSchema = z.object({
+  designations: z.array(z.object({
+    id,
+    accountLabel: z.string().trim().min(1).max(200),
+    accountType: z.enum(['retirement', 'life_insurance', 'tod_investment', 'pod_bank', 'annuity', 'hsa', 'other']),
+    primaryBeneficiary: z.string().trim().min(1).max(200),
+    contingentBeneficiary: z.string().max(200).nullable().optional(),
+    lastReviewedDate: date,
+  })).max(500),
+  documents: z.array(z.object({
+    id,
+    kind: z.enum(['will', 'revocable_trust', 'financial_poa', 'healthcare_poa', 'healthcare_directive', 'guardianship_letter', 'beneficiary_letter', 'other']),
+    label: z.string().max(200).nullable().optional(),
+    location: z.string().trim().max(300),
+    lastUpdatedDate: date,
+    reviewCycleYears: z.number().int().min(1).max(10),
+  })).max(500),
+  lifeEvents: z.array(z.object({
+    id,
+    date,
+    kind: z.enum(['marriage', 'divorce', 'birth', 'death', 'move', 'major_asset_change']),
+    description: z.string().max(500).nullable().optional(),
+  })).max(1_000),
+  settings: z.object({
+    estimatedGrossEstate: money,
+    maritalStatus: z.enum(['single', 'married']),
+    state: z.string().regex(/^[A-Z]{2}$/),
+    reviewCycleYearsDefault: z.number().int().min(1).max(10),
+    survivorRunbookLocation: z.string().max(300).nullable().optional(),
+    survivorRunbookUpdatedDate: date.nullable().optional(),
+  }),
+});
+// --- End estate readiness section (schema) ---
+
+// --- Farm production section (schema) ---
+/** Record provenance seam for the future Beez Trackz sync connector. */
+const farmSource = z.enum(['manual', 'beez_trackz']);
+const farmSourceId = z.string().max(100).nullable().optional();
+const farmQuantity = z.number().finite().min(0).max(1_000_000_000);
+
+const farmProductionSchema = z.object({
+  products: z.array(z.object({
+    id,
+    name: z.string().trim().min(1).max(160),
+    unit: z.string().trim().min(1).max(40),
+    category: z.enum(['honey', 'eggs', 'produce', 'meat', 'value_added', 'other']),
+    targetPrice: money.nullable().optional(),
+  })).max(500),
+  harvests: z.array(z.object({
+    id,
+    date,
+    productId: id,
+    quantity: farmQuantity,
+    notes: z.string().max(500).nullable().optional(),
+    source: farmSource,
+    sourceId: farmSourceId,
+  })).max(100_000),
+  sales: z.array(z.object({
+    id,
+    date,
+    productId: id,
+    channel: z.enum(['farmers_market', 'wholesale', 'direct', 'csa', 'other']),
+    quantity: farmQuantity,
+    revenue: money,
+    transactionGuid: z.string().max(32).nullable().optional(),
+    source: farmSource,
+    sourceId: farmSourceId,
+  })).max(100_000),
+  adjustments: z.array(z.object({
+    id,
+    date,
+    productId: id,
+    quantityDelta: z.number().finite().min(-1_000_000_000).max(1_000_000_000),
+    reason: z.string().max(300).nullable().optional(),
+  })).max(100_000),
+  costs: z.array(z.object({
+    id,
+    year: z.number().int().min(1900).max(2300),
+    productId: z.string().max(100).nullable().optional(),
+    label: z.string().trim().min(1).max(200),
+    amount: money,
+  })).max(10_000),
+  settings: z.object({
+    scheduleFNotes: z.string().max(2_000).nullable().optional(),
+    defaultMarketDay: z.number().int().min(0).max(6).nullable().optional(),
+  }),
+});
+// --- End farm production section (schema) ---
+
+// --- Retirement income section (schema) ---
+const retirementIncomeSchema = z.object({
+  people: z.array(z.object({
+    id,
+    name: z.string().trim().min(1).max(120),
+    birthYear: z.number().int().min(1900).max(2300),
+    pia: money,
+    annualEarnings: money.nullable().optional(),
+    plannedClaimAge: z.number().int().min(62).max(70),
+  })).max(2),
+  balances: z.object({
+    taxable: money,
+    traditional: money,
+    roth: money,
+    hsa: money,
+  }),
+  settings: z.object({
+    filingStatus: z.enum(['single', 'married_joint']),
+    annualSpending: money,
+    horizonAge: z.number().int().min(70).max(110),
+    colaPct: z.number().finite().min(0).max(10),
+    realReturnPct: z.number().finite().min(-5).max(15),
+    sequencingPreference: z.enum(['taxable_first', 'traditional_first', 'proportional']),
+  }),
+});
+// --- End retirement income section (schema) ---
+
 const schemas = {
   rentals: rentalsSchema,
   insurance: insuranceSchema,
@@ -329,6 +496,10 @@ const schemas = {
   family_banking: familyBankingSchema,
   trips: tripsSchema,
   vehicle_tco: vehicleTcoSchema,
+  giving: givingSchema,
+  estate: estateSchema,
+  farm_production: farmProductionSchema,
+  retirement_income: retirementIncomeSchema,
 } satisfies Record<ResilienceSection, z.ZodType>;
 
 const defaults = {
@@ -356,6 +527,53 @@ const defaults = {
   family_banking: { children: [] },
   trips: { trips: [] },
   vehicle_tco: { vehicles: [] },
+  giving: {
+    donations: [],
+    settings: {
+      filingStatus: 'married_joint',
+      marginalRatePct: 22,
+      stateRatePct: 0,
+      agiEstimate: null,
+      birthYear: null,
+      spouseBirthYear: null,
+      plannedAnnualGiving: 0,
+      standardDeductionOverride: null,
+      otherItemizedAnnual: 0,
+    },
+  },
+  estate: {
+    designations: [],
+    documents: [],
+    lifeEvents: [],
+    settings: {
+      estimatedGrossEstate: 0,
+      maritalStatus: 'married',
+      state: 'NC',
+      reviewCycleYearsDefault: 3,
+      survivorRunbookLocation: null,
+      survivorRunbookUpdatedDate: null,
+    },
+  },
+  farm_production: {
+    products: [],
+    harvests: [],
+    sales: [],
+    adjustments: [],
+    costs: [],
+    settings: { scheduleFNotes: null, defaultMarketDay: null },
+  },
+  retirement_income: {
+    people: [],
+    balances: { taxable: 0, traditional: 0, roth: 0, hsa: 0 },
+    settings: {
+      filingStatus: 'married_joint',
+      annualSpending: 0,
+      horizonAge: 90,
+      colaPct: 2.5,
+      realReturnPct: 4,
+      sequencingPreference: 'taxable_first',
+    },
+  },
 } satisfies Record<ResilienceSection, unknown>;
 
 interface ProfileRow {
@@ -576,8 +794,54 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
       mileageVehicles: mileage.vehicles,
     };
   }
+  if (section === 'giving') {
+    const mileage = await getResilienceProfile(bookGuid, 'mileage') as MileageProfile;
+    return {
+      profile,
+      plan: calculateGivingPlan(profile as GivingProfile, charityMileageContext(mileage)),
+    };
+  }
+  // --- Estate readiness section ---
+  if (section === 'estate') {
+    return { profile, readiness: calculateEstateReadiness(profile as EstateProfile) };
+  }
+  // --- End estate readiness section ---
+  // --- Farm production section ---
+  if (section === 'farm_production') {
+    return { profile, production: calculateFarmProduction(profile as FarmProductionProfile) };
+  }
+  // --- End farm production section ---
+  // --- Retirement income section ---
+  if (section === 'retirement_income') {
+    return { profile, analysis: analyzeRetirementIncome(profile as RetirementIncomeProfile) };
+  }
+  // --- End retirement income section ---
   return { profile };
 }
+
+// --- Charitable giving section (context helper) ---
+function charityMileageContext(mileage: MileageProfile, now = new Date()): GivingContext {
+  const charityRows = summarizeMileage(mileage.trips, now.getUTCFullYear()).rows
+    .filter(row => row.purpose === 'charity');
+  return {
+    charityMiles: charityRows.reduce((sum, row) => sum + row.miles, 0),
+    charityMileageDeduction: charityRows.reduce((sum, row) => sum + row.deduction, 0),
+  };
+}
+// --- End charitable giving section (context helper) ---
+
+// --- Estate readiness section (labels) ---
+const ESTATE_DOCUMENT_LABELS: Record<EstateDocument['kind'], string> = {
+  will: 'Will',
+  revocable_trust: 'Revocable living trust',
+  financial_poa: 'Financial power of attorney',
+  healthcare_poa: 'Healthcare power of attorney',
+  healthcare_directive: 'Healthcare directive',
+  guardianship_letter: 'Guardianship letter',
+  beneficiary_letter: 'Beneficiary letter',
+  other: 'Estate document',
+};
+// --- End estate readiness section (labels) ---
 
 async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesProfile) {
   const existingReceiptIds = new Set(profile.bills.flatMap(bill => bill.receiptId ? [bill.receiptId] : []));
@@ -951,6 +1215,10 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
     familyBanking,
     trips,
     vehicleTco,
+    giving,
+    estate,
+    farmProduction,
+    retirementIncome,
     items,
   ] = await Promise.all([
     getResilienceProfile(bookGuid, 'rentals'),
@@ -965,6 +1233,10 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
     getResilienceProfile(bookGuid, 'family_banking'),
     getResilienceProfile(bookGuid, 'trips'),
     getResilienceProfile(bookGuid, 'vehicle_tco'),
+    getResilienceProfile(bookGuid, 'giving'),
+    getResilienceProfile(bookGuid, 'estate'),
+    getResilienceProfile(bookGuid, 'farm_production'),
+    getResilienceProfile(bookGuid, 'retirement_income'),
     listItems(bookGuid),
   ]);
   const actions: FinancialActionCandidate[] = [];
@@ -1283,6 +1555,341 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: [{ kind: 'vehicle', id: vehicle.id, label: vehicle.name, source: 'manual', href: '/tools/vehicle-tco', verified: false }],
     }));
   }
+  // --- Charitable giving section (actions) ---
+  const givingPlan = calculateGivingPlan(
+    giving as GivingProfile,
+    charityMileageContext(mileageProfile, now),
+    now,
+  );
+  const currentGivingYear = givingPlan.currentYear;
+  const charityRate = mileageRate(`${currentGivingYear}-12-31`, 'charity');
+  for (const donation of givingPlan.donations) {
+    if (donation.needsAcknowledgment) {
+      actions.push(action({
+        stableKey: `giving:ack:${donation.id}`,
+        lane: 'fix',
+        origin: 'giving',
+        sourceId: donation.id,
+        severity: donation.amount > 1_000 ? 'warning' : 'info',
+        title: `Get an acknowledgment letter from ${donation.charity}`,
+        summary: `The ${donation.amount.toFixed(2)} ${donation.kind} donation on ${donation.date} needs a written acknowledgment to substantiate the deduction.`,
+        dueDate: `${donation.taxYear + 1}-04-15`,
+        impact: { low: donation.amount, high: donation.amount, period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Open giving log', kind: 'link', href: '/planning/giving', primary: true }],
+        result: donation.amount,
+        assumptions: ['Donations of $250 or more require a contemporaneous written acknowledgment.'],
+        evidence: [{ kind: 'donation', id: donation.id, label: `${donation.charity} — ${donation.date}`, source: 'manual', href: '/planning/giving', verified: false }],
+      }));
+    }
+    if (donation.needsAppraisal) {
+      actions.push(action({
+        stableKey: `giving:appraisal:${donation.id}`,
+        lane: 'fix',
+        origin: 'giving',
+        sourceId: donation.id,
+        severity: 'warning',
+        title: `Obtain a qualified appraisal for ${donation.charity}`,
+        summary: `The ${donation.amount.toFixed(2)} noncash donation on ${donation.date} exceeds $5,000 and requires a qualified appraisal.`,
+        dueDate: `${donation.taxYear + 1}-04-15`,
+        impact: { low: donation.amount, high: donation.amount, period: 'one_time' },
+        confidence: 1,
+        operations: [{ id: 'open', label: 'Open giving log', kind: 'link', href: '/planning/giving', primary: true }],
+        result: donation.amount,
+        assumptions: ['Noncash donations above $5,000 require a qualified appraisal and Form 8283 Section B.'],
+        evidence: [{ kind: 'donation', id: donation.id, label: `${donation.charity} — ${donation.date}`, source: 'manual', href: '/planning/giving', verified: false }],
+      }));
+    }
+  }
+  for (const yearRow of givingPlan.yearTotals) {
+    if (!yearRow.form8283Required || yearRow.taxYear < currentGivingYear - 1) continue;
+    actions.push(action({
+      stableKey: `giving:8283:${yearRow.taxYear}`,
+      lane: 'fix',
+      origin: 'giving',
+      sourceId: String(yearRow.taxYear),
+      severity: 'info',
+      title: `File Form 8283 with the ${yearRow.taxYear} return`,
+      summary: `Noncash donations total ${yearRow.noncashTotal.toFixed(2)} for ${yearRow.taxYear}, above the $500 Form 8283 threshold.`,
+      dueDate: `${yearRow.taxYear + 1}-04-15`,
+      impact: { low: yearRow.noncashTotal, high: yearRow.noncashTotal, period: 'one_time' },
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Open giving log', kind: 'link', href: '/planning/giving', primary: true }],
+      result: yearRow.noncashTotal,
+      assumptions: ['Form 8283 is required when total noncash donations for the year exceed $500.'],
+      evidence: [{ kind: 'donation', id: String(yearRow.taxYear), label: `${yearRow.taxYear} noncash donations`, source: 'manual', href: '/planning/giving', verified: false }],
+    }));
+  }
+  if (givingPlan.bunching.estimatedTaxSavings >= 250) {
+    const savings = givingPlan.bunching.estimatedTaxSavings;
+    actions.push(action({
+      stableKey: `giving:bunching:${currentGivingYear}:${Math.round(savings)}`,
+      lane: 'decide',
+      origin: 'giving',
+      sourceId: 'bunching',
+      severity: 'info',
+      title: 'Consider bunching two years of charitable giving',
+      summary: `Bunching ${givingPlan.bunching.plannedAnnualGiving.toFixed(2)} × 2 into one year and taking the standard deduction the next is estimated to save ${savings.toFixed(2)} in tax.`,
+      dueDate: `${currentGivingYear}-12-31`,
+      impact: { low: savings * 0.7, high: savings, period: 'one_time' },
+      confidence: 0.8,
+      operations: [{ id: 'open', label: 'Review bunching comparison', kind: 'link', href: '/planning/giving', primary: true }],
+      result: savings,
+      formula: givingPlan.bunching.formula,
+      assumptions: [
+        `Standard deduction ${givingPlan.bunching.standardDeduction.toFixed(2)} for ${givingPlan.bunching.taxYear} is assumed for both years of the window.`,
+        'Marginal and state rates stay constant across the two-year window.',
+        'A donor-advised fund can front-load the bunched gift while grants continue annually.',
+      ],
+      evidence: [{ kind: 'assumption', id: 'giving-settings', label: 'Planned giving and itemized deduction inputs', source: 'manual', href: '/planning/giving', verified: false }],
+    }));
+  }
+  if (givingPlan.qcd.eligible && givingPlan.settings.plannedAnnualGiving > 0) {
+    actions.push(action({
+      stableKey: `giving:qcd:${currentGivingYear}`,
+      lane: 'decide',
+      origin: 'giving',
+      sourceId: 'qcd',
+      severity: 'info',
+      title: 'Consider qualified charitable distributions from an IRA',
+      summary: `QCDs up to ${givingPlan.qcd.householdAnnualLimit.toFixed(2)} per year can satisfy giving directly from a traditional IRA without itemizing.`,
+      dueDate: `${currentGivingYear}-12-31`,
+      impact: { low: 0, high: givingPlan.settings.plannedAnnualGiving, period: 'annual' },
+      confidence: 0.8,
+      operations: [{ id: 'open', label: 'Review QCD status', kind: 'link', href: '/planning/giving', primary: true }],
+      result: givingPlan.qcd.remainingCapacity,
+      assumptions: [
+        'QCD eligibility begins at age 70½; with only birth years, eligibility is assumed once age 71 is reached by year end.',
+        `Per-person QCD limit ${givingPlan.qcd.annualLimitPerPerson.toFixed(2)} (2025 indexed figure).`,
+        `Charity mileage is separately deductible at ${charityRate.toFixed(2)} per mile.`,
+      ],
+      evidence: [{ kind: 'assumption', id: 'giving-qcd', label: 'Birth years and planned giving inputs', source: 'manual', href: '/planning/giving', verified: false }],
+    }));
+  }
+  // --- End charitable giving section (actions) ---
+  // --- Estate readiness section (actions) ---
+  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now);
+  for (const designation of estateReadiness.designations) {
+    if (!designation.stale) continue;
+    actions.push(action({
+      stableKey: `estate:designation:${designation.id}:${designation.lastReviewedDate}`,
+      lane: 'fix',
+      origin: 'estate',
+      sourceId: designation.id,
+      severity: designation.staleReason === 'life_event' ? 'warning' : 'info',
+      title: `Re-confirm beneficiaries on ${designation.accountLabel}`,
+      summary: designation.staleReason === 'life_event' && designation.triggeringLifeEvent
+        ? `The ${designation.triggeringLifeEvent.kind.replaceAll('_', ' ')} on ${designation.triggeringLifeEvent.date} postdates the last beneficiary review on ${designation.lastReviewedDate}.`
+        : `The designation was last reviewed ${designation.lastReviewedDate}, past the ${estateReadiness.settings.reviewCycleYearsDefault}-year review cycle.`,
+      dueDate: today,
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Review designations', kind: 'link', href: '/planning/estate', primary: true }],
+      result: designation.daysSinceReview,
+      assumptions: ['Beneficiary designations override the will; they must be re-confirmed after life events.'],
+      evidence: [{ kind: 'beneficiary', id: designation.id, label: `${designation.accountLabel} beneficiary designation`, source: 'manual', href: '/planning/estate', verified: false }],
+    }));
+  }
+  for (const document of estateReadiness.documents) {
+    if (!document.overdue) continue;
+    const documentLabel = document.label || ESTATE_DOCUMENT_LABELS[document.kind];
+    actions.push(action({
+      stableKey: `estate:document:${document.kind}:${document.dueDate}`,
+      lane: 'fix',
+      origin: 'estate',
+      sourceId: document.id,
+      severity: (CORE_ESTATE_DOCUMENT_KINDS as readonly string[]).includes(document.kind) ? 'warning' : 'info',
+      title: `Review the ${documentLabel.toLowerCase()}`,
+      summary: `Last updated ${document.lastUpdatedDate}; the ${document.reviewCycleYears}-year review was due ${document.dueDate}.`,
+      dueDate: document.dueDate,
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Review documents', kind: 'link', href: '/planning/estate', primary: true }],
+      result: Math.abs(document.daysUntilDue),
+      evidence: [{ kind: 'estate_document', id: document.id, label: `${documentLabel} — ${document.location || 'location not recorded'}`, source: 'manual', href: '/planning/estate', verified: false }],
+    }));
+  }
+  for (const kind of estateReadiness.coverage.missingCoreDocuments) {
+    actions.push(action({
+      stableKey: `estate:document:${kind}:missing`,
+      lane: 'fix',
+      origin: 'estate',
+      sourceId: kind,
+      severity: 'warning',
+      title: `Put a ${ESTATE_DOCUMENT_LABELS[kind].toLowerCase()} in place`,
+      summary: `No ${ESTATE_DOCUMENT_LABELS[kind].toLowerCase()} is on file; it is one of the four core estate documents.`,
+      dueDate: null,
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Review documents', kind: 'link', href: '/planning/estate', primary: true }],
+      assumptions: ['Core coverage means a will, financial POA, healthcare POA, and healthcare directive; a revocable trust is optional.'],
+      evidence: [{ kind: 'estate_document', id: kind, label: `${ESTATE_DOCUMENT_LABELS[kind]} (missing)`, source: 'manual', href: '/planning/estate', verified: false }],
+    }));
+  }
+  if (estateReadiness.exposure.exposure > 0) {
+    const estateTax = estateReadiness.exposure.estimatedTax;
+    actions.push(action({
+      stableKey: `estate:exposure:${Math.round(estateReadiness.exposure.exposure)}`,
+      lane: 'decide',
+      origin: 'estate',
+      sourceId: 'estate-exposure',
+      severity: 'warning',
+      title: 'Plan for federal estate tax exposure',
+      summary: `The estimated gross estate exceeds the applied federal exemption by ${estateReadiness.exposure.exposure.toFixed(2)}, implying roughly ${estateTax.toFixed(2)} of estate tax at the top rate.`,
+      dueDate: null,
+      impact: { low: Math.round(estateTax * 0.5 * 100) / 100, high: estateTax, period: 'one_time' },
+      confidence: 0.6,
+      operations: [{ id: 'open', label: 'Review estate exposure', kind: 'link', href: '/planning/estate', primary: true }],
+      result: estateTax,
+      formula: estateReadiness.exposure.formula,
+      assumptions: estateReadiness.exposure.assumptions,
+      evidence: [{ kind: 'assumption', id: 'estate-exposure', label: 'Estimated gross estate and marital status inputs', source: 'manual', href: '/planning/estate', verified: false }],
+    }));
+  }
+  if (!estateReadiness.runbook.current) {
+    actions.push(action({
+      stableKey: `estate:runbook:${estateReadiness.settings.survivorRunbookUpdatedDate ?? 'missing'}`,
+      lane: 'fix',
+      origin: 'estate',
+      sourceId: 'survivor-runbook',
+      severity: 'info',
+      title: estateReadiness.runbook.present ? 'Refresh the survivor runbook' : 'Write a survivor runbook',
+      summary: estateReadiness.runbook.present
+        ? 'The survivor runbook is more than two years old (or has no update date); accounts, passwords, and contacts drift.'
+        : 'No survivor runbook location is recorded; survivors need a map of accounts, advisors, and first steps.',
+      dueDate: today,
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Review runbook status', kind: 'link', href: '/planning/estate', primary: true }],
+      assumptions: ['A survivor runbook is considered current when updated within the last two years.'],
+      evidence: [{ kind: 'estate_document', id: 'survivor-runbook', label: 'Survivor runbook', source: 'manual', href: '/planning/estate', verified: false }],
+    }));
+  }
+  // --- End estate readiness section (actions) ---
+  // --- Farm production section (actions) ---
+  const production = calculateFarmProduction(farmProduction as FarmProductionProfile, now);
+  for (const stock of production.flags.negativeStock) {
+    actions.push(action({
+      stableKey: `farm:negative-stock:${stock.productId}:${Math.round(stock.onHandQty)}`,
+      lane: 'fix',
+      origin: 'farm',
+      sourceId: stock.productId,
+      severity: 'warning',
+      title: `Reconcile negative ${stock.name} stock`,
+      summary: `On-hand is ${stock.onHandQty.toFixed(2)} ${stock.unit} — more was sold than harvested plus adjustments; a harvest, sale, or adjustment record is missing or wrong.`,
+      dueDate: today,
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Open farm production', kind: 'link', href: '/business/farm-production', primary: true }],
+      result: stock.onHandQty,
+      formula: 'on-hand = harvested + adjustments − sold',
+      assumptions: ['Negative on-hand is treated as a data-quality signal, not a valid stock level.'],
+      evidence: [{ kind: 'farm_record', id: stock.productId, label: `${stock.name} stock ledger`, source: 'manual', href: '/business/farm-production', verified: false }],
+    }));
+  }
+  if (production.flags.unlinkedSales.revenue > UNLINKED_REVENUE_ACTION_THRESHOLD) {
+    const unlinkedRevenue = production.flags.unlinkedSales.revenue;
+    actions.push(action({
+      stableKey: `farm:unlinked-sales:${production.currentYear}:${production.flags.unlinkedSales.count}`,
+      lane: 'fix',
+      origin: 'farm',
+      sourceId: 'unlinked-sales',
+      severity: unlinkedRevenue > UNLINKED_REVENUE_WARNING_THRESHOLD ? 'warning' : 'info',
+      title: `Link ${production.flags.unlinkedSales.count} farm sale${production.flags.unlinkedSales.count === 1 ? '' : 's'} to transactions`,
+      summary: `${unlinkedRevenue.toFixed(2)} of ${production.currentYear} sales revenue has no GnuCash transaction linked, so Schedule F income cannot be reconciled to the ledger.`,
+      dueDate: today,
+      impact: { low: unlinkedRevenue, high: unlinkedRevenue, period: 'one_time' },
+      confidence: 1,
+      operations: [{ id: 'open', label: 'Review farm sales', kind: 'link', href: '/business/farm-production', primary: true }],
+      result: unlinkedRevenue,
+      evidence: [{ kind: 'farm_record', id: `unlinked-sales-${production.currentYear}`, label: `${production.currentYear} unlinked farm sales`, source: 'manual', href: '/business/farm-production', verified: false }],
+    }));
+  }
+  for (const row of production.current.products) {
+    if (row.revenue <= MARGIN_ALERT_REVENUE_THRESHOLD || row.marginPercent >= MARGIN_ALERT_PERCENT) continue;
+    actions.push(action({
+      stableKey: `farm:margin:${row.productId}:${production.currentYear}`,
+      lane: 'decide',
+      origin: 'farm',
+      sourceId: row.productId,
+      severity: 'info',
+      title: `Review ${row.name} pricing or input costs`,
+      summary: `${row.name} earned ${row.revenue.toFixed(2)} this year at a ${row.marginPercent.toFixed(1)}% gross margin, below the ${MARGIN_ALERT_PERCENT}% screen.`,
+      dueDate: null,
+      impact: { low: 0, high: Math.max(0, row.revenue * MARGIN_ALERT_PERCENT / 100 - row.grossMargin), period: 'annual' },
+      confidence: 0.8,
+      operations: [{ id: 'open', label: 'Review product margins', kind: 'link', href: '/business/farm-production', primary: true }],
+      result: row.marginPercent,
+      formula: 'margin % = (revenue − product costs − whole-farm costs × revenue share) ÷ revenue × 100',
+      assumptions: ['Whole-farm costs allocate by revenue share (produced-quantity share when there is no revenue).'],
+      evidence: [{ kind: 'farm_record', id: row.productId, label: `${row.name} ${production.currentYear} results`, source: 'manual', href: '/business/farm-production', verified: false }],
+    }));
+  }
+  // --- End farm production section (actions) ---
+  // --- Retirement income section (actions) ---
+  const retirement = analyzeRetirementIncome(retirementIncome as RetirementIncomeProfile, now);
+  for (const person of retirement.people) {
+    if (person.piaSource === 'missing') continue;
+    if (person.recommendedClaimAge === person.plannedClaimAge) continue;
+    if (person.lifetimeDelta < CLAIMING_DELTA_ACTION_THRESHOLD) continue;
+    actions.push(action({
+      stableKey: `retirement:claiming:${person.personId}:${person.recommendedClaimAge}`,
+      lane: 'decide',
+      origin: 'retirement',
+      sourceId: person.personId,
+      severity: 'info',
+      title: `Consider claiming Social Security at ${person.recommendedLabel} for ${person.name}`,
+      summary: `Claiming at ${person.recommendedLabel} instead of ${person.plannedClaimAge} projects ${person.lifetimeDelta.toFixed(2)} more cumulative benefits through age ${retirement.settings.horizonAge}.`,
+      dueDate: null,
+      impact: { low: Math.round(person.lifetimeDelta * 0.5 * 100) / 100, high: person.lifetimeDelta, period: 'lifetime' },
+      confidence: 0.65,
+      operations: [{ id: 'open', label: 'Review claiming comparison', kind: 'link', href: '/planning/retirement-income', primary: true }],
+      result: person.lifetimeDelta,
+      formula: 'lifetime delta = Σ monthly benefit × COLA factor (recommended claim age) − Σ monthly benefit × COLA factor (planned claim age), through the horizon age',
+      assumptions: retirement.assumptions,
+      evidence: [{ kind: 'assumption', id: person.personId, label: `${person.name} claiming inputs (PIA ${person.piaSource})`, source: 'manual', href: '/planning/retirement-income', verified: false }],
+    }));
+  }
+  const irmaa = retirement.irmaa;
+  if (irmaa?.withinCliff && irmaa.nextTierThreshold != null) {
+    actions.push(action({
+      stableKey: `retirement:irmaa:${irmaa.year}:${irmaa.tier + 1}`,
+      lane: 'decide',
+      origin: 'retirement',
+      sourceId: 'irmaa-cliff',
+      severity: 'info',
+      title: 'Projected income sits near an IRMAA cliff',
+      summary: `First-year MAGI of ${irmaa.magi.toFixed(2)} is within ${(irmaa.headroomToNextTier ?? 0).toFixed(2)} of the ${irmaa.nextTierThreshold.toLocaleString('en-US')} IRMAA threshold, which adds ${irmaa.surchargeDeltaAnnual.toFixed(2)} per enrollee per year in Medicare surcharges.`,
+      dueDate: null,
+      impact: { low: irmaa.surchargeDeltaAnnual, high: irmaa.surchargeDeltaAnnual, period: 'annual' },
+      confidence: 0.7,
+      operations: [{ id: 'open', label: 'Review IRMAA headroom', kind: 'link', href: '/planning/retirement-income', primary: true }],
+      result: irmaa.surchargeDeltaAnnual,
+      formula: 'surcharge delta = next-tier annual surcharge − current-tier annual surcharge (2026 Part B + Part D tables)',
+      assumptions: retirement.assumptions,
+      evidence: [{ kind: 'tax_table', id: `irmaa-${irmaa.year}`, label: '2026 IRMAA tiers', source: 'system', href: '/planning/retirement-income', verified: true }],
+    }));
+  }
+  const sequencing = retirement.sequencing;
+  if (sequencing
+    && sequencing.preferredVariantId != null
+    && sequencing.bestVariantId !== sequencing.preferredVariantId
+    && sequencing.endingValueDelta >= SEQUENCING_DELTA_ACTION_THRESHOLD) {
+    const best = sequencing.variants.find(variant => variant.id === sequencing.bestVariantId)!;
+    actions.push(action({
+      stableKey: `retirement:sequencing:${sequencing.bestVariantId}`,
+      lane: 'decide',
+      origin: 'retirement',
+      sourceId: 'sequencing',
+      severity: 'info',
+      title: `Compare a ${best.label.toLowerCase()} withdrawal order`,
+      summary: `Switching from ${sequencing.preferredVariantId.replaceAll('_', ' ')} projects ${sequencing.endingValueDelta.toFixed(2)} more ending portfolio value at age ${retirement.settings.horizonAge}.`,
+      dueDate: null,
+      impact: { low: Math.round(sequencing.endingValueDelta * 0.5 * 100) / 100, high: sequencing.endingValueDelta, period: 'lifetime' },
+      confidence: 0.65,
+      operations: [{ id: 'open', label: 'Review sequencing comparison', kind: 'link', href: '/planning/retirement-income', primary: true }],
+      result: sequencing.endingValueDelta,
+      formula: 'ending-value delta = best variant ending total − preferred variant ending total (drawdown engine)',
+      assumptions: retirement.assumptions,
+      evidence: [{ kind: 'assumption', id: 'retirement-sequencing', label: 'Balances, spending, and return inputs', source: 'manual', href: '/planning/retirement-income', verified: false }],
+    }));
+  }
+  // --- End retirement income section (actions) ---
   return actions;
 }
 
@@ -1291,7 +1898,7 @@ export async function loadResilienceEvents(
   currency: string,
   now = new Date(),
 ): Promise<FinancialEvent[]> {
-  const [rentals, insurance, capital, education, utilities, familyBanking, trips] = await Promise.all([
+  const [rentals, insurance, capital, education, utilities, familyBanking, trips, giving, givingMileage, estate, farmProduction, retirementIncome] = await Promise.all([
     getResilienceProfile(bookGuid, 'rentals'),
     getResilienceProfile(bookGuid, 'insurance'),
     getResilienceProfile(bookGuid, 'capital'),
@@ -1299,6 +1906,11 @@ export async function loadResilienceEvents(
     getResilienceProfile(bookGuid, 'utilities'),
     getResilienceProfile(bookGuid, 'family_banking'),
     getResilienceProfile(bookGuid, 'trips'),
+    getResilienceProfile(bookGuid, 'giving'),
+    getResilienceProfile(bookGuid, 'mileage'),
+    getResilienceProfile(bookGuid, 'estate'),
+    getResilienceProfile(bookGuid, 'farm_production'),
+    getResilienceProfile(bookGuid, 'retirement_income'),
   ]);
   const events: FinancialEvent[] = [];
   const today = now.toISOString().slice(0, 10);
@@ -1481,6 +2093,168 @@ export async function loadResilienceEvents(
       metadata: { budget: trip.trip.budget, spent: trip.spent, fundingGap: trip.fundingGap },
     });
   }
+  // --- Charitable giving section (events) ---
+  const givingProfile = giving as GivingProfile;
+  const givingPlan = calculateGivingPlan(
+    givingProfile,
+    charityMileageContext(givingMileage as MileageProfile, now),
+    now,
+  );
+  if (givingProfile.settings.plannedAnnualGiving > 0 || givingProfile.donations.length > 0) {
+    events.push({
+      id: `giving:year-end:${givingPlan.currentYear}`,
+      bookGuid,
+      domain: 'giving',
+      title: 'Year-end charitable giving deadline',
+      description: `Donations must post by December 31 to count for ${givingPlan.currentYear}.`,
+      date: `${givingPlan.currentYear}-12-31`,
+      endDate: null,
+      cashImpact: -givingPlan.remainingPlannedGiving,
+      currency,
+      confidence: 0.8,
+      status: 'expected',
+      href: '/planning/giving',
+      sourceId: 'giving-year-end',
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: {
+        plannedAnnualGiving: givingProfile.settings.plannedAnnualGiving,
+        givenSoFar: givingPlan.currentYearTotal,
+      },
+    });
+  }
+  for (const donation of givingPlan.donations) {
+    if (!donation.needsAcknowledgment) continue;
+    const followUp = new Date(`${donation.date}T12:00:00Z`);
+    followUp.setUTCDate(followUp.getUTCDate() + 30);
+    const followUpDate = followUp.toISOString().slice(0, 10);
+    if (followUpDate < today) continue;
+    events.push({
+      id: `giving:ack:${donation.id}:${followUpDate}`,
+      bookGuid,
+      domain: 'giving',
+      title: `Acknowledgment letter — ${donation.charity}`,
+      description: `Confirm the written acknowledgment for the ${donation.date} donation is on file.`,
+      date: followUpDate,
+      endDate: null,
+      cashImpact: null,
+      currency,
+      confidence: 1,
+      status: 'needs_action',
+      href: '/planning/giving',
+      sourceId: donation.id,
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: { amount: donation.amount, kind: donation.kind },
+    });
+  }
+  // --- End charitable giving section (events) ---
+  // --- Estate readiness section (events) ---
+  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now);
+  const estateHorizon = new Date(now.getTime() + 365 * 86_400_000).toISOString().slice(0, 10);
+  for (const document of estateReadiness.documents) {
+    if (document.dueDate > estateHorizon) continue;
+    const documentLabel = document.label || ESTATE_DOCUMENT_LABELS[document.kind];
+    events.push({
+      id: `estate:document:${document.id}:${document.dueDate}`,
+      bookGuid,
+      domain: 'estate',
+      title: `${documentLabel} review due`,
+      description: `Last updated ${document.lastUpdatedDate}; kept at ${document.location || 'an unrecorded location'}.`,
+      date: document.dueDate,
+      endDate: null,
+      cashImpact: 0,
+      currency,
+      confidence: 1,
+      status: document.overdue ? 'needs_action' : 'expected',
+      href: '/planning/estate',
+      sourceId: document.id,
+      actionId: null,
+      planId: null,
+      evidence: [],
+      metadata: { kind: document.kind, lastUpdatedDate: document.lastUpdatedDate, reviewCycleYears: document.reviewCycleYears },
+    });
+  }
+  // --- End estate readiness section (events) ---
+  // --- Farm production section (events) ---
+  const farmResults = calculateFarmProduction(farmProduction as FarmProductionProfile, now);
+  if (farmResults.marketDays) {
+    for (const marketDate of farmResults.marketDays.nextDates) {
+      events.push({
+        id: `farm:market:${marketDate}`,
+        bookGuid,
+        domain: 'farm',
+        title: 'Farmers market day',
+        description: farmResults.marketDays.marketDaysThisYear > 0
+          ? `Averaging ${farmResults.marketDays.averageRevenuePerMarketDay.toFixed(2)} per market day across ${farmResults.marketDays.marketDaysThisYear} market day${farmResults.marketDays.marketDaysThisYear === 1 ? '' : 's'} this year.`
+          : 'No farmers-market sales recorded yet this year.',
+        date: marketDate,
+        endDate: null,
+        cashImpact: farmResults.marketDays.averageRevenuePerMarketDay,
+        currency,
+        confidence: 0.5,
+        status: 'expected',
+        href: '/business/farm-production',
+        sourceId: `market-${marketDate}`,
+        actionId: null,
+        planId: null,
+        evidence: [],
+        metadata: {
+          dayOfWeek: farmResults.marketDays.dayOfWeek,
+          marketDaysThisYear: farmResults.marketDays.marketDaysThisYear,
+        },
+      });
+    }
+  }
+  // --- End farm production section (events) ---
+  // --- Retirement income section (events) ---
+  const retirementAnalysis = analyzeRetirementIncome(retirementIncome as RetirementIncomeProfile, now);
+  for (const person of retirementAnalysis.people) {
+    const rmdContext = retirementAnalysis.rmd.find(row => row.personId === person.personId);
+    // Claim-eligibility milestones: 62, FRA, 70, RMD start, and the planned
+    // claim age. Birthdays are only known to the year, so milestone dates are
+    // approximated as July 1 (FRA rounds to the nearest whole year of age).
+    const milestoneAges = new Map<number, string>();
+    milestoneAges.set(EARLIEST_CLAIM_AGE, `${person.name} becomes eligible to claim Social Security`);
+    milestoneAges.set(Math.round(person.fraMonths / 12), `${person.name} reaches full retirement age (${person.fraLabel})`);
+    milestoneAges.set(LATEST_CLAIM_AGE, `${person.name} reaches age 70 — delayed credits stop`);
+    if (rmdContext) {
+      milestoneAges.set(rmdContext.rmdStartAge, `${person.name} reaches RMD start age ${rmdContext.rmdStartAge}`);
+    }
+    if (!milestoneAges.has(person.plannedClaimAge)) {
+      milestoneAges.set(person.plannedClaimAge, `${person.name} plans to claim Social Security at ${person.plannedClaimAge}`);
+    }
+    for (const [age, title] of [...milestoneAges.entries()].sort((a, b) => a[0] - b[0])) {
+      if (age > retirementAnalysis.settings.horizonAge) continue;
+      const milestoneDate = `${person.birthYear + age}-07-01`;
+      if (milestoneDate < today) continue;
+      const isPlannedClaim = age === person.plannedClaimAge && person.plannedAnnualBenefit > 0;
+      events.push({
+        id: `retirement:milestone:${person.personId}:${age}`,
+        bookGuid,
+        domain: 'retirement',
+        title,
+        description: isPlannedClaim
+          ? `Planned claim: about ${person.plannedMonthlyBenefit.toFixed(2)} per month before COLAs.`
+          : null,
+        date: milestoneDate,
+        endDate: null,
+        cashImpact: isPlannedClaim ? person.plannedAnnualBenefit : 0,
+        currency,
+        confidence: 0.7,
+        status: 'expected',
+        href: '/planning/retirement-income',
+        sourceId: person.personId,
+        actionId: null,
+        planId: null,
+        evidence: [],
+        metadata: { age, birthYear: person.birthYear, plannedClaimAge: person.plannedClaimAge },
+      });
+    }
+  }
+  // --- End retirement income section (events) ---
   return events;
 }
 

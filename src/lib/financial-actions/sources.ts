@@ -26,8 +26,11 @@ import { getBaseCurrency } from '@/lib/currency';
 import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
+import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
-import { loadResilienceActions } from '@/lib/resilience/service';
+import { getResilienceProfile, loadResilienceActions } from '@/lib/resilience/service';
+import { analyzeRetirementIncome } from '@/lib/resilience/retirement-income-core';
+import type { RetirementIncomeProfile } from '@/lib/resilience/types';
 import type {
   EvidenceRef,
   FinancialActionCandidate,
@@ -650,6 +653,106 @@ async function jobProfitabilityActions(
   });
 }
 
+/**
+ * Contractor 1099 compliance: for the current and prior tax years, flag
+ * over-threshold vendors missing a W-9 (Fix lane) and, once the filing
+ * window opens on Jan 1, each reportable vendor without a filed 1099-NEC
+ * (Do lane; critical past the Jan 31 deadline).
+ */
+export async function vendor1099ComplianceActions(
+  bookGuid: string,
+  bookAccountGuids: string[],
+): Promise<FinancialActionCandidate[]> {
+  const now = new Date();
+  const currentYear = now.getUTCFullYear();
+  const actions: FinancialActionCandidate[] = [];
+
+  for (const taxYear of [currentYear - 1, currentYear]) {
+    const compliance = await get1099Compliance(bookGuid, bookAccountGuids, taxYear, now);
+    if (compliance.reportableCount === 0) continue;
+    const href = `/business/reports/1099?year=${taxYear}`;
+
+    for (const row of compliance.rows) {
+      if (!row.requiresFiling || row.filedDate) continue;
+      const paid = row.totalPaid.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      const evidence: EvidenceRef[] = [{
+        kind: 'vendor',
+        id: row.vendorGuid,
+        label: row.name,
+        source: 'system',
+        href,
+        observedAt: isoDate(now),
+        verified: false,
+      }];
+
+      if (row.w9State !== 'received') {
+        const stableKey = `vendor-1099:w9:${row.vendorGuid}:${taxYear}`;
+        actions.push({
+          stableKey,
+          lane: 'fix',
+          origin: 'vendor_1099',
+          sourceId: `${row.vendorGuid}:${taxYear}`,
+          severity: row.daysUntilDue <= 60 ? 'warning' : 'info',
+          title: `Collect a W-9 from ${row.name}`,
+          summary: `${paid} paid in ${taxYear} crosses the $600 1099-NEC threshold and ${row.w9State === 'requested' ? 'the requested W-9 has not come back yet' : 'no W-9 is on file'}.`,
+          dueDate: row.filingDueDate,
+          impact: { low: row.totalPaid, high: row.totalPaid, period: 'one_time' },
+          confidence: 1,
+          operations: [
+            { id: 'open', label: 'Open 1099 tracker', kind: 'link', href, primary: true },
+          ],
+          trace: createCalculationTrace({
+            namespace: 'business:vendor-1099',
+            identity: { stableKey },
+            title: `Why “Collect a W-9 from ${row.name}” needs attention`,
+            summary: `Cash paid in ${taxYear} is at or over the $600 reporting threshold, the 1099-NEC is due ${row.filingDueDate}, and the W-9 state is “${row.w9State}”.`,
+            asOfDate: isoDate(now),
+            result: row.totalPaid,
+            unit: 'currency',
+            evidence,
+            metadata: { taxYear, w9State: row.w9State, daysUntilDue: row.daysUntilDue },
+          }),
+          metadata: { vendorGuid: row.vendorGuid, taxYear, w9State: row.w9State },
+        });
+      }
+
+      if (taxYear < currentYear) {
+        const stableKey = `vendor-1099:filing:${row.vendorGuid}:${taxYear}`;
+        actions.push({
+          stableKey,
+          lane: 'do',
+          origin: 'vendor_1099',
+          sourceId: `${row.vendorGuid}:${taxYear}`,
+          severity: row.daysUntilDue < 0 ? 'critical' : 'warning',
+          title: `File the ${taxYear} 1099-NEC for ${row.name}`,
+          summary: row.daysUntilDue < 0
+            ? `The Jan 31 deadline has passed and no 1099-NEC is recorded for ${paid} paid in ${taxYear}.`
+            : `${paid} paid in ${taxYear} needs a 1099-NEC filed by ${row.filingDueDate}.`,
+          dueDate: row.filingDueDate,
+          impact: { low: row.totalPaid, high: row.totalPaid, period: 'one_time' },
+          confidence: 1,
+          operations: [
+            { id: 'open', label: 'Open 1099 tracker', kind: 'link', href, primary: true },
+          ],
+          trace: createCalculationTrace({
+            namespace: 'business:vendor-1099',
+            identity: { stableKey },
+            title: `Why “File the ${taxYear} 1099-NEC for ${row.name}” needs attention`,
+            summary: `Cash paid in ${taxYear} is at or over the $600 reporting threshold and no filed date is recorded (due ${row.filingDueDate}).`,
+            asOfDate: isoDate(now),
+            result: row.totalPaid,
+            unit: 'currency',
+            evidence,
+            metadata: { taxYear, daysUntilDue: row.daysUntilDue },
+          }),
+          metadata: { vendorGuid: row.vendorGuid, taxYear, daysUntilDue: row.daysUntilDue },
+        });
+      }
+    }
+  }
+  return actions;
+}
+
 async function notificationActions(
   userId: number,
   bookGuid: string,
@@ -866,6 +969,7 @@ export async function loadSourceActions(input: {
     safeActionSource('Business close', () => businessCloseActions(userId, bookGuid)),
     safeActionSource('Employee reimbursements', () => reimbursementActions(bookGuid)),
     safeActionSource('Job profitability', () => jobProfitabilityActions(bookGuid, bookAccountGuids)),
+    safeActionSource('Contractor 1099 compliance', () => vendor1099ComplianceActions(bookGuid, bookAccountGuids)),
     safeActionSource('Failed payments', () => failedPaymentActions(bookGuid)),
     safeActionSource('Household resilience', () => loadResilienceActions(bookGuid)),
     safeActionSource('Notifications and failed jobs', () => notificationActions(userId, bookGuid)),
@@ -925,6 +1029,83 @@ async function contributionSignals(
       metadata: { accountType: type, remainingCapacity: remaining },
     }];
   });
+}
+
+/** Lifetime value below this is not worth surfacing as an opportunity. */
+const RETIREMENT_OPPORTUNITY_MIN_VALUE = 1_000;
+
+async function retirementSequencingSignals(bookGuid: string): Promise<OpportunitySignal[]> {
+  const profile = await getResilienceProfile(bookGuid, 'retirement_income') as RetirementIncomeProfile;
+  if (profile.people.length === 0) return [];
+  const analysis = analyzeRetirementIncome(profile);
+  const signals: OpportunitySignal[] = [];
+  for (const person of analysis.people) {
+    if (person.piaSource === 'missing') continue;
+    if (person.recommendedClaimAge === person.plannedClaimAge) continue;
+    if (person.lifetimeDelta < RETIREMENT_OPPORTUNITY_MIN_VALUE) continue;
+    signals.push({
+      key: `claiming:${person.personId}:${person.recommendedClaimAge}`,
+      title: `Delay decision: claim Social Security at ${person.recommendedLabel} for ${person.name}`,
+      summary: `Claiming at ${person.recommendedLabel} instead of ${person.plannedClaimAge} projects ${person.lifetimeDelta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })} more cumulative benefits through age ${analysis.settings.horizonAge}.`,
+      href: '/planning/retirement-income',
+      valueLow: Math.round(person.lifetimeDelta * 0.5 * 100) / 100,
+      valueHigh: person.lifetimeDelta,
+      impactPeriod: 'lifetime',
+      cashRequired: 0,
+      urgency: Math.max(30, Math.min(80, 80 - (person.plannedClaimAge - person.currentAge) * 5)),
+      confidence: 0.65,
+      liquidityCost: 20,
+      reversibility: 60,
+      goalAlignment: 80,
+      assumptions: analysis.assumptions,
+      evidence: [{
+        kind: 'assumption',
+        id: `retirement:claiming:${person.personId}`,
+        label: `${person.name} claiming inputs (PIA ${person.piaSource})`,
+        source: 'manual',
+        href: '/planning/retirement-income',
+        verified: false,
+      }],
+      metadata: { personId: person.personId, plannedClaimAge: person.plannedClaimAge, recommendedClaimAge: person.recommendedClaimAge },
+    });
+  }
+  const sequencing = analysis.sequencing;
+  if (sequencing
+    && sequencing.preferredVariantId != null
+    && sequencing.bestVariantId !== sequencing.preferredVariantId
+    && sequencing.endingValueDelta >= RETIREMENT_OPPORTUNITY_MIN_VALUE) {
+    const best = sequencing.variants.find(variant => variant.id === sequencing.bestVariantId);
+    signals.push({
+      key: `sequencing:${sequencing.bestVariantId}`,
+      title: `Withdrawal order: consider ${best?.label.toLowerCase() ?? sequencing.bestVariantId.replaceAll('_', ' ')}`,
+      summary: `Reordering withdrawals projects ${sequencing.endingValueDelta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })} more ending portfolio value at the horizon age.`,
+      href: '/planning/retirement-income',
+      valueLow: Math.round(sequencing.endingValueDelta * 0.5 * 100) / 100,
+      valueHigh: sequencing.endingValueDelta,
+      impactPeriod: 'lifetime',
+      cashRequired: 0,
+      urgency: 45,
+      confidence: 0.65,
+      liquidityCost: 10,
+      reversibility: 85,
+      goalAlignment: 80,
+      assumptions: analysis.assumptions,
+      evidence: [{
+        kind: 'assumption',
+        id: 'retirement:sequencing',
+        label: 'Retirement balances, spending, and return inputs',
+        source: 'manual',
+        href: '/planning/retirement-income',
+        verified: false,
+      }],
+      metadata: {
+        preferredVariant: sequencing.preferredVariantId,
+        bestVariant: sequencing.bestVariantId,
+        endingValueDelta: sequencing.endingValueDelta,
+      },
+    });
+  }
+  return signals;
 }
 
 async function cashAndExpenseSnapshot(bookAccountGuids: string[]): Promise<{
@@ -1312,7 +1493,7 @@ export async function loadOpportunityActions(input: {
     cash: 0,
     monthlyExpenses: 0,
   });
-  const [contributionCapacity, debtPaydown, investments, subscriptions, notifications] = await Promise.all([
+  const [contributionCapacity, debtPaydown, investments, subscriptions, notifications, retirementSequencing] = await Promise.all([
     safe('contribution opportunity', () => contributionSignals(bookAccountGuids, now.getFullYear()), []),
     safe('debt opportunity', () => debtSignal(
       userId,
@@ -1330,6 +1511,7 @@ export async function loadOpportunityActions(input: {
       estimatedTax: null,
       budgetGaps: [],
     }),
+    safe('retirement sequencing opportunities', () => retirementSequencingSignals(bookGuid), []),
   ]);
   const snapshot: OpportunitySnapshot = {
     asOfDate: isoDate(now),
@@ -1341,6 +1523,7 @@ export async function loadOpportunityActions(input: {
     taxStrategy: investments.taxStrategy,
     subscriptions,
     budgetGaps: notifications.budgetGaps,
+    retirementSequencing,
   };
   return detectOpportunities(snapshot);
 }

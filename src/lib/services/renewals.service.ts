@@ -42,6 +42,12 @@ export interface Renewal {
     notes: string | null;
     /** ISO YYYY-MM-DD or null */
     dismissedUntil: string | null;
+    /** Linked document in the household document vault (gnucash_web_entity_documents), or null. */
+    documentId: number | null;
+    /** Title of the linked document (populated alongside documentId). */
+    documentTitle: string | null;
+    /** Stored filename of the linked document, when it has a file. */
+    documentFileName: string | null;
     createdAt: string;
     updatedAt: string;
 }
@@ -53,6 +59,8 @@ export interface RenewalInput {
     cadenceMonths?: number;
     remindDays?: number;
     notes?: string | null;
+    /** Link to a document in the book's document vault; null clears the link. */
+    documentId?: number | null;
 }
 
 export interface RenewalCandidate {
@@ -207,16 +215,21 @@ type RenewalRow = {
     source: string;
     notes: string | null;
     dismissed_until: Date | null;
+    document_id: number | null;
     created_at: Date;
     updated_at: Date;
 };
+
+/** Minimal metadata of a linked vault document, keyed by document id. */
+type DocumentMeta = { title: string; fileName: string | null };
 
 function isoOf(d: Date): string {
     return d.toISOString().slice(0, 10);
 }
 
-function mapRenewal(row: RenewalRow): Renewal {
+function mapRenewal(row: RenewalRow, docs?: Map<number, DocumentMeta>): Renewal {
     const amount = row.amount == null ? null : Number(row.amount);
+    const doc = row.document_id != null ? docs?.get(row.document_id) ?? null : null;
     return {
         id: row.id,
         bookGuid: row.book_guid,
@@ -228,6 +241,9 @@ function mapRenewal(row: RenewalRow): Renewal {
         source: row.source,
         notes: row.notes,
         dismissedUntil: row.dismissed_until ? isoOf(row.dismissed_until) : null,
+        documentId: row.document_id ?? null,
+        documentTitle: doc?.title ?? null,
+        documentFileName: doc?.fileName ?? null,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
     };
@@ -235,6 +251,30 @@ function mapRenewal(row: RenewalRow): Renewal {
 
 function toDbDate(iso: string): Date {
     return new Date(`${iso}T00:00:00Z`);
+}
+
+/**
+ * Batched title/filename lookup for the renewals' linked documents. Only
+ * documents still in the same book resolve — a stale link renders as
+ * id-without-title rather than leaking another book's metadata.
+ */
+async function fetchDocumentMeta(bookGuid: string, documentIds: number[]): Promise<Map<number, DocumentMeta>> {
+    const ids = [...new Set(documentIds)];
+    if (ids.length === 0) return new Map();
+    const rows = await prisma.gnucash_web_entity_documents.findMany({
+        where: { id: { in: ids }, book_guid: bookGuid },
+        select: { id: true, title: true, file_name: true },
+    });
+    return new Map(rows.map(r => [r.id, { title: r.title, fileName: r.file_name }]));
+}
+
+/** Throw unless the document exists in this book (used before saving a link). */
+async function assertDocumentInBook(bookGuid: string, documentId: number): Promise<void> {
+    const doc = await prisma.gnucash_web_entity_documents.findFirst({
+        where: { id: documentId, book_guid: bookGuid },
+        select: { id: true },
+    });
+    if (!doc) throw new RenewalError('Linked document not found in this book', 400);
 }
 
 /* ------------------------------------------------------------------ */
@@ -277,6 +317,15 @@ export function parseRenewalInput(body: unknown, { partial = false } = {}): Part
     if (b.notes !== undefined) {
         out.notes = typeof b.notes === 'string' && b.notes.trim() !== '' ? b.notes.trim() : null;
     }
+    if (b.documentId !== undefined) {
+        if (b.documentId === null || b.documentId === '') {
+            out.documentId = null;
+        } else {
+            const n = Number(b.documentId);
+            if (!Number.isInteger(n) || n < 1) throw new RenewalError('Document id must be a positive integer');
+            out.documentId = n;
+        }
+    }
     return out;
 }
 
@@ -284,12 +333,17 @@ export async function listRenewals(bookGuid: string): Promise<Renewal[]> {
     const rows = await prisma.gnucash_web_renewals.findMany({
         where: { book_guid: bookGuid },
         orderBy: [{ renewal_date: 'asc' }, { name: 'asc' }],
-    });
-    return rows.map(r => mapRenewal(r as unknown as RenewalRow));
+    }) as unknown as RenewalRow[];
+    const docs = await fetchDocumentMeta(
+        bookGuid,
+        rows.map(r => r.document_id).filter((id): id is number => id != null),
+    );
+    return rows.map(r => mapRenewal(r, docs));
 }
 
 export async function createRenewal(bookGuid: string, input: Partial<RenewalInput>, source: RenewalSource = 'manual'): Promise<Renewal> {
     if (!input.name || !input.renewalDate) throw new RenewalError('Name and renewal date are required');
+    if (input.documentId != null) await assertDocumentInBook(bookGuid, input.documentId);
     const row = await prisma.gnucash_web_renewals.create({
         data: {
             book_guid: bookGuid,
@@ -300,9 +354,11 @@ export async function createRenewal(bookGuid: string, input: Partial<RenewalInpu
             remind_days: input.remindDays ?? 30,
             source,
             notes: input.notes ?? null,
+            document_id: input.documentId ?? null,
         },
-    });
-    return mapRenewal(row as unknown as RenewalRow);
+    }) as unknown as RenewalRow;
+    const docs = await fetchDocumentMeta(bookGuid, row.document_id != null ? [row.document_id] : []);
+    return mapRenewal(row, docs);
 }
 
 export async function updateRenewal(bookGuid: string, id: number, input: Partial<RenewalInput>): Promise<Renewal | null> {
@@ -321,9 +377,14 @@ export async function updateRenewal(bookGuid: string, id: number, input: Partial
     if (input.cadenceMonths !== undefined) data.cadence_months = input.cadenceMonths;
     if (input.remindDays !== undefined) data.remind_days = input.remindDays;
     if (input.notes !== undefined) data.notes = input.notes;
+    if (input.documentId !== undefined) {
+        if (input.documentId !== null) await assertDocumentInBook(bookGuid, input.documentId);
+        data.document_id = input.documentId;
+    }
 
-    const row = await prisma.gnucash_web_renewals.update({ where: { id }, data });
-    return mapRenewal(row as unknown as RenewalRow);
+    const row = await prisma.gnucash_web_renewals.update({ where: { id }, data }) as unknown as RenewalRow;
+    const docs = await fetchDocumentMeta(bookGuid, row.document_id != null ? [row.document_id] : []);
+    return mapRenewal(row, docs);
 }
 
 export async function deleteRenewal(bookGuid: string, id: number): Promise<boolean> {
@@ -339,8 +400,9 @@ export async function markRenewalRenewed(bookGuid: string, id: number, today = t
     const row = await prisma.gnucash_web_renewals.update({
         where: { id },
         data: { renewal_date: toDbDate(next), dismissed_until: null, updated_at: new Date() },
-    });
-    return mapRenewal(row as unknown as RenewalRow);
+    }) as unknown as RenewalRow;
+    const docs = await fetchDocumentMeta(bookGuid, row.document_id != null ? [row.document_id] : []);
+    return mapRenewal(row, docs);
 }
 
 /** Suppress reminders through the given date (must be today or later). */
@@ -352,8 +414,9 @@ export async function dismissRenewalUntil(bookGuid: string, id: number, untilIso
     const row = await prisma.gnucash_web_renewals.update({
         where: { id },
         data: { dismissed_until: toDbDate(untilIso), updated_at: new Date() },
-    });
-    return mapRenewal(row as unknown as RenewalRow);
+    }) as unknown as RenewalRow;
+    const docs = await fetchDocumentMeta(bookGuid, row.document_id != null ? [row.document_id] : []);
+    return mapRenewal(row, docs);
 }
 
 /* ------------------------------------------------------------------ */

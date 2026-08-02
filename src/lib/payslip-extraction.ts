@@ -136,8 +136,11 @@ CRITICAL: Use the CURRENT period column values, NOT YTD (year-to-date) values. R
  * Render a PDF buffer to a PNG image for vision extraction.
  * Uses pdftoppm (poppler-utils) for high-quality rendering.
  * Returns base64-encoded PNG string, or null if rendering fails.
+ *
+ * Exported for reuse by other vision extraction flows (e.g. insurance
+ * policy parsing) so PDF rendering stays a single code path.
  */
-async function renderPdfToBase64(pdfBuffer: Buffer): Promise<string | null> {
+export async function renderPdfToBase64(pdfBuffer: Buffer): Promise<string | null> {
   try {
     const { writeFileSync, readFileSync, readdirSync, unlinkSync } = await import('fs');
     const { execSync } = await import('child_process');

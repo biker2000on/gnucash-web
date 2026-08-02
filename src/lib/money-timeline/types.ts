@@ -23,6 +23,10 @@ export const FINANCIAL_EVENT_DOMAINS = [
   'family',
   'trip',
   'vehicle',
+  'giving',
+  'estate',
+  'farm',
+  'retirement',
 ] as const;
 
 export type FinancialEventDomain = (typeof FINANCIAL_EVENT_DOMAINS)[number];

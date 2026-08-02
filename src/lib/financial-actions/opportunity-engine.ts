@@ -38,6 +38,7 @@ export interface OpportunitySnapshot {
   taxStrategy?: OpportunitySignal[];
   subscriptions?: OpportunitySignal[];
   budgetGaps?: OpportunitySignal[];
+  retirementSequencing?: OpportunitySignal[];
 }
 
 function clamp(value: number, min = 0, max = 100): number {
@@ -170,7 +171,7 @@ function pack(
 }
 
 /**
- * Eight deterministic opportunity packs. Inputs are deliberately normalized:
+ * Nine deterministic opportunity packs. Inputs are deliberately normalized:
  * loaders may evolve, while ranking and behavior remain inspectable and easy
  * to test without a database or an AI model.
  */
@@ -184,6 +185,7 @@ export function detectOpportunities(snapshot: OpportunitySnapshot): FinancialAct
     ...pack('tax-strategy', snapshot.taxStrategy, snapshot.asOfDate),
     ...pack('subscriptions', snapshot.subscriptions, snapshot.asOfDate),
     ...pack('budget-gaps', snapshot.budgetGaps, snapshot.asOfDate),
+    ...pack('retirement-sequencing', snapshot.retirementSequencing, snapshot.asOfDate),
   ].sort((a, b) =>
     (b.score?.total ?? 0) - (a.score?.total ?? 0)
     || (a.dueDate ?? '9999-12-31').localeCompare(b.dueDate ?? '9999-12-31')

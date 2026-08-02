@@ -80,6 +80,8 @@ export function SaveBar(props: {
   saving: boolean;
   dirty: boolean;
   onSave: () => void;
+  /** Optional: shown while dirty; reverts unsaved edits. */
+  onDiscard?: () => void;
   message?: string | null;
 }) {
   return (
@@ -87,14 +89,26 @@ export function SaveBar(props: {
       <p className="text-xs text-foreground-secondary">
         {props.message ?? (props.dirty ? 'Unsaved changes' : 'All changes saved')}
       </p>
-      <button
-        type="button"
-        onClick={props.onSave}
-        disabled={props.saving || !props.dirty}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-50"
-      >
-        {props.saving ? 'Saving…' : 'Save changes'}
-      </button>
+      <div className="flex items-center gap-2">
+        {props.onDiscard && props.dirty && (
+          <button
+            type="button"
+            onClick={props.onDiscard}
+            disabled={props.saving}
+            className="rounded-md border border-border px-4 py-2 text-sm text-foreground-secondary transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            Discard
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={props.onSave}
+          disabled={props.saving || !props.dirty}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-50"
+        >
+          {props.saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
     </div>
   );
 }

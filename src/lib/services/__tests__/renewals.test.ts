@@ -1,8 +1,27 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // The service imports prisma at module level; mock it so pure helpers can be
-// imported without a DB.
-vi.mock('@/lib/prisma', () => ({ default: {} }));
+// imported without a DB, and so the CRUD tests can drive row responses.
+const { renewalsTable, entityDocs } = vi.hoisted(() => ({
+    renewalsTable: {
+        findMany: vi.fn(),
+        findFirst: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        deleteMany: vi.fn(),
+    },
+    entityDocs: {
+        findMany: vi.fn(),
+        findFirst: vi.fn(),
+    },
+}));
+
+vi.mock('@/lib/prisma', () => ({
+    default: {
+        gnucash_web_renewals: renewalsTable,
+        gnucash_web_entity_documents: entityDocs,
+    },
+}));
 
 import {
     addMonthsClamped,
@@ -13,6 +32,11 @@ import {
     subscriptionCadenceToMonths,
     defaultRemindDays,
     subscriptionToRenewalCandidate,
+    parseRenewalInput,
+    listRenewals,
+    createRenewal,
+    updateRenewal,
+    RenewalError,
 } from '../renewals.service';
 
 describe('addMonthsClamped', () => {
@@ -175,5 +199,161 @@ describe('subscription import mapping', () => {
             currentAmount: 12,
             accountName: '',
         }, today)).toBeNull();
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Document vault linking (mocked prisma)                               */
+/* ------------------------------------------------------------------ */
+
+const BOOK = 'a'.repeat(32);
+const OTHER_BOOK = 'b'.repeat(32);
+
+function renewalRow(overrides: Record<string, unknown> = {}) {
+    return {
+        id: 1,
+        book_guid: BOOK,
+        name: 'Auto insurance',
+        renewal_date: new Date('2026-09-01T00:00:00Z'),
+        amount: null,
+        cadence_months: 12,
+        remind_days: 30,
+        source: 'manual',
+        notes: null,
+        dismissed_until: null,
+        document_id: null,
+        created_at: new Date('2026-01-01T00:00:00Z'),
+        updated_at: new Date('2026-01-01T00:00:00Z'),
+        ...overrides,
+    };
+}
+
+describe('parseRenewalInput documentId', () => {
+    it('accepts a positive integer id', () => {
+        expect(parseRenewalInput({ documentId: 12 }, { partial: true })).toEqual({ documentId: 12 });
+        expect(parseRenewalInput({ documentId: '12' }, { partial: true })).toEqual({ documentId: 12 });
+    });
+
+    it('treats null and empty string as clearing the link', () => {
+        expect(parseRenewalInput({ documentId: null }, { partial: true })).toEqual({ documentId: null });
+        expect(parseRenewalInput({ documentId: '' }, { partial: true })).toEqual({ documentId: null });
+    });
+
+    it('leaves documentId untouched when absent', () => {
+        expect(parseRenewalInput({ notes: 'x' }, { partial: true })).not.toHaveProperty('documentId');
+    });
+
+    it('rejects non-integer and non-positive ids', () => {
+        expect(() => parseRenewalInput({ documentId: 0 }, { partial: true })).toThrow(RenewalError);
+        expect(() => parseRenewalInput({ documentId: -3 }, { partial: true })).toThrow(RenewalError);
+        expect(() => parseRenewalInput({ documentId: 1.5 }, { partial: true })).toThrow(RenewalError);
+        expect(() => parseRenewalInput({ documentId: 'abc' }, { partial: true })).toThrow(RenewalError);
+    });
+});
+
+describe('document linking round-trip (mocked prisma)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        entityDocs.findMany.mockResolvedValue([]);
+    });
+
+    it('createRenewal stores document_id after confirming the doc is in the book', async () => {
+        entityDocs.findFirst.mockResolvedValue({ id: 42 });
+        renewalsTable.create.mockResolvedValue(renewalRow({ document_id: 42 }));
+        entityDocs.findMany.mockResolvedValue([{ id: 42, title: 'Policy PDF', file_name: 'policy.pdf' }]);
+
+        const renewal = await createRenewal(BOOK, {
+            name: 'Auto insurance',
+            renewalDate: '2026-09-01',
+            documentId: 42,
+        });
+
+        expect(entityDocs.findFirst).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { id: 42, book_guid: BOOK } }),
+        );
+        expect(renewalsTable.create).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ document_id: 42 }) }),
+        );
+        expect(renewal.documentId).toBe(42);
+        expect(renewal.documentTitle).toBe('Policy PDF');
+        expect(renewal.documentFileName).toBe('policy.pdf');
+    });
+
+    it('createRenewal rejects a document from another book', async () => {
+        // Cross-book lookup misses because the where clause pins book_guid.
+        entityDocs.findFirst.mockResolvedValue(null);
+
+        await expect(createRenewal(OTHER_BOOK, {
+            name: 'Auto insurance',
+            renewalDate: '2026-09-01',
+            documentId: 42,
+        })).rejects.toThrow('Linked document not found in this book');
+        expect(renewalsTable.create).not.toHaveBeenCalled();
+    });
+
+    it('updateRenewal sets a validated link and clears it with null', async () => {
+        renewalsTable.findFirst.mockResolvedValue(renewalRow());
+        entityDocs.findFirst.mockResolvedValue({ id: 7 });
+        renewalsTable.update.mockResolvedValue(renewalRow({ document_id: 7 }));
+        entityDocs.findMany.mockResolvedValue([{ id: 7, title: 'Contract', file_name: null }]);
+
+        const linked = await updateRenewal(BOOK, 1, { documentId: 7 });
+        expect(renewalsTable.update).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ document_id: 7 }) }),
+        );
+        expect(linked?.documentId).toBe(7);
+        expect(linked?.documentTitle).toBe('Contract');
+
+        // Clearing skips validation and writes null.
+        entityDocs.findFirst.mockClear();
+        renewalsTable.update.mockResolvedValue(renewalRow({ document_id: null }));
+        entityDocs.findMany.mockResolvedValue([]);
+
+        const cleared = await updateRenewal(BOOK, 1, { documentId: null });
+        expect(entityDocs.findFirst).not.toHaveBeenCalled();
+        expect(renewalsTable.update).toHaveBeenLastCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ document_id: null }) }),
+        );
+        expect(cleared?.documentId).toBeNull();
+        expect(cleared?.documentTitle).toBeNull();
+    });
+
+    it('updateRenewal rejects a cross-book document without writing', async () => {
+        renewalsTable.findFirst.mockResolvedValue(renewalRow());
+        entityDocs.findFirst.mockResolvedValue(null);
+
+        await expect(updateRenewal(BOOK, 1, { documentId: 999 })).rejects.toThrow(RenewalError);
+        expect(renewalsTable.update).not.toHaveBeenCalled();
+    });
+
+    it('listRenewals enriches linked docs with book-scoped metadata', async () => {
+        renewalsTable.findMany.mockResolvedValue([
+            renewalRow({ id: 1, document_id: 42 }),
+            renewalRow({ id: 2, document_id: null, name: 'Domain' }),
+        ]);
+        entityDocs.findMany.mockResolvedValue([{ id: 42, title: 'Policy PDF', file_name: 'policy.pdf' }]);
+
+        const renewals = await listRenewals(BOOK);
+
+        expect(entityDocs.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({ id: { in: [42] }, book_guid: BOOK }),
+            }),
+        );
+        expect(renewals[0].documentId).toBe(42);
+        expect(renewals[0].documentTitle).toBe('Policy PDF');
+        expect(renewals[1].documentId).toBeNull();
+        expect(renewals[1].documentTitle).toBeNull();
+    });
+
+    it('listRenewals leaves a stale link title-less rather than leaking foreign metadata', async () => {
+        renewalsTable.findMany.mockResolvedValue([renewalRow({ document_id: 42 })]);
+        // Doc 42 exists in another book, so the scoped lookup returns nothing.
+        entityDocs.findMany.mockResolvedValue([]);
+
+        const renewals = await listRenewals(BOOK);
+        expect(renewals[0].documentId).toBe(42);
+        expect(renewals[0].documentTitle).toBeNull();
+        expect(renewals[0].documentFileName).toBeNull();
     });
 });

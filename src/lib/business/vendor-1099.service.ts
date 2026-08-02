@@ -19,13 +19,18 @@
 
 import prisma from '@/lib/prisma';
 import { OWNER_TYPE_JOB, OWNER_TYPE_VENDOR } from '@/lib/business/business-reports';
+import {
+    NEC_THRESHOLD,
+    summarizeVendor1099Compliance,
+    type Vendor1099ComplianceSummary,
+} from '@/lib/business/vendor-1099-compliance';
 
 /* ------------------------------------------------------------------ */
 /* Constants + pure helpers (unit-tested)                              */
 /* ------------------------------------------------------------------ */
 
-/** 1099-NEC reporting threshold (box 1 total for the calendar year). */
-export const NEC_THRESHOLD = 600;
+/** 1099-NEC reporting threshold — canonical value lives in the pure engine. */
+export { NEC_THRESHOLD } from '@/lib/business/vendor-1099-compliance';
 
 export const TAX_CLASSIFICATIONS = [
     'individual/sole_prop',
@@ -103,6 +108,8 @@ export interface VendorTaxInfo {
     w9Received: boolean;
     /** ISO date (YYYY-MM-DD) or null. */
     w9ReceivedDate: string | null;
+    /** ISO date (YYYY-MM-DD) the W-9 was requested from the vendor, or null. */
+    w9RequestedDate: string | null;
     exemptFrom1099: boolean;
     address: string | null;
     notes: string | null;
@@ -116,6 +123,8 @@ export interface Vendor1099Row {
     crosses600: boolean;
     taxInfo: VendorTaxInfo | null;
     status: Vendor1099Status;
+    /** ISO date (YYYY-MM-DD) the 1099-NEC was filed for this year, or null. */
+    filedDate: string | null;
 }
 
 export interface Vendor1099Summary {
@@ -152,6 +161,7 @@ export function buildVendor1099Summary(
     vendors: ReadonlyArray<VendorListEntry>,
     paidByVendor: ReadonlyMap<string, number>,
     taxInfoByVendor: ReadonlyMap<string, VendorTaxInfo>,
+    filedByVendor: ReadonlyMap<string, string> = new Map(),
 ): Vendor1099Summary {
     const rows: Vendor1099Row[] = [];
 
@@ -171,6 +181,7 @@ export function buildVendor1099Summary(
                 exempt: taxInfo?.exemptFrom1099 ?? false,
                 w9Received: taxInfo?.w9Received ?? false,
             }),
+            filedDate: filedByVendor.get(vendor.guid) ?? null,
         });
     }
 
@@ -202,6 +213,7 @@ interface TaxInfoDbRow {
     tax_id_masked: string | null;
     w9_received: boolean;
     w9_received_date: Date | null;
+    w9_requested_date: Date | null;
     exempt_from_1099: boolean;
     address: string | null;
     notes: string | null;
@@ -214,6 +226,7 @@ function mapTaxInfo(row: TaxInfoDbRow): VendorTaxInfo {
         taxIdMasked: row.tax_id_masked,
         w9Received: row.w9_received,
         w9ReceivedDate: toIsoDate(row.w9_received_date),
+        w9RequestedDate: toIsoDate(row.w9_requested_date),
         exemptFrom1099: row.exempt_from_1099,
         address: row.address,
         notes: row.notes,
@@ -275,19 +288,118 @@ export async function get1099Summary(
     const paidByVendor = new Map(paidRows.map((r) => [r.vendor_guid, r.paid]));
 
     const guids = vendorRows.map((v) => v.guid);
-    const taxRows = guids.length
-        ? await prisma.gnucash_web_vendor_tax_info.findMany({
-              where: { vendor_guid: { in: guids } },
-          })
-        : [];
+    const [taxRows, filingRows] = guids.length
+        ? await Promise.all([
+              prisma.gnucash_web_vendor_tax_info.findMany({
+                  where: { vendor_guid: { in: guids } },
+              }),
+              prisma.gnucash_web_vendor_1099_filings.findMany({
+                  where: { vendor_guid: { in: guids }, tax_year: year },
+              }),
+          ])
+        : [[], []];
     const taxInfoByVendor = new Map(taxRows.map((r) => [r.vendor_guid, mapTaxInfo(r)]));
+    const filedByVendor = new Map(
+        filingRows.flatMap((r) => {
+            const filed = toIsoDate(r.filed_1099_nec);
+            return filed ? [[r.vendor_guid, filed] as const] : [];
+        }),
+    );
 
     return buildVendor1099Summary(
         year,
         vendorRows.map((v) => ({ guid: v.guid, name: v.name, active: v.active !== 0 })),
         paidByVendor,
         taxInfoByVendor,
+        filedByVendor,
     );
+}
+
+/* ------------------------------------------------------------------ */
+/* Compliance rollup (Action Center + Money Timeline + page banner)     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Load the year's vendor summary and run the deterministic compliance engine
+ * over it: over-threshold flags, W-9 tracking state, the Jan 31 due date,
+ * days until due, and per-vendor filing status.
+ */
+export async function get1099Compliance(
+    bookGuid: string,
+    bookAccountGuids: string[],
+    taxYear: number,
+    asOf: Date = new Date(),
+): Promise<Vendor1099ComplianceSummary> {
+    const summary = await get1099Summary(bookGuid, bookAccountGuids, taxYear);
+    return summarizeVendor1099Compliance(
+        taxYear,
+        summary.vendors.map((row) => ({
+            vendorGuid: row.vendorGuid,
+            name: row.name,
+            totalPaid: row.totalPaid,
+            exemptFrom1099: row.taxInfo?.exemptFrom1099 ?? false,
+            w9Received: row.taxInfo?.w9Received ?? false,
+            w9RequestedDate: row.taxInfo?.w9RequestedDate ?? null,
+            tinOnFile: (row.taxInfo?.taxIdMasked ?? null) !== null,
+            filedDate: row.filedDate,
+        })),
+        asOf,
+    );
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-year filing status                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Record (or clear, with `filedDate: null`) the date a 1099-NEC was filed
+ * for a vendor-year. Dates are ISO YYYY-MM-DD; only the date is stored.
+ */
+export async function setVendor1099Filing(
+    bookGuid: string,
+    vendorGuid: string,
+    taxYear: number,
+    filedDate: string | null,
+): Promise<{ vendorGuid: string; taxYear: number; filedDate: string | null }> {
+    const vendor = await prisma.$queryRaw<{ guid: string }[]>`
+        SELECT guid FROM vendors WHERE guid = ${vendorGuid}
+    `;
+    if (vendor.length === 0) {
+        throw new Vendor1099NotFoundError('Vendor not found');
+    }
+    if (!Number.isInteger(taxYear) || taxYear < 1990 || taxYear > 2100) {
+        throw new Vendor1099ValidationError('Invalid tax year');
+    }
+
+    let filed: Date | null = null;
+    if (filedDate !== null && filedDate !== '') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(filedDate)) {
+            throw new Vendor1099ValidationError('filedDate must be YYYY-MM-DD');
+        }
+        filed = new Date(`${filedDate}T00:00:00.000Z`);
+        if (isNaN(filed.getTime())) {
+            throw new Vendor1099ValidationError('Invalid filedDate');
+        }
+    }
+
+    if (filed === null) {
+        await prisma.gnucash_web_vendor_1099_filings.deleteMany({
+            where: { vendor_guid: vendorGuid, tax_year: taxYear },
+        });
+        return { vendorGuid, taxYear, filedDate: null };
+    }
+
+    const row = await prisma.gnucash_web_vendor_1099_filings.upsert({
+        where: { vendor_guid_tax_year: { vendor_guid: vendorGuid, tax_year: taxYear } },
+        create: {
+            vendor_guid: vendorGuid,
+            tax_year: taxYear,
+            book_guid: bookGuid,
+            filed_1099_nec: filed,
+        },
+        update: { book_guid: bookGuid, filed_1099_nec: filed, updated_at: new Date() },
+    });
+    return { vendorGuid, taxYear, filedDate: toIsoDate(row.filed_1099_nec) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,6 +414,8 @@ export interface UpsertVendorTaxInfoInput {
     w9Received?: boolean;
     /** ISO date (YYYY-MM-DD) or null. */
     w9ReceivedDate?: string | null;
+    /** ISO date (YYYY-MM-DD) the W-9 was requested, or null. */
+    w9RequestedDate?: string | null;
     exemptFrom1099?: boolean;
     address?: string | null;
     notes?: string | null;
@@ -334,20 +448,23 @@ export async function upsertVendorTaxInfo(
         );
     }
 
-    let w9Date: Date | null | undefined = undefined;
-    if (input.w9ReceivedDate !== undefined) {
-        if (input.w9ReceivedDate === null || input.w9ReceivedDate === '') {
-            w9Date = null;
-        } else {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(input.w9ReceivedDate)) {
-                throw new Vendor1099ValidationError('w9ReceivedDate must be YYYY-MM-DD');
-            }
-            w9Date = new Date(`${input.w9ReceivedDate}T00:00:00.000Z`);
-            if (isNaN(w9Date.getTime())) {
-                throw new Vendor1099ValidationError('Invalid w9ReceivedDate');
-            }
+    const parseIsoDateInput = (
+        value: string | null | undefined,
+        field: string,
+    ): Date | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null || value === '') return null;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            throw new Vendor1099ValidationError(`${field} must be YYYY-MM-DD`);
         }
-    }
+        const parsed = new Date(`${value}T00:00:00.000Z`);
+        if (isNaN(parsed.getTime())) {
+            throw new Vendor1099ValidationError(`Invalid ${field}`);
+        }
+        return parsed;
+    };
+    const w9Date = parseIsoDateInput(input.w9ReceivedDate, 'w9ReceivedDate');
+    const w9Requested = parseIsoDateInput(input.w9RequestedDate, 'w9RequestedDate');
 
     const existing = await prisma.gnucash_web_vendor_tax_info.findUnique({
         where: { vendor_guid: vendorGuid },
@@ -376,6 +493,7 @@ export async function upsertVendorTaxInfo(
         ...(taxIdMasked !== undefined && { tax_id_masked: taxIdMasked }),
         ...(input.w9Received !== undefined && { w9_received: input.w9Received }),
         ...(w9Date !== undefined && { w9_received_date: w9Date }),
+        ...(w9Requested !== undefined && { w9_requested_date: w9Requested }),
         ...(input.exemptFrom1099 !== undefined && { exempt_from_1099: input.exemptFrom1099 }),
         ...(input.address !== undefined && { address: input.address }),
         ...(input.notes !== undefined && { notes: input.notes }),

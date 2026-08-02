@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import {
-    upsertVendorTaxInfo,
+    setVendor1099Filing,
     Vendor1099NotFoundError,
     Vendor1099ValidationError,
-    type UpsertVendorTaxInfoInput,
 } from '@/lib/business/vendor-1099.service';
 
 type RouteParams = { params: Promise<{ guid: string }> };
 
-const optionalString = (v: unknown): string | null | undefined =>
-    v === undefined ? undefined : v === null ? null : String(v);
-
+/**
+ * Record or clear the date a 1099-NEC was filed for one vendor and tax year.
+ * Body: { taxYear: number, filedDate: 'YYYY-MM-DD' | null }.
+ */
 export async function PUT(request: Request, { params }: RouteParams) {
     try {
         const roleResult = await requireRole('edit');
@@ -28,21 +28,15 @@ export async function PUT(request: Request, { params }: RouteParams) {
             return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
         }
 
-        const input: UpsertVendorTaxInfoInput = {
-            legalName: optionalString(body.legalName),
-            taxClassification: optionalString(body.taxClassification),
-            tinLast4: optionalString(body.tinLast4),
-            w9Received: body.w9Received === undefined ? undefined : Boolean(body.w9Received),
-            w9ReceivedDate: optionalString(body.w9ReceivedDate),
-            w9RequestedDate: optionalString(body.w9RequestedDate),
-            exemptFrom1099:
-                body.exemptFrom1099 === undefined ? undefined : Boolean(body.exemptFrom1099),
-            address: optionalString(body.address),
-            notes: optionalString(body.notes),
-        };
+        const taxYear = Number(body.taxYear);
+        if (!Number.isInteger(taxYear)) {
+            return NextResponse.json({ error: 'taxYear must be an integer' }, { status: 400 });
+        }
+        const filedDate =
+            body.filedDate === undefined || body.filedDate === null ? null : String(body.filedDate);
 
-        const taxInfo = await upsertVendorTaxInfo(bookGuid, guid, input);
-        return NextResponse.json({ vendorGuid: guid, taxInfo });
+        const result = await setVendor1099Filing(bookGuid, guid, taxYear, filedDate);
+        return NextResponse.json(result);
     } catch (error) {
         if (error instanceof Vendor1099ValidationError) {
             return NextResponse.json({ error: error.message }, { status: 400 });
@@ -50,7 +44,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
         if (error instanceof Vendor1099NotFoundError) {
             return NextResponse.json({ error: error.message }, { status: 404 });
         }
-        console.error('Error saving vendor tax info:', error);
-        return NextResponse.json({ error: 'Failed to save vendor tax info' }, { status: 500 });
+        console.error('Error saving 1099 filing status:', error);
+        return NextResponse.json({ error: 'Failed to save 1099 filing status' }, { status: 500 });
     }
 }
