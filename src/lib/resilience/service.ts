@@ -19,7 +19,11 @@ import {
   summarizeMileage,
 } from './core';
 import { calculateGivingPlan, type GivingContext } from './giving-core';
-import { CORE_DOCUMENT_KINDS as CORE_ESTATE_DOCUMENT_KINDS, calculateEstateReadiness } from './estate-core';
+import {
+  CORE_DOCUMENT_KINDS as CORE_ESTATE_DOCUMENT_KINDS,
+  calculateEstateReadiness,
+  type EstateHouseholdMember,
+} from './estate-core';
 import {
   MARGIN_ALERT_PERCENT,
   MARGIN_ALERT_REVENUE_THRESHOLD,
@@ -367,6 +371,15 @@ const givingSchema = z.object({
 // --- End charitable giving section (schema) ---
 
 // --- Estate readiness section (schema) ---
+/**
+ * Member attribution. The roster has no stable per-member id in the entity API,
+ * so records store the role plus a display-name snapshot. Both fields default so
+ * profiles saved before attribution existed still parse ('household' = joint,
+ * which credits every adult and preserves the old whole-household behaviour).
+ */
+const estateMemberRole = z.enum(['self', 'spouse', 'dependent', 'household']).default('household');
+const estateMemberName = z.string().trim().max(200).default('');
+
 const estateSchema = z.object({
   designations: z.array(z.object({
     id,
@@ -375,6 +388,8 @@ const estateSchema = z.object({
     primaryBeneficiary: z.string().trim().min(1).max(200),
     contingentBeneficiary: z.string().max(200).nullable().optional(),
     lastReviewedDate: date,
+    memberRole: estateMemberRole,
+    memberName: estateMemberName,
   })).max(500),
   documents: z.array(z.object({
     id,
@@ -383,6 +398,10 @@ const estateSchema = z.object({
     location: z.string().trim().max(300),
     lastUpdatedDate: date,
     reviewCycleYears: z.number().int().min(1).max(10),
+    memberRole: estateMemberRole,
+    memberName: estateMemberName,
+    /** One vault document per estate record (gnucash_web_entity_documents.id). */
+    documentId: z.number().int().positive().nullable().optional(),
   })).max(500),
   lifeEvents: z.array(z.object({
     id,
@@ -803,7 +822,8 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
   }
   // --- Estate readiness section ---
   if (section === 'estate') {
-    return { profile, readiness: calculateEstateReadiness(profile as EstateProfile) };
+    const roster = await loadEstateRoster(bookGuid);
+    return { profile, readiness: calculateEstateReadiness(profile as EstateProfile, new Date(), roster) };
   }
   // --- End estate readiness section ---
   // --- Farm production section ---
@@ -830,6 +850,34 @@ function charityMileageContext(mileage: MileageProfile, now = new Date()): Givin
 }
 // --- End charitable giving section (context helper) ---
 
+// --- Estate readiness section (context helper) ---
+/**
+ * Household roster for estate attribution, read straight from the entity
+ * members table. Business roles (owner, officer) are excluded — they are not
+ * household members. Books without an entity profile return an empty roster and
+ * the engine falls back to household-level coverage.
+ */
+async function loadEstateRoster(bookGuid: string): Promise<EstateHouseholdMember[]> {
+  try {
+    const result = await query(
+      `SELECT role, COALESCE(name, '') AS name
+         FROM gnucash_web_entity_members
+        WHERE book_guid = $1
+          AND role IN ('self', 'spouse', 'dependent')
+        ORDER BY sort_order ASC, id ASC`,
+      [bookGuid],
+    );
+    return (result.rows as Array<{ role: string; name: string }>).map(row => ({
+      role: row.role as EstateHouseholdMember['role'],
+      name: row.name,
+    }));
+  } catch {
+    // A missing entity table (fresh install) must not break estate readiness.
+    return [];
+  }
+}
+// --- End estate readiness section (context helper) ---
+
 // --- Estate readiness section (labels) ---
 const ESTATE_DOCUMENT_LABELS: Record<EstateDocument['kind'], string> = {
   will: 'Will',
@@ -841,6 +889,19 @@ const ESTATE_DOCUMENT_LABELS: Record<EstateDocument['kind'], string> = {
   beneficiary_letter: 'Beneficiary letter',
   other: 'Estate document',
 };
+
+/**
+ * Who an estate record belongs to, for Action Center titles and summaries:
+ * the recorded name when there is one, otherwise a role phrase.
+ */
+function estateMemberDisplay(memberRole: string | undefined, memberName: string | undefined): string {
+  const name = memberName?.trim();
+  if (name) return name;
+  if (memberRole === 'self') return 'you';
+  if (memberRole === 'spouse') return 'your spouse';
+  if (memberRole === 'dependent') return 'a dependent';
+  return 'the household';
+}
 // --- End estate readiness section (labels) ---
 
 async function loadUtilityBillSuggestions(bookGuid: string, profile: UtilitiesProfile) {
@@ -1668,7 +1729,7 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   }
   // --- End charitable giving section (actions) ---
   // --- Estate readiness section (actions) ---
-  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now);
+  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now, await loadEstateRoster(bookGuid));
   for (const designation of estateReadiness.designations) {
     if (!designation.stale) continue;
     actions.push(action({
@@ -1692,14 +1753,17 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   for (const document of estateReadiness.documents) {
     if (!document.overdue) continue;
     const documentLabel = document.label || ESTATE_DOCUMENT_LABELS[document.kind];
+    const owner = estateMemberDisplay(document.memberRole, document.memberName);
     actions.push(action({
-      stableKey: `estate:document:${document.kind}:${document.dueDate}`,
+      // The member is part of the key: two adults can each hold an overdue
+      // document of the same kind, and they must dismiss independently.
+      stableKey: `estate:document:${document.memberRole ?? 'household'}:${document.kind}:${document.dueDate}`,
       lane: 'fix',
       origin: 'estate',
       sourceId: document.id,
       severity: (CORE_ESTATE_DOCUMENT_KINDS as readonly string[]).includes(document.kind) ? 'warning' : 'info',
-      title: `Review the ${documentLabel.toLowerCase()}`,
-      summary: `Last updated ${document.lastUpdatedDate}; the ${document.reviewCycleYears}-year review was due ${document.dueDate}.`,
+      title: `Review the ${documentLabel.toLowerCase()} for ${owner}`,
+      summary: `${documentLabel} for ${owner} was last updated ${document.lastUpdatedDate}; the ${document.reviewCycleYears}-year review was due ${document.dueDate}.`,
       dueDate: document.dueDate,
       confidence: 1,
       operations: [{ id: 'open', label: 'Review documents', kind: 'link', href: '/planning/estate', primary: true }],
@@ -1707,20 +1771,29 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: [{ kind: 'estate_document', id: document.id, label: `${documentLabel} — ${document.location || 'location not recorded'}`, source: 'manual', href: '/planning/estate', verified: false }],
     }));
   }
-  for (const kind of estateReadiness.coverage.missingCoreDocuments) {
+  // One item per (adult, missing core kind). With no roster the engine reports a
+  // single household-level gap list, which lands here as memberRole 'household'.
+  const missingCoreItems = estateReadiness.coverage.members.length > 0
+    ? estateReadiness.coverage.missingByMember
+    : estateReadiness.coverage.missingCoreDocuments.map(kind => ({ role: 'household' as const, name: '', kind }));
+  for (const item of missingCoreItems) {
+    const who = estateMemberDisplay(item.role, item.name);
     actions.push(action({
-      stableKey: `estate:document:${kind}:missing`,
+      stableKey: `estate:document:${item.role}:${item.kind}:missing`,
       lane: 'fix',
       origin: 'estate',
-      sourceId: kind,
+      sourceId: `${item.role}:${item.kind}`,
       severity: 'warning',
-      title: `Put a ${ESTATE_DOCUMENT_LABELS[kind].toLowerCase()} in place`,
-      summary: `No ${ESTATE_DOCUMENT_LABELS[kind].toLowerCase()} is on file; it is one of the four core estate documents.`,
+      title: `Put a ${ESTATE_DOCUMENT_LABELS[item.kind].toLowerCase()} in place for ${who}`,
+      summary: `No ${ESTATE_DOCUMENT_LABELS[item.kind].toLowerCase()} is on file for ${who}; it is one of the four core estate documents, and each adult needs their own.`,
       dueDate: null,
       confidence: 1,
       operations: [{ id: 'open', label: 'Review documents', kind: 'link', href: '/planning/estate', primary: true }],
-      assumptions: ['Core coverage means a will, financial POA, healthcare POA, and healthcare directive; a revocable trust is optional.'],
-      evidence: [{ kind: 'estate_document', id: kind, label: `${ESTATE_DOCUMENT_LABELS[kind]} (missing)`, source: 'manual', href: '/planning/estate', verified: false }],
+      assumptions: [
+        'Core coverage means a will, financial POA, healthcare POA, and healthcare directive; a revocable trust is optional.',
+        'Each adult household member needs their own set; documents attributed to the household count for everyone.',
+      ],
+      evidence: [{ kind: 'estate_document', id: `${item.role}:${item.kind}`, label: `${ESTATE_DOCUMENT_LABELS[item.kind]} for ${who} (missing)`, source: 'manual', href: '/planning/estate', verified: false }],
     }));
   }
   if (estateReadiness.exposure.exposure > 0) {
@@ -2152,16 +2225,17 @@ export async function loadResilienceEvents(
   }
   // --- End charitable giving section (events) ---
   // --- Estate readiness section (events) ---
-  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now);
+  const estateReadiness = calculateEstateReadiness(estate as EstateProfile, now, await loadEstateRoster(bookGuid));
   const estateHorizon = new Date(now.getTime() + 365 * 86_400_000).toISOString().slice(0, 10);
   for (const document of estateReadiness.documents) {
     if (document.dueDate > estateHorizon) continue;
     const documentLabel = document.label || ESTATE_DOCUMENT_LABELS[document.kind];
+    const owner = estateMemberDisplay(document.memberRole, document.memberName);
     events.push({
       id: `estate:document:${document.id}:${document.dueDate}`,
       bookGuid,
       domain: 'estate',
-      title: `${documentLabel} review due`,
+      title: `${documentLabel} review due — ${owner}`,
       description: `Last updated ${document.lastUpdatedDate}; kept at ${document.location || 'an unrecorded location'}.`,
       date: document.dueDate,
       endDate: null,
@@ -2174,7 +2248,12 @@ export async function loadResilienceEvents(
       actionId: null,
       planId: null,
       evidence: [],
-      metadata: { kind: document.kind, lastUpdatedDate: document.lastUpdatedDate, reviewCycleYears: document.reviewCycleYears },
+      metadata: {
+        kind: document.kind,
+        lastUpdatedDate: document.lastUpdatedDate,
+        reviewCycleYears: document.reviewCycleYears,
+        memberRole: document.memberRole ?? 'household',
+      },
     });
   }
   // --- End estate readiness section (events) ---

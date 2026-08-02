@@ -8,6 +8,7 @@ import {
     type EntityDocumentProfile,
 } from '@/lib/entity-document-context';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { useDocumentPreview } from '@/components/documents/DocumentPreviewModal';
 import { useToast } from '@/contexts/ToastContext';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
@@ -64,6 +65,7 @@ const labelClass = 'block text-xs text-foreground-secondary mb-1';
 
 export default function EntityDocumentsPage() {
     const toast = useToast();
+    const documentPreview = useDocumentPreview();
     const [data, setData] = useState<DocumentsResponse | null>(null);
     const [entityProfile, setEntityProfile] = useState<EntityDocumentProfile | null>(null);
     const [loading, setLoading] = useState(true);
@@ -459,9 +461,21 @@ export default function EntityDocumentsPage() {
                                                         </div>
                                                         <ExpiryBadge doc={doc} />
                                                         <div className="flex items-center gap-3 text-sm">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => documentPreview.open({
+                                                                    documentId: doc.id,
+                                                                    title: doc.title,
+                                                                    fileName: doc.fileName,
+                                                                    mimeType: doc.mimeType,
+                                                                })}
+                                                                className="text-primary hover:text-primary-hover transition-colors"
+                                                            >
+                                                                Preview
+                                                            </button>
                                                             <a
                                                                 href={`/api/business/documents/${doc.id}/download`}
-                                                                className="text-primary hover:text-primary-hover transition-colors"
+                                                                className="text-foreground-secondary hover:text-foreground transition-colors"
                                                             >
                                                                 Download
                                                             </a>
@@ -612,6 +626,8 @@ export default function EntityDocumentsPage() {
                     </p>
                 </>
             )}
+
+            {documentPreview.preview}
         </div>
     );
 }

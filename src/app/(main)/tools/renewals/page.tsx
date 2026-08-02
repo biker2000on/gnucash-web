@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { Modal } from '@/components/ui/Modal';
+import { useDocumentPreview } from '@/components/documents/DocumentPreviewModal';
 import { useToast } from '@/contexts/ToastContext';
 
 /* ------------------------------------------------------------------ */
@@ -130,6 +131,7 @@ function DaysChip({ days }: { days: number }) {
 
 export default function RenewalsPage() {
     const toast = useToast();
+    const documentPreview = useDocumentPreview();
     const [renewals, setRenewals] = useState<Renewal[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -419,18 +421,21 @@ export default function RenewalsPage() {
                                                             </span>
                                                         )}
                                                         {r.documentId != null && (
-                                                            <a
-                                                                href={`/api/business/documents/${r.documentId}/download`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                title={r.documentTitle ? `Open document: ${r.documentTitle}` : 'Open linked document'}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => documentPreview.open({
+                                                                    documentId: r.documentId as number,
+                                                                    title: r.documentTitle,
+                                                                    fileName: r.documentFileName,
+                                                                })}
+                                                                title={r.documentTitle ? `Preview document: ${r.documentTitle}` : 'Preview linked document'}
                                                                 className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/40 text-primary hover:bg-primary-light transition-colors"
                                                             >
                                                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3" aria-hidden="true">
                                                                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
                                                                 </svg>
                                                                 Doc
-                                                            </a>
+                                                            </button>
                                                         )}
                                                     </div>
                                                     <p className="text-xs text-foreground-muted mt-0.5">
@@ -653,6 +658,8 @@ export default function RenewalsPage() {
                     </div>
                 </div>
             </Modal>
+
+            {documentPreview.preview}
         </div>
     );
 }

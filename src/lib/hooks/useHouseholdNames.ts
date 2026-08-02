@@ -46,3 +46,37 @@ export function useHouseholdNames(): HouseholdNames {
         spouseName: memberName(data, 'spouse'),
     };
 }
+
+/** Household roles that can own a record (business owner/officer are excluded). */
+export type HouseholdRole = 'self' | 'spouse' | 'dependent';
+
+export interface HouseholdMember {
+    role: HouseholdRole;
+    /** Display name, or '' when the roster row has no name recorded. */
+    name: string;
+}
+
+const HOUSEHOLD_ROLES: HouseholdRole[] = ['self', 'spouse', 'dependent'];
+
+/**
+ * The full household roster (self, spouse, and dependents) from the active
+ * book's entity profile. Business owner/officer rows are filtered out — they
+ * are not household members and must never appear in household pickers.
+ * Shares the react-query cache key with useHouseholdNames, so pages using both
+ * make a single request.
+ */
+export function useHouseholdMembers(): HouseholdMember[] {
+    const { data } = useQuery<EntityProfileLite | null>({
+        queryKey: ['entity', 'profile'],
+        queryFn: async () => {
+            const res = await fetch('/api/entity');
+            if (!res.ok) return null;
+            return res.json() as Promise<EntityProfileLite>;
+        },
+        staleTime: 1000 * 60 * 5,
+    });
+
+    return (data?.members ?? [])
+        .filter(member => (HOUSEHOLD_ROLES as string[]).includes(member.role))
+        .map(member => ({ role: member.role as HouseholdRole, name: member.name?.trim() ?? '' }));
+}

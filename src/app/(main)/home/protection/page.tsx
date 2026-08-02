@@ -15,6 +15,7 @@ import type {
   LifeProfile,
 } from '@/lib/resilience/types';
 import { Empty, Field, INPUT, Metric, Panel, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
+import { DocumentChip, type VaultDocument } from '@/components/resilience/DocumentLinkField';
 
 type Tab = 'insurance' | 'capital' | 'life';
 const uid = () => crypto.randomUUID();
@@ -29,13 +30,6 @@ const POLICY_TYPE_LABELS: Record<InsurancePolicy['type'], string> = {
   health: 'Health',
   other: 'Other',
 };
-
-interface VaultDocument {
-  id: number;
-  title: string;
-  fileName: string | null;
-  docType: string;
-}
 
 interface InsuranceResponse {
   profile: InsuranceProfile;
@@ -130,26 +124,6 @@ function Stat(props: { label: string; value: string }) {
   );
 }
 
-function DocumentChip(props: { doc: VaultDocument | undefined; id: number; onRemove?: () => void }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background-tertiary px-2 py-0.5 text-[11px]">
-      <a
-        href={`/api/business/documents/${props.id}/download`}
-        target="_blank"
-        rel="noreferrer"
-        className="text-primary hover:text-primary-hover"
-      >
-        {props.doc?.title ?? `Document #${props.id}`}
-      </a>
-      {props.onRemove && (
-        <button type="button" onClick={props.onRemove} className="text-foreground-muted hover:text-negative" aria-label="Unlink document">
-          ×
-        </button>
-      )}
-    </span>
-  );
-}
-
 const EDIT_BUTTON = 'rounded-md border border-border px-2.5 py-1 text-xs text-foreground-secondary transition-colors hover:border-primary hover:text-primary';
 const SMALL_PRIMARY = 'rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-50';
 
@@ -190,7 +164,7 @@ export default function ProtectionPage() {
       if (!response.ok) return;
       const json = await response.json() as { documents?: VaultDocument[] };
       setVaultDocs((json.documents ?? []).map(doc => ({
-        id: doc.id, title: doc.title, fileName: doc.fileName, docType: doc.docType,
+        id: doc.id, title: doc.title, fileName: doc.fileName, docType: doc.docType, mimeType: doc.mimeType,
       })));
     } catch { /* vault stays empty — linking is optional */ }
   };
@@ -288,7 +262,7 @@ export default function ProtectionPage() {
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Upload failed');
       const doc = json.document as VaultDocument;
-      setVaultDocs(current => [{ id: doc.id, title: doc.title, fileName: doc.fileName, docType: doc.docType }, ...current]);
+      setVaultDocs(current => [{ id: doc.id, title: doc.title, fileName: doc.fileName, docType: doc.docType, mimeType: doc.mimeType }, ...current]);
       updatePolicy(policy.id, { documentIds: [...policy.documentIds, doc.id] });
       toast.success('Document uploaded to the vault and linked — save to keep the link');
     } catch (error) {

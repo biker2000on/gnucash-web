@@ -397,6 +397,18 @@ export type EstateAccountType =
   | 'hsa'
   | 'other';
 
+/**
+ * Who an estate record belongs to.
+ *
+ * The household roster (gnucash_web_entity_members, exposed by GET /api/entity)
+ * has no stable per-member id in its API contract, so attribution stores the
+ * role plus a display-name snapshot instead of a foreign key. 'household' means
+ * jointly held — a joint revocable trust or a shared account — and credits every
+ * adult. A person who is not on the roster (an aging parent, for example) is
+ * stored as 'dependent' with a free-text memberName.
+ */
+export type EstateMemberRole = 'self' | 'spouse' | 'dependent' | 'household';
+
 export interface EstateDesignation {
   id: string;
   /** Free text, e.g. "Fidelity 401k". */
@@ -405,6 +417,13 @@ export interface EstateDesignation {
   primaryBeneficiary: string;
   contingentBeneficiary?: string | null;
   lastReviewedDate: string;
+  /**
+   * Whose account this is. Absent on profiles saved before attribution existed;
+   * the zod schema defaults it to 'household' (jointly held) on read.
+   */
+  memberRole?: EstateMemberRole;
+  /** Display snapshot of the member's name; empty for a joint record. */
+  memberName?: string;
 }
 
 export type EstateDocumentKind =
@@ -425,6 +444,18 @@ export interface EstateDocument {
   location: string;
   lastUpdatedDate: string;
   reviewCycleYears: number;
+  /**
+   * Whose document this is. Absent on profiles saved before attribution
+   * existed; the zod schema defaults it to 'household' (covers every adult).
+   */
+  memberRole?: EstateMemberRole;
+  /** Display snapshot of the member's name; empty for a joint document. */
+  memberName?: string;
+  /**
+   * Optional link to one document-vault record (gnucash_web_entity_documents).
+   * One-to-one: an estate document is a single signed instrument.
+   */
+  documentId?: number | null;
 }
 
 export type EstateLifeEventKind =

@@ -1,4 +1,18 @@
-import type { EstateProfile } from './types';
+import type { EstateDocumentKind, EstateMemberRole, EstateProfile } from './types';
+
+/**
+ * A household roster entry passed into the engine by the service layer.
+ * The engine stays pure: it never reads the entity profile itself, exactly like
+ * the giving pack takes its charity-mileage context as an argument.
+ */
+export interface EstateHouseholdMember {
+  role: EstateMemberRole | 'owner' | 'officer';
+  name: string;
+}
+
+/** Roles that need their own set of core estate documents. */
+const ADULT_ROLES = ['self', 'spouse'] as const;
+type AdultRole = (typeof ADULT_ROLES)[number];
 
 function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -34,7 +48,29 @@ function addYears(date: string, years: number): string {
   return value.toISOString().slice(0, 10);
 }
 
-export function calculateEstateReadiness(profile: EstateProfile, asOf = new Date()) {
+/**
+ * Estate readiness.
+ *
+ * `roster` is the household roster (self / spouse / dependents) loaded by the
+ * service layer. Core-document coverage is measured **per adult**: one spouse's
+ * will does not satisfy the other's. Documents attributed to 'household' (a
+ * joint revocable trust, for example) credit every adult. With an empty roster
+ * the engine falls back to the original household-level behaviour so books with
+ * no entity profile keep working unchanged.
+ *
+ * Score weighting (100 points):
+ *   - 40 designations: share of beneficiary designations that are not stale.
+ *   - 40 core documents: with a roster, the *average* per-adult share of the
+ *     four core kinds that are on file, fresh, and not life-event triggered —
+ *     so one adult missing a financial POA costs 40 × (1/4) / adults. With no
+ *     roster, the household-level share of the four core kinds.
+ *   - 20 survivor runbook: present and updated within two years.
+ */
+export function calculateEstateReadiness(
+  profile: EstateProfile,
+  asOf = new Date(),
+  roster: EstateHouseholdMember[] = [],
+) {
   const { settings } = profile;
   const asOfDate = asOf.toISOString().slice(0, 10);
   const pastEvents = profile.lifeEvents
@@ -74,10 +110,53 @@ export function calculateEstateReadiness(profile: EstateProfile, asOf = new Date
   });
 
   const presentKinds = new Set(profile.documents.map(document => document.kind));
+
+  // Adults needing their own document set, de-duplicated by role and in roster
+  // order (self first). Business owner/officer rows are not household members.
+  const adults: Array<{ role: AdultRole; name: string }> = [];
+  for (const member of roster) {
+    if (!(ADULT_ROLES as readonly string[]).includes(member.role)) continue;
+    const role = member.role as AdultRole;
+    if (adults.some(adult => adult.role === role)) continue;
+    adults.push({ role, name: member.name });
+  }
+
+  const attributedTo = (documentRole: EstateMemberRole | undefined, role: AdultRole) =>
+    documentRole == null || documentRole === 'household' || documentRole === role;
+
+  /** Per-adult core coverage; empty when there is no roster. */
+  const members = adults.map(adult => {
+    const owned = documents.filter(document => attributedTo(document.memberRole, adult.role));
+    const heldKinds = new Set(owned.map(document => document.kind));
+    const freshKinds = new Set(
+      owned.filter(document => !document.overdue && !document.lifeEventTrigger).map(document => document.kind),
+    );
+    const presentCoreDocuments = CORE_DOCUMENT_KINDS.filter(kind => heldKinds.has(kind));
+    return {
+      role: adult.role,
+      name: adult.name,
+      presentCoreDocuments,
+      missingCoreDocuments: CORE_DOCUMENT_KINDS.filter(kind => !heldKinds.has(kind)),
+      freshCoreCount: CORE_DOCUMENT_KINDS.filter(kind => freshKinds.has(kind)).length,
+    };
+  });
+
+  const householdMissing = CORE_DOCUMENT_KINDS.filter(kind => !presentKinds.has(kind));
   const coverage = {
-    missingCoreDocuments: CORE_DOCUMENT_KINDS.filter(kind => !presentKinds.has(kind)),
+    /** Household rollup: kinds nobody has on file. Drives the summary copy. */
+    missingCoreDocuments: householdMissing,
     // A revocable trust is noted for context but never required.
     hasRevocableTrust: presentKinds.has('revocable_trust'),
+    /** Per-adult coverage; empty array when no roster was supplied. */
+    members,
+    /** Every (adult, kind) pair still missing — one Action Center item each. */
+    missingByMember: members.flatMap(member =>
+      member.missingCoreDocuments.map(kind => ({
+        role: member.role,
+        name: member.name,
+        kind: kind as EstateDocumentKind,
+      })),
+    ),
   };
 
   const married = settings.maritalStatus === 'married';
@@ -117,16 +196,24 @@ export function calculateEstateReadiness(profile: EstateProfile, asOf = new Date
   };
 
   const staleDesignationCount = designations.filter(designation => designation.stale).length;
+  const missingCoreCount = adults.length > 0
+    ? coverage.missingByMember.length
+    : coverage.missingCoreDocuments.length;
   const documentIssueCount = documents.filter(document => document.overdue || document.lifeEventTrigger).length
-    + coverage.missingCoreDocuments.length;
+    + missingCoreCount;
 
   const designationComponent = designations.length === 0
     ? 40
     : (designations.length - staleDesignationCount) / designations.length * 40;
-  const freshCoreCount = CORE_DOCUMENT_KINDS
+  // With a roster the document component is the mean per-adult completeness;
+  // without one it stays the household-level share of the four core kinds.
+  const householdFreshCoreCount = CORE_DOCUMENT_KINDS
     .filter(kind => documents.some(document => document.kind === kind && !document.overdue && !document.lifeEventTrigger))
     .length;
-  const documentComponent = freshCoreCount / CORE_DOCUMENT_KINDS.length * 40;
+  const coreCompleteness = adults.length > 0
+    ? members.reduce((sum, member) => sum + member.freshCoreCount / CORE_DOCUMENT_KINDS.length, 0) / members.length
+    : householdFreshCoreCount / CORE_DOCUMENT_KINDS.length;
+  const documentComponent = coreCompleteness * 40;
   const runbookComponent = runbookCurrent ? 20 : 0;
 
   return {

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   FEDERAL_ESTATE_EXEMPTION_2026,
   calculateEstateReadiness,
+  type EstateHouseholdMember,
 } from '../estate-core';
-import type { EstateProfile, EstateSettings } from '../types';
+import type { EstateDocument, EstateProfile, EstateSettings } from '../types';
 
 const asOf = new Date('2026-08-01T12:00:00Z');
 
@@ -213,5 +214,167 @@ describe('calculateEstateReadiness', () => {
     expect(mixed.score).toBe(30);
     expect(mixed.staleDesignationCount).toBe(1);
     expect(mixed.documentIssueCount).toBe(3); // financial_poa overdue + 2 missing core kinds
+  });
+});
+
+describe('calculateEstateReadiness — per-member coverage', () => {
+  const roster: EstateHouseholdMember[] = [
+    { role: 'self', name: 'Justin Crawford' },
+    { role: 'spouse', name: 'Cara Crawford' },
+    // Dependents and business roles never get their own core-document checklist.
+    { role: 'dependent', name: 'Kid Crawford' },
+    { role: 'owner', name: 'Justin Crawford' },
+  ];
+
+  const document = (
+    id: string,
+    kind: EstateDocument['kind'],
+    memberRole: EstateDocument['memberRole'],
+    memberName = '',
+  ): EstateDocument => ({
+    id,
+    kind,
+    location: 'Fireproof safe',
+    lastUpdatedDate: '2026-01-01',
+    reviewCycleYears: 3,
+    memberRole,
+    memberName,
+  });
+
+  /** The real book: both adults have three of four, only one has a financial POA. */
+  const realWorld: EstateProfile = {
+    designations: [],
+    documents: [
+      document('d1', 'financial_poa', 'self', 'Justin Crawford'),
+      document('d2', 'will', 'self', 'Justin Crawford'),
+      document('d3', 'healthcare_poa', 'self', 'Justin Crawford'),
+      document('d4', 'healthcare_directive', 'self', 'Justin Crawford'),
+      document('d5', 'will', 'spouse', 'Cara Crawford'),
+      document('d6', 'healthcare_poa', 'spouse', 'Cara Crawford'),
+      document('d7', 'healthcare_directive', 'spouse', 'Cara Crawford'),
+    ],
+    lifeEvents: [],
+    settings: { ...settings, survivorRunbookLocation: 'Fireproof safe', survivorRunbookUpdatedDate: '2026-01-01' },
+  };
+
+  it('reports core coverage for each adult and only the adults', () => {
+    const result = calculateEstateReadiness(realWorld, asOf, roster);
+    expect(result.coverage.members.map(member => member.role)).toEqual(['self', 'spouse']);
+    expect(result.coverage.members[0]).toMatchObject({
+      role: 'self',
+      name: 'Justin Crawford',
+      missingCoreDocuments: [],
+      freshCoreCount: 4,
+    });
+    expect(result.coverage.members[1]).toMatchObject({
+      role: 'spouse',
+      name: 'Cara Crawford',
+      missingCoreDocuments: ['financial_poa'],
+      freshCoreCount: 3,
+    });
+    expect(result.coverage.missingByMember).toEqual([
+      { role: 'spouse', name: 'Cara Crawford', kind: 'financial_poa' },
+    ]);
+    // The household rollup still says the kind exists somewhere.
+    expect(result.coverage.missingCoreDocuments).toEqual([]);
+  });
+
+  it('lowers the score when one adult is missing a financial POA', () => {
+    const perMember = calculateEstateReadiness(realWorld, asOf, roster);
+    // No designations (40) + mean core completeness ((4/4 + 3/4) / 2 = 0.875 → 35) + runbook (20).
+    expect(perMember.score).toBe(95);
+    expect(perMember.documentIssueCount).toBe(1);
+    // Without a roster the same profile looks perfect: one adult's POA covered everyone.
+    const householdOnly = calculateEstateReadiness(realWorld, asOf);
+    expect(householdOnly.score).toBe(100);
+    expect(householdOnly.documentIssueCount).toBe(0);
+    // Giving the spouse a financial POA closes the gap.
+    const fixed = calculateEstateReadiness({
+      ...realWorld,
+      documents: [...realWorld.documents, document('d8', 'financial_poa', 'spouse', 'Cara Crawford')],
+    }, asOf, roster);
+    expect(fixed.score).toBe(100);
+    expect(fixed.coverage.missingByMember).toEqual([]);
+  });
+
+  it('credits household-attributed documents to every adult', () => {
+    const joint = calculateEstateReadiness({
+      ...realWorld,
+      documents: [
+        document('j1', 'will', 'household'),
+        document('j2', 'financial_poa', 'household'),
+        document('j3', 'healthcare_poa', 'household'),
+        document('j4', 'healthcare_directive', 'household'),
+      ],
+    }, asOf, roster);
+    expect(joint.coverage.missingByMember).toEqual([]);
+    expect(joint.coverage.members.every(member => member.freshCoreCount === 4)).toBe(true);
+    expect(joint.score).toBe(100);
+  });
+
+  it('does not credit one adult with the other adult\'s documents', () => {
+    const selfOnly = calculateEstateReadiness({
+      ...realWorld,
+      documents: realWorld.documents.filter(item => item.memberRole === 'self'),
+    }, asOf, roster);
+    expect(selfOnly.coverage.members[0].missingCoreDocuments).toEqual([]);
+    expect(selfOnly.coverage.members[1].missingCoreDocuments).toEqual([
+      'will', 'financial_poa', 'healthcare_poa', 'healthcare_directive',
+    ]);
+    expect(selfOnly.coverage.missingByMember).toHaveLength(4);
+    // 40 designations + ((4/4 + 0/4) / 2 = 0.5 → 20) + 20 runbook.
+    expect(selfOnly.score).toBe(80);
+  });
+
+  it('excludes overdue and life-event-triggered documents from an adult\'s fresh count', () => {
+    const stale = calculateEstateReadiness({
+      ...realWorld,
+      documents: [
+        { ...document('s1', 'will', 'self', 'Justin Crawford'), lastUpdatedDate: '2020-01-01' },
+        document('s2', 'financial_poa', 'household'),
+        document('s3', 'healthcare_poa', 'household'),
+        document('s4', 'healthcare_directive', 'household'),
+      ],
+    }, asOf, roster);
+    const [self, spouse] = stale.coverage.members;
+    // The will is on file for self (so not "missing") but overdue, so it is not fresh.
+    expect(self.missingCoreDocuments).toEqual([]);
+    expect(self.freshCoreCount).toBe(3);
+    expect(spouse.missingCoreDocuments).toEqual(['will']);
+    expect(spouse.freshCoreCount).toBe(3);
+  });
+
+  it('falls back to household-level behaviour with an empty roster', () => {
+    const noRoster = calculateEstateReadiness(realWorld, asOf, []);
+    expect(noRoster.coverage.members).toEqual([]);
+    expect(noRoster.coverage.missingByMember).toEqual([]);
+    expect(noRoster.coverage.missingCoreDocuments).toEqual([]);
+    expect(noRoster.score).toBe(calculateEstateReadiness(realWorld, asOf).score);
+    // Business-only rosters have no household adults, so the fallback applies too.
+    const businessRoster = calculateEstateReadiness(realWorld, asOf, [
+      { role: 'owner', name: 'Justin Crawford' },
+      { role: 'officer', name: 'Cara Crawford' },
+    ]);
+    expect(businessRoster.coverage.members).toEqual([]);
+    expect(businessRoster.score).toBe(100);
+  });
+
+  it('treats documents with no attribution as household so old profiles still compute', () => {
+    // Exactly the shape of a profile saved before member attribution existed.
+    const legacy = calculateEstateReadiness({
+      designations: [
+        { id: 'des1', accountLabel: 'Fidelity 401k', accountType: 'retirement', primaryBeneficiary: 'Spouse', lastReviewedDate: '2026-06-01' },
+      ],
+      documents: [
+        { id: 'doc1', kind: 'will', location: 'Safe', lastUpdatedDate: '2026-01-01', reviewCycleYears: 3 },
+        { id: 'doc2', kind: 'financial_poa', location: 'Safe', lastUpdatedDate: '2026-01-01', reviewCycleYears: 3 },
+        { id: 'doc3', kind: 'healthcare_poa', location: 'Safe', lastUpdatedDate: '2026-01-01', reviewCycleYears: 3 },
+        { id: 'doc4', kind: 'healthcare_directive', location: 'Safe', lastUpdatedDate: '2026-01-01', reviewCycleYears: 3 },
+      ],
+      lifeEvents: [],
+      settings: { ...settings, survivorRunbookLocation: 'Safe', survivorRunbookUpdatedDate: '2026-01-01' },
+    }, asOf, roster);
+    expect(legacy.coverage.missingByMember).toEqual([]);
+    expect(legacy.score).toBe(100);
   });
 });

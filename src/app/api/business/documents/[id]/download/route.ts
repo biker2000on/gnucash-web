@@ -4,10 +4,18 @@ import {
     getEntityDocumentFile,
     EntityDocumentNotFoundError,
 } from '@/lib/services/entity-documents.service';
+import { buildDocumentServeHeaders } from '@/lib/document-preview';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-/** Streamed download following the receipts serve pattern. */
+/**
+ * Streamed download following the receipts serve pattern.
+ *
+ * `?disposition=inline` opts into in-browser preview, which is honoured only for
+ * the safelisted MIME types in `@/lib/document-preview`; every other request —
+ * including one with no parameter — still gets `attachment`. Auth and book
+ * scoping are unchanged.
+ */
 export async function GET(request: Request, { params }: RouteParams) {
     try {
         const roleResult = await requireRole('readonly');
@@ -23,11 +31,11 @@ export async function GET(request: Request, { params }: RouteParams) {
         const file = await getEntityDocumentFile(bookGuid, documentId);
 
         return new Response(new Uint8Array(file.buffer), {
-            headers: {
-                'Content-Type': file.mimeType,
-                'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
-                'Cache-Control': 'private, max-age=86400',
-            },
+            headers: buildDocumentServeHeaders({
+                mimeType: file.mimeType,
+                fileName: file.fileName,
+                requestedDisposition: new URL(request.url).searchParams.get('disposition'),
+            }),
         });
     } catch (error) {
         if (error instanceof EntityDocumentNotFoundError) {
