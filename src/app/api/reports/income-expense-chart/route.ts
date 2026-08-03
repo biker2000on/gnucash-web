@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ChartReportData, ReportType } from '@/lib/reports/types';
 import { requireRole } from '@/lib/auth';
+import { GET as dashboardIncomeExpense } from '@/app/api/dashboard/income-expense/route';
 
 interface DashboardIncomeExpensePoint {
     month: string;
@@ -19,8 +20,10 @@ export async function GET(request: NextRequest) {
 
         const searchParams = request.nextUrl.searchParams;
 
-        // Proxy to dashboard income-expense API
-        const dashboardUrl = new URL('/api/dashboard/income-expense', request.nextUrl.origin);
+        // Call the dashboard handler in-process. Self-fetching
+        // `request.nextUrl.origin` (derived from the client's Host header) while
+        // forwarding Cookie would leak the session to a spoofed host.
+        const dashboardUrl = new URL('/api/dashboard/income-expense', 'http://localhost');
 
         // Forward relevant params
         if (searchParams.has('startDate')) {
@@ -30,7 +33,9 @@ export async function GET(request: NextRequest) {
             dashboardUrl.searchParams.set('endDate', searchParams.get('endDate')!);
         }
 
-        const response = await fetch(dashboardUrl, { headers: request.headers });
+        const response = await dashboardIncomeExpense(
+            new NextRequest(dashboardUrl, request)
+        );
 
         if (!response.ok) {
             return NextResponse.json(

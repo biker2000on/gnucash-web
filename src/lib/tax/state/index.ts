@@ -11,11 +11,72 @@
  * tax rate tables (2025 and 2026 editions). State taxable income is
  * approximated as federal AGI minus the state standard deduction — state
  * credits, exemptions, and add-backs are NOT modeled. Estimates only.
+ *
+ * State standard deductions verified August 2026 (NCDOR for NC; Tax Foundation
+ * 2025/2026 tables for the rest). States whose relief is a personal exemption
+ * (IL, MI, IN) or a tax credit (UT) apply a $0 DEDUCTION here — that is the
+ * true figure for the deduction line; the exemption/credit is simply not
+ * modeled, and is flagged in each module's notes.
  */
 
 import type { FilingStatus, StateTaxInputs, StateTaxResult, TaxYear } from '../types';
+import { getYearStatusParams } from '../federal';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/* ------------------------------------------------------------------ */
+/* State standard deductions                                           */
+/* ------------------------------------------------------------------ */
+
+/** Resolves a state's standard-deduction equivalent for a year + filing status. */
+type StateDeduction = (year: TaxYear, filingStatus: FilingStatus) => number;
+
+/**
+ * Genuinely zero: Pennsylvania has neither a standard deduction nor a personal
+ * exemption, and Illinois / Michigan / Indiana grant a personal EXEMPTION while
+ * Utah grants a phased-out taxpayer CREDIT — none of which is a deduction, and
+ * none of which is modeled here.
+ */
+const noStateDeduction: StateDeduction = () => 0;
+
+/**
+ * Colorado starts from FEDERAL TAXABLE income (C.R.S. §39-22-104(1.7)) and
+ * Arizona adopts the federal standard deduction outright (A.R.S. §43-1041), so
+ * both track the federal figure in this estimator.
+ *
+ * CAVEAT: Arizona's IRC conformity date is fixed annually, so for 2025 it may
+ * still key off the pre-OBBBA federal amount ($15,000 single rather than
+ * $15,750); the Tax Foundation 2026 table also shows an Arizona figure that
+ * could not be reconciled with §43-1041. Treated as federal-conforming here.
+ */
+const federalStandardDeduction: StateDeduction = (year, filingStatus) =>
+  getYearStatusParams(year, filingStatus).standardDeduction;
+
+/** Per-filing-status amounts that do not change across the modeled years. */
+function fixedDeduction(byStatus: Record<FilingStatus, number>): StateDeduction {
+  return (_year, filingStatus) => byStatus[filingStatus];
+}
+
+/** Per-year single-filer amount; joint statuses get double. */
+function perFilerDeduction(byYear: Record<TaxYear, number>): StateDeduction {
+  return (year, filingStatus) => {
+    const amount = byYear[year] ?? 0;
+    return filingStatus === 'mfj' || filingStatus === 'qss' ? amount * 2 : amount;
+  };
+}
+
+/** NC (G.S. §105-153.5(a)(1)) — unchanged across 2024-2026 per NCDOR. */
+const NC_DEDUCTION = fixedDeduction({
+  single: 12_750, mfs: 12_750, mfj: 25_500, qss: 25_500, hoh: 19_125,
+});
+
+/** GA (HB 1437) — $12,000 single/MFS/HOH, $24,000 joint, 2024 onward. */
+const GA_DEDUCTION = fixedDeduction({
+  single: 12_000, mfs: 12_000, mfj: 24_000, qss: 24_000, hoh: 12_000,
+});
+
+/** KY — indexed annually; each spouse on a joint return claims one. */
+const KY_DEDUCTION = perFilerDeduction({ 2024: 3_160, 2025: 3_270, 2026: 3_360 });
 
 export interface StateTaxModule {
   code: string;
@@ -48,15 +109,22 @@ function flatModule(
   code: string,
   name: string,
   ratesByYear: Record<TaxYear, number>,
-  standardDeduction: number = 0,
+  deduction: StateDeduction = noStateDeduction,
+  deductionNote?: string,
 ): StateTaxModule {
   return {
     code,
     name,
     compute: (inputs) => {
       const rate = ratesByYear[inputs.year];
-      const taxable = Math.max(0, inputs.federalAgi - standardDeduction);
+      const stdDed = deduction(inputs.year, inputs.filingStatus);
+      const taxable = Math.max(0, inputs.federalAgi - stdDed);
       const tax = taxable * rate;
+      const notes = [`Flat ${(rate * 100).toFixed(2)}% on taxable income.`];
+      if (stdDed > 0) {
+        notes.push(`State standard deduction of $${stdDed.toLocaleString('en-US')} applied to federal AGI.`);
+      }
+      if (deductionNote) notes.push(deductionNote);
       return {
         stateCode: code,
         stateName: name,
@@ -65,7 +133,7 @@ function flatModule(
         tax: round2(tax),
         effectiveRate: inputs.federalAgi > 0 ? round2((tax / inputs.federalAgi) * 10000) / 10000 : 0,
         marginalRate: rate,
-        notes: [`Flat ${(rate * 100).toFixed(2)}% on taxable income.`],
+        notes,
       };
     },
   };
@@ -258,17 +326,30 @@ export const STATE_MODULES: Record<string, StateTaxModule> = {
   WY: noTaxModule('WY', 'Wyoming'),
   AK: noTaxModule('AK', 'Alaska'),
   NH: noTaxModule('NH', 'New Hampshire', 'New Hampshire repealed its interest & dividends tax effective 2025.'),
-  // Flat states (rates verified for 2024/2025/2026)
-  CO: flatModule('CO', 'Colorado', { 2024: 0.044, 2025: 0.044, 2026: 0.044 }),
-  IL: flatModule('IL', 'Illinois', { 2024: 0.0495, 2025: 0.0495, 2026: 0.0495 }),
-  PA: flatModule('PA', 'Pennsylvania', { 2024: 0.0307, 2025: 0.0307, 2026: 0.0307 }),
-  MI: flatModule('MI', 'Michigan', { 2024: 0.0425, 2025: 0.0425, 2026: 0.0425 }),
-  IN: flatModule('IN', 'Indiana', { 2024: 0.0305, 2025: 0.03, 2026: 0.0295 }),
-  UT: flatModule('UT', 'Utah', { 2024: 0.0455, 2025: 0.045, 2026: 0.045 }),
-  NC: flatModule('NC', 'North Carolina', { 2024: 0.045, 2025: 0.0425, 2026: 0.0399 }),
-  KY: flatModule('KY', 'Kentucky', { 2024: 0.04, 2025: 0.04, 2026: 0.035 }),
-  AZ: flatModule('AZ', 'Arizona', { 2024: 0.025, 2025: 0.025, 2026: 0.025 }),
-  GA: flatModule('GA', 'Georgia', { 2024: 0.0539, 2025: 0.0519, 2026: 0.0519 }),
+  // Flat states (rates verified for 2024/2025/2026). The 4th argument is the
+  // state standard deduction — omitted only where the state genuinely has none.
+  CO: flatModule('CO', 'Colorado', { 2024: 0.044, 2025: 0.044, 2026: 0.044 },
+    federalStandardDeduction,
+    'Colorado taxable income starts from FEDERAL taxable income, so the federal standard deduction is applied. State addbacks and subtractions are not modeled.'),
+  IL: flatModule('IL', 'Illinois', { 2024: 0.0495, 2025: 0.0495, 2026: 0.0495 },
+    noStateDeduction, 'Illinois has no standard deduction; its personal exemption allowance is not modeled.'),
+  PA: flatModule('PA', 'Pennsylvania', { 2024: 0.0307, 2025: 0.0307, 2026: 0.0307 },
+    noStateDeduction, 'Pennsylvania has no standard deduction or personal exemption.'),
+  MI: flatModule('MI', 'Michigan', { 2024: 0.0425, 2025: 0.0425, 2026: 0.0425 },
+    noStateDeduction, 'Michigan has no standard deduction; its personal exemption is not modeled.'),
+  IN: flatModule('IN', 'Indiana', { 2024: 0.0305, 2025: 0.03, 2026: 0.0295 },
+    noStateDeduction, 'Indiana has no standard deduction; its personal/dependent exemptions and county income taxes are not modeled.'),
+  UT: flatModule('UT', 'Utah', { 2024: 0.0455, 2025: 0.045, 2026: 0.045 },
+    noStateDeduction, 'Utah grants a phased-out taxpayer tax CREDIT rather than a standard deduction; the credit is not modeled, so this overstates Utah tax.'),
+  NC: flatModule('NC', 'North Carolina', { 2024: 0.045, 2025: 0.0425, 2026: 0.0399 },
+    NC_DEDUCTION),
+  KY: flatModule('KY', 'Kentucky', { 2024: 0.04, 2025: 0.04, 2026: 0.035 },
+    KY_DEDUCTION),
+  AZ: flatModule('AZ', 'Arizona', { 2024: 0.025, 2025: 0.025, 2026: 0.025 },
+    federalStandardDeduction,
+    'Arizona adopts the federal standard deduction (A.R.S. §43-1041); its annual IRC conformity date is not modeled.'),
+  GA: flatModule('GA', 'Georgia', { 2024: 0.0539, 2025: 0.0519, 2026: 0.0519 },
+    GA_DEDUCTION),
   // Bracketed
   CA: californiaModule,
   NY: newYorkModule,

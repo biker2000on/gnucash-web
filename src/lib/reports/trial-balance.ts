@@ -1,5 +1,4 @@
 import prisma from '@/lib/prisma';
-import { buildAccountValuationContext } from '@/lib/account-valuation';
 import { ReportType, ReportFilters, TrialBalanceData, TrialBalanceEntry } from './types';
 import { buildAccountPathMap, sumSplitsByAccount } from './utils';
 
@@ -13,16 +12,38 @@ const CREDIT_NORMAL_TYPES = new Set([
     'LIABILITY', 'CREDIT', 'EQUITY', 'INCOME', 'PAYABLE',
 ]);
 
-/** All account types to include (excludes ROOT and TRADING) */
-const ALL_ACCOUNT_TYPES = [...DEBIT_NORMAL_TYPES, ...CREDIT_NORMAL_TYPES];
+/**
+ * All account types to include (excludes only ROOT).
+ *
+ * TRADING accounts ARE included: GnuCash posts the currency/commodity
+ * conversion legs of a multi-currency transaction to them, so omitting them
+ * removes real debits and credits from the trial balance. Their normal side
+ * varies, so they are placed by balance sign (see below).
+ */
+const ALL_ACCOUNT_TYPES = [...DEBIT_NORMAL_TYPES, ...CREDIT_NORMAL_TYPES, 'TRADING'];
 
 /**
  * Generate Trial Balance report.
  *
- * Queries all non-ROOT, non-TRADING accounts and computes their balance
- * (sum of quantity_num/quantity_denom for all splits up to endDate).
- * Places each balance into the appropriate debit or credit column based
- * on the account's normal sign and the raw balance sign.
+ * Queries all non-ROOT accounts and computes each one's POSTED book value —
+ * SUM(value_num/value_denom), the debit/credit amount actually written to the
+ * ledger — up to endDate. Places each balance into the debit or credit column
+ * based on the account's normal sign and the balance sign.
+ *
+ * VALUATION CHOICE: securities are carried at COST, not marked to market.
+ * A trial balance exists to prove that posted debits equal posted credits, and
+ * GnuCash guarantees the split VALUES of every transaction sum to zero. Marking
+ * STOCK/MUTUAL holdings to market (quantity x latest price) while every
+ * offsetting entry stays at cost injects the unrealized gain into one side
+ * only, which rendered a healthy book as a red "Imbalance". The alternative —
+ * marking to market and synthesizing an Unrealized Gains balancing line — would
+ * report an amount that appears nowhere in the ledger, so cost basis wins here.
+ * (Market values are available on the Balance Sheet and portfolio reports.)
+ *
+ * CAVEAT: split values are denominated in each transaction's currency. In a
+ * single-currency book that is the report currency and the columns tie exactly;
+ * in a multi-currency book, foreign-currency postings are summed at their
+ * historical transaction currency without conversion.
  */
 export async function generateTrialBalance(filters: ReportFilters): Promise<TrialBalanceData> {
     const endDate = filters.endDate ? new Date(filters.endDate + 'T23:59:59Z') : new Date();
@@ -40,23 +61,8 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
             guid: true,
             name: true,
             account_type: true,
-            commodity_guid: true,
-            commodity: {
-                select: {
-                    namespace: true,
-                },
-            },
         },
     });
-
-    const valuation = await buildAccountValuationContext(
-        accounts.map(account => ({
-            accountType: account.account_type,
-            commodityGuid: account.commodity_guid,
-            commodityNamespace: account.commodity?.namespace,
-        })),
-        endDate
-    );
 
     // Build full account path map
     const pathMap = await buildAccountPathMap(filters.bookAccountGuids);
@@ -70,13 +76,9 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
     const entries: TrialBalanceEntry[] = [];
 
     for (const account of accounts) {
-        const quantityBalance = balanceSums.get(account.guid)?.quantity ?? 0;
-        const reportCurrencyMultiplier = valuation.getMultiplier({
-            accountType: account.account_type,
-            commodityGuid: account.commodity_guid,
-            commodityNamespace: account.commodity?.namespace,
-        });
-        const rawBalance = quantityBalance * reportCurrencyMultiplier;
+        // Posted book value (cost), NOT quantity x market price — see the
+        // valuation note in the function doc.
+        const rawBalance = balanceSums.get(account.guid)?.value ?? 0;
 
         // Skip zero-balance accounts unless showZeroBalances is true
         if (Math.abs(rawBalance) < 0.005 && !filters.showZeroBalances) {
@@ -100,6 +102,14 @@ export async function generateTrialBalance(filters: ReportFilters): Promise<Tria
                 credit = Math.abs(rawBalance);
             } else {
                 debit = rawBalance;
+            }
+        } else {
+            // TRADING (and any future type) has no fixed normal side — place by
+            // the sign of the posted balance.
+            if (rawBalance >= 0) {
+                debit = rawBalance;
+            } else {
+                credit = Math.abs(rawBalance);
             }
         }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ChartReportData, ReportType } from '@/lib/reports/types';
 import { requireRole } from '@/lib/auth';
+import { GET as dashboardNetWorth } from '@/app/api/dashboard/net-worth/route';
 
 /**
  * Net Worth Chart Report API
@@ -17,8 +18,11 @@ export async function GET(request: NextRequest) {
         const startDateParam = searchParams.get('startDate');
         const endDateParam = searchParams.get('endDate');
 
-        // Build dashboard URL with same params
-        const dashboardUrl = new URL('/api/dashboard/net-worth', request.nextUrl.origin);
+        // Call the dashboard handler in-process. This used to self-fetch
+        // `request.nextUrl.origin` — built from the client-supplied Host header
+        // — while forwarding every header including Cookie, so a spoofed Host
+        // would have sent the caller's session cookie to that host.
+        const dashboardUrl = new URL('/api/dashboard/net-worth', 'http://localhost');
         if (startDateParam) {
             dashboardUrl.searchParams.set('startDate', startDateParam);
         }
@@ -26,10 +30,9 @@ export async function GET(request: NextRequest) {
             dashboardUrl.searchParams.set('endDate', endDateParam);
         }
 
-        // Proxy to dashboard endpoint
-        const response = await fetch(dashboardUrl.toString(), {
-            headers: request.headers,
-        });
+        const response = await dashboardNetWorth(
+            new NextRequest(dashboardUrl, request)
+        );
 
         if (!response.ok) {
             throw new Error('Failed to fetch net worth data from dashboard');

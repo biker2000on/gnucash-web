@@ -11,13 +11,14 @@ import { TTM_TITLE } from './ttm';
 
 export default function DividendsPage() {
     const [data, setData] = useState<DividendSummary | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [fetchError, setFetchError] = useState<string | null>(null);
     const [year, setYear] = useState<number | null>(null);
+    // Which selection the settled data/error belongs to. `loading` is derived
+    // from it rather than reset at the top of the effect.
+    const [settledYear, setSettledYear] = useState<{ year: number | null } | null>(null);
 
     useEffect(() => {
         let cancelled = false;
-        setLoading(true);
         const url = year != null
             ? `/api/investments/dividends?year=${year}`
             : '/api/investments/dividends';
@@ -27,12 +28,16 @@ export default function DividendsPage() {
                 return res.json();
             })
             .then((json: DividendSummary) => {
-                if (!cancelled) { setData(json); setError(null); }
+                if (!cancelled) { setData(json); setFetchError(null); }
             })
-            .catch((err) => { if (!cancelled) setError(err.message); })
-            .finally(() => { if (!cancelled) setLoading(false); });
+            .catch((err) => { if (!cancelled) setFetchError(err.message); })
+            .finally(() => { if (!cancelled) setSettledYear({ year }); });
         return () => { cancelled = true; };
     }, [year]);
+
+    const loading = settledYear === null || settledYear.year !== year;
+    // A previous selection's failure is not shown while a new one is in flight.
+    const error = loading ? null : fetchError;
 
     const years = useMemo(() => (data?.perYear ?? []).map(y => y.year).sort((a, b) => b - a), [data]);
 

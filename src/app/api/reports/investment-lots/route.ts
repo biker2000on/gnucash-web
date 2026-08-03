@@ -5,6 +5,7 @@ import { requireRole } from '@/lib/auth';
 import { getLatestPrice } from '@/lib/commodities';
 import { getBaseCurrency } from '@/lib/currency';
 import { buildAccountPathMap } from '@/lib/reports/utils';
+import { isLongTerm } from '@/lib/reports/capital-gains';
 
 interface LotReportRow {
     accountName: string;
@@ -167,7 +168,14 @@ export async function GET(request: NextRequest) {
                     const openMs = new Date(openDate).getTime();
                     const endMs = closeDate ? new Date(closeDate).getTime() : now.getTime();
                     daysHeld = Math.floor((endMs - openMs) / (1000 * 60 * 60 * 24));
-                    holdingPeriod = daysHeld >= 365 ? 'long_term' : 'short_term';
+                    // Delegate the term rule rather than comparing against 365:
+                    // the IRS period is calendar-year based and starts the day
+                    // after acquisition, so a day count is off by one at exactly
+                    // one year and drifts across leap years.
+                    holdingPeriod = isLongTerm(
+                        openDate,
+                        closeDate ?? now.toISOString(),
+                    ) ? 'long_term' : 'short_term';
                 }
 
                 const lotTitle = lotTitleMap.get(lot.guid) || `Lot ${account.lots.indexOf(lot) + 1}`;

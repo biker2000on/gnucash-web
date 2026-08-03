@@ -59,15 +59,72 @@ function applyWeekendAdjust(date: Date, adjust: string): Date {
  * Add N months to a date, clamping day to the last day of the target month.
  */
 function addMonths(base: Date, n: number): Date {
-  const year = base.getFullYear();
-  const month = base.getMonth() + n;
-  const day = base.getDate();
+  return monthDay(base.getFullYear(), base.getMonth() + n, base.getDate());
+}
 
+/**
+ * Build a date from a possibly out-of-range month index, clamping the day to
+ * the target month's length.
+ */
+function monthDay(year: number, month: number, day: number): Date {
   const targetYear = year + Math.floor(month / 12);
   const targetMonth = ((month % 12) + 12) % 12;
-  const clampedDay = clampDay(targetYear, targetMonth, day);
+  return new Date(targetYear, targetMonth, clampDay(targetYear, targetMonth, day));
+}
 
-  return new Date(targetYear, targetMonth, clampedDay);
+/**
+ * The Nth occurrence of `weekday` (0=Sun) in the given month.
+ *
+ * Months without an Nth such weekday — a 5th Friday, say — fall back to the
+ * last one, matching GnuCash desktop and the month-end clamping used above.
+ */
+function nthWeekdayOfMonth(year: number, month: number, weekday: number, nth: number): Date {
+  const firstDow = new Date(year, month, 1).getDay();
+  const last = lastDayOfMonth(year, month);
+  let day = 1 + ((weekday - firstDow + 7) % 7) + (nth - 1) * 7;
+  while (day > last) day -= 7;
+  return new Date(year, month, day);
+}
+
+/** The final occurrence of `weekday` (0=Sun) in the given month. */
+function lastWeekdayOfMonth(year: number, month: number, weekday: number): Date {
+  const last = lastDayOfMonth(year, month);
+  const lastDow = new Date(year, month, last).getDay();
+  return new Date(year, month, last - ((lastDow - weekday + 7) % 7));
+}
+
+/**
+ * Weekday and ordinal ("3rd Friday") that a nth/last-weekday recurrence is
+ * anchored on — both derived from the pattern's start date, as GnuCash does.
+ */
+function weekdayAnchor(periodStart: Date): { weekday: number; ordinal: number } {
+  return {
+    weekday: periodStart.getDay(),
+    ordinal: Math.floor((periodStart.getDate() - 1) / 7) + 1,
+  };
+}
+
+function weekdayOccurrence(
+  periodType: string,
+  periodStart: Date,
+  year: number,
+  month: number,
+): Date {
+  const { weekday, ordinal } = weekdayAnchor(periodStart);
+  const base = monthDay(year, month, 1);
+  return periodType === 'last weekday'
+    ? lastWeekdayOfMonth(base.getFullYear(), base.getMonth(), weekday)
+    : nthWeekdayOfMonth(base.getFullYear(), base.getMonth(), weekday, ordinal);
+}
+
+/** Last day of the month containing the given (possibly out-of-range) month index. */
+function endOfMonth(year: number, month: number): Date {
+  const base = monthDay(year, month, 1);
+  return new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    lastDayOfMonth(base.getFullYear(), base.getMonth()),
+  );
 }
 
 /**
@@ -105,18 +162,18 @@ function* generateRawDates(
       }
     }
     case 'month': {
+      // The day-of-month is anchored on periodStart, never on the date we
+      // start from: a schedule on the 31st that was clamped to Feb 29 must
+      // return to the 31st in March rather than stay pinned to the 29th.
+      const anchorDay = periodStart.getDate();
       while (true) {
-        const d = addMonths(startFrom, step * mult);
-        yield d;
+        yield monthDay(startFrom.getFullYear(), startFrom.getMonth() + step * mult, anchorDay);
         step++;
       }
     }
     case 'end of month': {
       while (true) {
-        const d = addMonths(startFrom, step * mult);
-        // Force to last day of that month
-        const last = lastDayOfMonth(d.getFullYear(), d.getMonth());
-        yield new Date(d.getFullYear(), d.getMonth(), last);
+        yield endOfMonth(startFrom.getFullYear(), startFrom.getMonth() + step * mult);
         step++;
       }
     }
@@ -141,20 +198,25 @@ function* generateRawDates(
       }
     }
     case 'year': {
+      // Month and day come from periodStart for the same reason as 'month':
+      // a Feb 29 schedule clamped to Feb 28 must not stay on the 28th.
+      const anchorMonth = periodStart.getMonth();
+      const anchorDay = periodStart.getDate();
       while (true) {
-        const baseYear = startFrom.getFullYear() + step * mult;
-        const month = startFrom.getMonth();
-        const day = clampDay(baseYear, month, startFrom.getDate());
-        yield new Date(baseYear, month, day);
+        const year = startFrom.getFullYear() + step * mult;
+        yield new Date(year, anchorMonth, clampDay(year, anchorMonth, anchorDay));
         step++;
       }
     }
     case 'nth weekday':
     case 'last weekday': {
-      // Simplified: treat like monthly for now
       while (true) {
-        const d = addMonths(startFrom, step * mult);
-        yield d;
+        yield weekdayOccurrence(
+          periodType,
+          periodStart,
+          startFrom.getFullYear(),
+          startFrom.getMonth() + step * mult,
+        );
         step++;
       }
     }
@@ -236,9 +298,14 @@ export function computeNextOccurrences(
 /**
  * Compute the first occurrence after the last known occurrence.
  * This advances by one interval from lastOccur.
+ *
+ * Only the MONTH is taken from lastOccur for the monthly family; the
+ * day-of-month (or weekday/ordinal) comes from periodStart. Re-deriving the
+ * day from a previous occurrence would make every clamped month permanent —
+ * a rent SX on the 31st went Jan 31 → Feb 29 → Mar 29 and never recovered.
  */
 function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Date {
-  const { periodType, mult } = pattern;
+  const { periodType, mult, periodStart } = pattern;
 
   switch (periodType) {
     case 'daily':
@@ -248,10 +315,19 @@ function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Dat
       return new Date(lastOccur.getFullYear(), lastOccur.getMonth(), lastOccur.getDate() + mult * 7);
 
     case 'month':
+      return monthDay(lastOccur.getFullYear(), lastOccur.getMonth() + mult, periodStart.getDate());
+
     case 'end of month':
+      return endOfMonth(lastOccur.getFullYear(), lastOccur.getMonth() + mult);
+
     case 'nth weekday':
     case 'last weekday':
-      return addMonths(lastOccur, mult);
+      return weekdayOccurrence(
+        periodType,
+        periodStart,
+        lastOccur.getFullYear(),
+        lastOccur.getMonth() + mult,
+      );
 
     case 'semi_monthly': {
       // Advance to next semi-monthly date
@@ -267,8 +343,8 @@ function computeFirstAfterLast(pattern: RecurrencePattern, lastOccur: Date): Dat
 
     case 'year': {
       const targetYear = lastOccur.getFullYear() + mult;
-      const month = lastOccur.getMonth();
-      const day = clampDay(targetYear, month, lastOccur.getDate());
+      const month = periodStart.getMonth();
+      const day = clampDay(targetYear, month, periodStart.getDate());
       return new Date(targetYear, month, day);
     }
 

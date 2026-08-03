@@ -277,8 +277,12 @@ export function TransactionModal({
     const [redockGuid, setRedockGuid] = useState<string | null>(null);
 
     const handleRedock = useCallback((lastPayload: unknown) => {
+        // The host's own selection supersedes a re-docked one, so a selection
+        // arriving while the modal is already open is dropped rather than
+        // stored and cleared.
+        if (isOpen) return;
         if (typeof lastPayload === 'string') setRedockGuid(lastPayload);
-    }, []);
+    }, [isOpen]);
     const popout = usePopoutHost('transaction', handleRedock);
     const { isPopoutOpen, show: showInPopout, open: openPopout } = popout;
 
@@ -289,11 +293,6 @@ export function TransactionModal({
         setRedockGuid(null);
         onClose();
     }, [onClose]);
-
-    // The host's own selection supersedes a re-docked one.
-    useEffect(() => {
-        if (isOpen) setRedockGuid(null);
-    }, [isOpen, transactionGuid]);
 
     // While a pop-out window is open, selections route there instead of the
     // modal. Layout effect so the modal never paints before forwarding.

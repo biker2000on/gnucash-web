@@ -4,7 +4,37 @@ import { useState, useRef, useMemo, useCallback, forwardRef, useImperativeHandle
 import { AccountTransaction } from '@/components/AccountLedger';
 import { AccountCell } from '@/components/ledger/cells/AccountCell';
 import { AmountCell } from '@/components/ledger/cells/AmountCell';
-import { toNumDenom } from '@/lib/validation';
+import type { Split } from '@/lib/types';
+
+/** The stored GnuCash fractions of a split, carried through edits untouched. */
+interface StoredFractions {
+    debit: string;
+    credit: string;
+    shares: string;
+    value_num: number;
+    value_denom: number;
+    quantity_num: number;
+    quantity_denom: number;
+}
+
+/**
+ * True when a split's quantity is NOT denominated in the transaction currency
+ * — share counts, or a foreign currency. Such a quantity cannot be derived
+ * from an edited dollar amount, so the inline editors must never recompute it.
+ */
+export function isNonCurrencySplit(
+    split: Pick<Split, 'value_num' | 'value_denom' | 'quantity_num' | 'quantity_denom'>,
+): boolean {
+    const valueDenom = Number(split.value_denom);
+    const quantityDenom = Number(split.quantity_denom);
+    if (!valueDenom || !quantityDenom) return false;
+    if (valueDenom !== quantityDenom) return true;
+    return Number(split.value_num) !== Number(split.quantity_num);
+}
+
+export function hasNonCurrencySplit(splits: Split[] | undefined): boolean {
+    return (splits ?? []).some(isNonCurrencySplit);
+}
 
 interface SplitState {
     guid: string;
@@ -19,6 +49,8 @@ interface SplitState {
     shares: string;
     price: string;
     commodity_mnemonic?: string;
+    /** Absent for rows the user added; present for rows loaded from the database. */
+    original?: StoredFractions;
 }
 
 export interface EditableSplitRowsHandle {
@@ -68,17 +100,29 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
             const val = parseFloat(String(s.value_decimal ?? 0));
             const qty = parseFloat(String(s.quantity_decimal ?? 0));
             const hasQty = Math.abs(qty) > 0.0001 && qty !== val;
+            const debit = val > 0 ? Math.abs(val).toFixed(2) : '';
+            const credit = val < 0 ? Math.abs(val).toFixed(2) : '';
+            const shares = hasQty ? Math.abs(qty).toFixed(sp) : '';
             return {
                 guid: s.guid,
                 account_guid: s.account_guid,
                 account_name: s.account_fullname || s.account_name || '',
                 memo: s.memo || '',
-                debit: val > 0 ? Math.abs(val).toFixed(2) : '',
-                credit: val < 0 ? Math.abs(val).toFixed(2) : '',
+                debit,
+                credit,
                 reconcile_state: s.reconcile_state || 'n',
-                shares: hasQty ? Math.abs(qty).toFixed(sp) : '',
+                shares,
                 price: hasQty && Math.abs(qty) > 0.0001 ? Math.abs(val / qty).toFixed(2) : '',
                 commodity_mnemonic: s.commodity_mnemonic || transaction.commodity_mnemonic || '',
+                original: {
+                    debit,
+                    credit,
+                    shares,
+                    value_num: Number(s.value_num),
+                    value_denom: Number(s.value_denom) || 100,
+                    quantity_num: Number(s.quantity_num),
+                    quantity_denom: Number(s.quantity_denom) || Number(s.value_denom) || 100,
+                },
             };
         });
     // Always append a placeholder
@@ -259,22 +303,51 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
             return splits
                 .filter(s => !s.isPlaceholder)
                 .map(s => {
+                    const orig = s.original;
+                    const amountEdited = !orig || s.debit !== orig.debit || s.credit !== orig.credit;
+                    const sharesEdited = Boolean(orig) && s.shares !== orig!.shares;
+
+                    // Untouched amount: hand the stored fractions straight back.
+                    // Recomputing them would flatten a 10.0000-share quantity
+                    // (100000/10000) into the dollar figure at denom 100.
+                    if (orig && !amountEdited && !sharesEdited) {
+                        return {
+                            guid: s.guid,
+                            account_guid: s.account_guid,
+                            value_num: orig.value_num,
+                            value_denom: orig.value_denom,
+                            quantity_num: orig.quantity_num,
+                            quantity_denom: orig.quantity_denom,
+                            memo: s.memo,
+                            reconcile_state: s.reconcile_state,
+                        };
+                    }
+
                     const debit = parseFloat(s.debit) || 0;
                     const credit = parseFloat(s.credit) || 0;
                     const signedAmount = debit - credit;
-                    const { num: valueNum, denom: valueDenom } = toNumDenom(signedAmount);
+                    // Keep the stored value scale so a non-100 currency SCU survives.
+                    const valueDenom = orig?.value_denom ?? 100;
+                    const valueNum = Math.round(signedAmount * valueDenom);
 
                     let quantityNum = valueNum;
                     let quantityDenom = valueDenom;
 
-                    // For the investment-account split itself, the quantity is in
-                    // shares (not USD). Use the commodity's SCU as denom so finer
-                    // precisions (e.g. FSMDX = 1000000) aren't truncated.
                     if (isInvestmentAccount && s.account_guid === accountGuid && s.shares) {
+                        // For the investment-account split itself, the quantity is in
+                        // shares (not USD). Use the commodity's SCU as denom so finer
+                        // precisions (e.g. FSMDX = 1000000) aren't truncated.
                         const sharesValue = parseFloat(s.shares) || 0;
                         const signedShares = signedAmount >= 0 ? sharesValue : -sharesValue;
                         quantityDenom = commodityScu && commodityScu > 0 ? commodityScu : 10000;
                         quantityNum = Math.round(signedShares * quantityDenom);
+                    } else if (orig && isNonCurrencySplit(orig) && !sharesEdited) {
+                        // Value-only edit of a share / foreign-currency split. The
+                        // new quantity is not derivable from a dollar amount, so it
+                        // stays exactly as stored — the implied price moves instead
+                        // of the position silently changing size.
+                        quantityNum = orig.quantity_num;
+                        quantityDenom = orig.quantity_denom;
                     }
 
                     return {

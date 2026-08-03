@@ -53,6 +53,9 @@ export function ensureFinancialActionsTable(): Promise<void> {
         ${FINANCIAL_ACTIONS_SCHEMA_SQL}
       END $$;
     `).then(() => undefined);
+    // A transient failure must not poison the memo for the process lifetime —
+    // the DDL is idempotent, so let the next call retry.
+    ensurePromise.catch(() => { ensurePromise = null; });
   }
   return ensurePromise;
 }

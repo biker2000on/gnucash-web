@@ -86,9 +86,12 @@ export async function generateAccountSummary(filters: ReportFilters): Promise<Re
         };
     });
 
-    // Categorize top-level account types
-    const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL'];
-    const liabilityTypes = ['LIABILITY', 'CREDIT'];
+    // Categorize top-level account types. The query has NO type filter, so an
+    // omitted type is fetched, balanced, then matches no category and is
+    // silently DROPPED — RECEIVABLE (an asset) and PAYABLE (a liability) must
+    // be listed here or A/R and A/P balances vanish from the report.
+    const assetTypes = ['ASSET', 'BANK', 'CASH', 'STOCK', 'MUTUAL', 'RECEIVABLE'];
+    const liabilityTypes = ['LIABILITY', 'CREDIT', 'PAYABLE'];
     const incomeTypes = ['INCOME'];
     const expenseTypes = ['EXPENSE'];
     const equityTypes = ['EQUITY'];

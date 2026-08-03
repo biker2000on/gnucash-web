@@ -1,14 +1,15 @@
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
+import { toDecimalNumber } from '@/lib/gnucash';
 import { LineItem } from './types';
 
 /**
  * Convert GnuCash fraction to decimal number.
  * Note: This returns a number, unlike gnucash.ts's toDecimal which returns a string.
+ * Delegates to the canonical converter so the two can't drift apart.
  */
 export function toDecimal(num: bigint | null, denom: bigint | null): number {
-    if (num === null || denom === null || denom === 0n) return 0;
-    return Number(num) / Number(denom);
+    return toDecimalNumber(num, denom);
 }
 
 export interface SplitSums {

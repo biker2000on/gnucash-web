@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
+import { hasTargetBookRole } from '@/lib/target-book-auth';
 import { enqueueJob } from '@/lib/queue/queues';
 import {
   addIngestSender,
@@ -111,6 +112,16 @@ export async function POST(request: NextRequest) {
       typeof body.bookGuid === 'string' && body.bookGuid.trim()
         ? body.bookGuid.trim()
         : roleResult.bookGuid;
+
+    // requireRole authorized the ACTIVE book; a caller-supplied guid is a
+    // different book and needs its own check. Without this, anyone with edit
+    // on their own book could route inbound mail into someone else's.
+    if (bookGuid !== roleResult.bookGuid) {
+      const allowed = await hasTargetBookRole(roleResult, bookGuid, 'edit');
+      if (!allowed) {
+        return NextResponse.json({ error: 'No access to the requested book' }, { status: 403 });
+      }
+    }
 
     const sender = await addIngestSender({
       email,

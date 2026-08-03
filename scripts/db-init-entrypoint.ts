@@ -36,6 +36,9 @@ async function bootstrapIfEmpty() {
 
 async function main() {
     await bootstrapIfEmpty();
+    // initializeDatabase() rethrows on a structural failure, so this can now
+    // actually reject — which is the point: a half-migrated schema must stop
+    // the container rather than let the app serve traffic against it.
     await initializeDatabase();
     process.exit(0);
 }

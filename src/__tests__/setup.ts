@@ -6,6 +6,11 @@
 
 import '@testing-library/jest-dom';
 
+// session-config.ts refuses to load without a secret (a weak one would let
+// anyone mint an authenticated cookie), so give the suite a throwaway value.
+// Never a real secret: tests must not depend on deployment configuration.
+process.env.SESSION_SECRET ||= 'test-only-session-secret-not-used-in-any-deployment';
+
 // Mock IntersectionObserver for components using infinite scroll
 class MockIntersectionObserver implements IntersectionObserver {
   readonly root: Element | null = null;

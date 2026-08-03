@@ -4,9 +4,69 @@ import {
     type InvestmentSplitInput,
 } from '../../components/InvestmentTransactionForm';
 import { classifySecurityPosition } from '../data-health';
+import {
+    assertValueBalanced,
+    calculateImbalances,
+    generateTradingSplits,
+    type SplitWithCommodity,
+} from '../trading-accounts';
 
-function valueOf(split: ReturnType<typeof buildInvestmentSplits>[number]): number {
+function valueOf(split: { value_num: number; value_denom: number }): number {
     return split.value_num / split.value_denom;
+}
+
+const COMMODITIES: Record<string, Omit<SplitWithCommodity, 'accountGuid' | 'value' | 'quantity'>> = {
+    stock: {
+        commodityGuid: 'vt-guid',
+        commodityMnemonic: 'VT',
+        commodityNamespace: 'NYSE',
+        commodityFraction: 1_000_000,
+    },
+    cash: {
+        commodityGuid: 'usd-guid',
+        commodityMnemonic: 'USD',
+        commodityNamespace: 'CURRENCY',
+        commodityFraction: 100,
+    },
+    income: {
+        commodityGuid: 'usd-guid',
+        commodityMnemonic: 'USD',
+        commodityNamespace: 'CURRENCY',
+        commodityFraction: 100,
+    },
+    fees: {
+        commodityGuid: 'usd-guid',
+        commodityMnemonic: 'USD',
+        commodityNamespace: 'CURRENCY',
+        commodityFraction: 100,
+    },
+};
+
+/**
+ * Mirrors the pure half of `processMultiCurrencySplits`: derive commodity info
+ * per split, generate the balancing trading splits, and return the FULL set
+ * that would be written to the database.
+ */
+function withTradingSplits(splits: ReturnType<typeof buildInvestmentSplits>) {
+    const withCommodity: SplitWithCommodity[] = splits.map(s => ({
+        accountGuid: s.account_guid,
+        ...COMMODITIES[s.account_guid],
+        value: s.value_num / s.value_denom,
+        quantity: (s.quantity_num ?? s.value_num) / (s.quantity_denom ?? s.value_denom),
+    }));
+
+    const imbalances = calculateImbalances(withCommodity);
+    const tradingGuids = new Map(
+        [...imbalances.keys()].map(guid => [guid, `trading-${guid}`]),
+    );
+
+    return [
+        ...splits.map(s => ({ value_num: s.value_num, value_denom: s.value_denom })),
+        ...generateTradingSplits(imbalances, tradingGuids).map(ts => ({
+            value_num: ts.valueNum,
+            value_denom: ts.valueDenom,
+        })),
+    ];
 }
 
 const BASE_INPUT: InvestmentSplitInput = {
@@ -78,5 +138,48 @@ describe('investment split construction', () => {
         expect(valueOf(splits[0])).toBe(-125);
         expect(valueOf(splits[1])).toBe(125);
         expect(splits.reduce((sum, split) => sum + valueOf(split), 0)).toBe(0);
+    });
+});
+
+describe('trading splits keep the written transaction balanced', () => {
+    // Regression: a return of capital nets to ZERO shares on the security but
+    // carries value there. The generator used to drop any commodity whose
+    // quantity netted to zero, discarding its value with it, so the set that
+    // actually reached the database summed to -$500 instead of 0.
+    it('balances a return of capital once trading splits are appended', () => {
+        const splits = buildInvestmentSplits({
+            ...BASE_INPUT,
+            action: 'ReturnOfCapital',
+            amount: 500,
+        });
+
+        expect(splits.reduce((sum, split) => sum + valueOf(split), 0)).toBe(0);
+
+        const allSplits = withTradingSplits(splits);
+
+        expect(allSplits).toHaveLength(4); // 2 original + Trading:NYSE:VT + Trading:CURRENCY:USD
+        expect(allSplits.reduce((sum, split) => sum + valueOf(split), 0)).toBe(0);
+        expect(() => assertValueBalanced(allSplits)).not.toThrow();
+    });
+
+    it('balances a buy with commission across trading splits', () => {
+        const allSplits = withTradingSplits(buildInvestmentSplits(BASE_INPUT));
+
+        expect(allSplits.reduce((sum, split) => sum + valueOf(split), 0)).toBe(0);
+        expect(() => assertValueBalanced(allSplits)).not.toThrow();
+    });
+
+    it('throws rather than writing an unbalanced set', () => {
+        expect(() => assertValueBalanced([
+            { value_num: 50_000, value_denom: 100 },
+            { value_num: -49_999, value_denom: 100 },
+        ])).toThrow(/do not balance/);
+    });
+
+    it('compares across mixed denominators exactly', () => {
+        expect(() => assertValueBalanced([
+            { value_num: 1_000_000, value_denom: 1_000_000 },
+            { value_num: -100, value_denom: 100 },
+        ])).not.toThrow();
     });
 });

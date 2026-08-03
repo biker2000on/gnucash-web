@@ -28,6 +28,13 @@ function createPrismaClient() {
     max: Number.parseInt(process.env.DB_POOL_MAX ?? '', 10) || 20,
   });
 
+  // pg emits 'error' on IDLE pooled clients. Without a listener Node turns a
+  // Postgres restart into an uncaught exception that kills the server and every
+  // in-flight request. Log and let pg replace the broken client.
+  pool.on('error', (err) => {
+    console.error('Postgres pool (prisma.ts) idle client error:', err);
+  });
+
   // Create Prisma adapter
   const adapter = new PrismaPg(pool);
 

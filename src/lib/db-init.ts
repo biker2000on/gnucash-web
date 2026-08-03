@@ -128,6 +128,41 @@ async function createAccountHierarchyView() {
 }
 
 /**
+ * Diagnostic for a failed legacy document backfill: names the legacy rows
+ * whose `book_guid` has no matching `books` row, which is what breaks the
+ * FK-guarded insert into gnucash_web_documents. Purely informational — no
+ * user data is deleted or rewritten.
+ */
+async function reportOrphanedBookGuids() {
+    const sources: Array<[string, string]> = [
+        ['gnucash_web_receipts', 'id'],
+        ['gnucash_web_payslips', 'id'],
+        ['gnucash_web_entity_documents', 'id'],
+        ['gnucash_web_home_item_photos', 'id'],
+        ['gnucash_web_statement_batches', 'id'],
+    ];
+    for (const [table, idColumn] of sources) {
+        try {
+            const result = await query(
+                `SELECT COUNT(*)::int AS orphans
+                   FROM ${table} t
+                  WHERE t.book_guid IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM books b WHERE b.guid = t.book_guid)`,
+            );
+            const orphans = Number(result.rows?.[0]?.orphans ?? 0);
+            if (orphans > 0) {
+                console.error(
+                    `  -> ${table}: ${orphans} row(s) reference a book_guid with no matching books row. ` +
+                    `Find them with: SELECT ${idColumn}, book_guid FROM ${table} t WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.guid = t.book_guid);`,
+                );
+            }
+        } catch {
+            // Table may not exist (lazy schema) — nothing to report.
+        }
+    }
+}
+
+/**
  * Creates the gnucash_web extension tables if they don't exist.
  * These tables are used for authentication and audit logging.
  */
@@ -1735,6 +1770,28 @@ async function createExtensionTables() {
         UPDATE gnucash_web_home_items SET photo_key = NULL WHERE photo_key IS NOT NULL;
     `;
 
+    // Inbound-webhook idempotency keys. The UNIQUE index is what actually
+    // stops an n8n retry from posting a second ledger entry / dues payment
+    // (see src/lib/webhook-idempotency.ts) — an application-level check would
+    // be racy. Completed claims are pruned after 90 days.
+    const webhookIdempotencyTableDDL = `
+        CREATE TABLE IF NOT EXISTS gnucash_web_webhook_idempotency (
+            id SERIAL PRIMARY KEY,
+            book_guid VARCHAR(32) NOT NULL,
+            endpoint VARCHAR(64) NOT NULL,
+            idempotency_key VARCHAR(200) NOT NULL,
+            result JSONB,
+            completed_at TIMESTAMP,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_idempotency
+            ON gnucash_web_webhook_idempotency (book_guid, endpoint, idempotency_key);
+
+        DELETE FROM gnucash_web_webhook_idempotency
+        WHERE created_at < NOW() - INTERVAL '90 days';
+    `;
+
     const importBatchesTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_import_batches (
             id SERIAL PRIMARY KEY,
@@ -1984,6 +2041,7 @@ async function createExtensionTables() {
         await query(payslipsTableDDL);
         await query(aiConfigTableDDL);
         await query(importBatchesTableDDL);
+        await query(webhookIdempotencyTableDDL);
         await query(notificationsTableDDL);
         await query(financialActionsTableDDL);
         await query(operatorBusinessWorkflowsDDL);
@@ -2017,7 +2075,26 @@ async function createExtensionTables() {
         await query(homeItemPhotosTableDDL);
         await query(homeItemPhotosBackfillDDL);
         await query(CANONICAL_DOCUMENT_SCHEMA_SQL);
-        await query(LEGACY_DOCUMENT_BACKFILL_SQL);
+        // The legacy backfill is search-index population, NOT structure. It
+        // copies <legacy table>.book_guid into
+        // gnucash_web_documents.book_guid REFERENCES books(guid), but several
+        // of those legacy tables have no FK of their own — so ONE orphaned row
+        // makes this statement fail on every single boot. Letting that abort
+        // createExtensionTables meant createUniqueConstraintGuards(),
+        // createPerformanceIndexes(), dropRedundantIndexes() and
+        // tuneAutovacuum() never ran, and the app served traffic without the
+        // unique indexes the SimpleFIN / autofund / price idempotency paths
+        // rely on. Degrade instead: log loudly (with the offending rows) and
+        // continue.
+        try {
+            await query(LEGACY_DOCUMENT_BACKFILL_SQL);
+        } catch (backfillError) {
+            console.error(
+                'ERROR: legacy document backfill failed — the canonical document index may be stale. Schema initialization continues.',
+                backfillError,
+            );
+            await reportOrphanedBookGuids();
+        }
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`
@@ -2214,6 +2291,69 @@ async function tuneAutovacuum() {
  * desktop-written books. The invoice/voucher counter race on slots is
  * already serialized by the Phase 2a advisory lock in invoice-engine.
  */
+interface UniqueGuardSkipDiagnostic {
+    /** Index the guard creates when the data is clean. */
+    indexName: string;
+    /** Counts the duplicate groups that block the index (column alias: dupes). */
+    countSql: string;
+    /** Copy-pasteable SQL the operator can run to list the offending rows. */
+    findSql: string;
+    /** What breaks in the app while the index is missing. */
+    impact: string;
+    /** How to clean up (never done automatically — this is user data). */
+    advice: string;
+}
+
+interface UniqueGuard {
+    label: string;
+    ddl: string;
+    /** Set only for guards that SKIP creation on dirty data rather than cleaning up. */
+    skipDiagnostic?: UniqueGuardSkipDiagnostic;
+}
+
+/**
+ * Make a skipped unique index VISIBLE to the application.
+ *
+ * The guards above raise a Postgres `WARNING` and move on. No pool installs a
+ * `notice` listener, so node-postgres discards it silently — one duplicate
+ * meant the index was never created again on ANY restart, forever, with the
+ * affected writer silently back on its racy SELECT-then-INSERT path. This
+ * re-checks whether the index actually exists and logs at error level with the
+ * duplicate count and the SQL to find the offending rows. It never deletes or
+ * rewrites user data.
+ */
+async function reportSkippedUniqueGuard(
+    label: string,
+    diagnostic: UniqueGuardSkipDiagnostic,
+): Promise<void> {
+    try {
+        const presence = await query('SELECT to_regclass($1) IS NOT NULL AS present', [
+            diagnostic.indexName,
+        ]);
+        // Only a definitive `false` means "guard skipped"; anything else
+        // (index present, or the check itself inconclusive) is not reportable.
+        if (presence.rows?.[0]?.present !== false) return;
+
+        let dupes = 'an unknown number of';
+        try {
+            const counted = await query(diagnostic.countSql);
+            const value = counted.rows?.[0]?.dupes;
+            if (value !== undefined && value !== null) dupes = String(value);
+        } catch {
+            // Fall through with the "unknown" wording.
+        }
+
+        console.error(
+            `ERROR: unique index ${diagnostic.indexName} on ${label} was NOT created — ` +
+            `${dupes} duplicate group(s) block it. Until this is fixed and the app restarted, ` +
+            `${diagnostic.impact}. ${diagnostic.advice} ` +
+            `List the offending rows with: ${diagnostic.findSql}`,
+        );
+    } catch (error) {
+        console.error(`Failed to verify unique index ${diagnostic.indexName} for ${label}:`, error);
+    }
+}
+
 async function createUniqueConstraintGuards() {
     // H5: duplicate prices. Deduping is safe and desired — two rows for the
     // same (commodity, currency, instant) are exactly the race this index
@@ -2392,22 +2532,77 @@ async function createUniqueConstraintGuards() {
         END $$;
     `;
 
-    const guards: Array<[string, string]> = [
-        ['prices(commodity_guid, currency_guid, date)', pricesUniqueDDL],
-        ['commodities(namespace, mnemonic)', commoditiesUniqueDDL],
-        ['accounts(parent_guid, name)', accountsUniqueDDL],
-        ['gnucash_web_transaction_meta(simplefin_transaction_id)', simpleFinIdUniqueDDL],
-        ['gnucash_web_reconciliation_sessions(account_guid) started', reconciliationStartedUniqueDDL],
-        ["transactions(num) autofund", autofundNumUniqueDDL],
+    const guards: UniqueGuard[] = [
+        { label: 'prices(commodity_guid, currency_guid, date)', ddl: pricesUniqueDDL },
+        {
+            label: 'commodities(namespace, mnemonic)',
+            ddl: commoditiesUniqueDDL,
+            skipDiagnostic: {
+                indexName: 'uq_commodities_namespace_mnemonic',
+                countSql: `SELECT COUNT(*)::int AS dupes FROM (
+                    SELECT namespace, mnemonic FROM commodities
+                    GROUP BY namespace, mnemonic HAVING COUNT(*) > 1) d`,
+                findSql: `SELECT namespace, mnemonic, COUNT(*) FROM commodities GROUP BY 1, 2 HAVING COUNT(*) > 1;`,
+                impact: 'commodity creation can race and produce more duplicates',
+                advice: 'Merge the duplicate commodities manually, then restart.',
+            },
+        },
+        {
+            label: 'accounts(parent_guid, name)',
+            ddl: accountsUniqueDDL,
+            skipDiagnostic: {
+                indexName: 'uq_accounts_parent_name',
+                countSql: `SELECT COUNT(*)::int AS dupes FROM (
+                    SELECT parent_guid, name FROM accounts WHERE parent_guid IS NOT NULL
+                    GROUP BY parent_guid, name HAVING COUNT(*) > 1) d`,
+                findSql: `SELECT parent_guid, name, COUNT(*) FROM accounts WHERE parent_guid IS NOT NULL GROUP BY 1, 2 HAVING COUNT(*) > 1;`,
+                impact: 'findOrCreateAccount falls back to a racy SELECT-then-INSERT',
+                advice: 'Rename or merge the duplicate sibling accounts manually, then restart.',
+            },
+        },
+        {
+            label: 'gnucash_web_transaction_meta(simplefin_transaction_id)',
+            ddl: simpleFinIdUniqueDDL,
+            skipDiagnostic: {
+                indexName: 'uq_txn_meta_simplefin_id',
+                countSql: `SELECT COUNT(*)::int AS dupes FROM (
+                    SELECT simplefin_transaction_id FROM gnucash_web_transaction_meta
+                    WHERE simplefin_transaction_id IS NOT NULL
+                    GROUP BY simplefin_transaction_id HAVING COUNT(*) > 1) d`,
+                findSql: `SELECT simplefin_transaction_id, COUNT(*) FROM gnucash_web_transaction_meta WHERE simplefin_transaction_id IS NOT NULL GROUP BY 1 HAVING COUNT(*) > 1;`,
+                impact: 'SimpleFIN dedupe falls back to a racy SELECT-then-INSERT and can import MORE duplicates',
+                advice: 'The duplicate imports are real transactions — reconcile and delete them manually, then restart.',
+            },
+        },
+        {
+            label: 'gnucash_web_reconciliation_sessions(account_guid) started',
+            ddl: reconciliationStartedUniqueDDL,
+        },
+        {
+            label: 'transactions(num) autofund',
+            ddl: autofundNumUniqueDDL,
+            skipDiagnostic: {
+                indexName: 'uq_transactions_autofund_num',
+                countSql: `SELECT COUNT(*)::int AS dupes FROM (
+                    SELECT num FROM transactions WHERE num LIKE 'autofund:%'
+                    GROUP BY num HAVING COUNT(*) > 1) d`,
+                findSql: `SELECT num, COUNT(*) FROM transactions WHERE num LIKE 'autofund:%' GROUP BY 1 HAVING COUNT(*) > 1;`,
+                impact: 'the budget auto-funding sweep can double-apply a rule',
+                advice: 'The duplicates are real transactions (real money movement) — review and delete the double-sweeps manually, then restart.',
+            },
+        },
     ];
 
-    for (const [label, ddl] of guards) {
+    for (const guard of guards) {
         try {
-            await query(ddl);
+            await query(guard.ddl);
         } catch (error) {
             // One dirty/failed guard must not block the remaining guards or
             // app startup; the affected writer keeps its pre-index behavior.
-            console.error(`Error creating unique constraint guard for ${label}:`, error);
+            console.error(`Error creating unique constraint guard for ${guard.label}:`, error);
+        }
+        if (guard.skipDiagnostic) {
+            await reportSkippedUniqueGuard(guard.label, guard.skipDiagnostic);
         }
     }
     console.log('✓ Unique constraint guards created/verified successfully');
@@ -2431,8 +2626,13 @@ export async function initializeDatabase() {
         });
         console.log('✓ Database initialization complete');
     } catch (error) {
+        // RETHROW. Swallowing this let the app come up on a half-migrated
+        // schema — missing views, missing unique indexes — and serve traffic
+        // normally, which is far worse than refusing to start. Each individual
+        // optimization step (indexes, autovacuum, unique guards) already
+        // swallows its own non-fatal errors, so anything reaching here is
+        // structural.
         console.error('Database initialization failed:', error);
-        // Don't throw - allow the app to continue even if initialization fails
-        // The views might already exist or there might be permission issues
+        throw error;
     }
 }

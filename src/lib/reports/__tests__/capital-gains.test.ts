@@ -267,3 +267,41 @@ describe('parseBrokerCSV', () => {
     expect(rows[1]).toEqual({ ticker: 'MSFT', dateSold: '2024-06-01', proceeds: 800, basis: 950 });
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Time-of-day must never decide the holding term                      */
+/* ------------------------------------------------------------------ */
+
+describe('isLongTerm normalizes both dates to their calendar day', () => {
+  // Post-date times of day genuinely vary in a real book: legacy rows carry
+  // 05:59-10:59Z clock times, app-written rows are T12:00:00Z. Comparing raw
+  // timestamps made the term flip on the clock.
+  it('exactly one year later is SHORT term regardless of the clock times', () => {
+    expect(isLongTerm('2024-01-15T05:59:00.000Z', '2025-01-15T10:59:00.000Z')).toBe(false);
+    expect(computeTerm('2024-01-15T05:59:00.000Z', '2025-01-15T10:59:00.000Z')).toBe('short_term');
+  });
+
+  it('one year later is short term with the clocks reversed too', () => {
+    expect(isLongTerm('2024-01-15T10:59:00.000Z', '2025-01-15T05:59:00.000Z')).toBe(false);
+  });
+
+  it('one year and one day later is LONG term whatever the clock times', () => {
+    expect(isLongTerm('2024-01-15T10:59:00.000Z', '2025-01-16T05:59:00.000Z')).toBe(true);
+    expect(isLongTerm('2024-01-15T00:00:00.000Z', '2025-01-16T00:00:00.000Z')).toBe(true);
+  });
+
+  it('the term does not depend on the time of day at all', () => {
+    const times = ['00:00:00', '05:59:00', '10:59:00', '12:00:00', '23:59:59'];
+    for (const a of times) {
+      for (const b of times) {
+        expect(isLongTerm(`2024-06-01T${a}.000Z`, `2025-06-01T${b}.000Z`)).toBe(false);
+        expect(isLongTerm(`2024-06-01T${a}.000Z`, `2025-06-02T${b}.000Z`)).toBe(true);
+      }
+    }
+  });
+
+  it('accepts bare YYYY-MM-DD dates', () => {
+    expect(isLongTerm('2024-01-15', '2025-01-15')).toBe(false);
+    expect(isLongTerm('2024-01-15', '2025-01-16')).toBe(true);
+  });
+});

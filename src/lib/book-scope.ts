@@ -5,8 +5,10 @@
  * database queries to a specific book's account hierarchy.
  */
 
+import { headers } from 'next/headers';
 import { getSession } from './auth';
 import prisma from './prisma';
+import { authenticateBearer, parseBearerToken } from './api-tokens';
 
 /**
  * Module-global short-TTL cache for book scoping.
@@ -57,6 +59,39 @@ function isFresh(at: number): boolean {
     return Date.now() - at < BOOK_SCOPE_TTL_MS;
 }
 
+/** Bearer token -> its book guid, same short TTL (a token's book never changes). */
+const bookGuidByToken = new Map<string, { bookGuid: string | null; at: number }>();
+
+/**
+ * The book a `Bearer gcw_...` request is scoped to, or null.
+ *
+ * Token requests carry no cookie, so `session.activeBookGuid` is undefined and
+ * the fallbacks below would otherwise resolve to whichever book happens to be
+ * first — reading a book the token was never issued for. Re-deriving from the
+ * Authorization header is the same mechanism `requireRole` uses; it cannot be
+ * threaded through via AsyncLocalStorage because `enterWith` inside an awaited
+ * helper does not propagate to the caller's continuation.
+ */
+async function getBearerBookGuid(): Promise<string | null> {
+    let raw: string | null;
+    try {
+        const headerStore = await headers();
+        raw = parseBearerToken(headerStore.get('authorization'));
+    } catch {
+        // headers() throws outside a request scope (e.g. build time, worker)
+        return null;
+    }
+    if (!raw) return null;
+
+    const cached = bookGuidByToken.get(raw);
+    if (cached && isFresh(cached.at)) return cached.bookGuid;
+
+    const auth = await authenticateBearer(raw);
+    const bookGuid = auth?.bookGuid ?? null;
+    bookGuidByToken.set(raw, { bookGuid, at: Date.now() });
+    return bookGuid;
+}
+
 /**
  * Resolve a book's root_account_guid with short-TTL memoization.
  * Returns null when the book does not exist.
@@ -93,6 +128,12 @@ export async function getActiveBookRootGuid(): Promise<string> {
         if (rootGuid) return rootGuid;
     }
 
+    const tokenBookGuid = await getBearerBookGuid();
+    if (tokenBookGuid) {
+        const rootGuid = await resolveBookRootGuid(tokenBookGuid);
+        if (rootGuid) return rootGuid;
+    }
+
     // Fallback to first book (uncached — it mutates the session)
     const firstBook = await prisma.books.findFirst({
         select: { guid: true, root_account_guid: true },
@@ -119,6 +160,13 @@ export async function getActiveBookGuid(): Promise<string> {
     if (session.activeBookGuid) {
         const rootGuid = await resolveBookRootGuid(session.activeBookGuid);
         if (rootGuid) return session.activeBookGuid;
+    }
+
+    // See getBearerBookGuid: token requests have no session book.
+    const tokenBookGuid = await getBearerBookGuid();
+    if (tokenBookGuid) {
+        const rootGuid = await resolveBookRootGuid(tokenBookGuid);
+        if (rootGuid) return tokenBookGuid;
     }
 
     const firstBook = await prisma.books.findFirst({

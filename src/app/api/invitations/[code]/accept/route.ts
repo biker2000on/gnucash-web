@@ -18,57 +18,58 @@ export async function POST(
         const { code } = await params;
         const { user } = authResult;
 
-        // Find the invitation
-        const rows = await prisma.$queryRaw<{
-            id: number;
+        // Claim a use atomically. Checking use_count and then incrementing in a
+        // second statement lets two concurrent redemptions both pass the check
+        // and exceed max_uses; the conditional UPDATE makes the database the
+        // arbiter. Claim before granting so a lost race grants nothing.
+        const claimed = await prisma.$queryRaw<{
             book_guid: string;
             role: string;
-            expires_at: Date;
-            use_count: number;
-            max_uses: number;
-            is_revoked: boolean;
             created_by: number;
         }[]>`
-            SELECT
-                i.id, i.book_guid, r.name as role,
-                i.expires_at, i.use_count, i.max_uses,
-                i.is_revoked, i.created_by
-            FROM gnucash_web_invitations i
-            JOIN gnucash_web_roles r ON r.id = i.role_id
-            WHERE i.code = ${code}
-            LIMIT 1
+            WITH claimed AS (
+                UPDATE gnucash_web_invitations
+                SET use_count = use_count + 1, used_by = ${user.id}, used_at = NOW()
+                WHERE code = ${code}
+                  AND is_revoked = false
+                  AND expires_at > NOW()
+                  AND use_count < max_uses
+                RETURNING book_guid, role_id, created_by
+            )
+            SELECT c.book_guid, r.name AS role, c.created_by
+            FROM claimed c
+            JOIN gnucash_web_roles r ON r.id = c.role_id
         `;
 
-        if (rows.length === 0) {
-            return NextResponse.json({ error: 'Invitation not found' }, { status: 404 });
-        }
+        if (claimed.length === 0) {
+            // Nothing was claimed — say which precondition failed.
+            const existing = await prisma.$queryRaw<{
+                expires_at: Date;
+                use_count: number;
+                max_uses: number;
+                is_revoked: boolean;
+            }[]>`
+                SELECT expires_at, use_count, max_uses, is_revoked
+                FROM gnucash_web_invitations
+                WHERE code = ${code}
+                LIMIT 1
+            `;
 
-        const inv = rows[0];
-
-        // Check if revoked
-        if (inv.is_revoked) {
-            return NextResponse.json({ error: 'Invitation has been revoked' }, { status: 410 });
-        }
-
-        // Check if expired
-        if (new Date(inv.expires_at) < new Date()) {
-            return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
-        }
-
-        // Check if max uses exceeded
-        if (Number(inv.use_count) >= Number(inv.max_uses)) {
+            if (existing.length === 0) {
+                return NextResponse.json({ error: 'Invitation not found' }, { status: 404 });
+            }
+            const inv = existing[0];
+            if (inv.is_revoked) {
+                return NextResponse.json({ error: 'Invitation has been revoked' }, { status: 410 });
+            }
+            if (new Date(inv.expires_at) < new Date()) {
+                return NextResponse.json({ error: 'Invitation has expired' }, { status: 410 });
+            }
             return NextResponse.json({ error: 'Invitation has reached maximum uses' }, { status: 410 });
         }
 
-        // Grant the role
+        const inv = claimed[0];
         await grantRole(user.id, inv.book_guid, inv.role as Role, inv.created_by);
-
-        // Increment use count and record user
-        await prisma.$executeRaw`
-            UPDATE gnucash_web_invitations
-            SET use_count = use_count + 1, used_by = ${user.id}, used_at = NOW()
-            WHERE code = ${code}
-        `;
 
         return NextResponse.json({
             bookGuid: inv.book_guid,

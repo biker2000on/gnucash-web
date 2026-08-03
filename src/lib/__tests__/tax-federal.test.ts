@@ -436,3 +436,133 @@ describe('tax-exempt interest (Pub 915)', () => {
     expect(negative.taxableSocialSecurity).toBe(base.taxableSocialSecurity);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* §199A qualified business income deduction                           */
+/* ------------------------------------------------------------------ */
+
+describe('QBI / §199A deduction', () => {
+  it('2025 single, $100,000 of SE income only → $15,437.04 deduction, $8,498.60 income tax', () => {
+    const r = computeFederalTax(inputs({ year: 2025, selfEmploymentIncome: 100_000 }));
+
+    // SE tax 14,129.55, half of it 7,064.78 -> AGI 92,935.22
+    expect(r.selfEmploymentTax).toBeCloseTo(14_129.55, 2);
+    expect(r.halfSeTaxDeduction).toBeCloseTo(7_064.78, 2);
+    expect(r.agi).toBeCloseTo(92_935.22, 2);
+
+    // Taxable before QBI = AGI - 15,750 standard deduction
+    // QBI deduction = min(20% x 92,935.22, 20% x 77,185.22) = 15,437.04
+    expect(r.qbiDeduction).toBeCloseTo(15_437.04, 2);
+    expect(r.taxableIncome).toBeCloseTo(61_748.18, 2);
+    expect(r.ordinaryTax).toBeCloseTo(8_498.60, 2);
+
+    // Before this deduction existed the engine reported 11,894.85 of income
+    // tax — overstated by ~$3,396.
+    expect(r.ordinaryTax).toBeLessThan(11_000);
+  });
+
+  it('the taxable-income limit binds when it is lower than 20% of QBI', () => {
+    // Large SE income but a big itemized deduction crushes taxable income.
+    const r = computeFederalTax(inputs({
+      year: 2025,
+      selfEmploymentIncome: 100_000,
+      charitableDonations: 60_000,
+    }));
+    const taxableBeforeQbi = r.agi - r.deductionTaken - r.seniorDeduction;
+    expect(r.qbiDeduction).toBeCloseTo(0.20 * taxableBeforeQbi, 2);
+    expect(r.taxableIncome).toBeCloseTo(taxableBeforeQbi - r.qbiDeduction, 2);
+  });
+
+  it('net capital gain is excluded from the taxable-income limit (Form 8995 line 12)', () => {
+    const withGain = computeFederalTax(inputs({
+      year: 2025,
+      selfEmploymentIncome: 60_000,
+      longTermCapitalGains: 40_000,
+    }));
+    const taxableBeforeQbi = withGain.agi - withGain.deductionTaken;
+    // Limit uses taxable income MINUS the 40,000 preferential gain
+    expect(withGain.qbiDeduction).toBeCloseTo(
+      Math.min(0.20 * (60_000 - withGain.halfSeTaxDeduction), 0.20 * (taxableBeforeQbi - 40_000)),
+      2,
+    );
+  });
+
+  it('wage-only filers get no QBI deduction', () => {
+    expect(computeFederalTax(inputs({ year: 2025, wages: 120_000 })).qbiDeduction).toBe(0);
+  });
+
+  it('a Schedule C loss produces no QBI deduction', () => {
+    const r = computeFederalTax(inputs({ year: 2025, wages: 100_000, selfEmploymentIncome: -20_000 }));
+    expect(r.qbiDeduction).toBe(0);
+  });
+
+  it('flows through to safe harbor via the reduced total tax', () => {
+    const r = computeFederalTax(inputs({ year: 2025, selfEmploymentIncome: 100_000 }));
+    const sh = computeSafeHarbor({
+      year: 2025,
+      filingStatus: 'single',
+      currentYearTax: r.totalTax,
+      priorYearTax: null,
+      priorYearAgi: null,
+      withholding: 0,
+    });
+    expect(sh.ninetyPercentCurrent).toBeCloseTo(0.9 * r.totalTax, 2);
+    // 8,498.60 income tax + 14,129.55 SE tax
+    expect(r.totalTax).toBeCloseTo(22_628.15, 2);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Schedule C / F losses                                               */
+/* ------------------------------------------------------------------ */
+
+describe('self-employment losses', () => {
+  it('2025 single, $100,000 wages and a $20,000 SE loss → AGI $80,000, tax $9,049', () => {
+    const r = computeFederalTax(inputs({
+      year: 2025,
+      wages: 100_000,
+      selfEmploymentIncome: -20_000,
+    }));
+    expect(r.agi).toBeCloseTo(80_000, 2);
+    expect(r.taxableIncome).toBeCloseTo(80_000 - 15_750, 2);
+    expect(r.totalTax).toBeCloseTo(9_049.00, 2);
+  });
+
+  it('a loss produces no SE tax and no half-SE deduction', () => {
+    const r = computeFederalTax(inputs({ year: 2025, wages: 100_000, selfEmploymentIncome: -20_000 }));
+    expect(r.selfEmploymentTax).toBe(0);
+    expect(r.halfSeTaxDeduction).toBe(0);
+    expect(computeSeTax(-20_000, 2025).total).toBe(0);
+  });
+
+  it('the loss is not silently dropped — it must move AGI', () => {
+    const noLoss = computeFederalTax(inputs({ year: 2025, wages: 100_000 }));
+    const withLoss = computeFederalTax(inputs({ year: 2025, wages: 100_000, selfEmploymentIncome: -20_000 }));
+    expect(noLoss.agi - withLoss.agi).toBeCloseTo(20_000, 2);
+    expect(withLoss.totalTax).toBeLessThan(noLoss.totalTax);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Additional Medicare thresholds                                      */
+/* ------------------------------------------------------------------ */
+
+describe('Additional Medicare thresholds by filing status', () => {
+  it('QSS uses the $200,000 "any other case" threshold, not the $250,000 NIIT one', () => {
+    const r = computeFederalTax(inputs({ filingStatus: 'qss', wages: 250_000 }));
+    // §3101(b)(2)(C): QSS is NOT in the joint bucket
+    expect(r.additionalMedicareTax).toBeCloseTo(0.009 * 50_000, 2);
+    // NIIT, by contrast, DOES put QSS at $250,000 (§1411(b))
+    expect(getYearStatusParams(2024, 'qss').niitThreshold).toBe(250_000);
+  });
+
+  it('HOH also uses $200,000', () => {
+    const r = computeFederalTax(inputs({ filingStatus: 'hoh', wages: 250_000 }));
+    expect(r.additionalMedicareTax).toBeCloseTo(0.009 * 50_000, 2);
+  });
+
+  it('MFJ uses $250,000', () => {
+    const r = computeFederalTax(inputs({ filingStatus: 'mfj', wages: 300_000 }));
+    expect(r.additionalMedicareTax).toBeCloseTo(0.009 * 50_000, 2);
+  });
+});

@@ -56,8 +56,6 @@ interface PortfolioResponse {
     totalCostBasis: number;
     totalGainLoss: number;
     totalGainLossPercent: number;
-    dayChange: number;
-    dayChangePercent: number;
   };
   holdings: Array<{
     accountGuid: string;
@@ -212,16 +210,12 @@ export async function GET(request: Request) {
         totalCostBasis: acc.totalCostBasis + holding.costBasis,
         totalGainLoss: acc.totalGainLoss + holding.gainLoss,
         totalGainLossPercent: 0, // Calculated after
-        dayChange: 0, // Requires previous close tracking (not implemented yet)
-        dayChangePercent: 0,
       }),
       {
         totalValue: 0,
         totalCostBasis: 0,
         totalGainLoss: 0,
         totalGainLossPercent: 0,
-        dayChange: 0,
-        dayChangePercent: 0,
       }
     );
 

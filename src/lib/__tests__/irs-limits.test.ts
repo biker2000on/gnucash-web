@@ -157,28 +157,28 @@ describe('IRS Contribution Limits', () => {
       });
 
       const limit = await getContributionLimit(2025, '401k', null);
-      expect(limit).toEqual({ base: 24000, catchUp: 8000, total: 24000, catchUpAge: 50 });
+      expect(limit).toMatchObject({ base: 24000, catchUp: 8000, total: 24000, catchUpAge: 50 });
     });
 
     it('should fall back to defaults when no DB override', async () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2025, '401k', null);
-      expect(limit).toEqual({ base: 23500, catchUp: 7500, total: 23500, catchUpAge: 50 });
+      expect(limit).toMatchObject({ base: 23500, catchUp: 7500, total: 23500, catchUpAge: 50 });
     });
 
     it('should include catch-up amount when user is over catch-up age', async () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2025, '401k', '1970-06-15');
-      expect(limit).toEqual({ base: 23500, catchUp: 7500, total: 31000, catchUpAge: 50 });
+      expect(limit).toMatchObject({ base: 23500, catchUp: 7500, total: 31000, catchUpAge: 50 });
     });
 
     it('should not include catch-up when user is under catch-up age', async () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2025, '401k', '1990-06-15');
-      expect(limit).toEqual({ base: 23500, catchUp: 7500, total: 23500, catchUpAge: 50 });
+      expect(limit).toMatchObject({ base: 23500, catchUp: 7500, total: 23500, catchUpAge: 50 });
     });
 
     it('should return null for brokerage accounts (no IRS limit)', async () => {
@@ -198,28 +198,86 @@ describe('IRS Contribution Limits', () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2026, 'sep_ira', '1970-06-15');
-      expect(limit).toEqual({ base: 72000, catchUp: 0, total: 72000, catchUpAge: 50 });
+      expect(limit).toMatchObject({ base: 72000, catchUp: 0, total: 72000, catchUpAge: 50 });
     });
 
     it('should add family HSA catch-up at 55+ (2026: 8,750 + 1,000)', async () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2026, 'hsa_family', '1968-06-15');
-      expect(limit).toEqual({ base: 8750, catchUp: 1000, total: 9750, catchUpAge: 55 });
+      expect(limit).toMatchObject({ base: 8750, catchUp: 1000, total: 9750, catchUpAge: 55 });
     });
 
     it('should not add family HSA catch-up under 55', async () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2026, 'hsa_family', '1980-06-15');
-      expect(limit).toEqual({ base: 8750, catchUp: 1000, total: 8750, catchUpAge: 55 });
+      expect(limit).toMatchObject({ base: 8750, catchUp: 1000, total: 8750, catchUpAge: 55 });
     });
 
     it('should add SIMPLE IRA catch-up when over 50 (2026: 17,000 + 4,000)', async () => {
       mockContributionLimitsFindFirst.mockResolvedValue(null);
 
       const limit = await getContributionLimit(2026, 'simple_ira', '1970-06-15');
-      expect(limit).toEqual({ base: 17000, catchUp: 4000, total: 21000, catchUpAge: 50 });
+      expect(limit).toMatchObject({ base: 17000, catchUp: 4000, total: 21000, catchUpAge: 50 });
+    });
+  });
+
+  // SECURE 2.0 §109, effective for tax years beginning after 2024.
+  // Notice 2024-80 (2025) / Notice 2025-67 (2026): $11,250 for 401(k)/403(b)/
+  // 457(b) and $5,250 for SIMPLE plans in both years.
+  describe('SECURE 2.0 age 60-63 super catch-up', () => {
+    beforeEach(() => {
+      mockContributionLimitsFindFirst.mockResolvedValue(null);
+    });
+
+    it('replaces the ordinary 401k catch-up at age 61 (2025: 23,500 + 11,250 = 34,750)', async () => {
+      const limit = await getContributionLimit(2025, '401k', '1964-06-15');
+      expect(limit?.total).toBe(34_750);
+      expect(limit).toMatchObject({
+        base: 23_500,
+        catchUp: 7_500,
+        superCatchUp: 11_250,
+        catchUpApplied: 11_250,
+        superCatchUpApplied: true,
+      });
+    });
+
+    it('applies at the age-60 and age-63 boundaries', async () => {
+      // 60 at 2025 year end
+      expect((await getContributionLimit(2025, '401k', '1965-06-15'))?.total).toBe(34_750);
+      // 63 at 2025 year end
+      expect((await getContributionLimit(2025, '401k', '1962-06-15'))?.total).toBe(34_750);
+    });
+
+    it('reverts to the ordinary catch-up at 64', async () => {
+      const limit = await getContributionLimit(2025, '401k', '1961-06-15');
+      expect(limit?.total).toBe(31_000);
+      expect(limit?.superCatchUpApplied).toBe(false);
+      expect(limit?.catchUpApplied).toBe(7_500);
+    });
+
+    it('does not apply for 2024 — the provision starts in 2025', async () => {
+      const limit = await getContributionLimit(2024, '401k', '1963-06-15');
+      expect(limit?.total).toBe(30_500); // 23,000 + 7,500
+      expect(limit?.superCatchUp).toBe(0);
+    });
+
+    it('SIMPLE plans use $5,250 (2025: 16,500 + 5,250 = 21,750)', async () => {
+      const limit = await getContributionLimit(2025, 'simple_ira', '1964-06-15');
+      expect(limit?.total).toBe(21_750);
+      expect(limit?.superCatchUpApplied).toBe(true);
+    });
+
+    it('2026 keeps $11,250 / $5,250 (24,500 + 11,250 = 35,750)', async () => {
+      expect((await getContributionLimit(2026, '401k', '1965-06-15'))?.total).toBe(35_750);
+      expect((await getContributionLimit(2026, 'simple_ira', '1965-06-15'))?.total).toBe(22_250);
+    });
+
+    it('IRAs get no super catch-up', async () => {
+      const limit = await getContributionLimit(2025, 'traditional_ira', '1964-06-15');
+      expect(limit?.total).toBe(8_000); // 7,000 + 1,000 ordinary catch-up
+      expect(limit?.superCatchUp).toBe(0);
     });
   });
 });

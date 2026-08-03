@@ -11,7 +11,8 @@
  */
 
 import prisma from '@/lib/prisma';
-import { generateGuid, fromDecimal } from '@/lib/gnucash';
+import { generateGuid } from '@/lib/gnucash';
+import { balanceSplitNumerators, POSTING_DENOM } from '@/lib/services/scheduled-tx-execute';
 import { fetchScheduledTransactions, type ScheduledTransaction } from '@/lib/scheduled-transactions';
 import { logAudit } from '@/lib/services/audit.service';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
@@ -92,11 +93,14 @@ export async function validateScheduledTransactionInput(
   ))) {
     return 'Every split must reference a valid account';
   }
-  const splitSum = input.splits.reduce((sum, split) => sum + split.amount, 0);
-  if (Math.abs(splitSum) > 0.005) return 'Splits must balance (sum to zero)';
   if (input.splits.some(split => !Number.isFinite(split.amount))) {
     return 'Every split amount must be a finite number';
   }
+  // Balance is checked on the ROUNDED numerators actually written, not on the
+  // float sum: 0.334 / 0.333 / -0.667 sums to 0 as floats but rounds to
+  // 33 + 33 - 67 cents.
+  const balanced = balanceSplitNumerators(input.splits.map(split => split.amount));
+  if (!balanced.ok) return balanced.error;
   if (!VALID_PERIOD_TYPES.includes(input.recurrence.periodType)) {
     return `Invalid period type: ${input.recurrence.periodType}`;
   }
@@ -145,9 +149,14 @@ async function createTemplateContents(
     INSERT INTO transactions (guid, currency_guid, num, post_date, enter_date, description)
     VALUES (${txGuid}, ${currencyGuid}, '', NULL, NOW(), ${input.name})
   `;
+  // Same set-wise rounding as posting: the template must itself sum to zero at
+  // cent precision, or every occurrence it creates inherits the imbalance.
+  const balanced = balanceSplitNumerators(input.splits.map(split => split.amount));
+  if (!balanced.ok) throw new Error(balanced.error);
+
+  const denom = BigInt(POSTING_DENOM);
   for (let index = 0; index < input.splits.length; index++) {
-    const split = input.splits[index];
-    const { num, denom } = fromDecimal(split.amount);
+    const num = BigInt(balanced.nums[index]);
     await tx.$executeRaw`
       INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state, reconcile_date, value_num, value_denom, quantity_num, quantity_denom, lot_guid)
       VALUES (${generateGuid()}, ${txGuid}, ${childGuids[index]}, '', '', 'n', NULL, ${num}, ${denom}, ${num}, ${denom}, NULL)

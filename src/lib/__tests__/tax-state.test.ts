@@ -15,18 +15,59 @@ describe('no-income-tax states', () => {
 });
 
 describe('flat states', () => {
-  it('PA is 3.07% flat', () => {
+  it('PA is 3.07% flat on the full AGI — PA has no standard deduction', () => {
     const r = computeStateTax('PA', si());
     expect(r.tax).toBeCloseTo(3_070, 2);
+    expect(r.taxableIncome).toBe(100_000);
     expect(r.marginalRate).toBe(0.0307);
   });
 
-  it('CO is 4.40% flat', () => {
-    expect(computeStateTax('CO', si()).tax).toBeCloseTo(4_400, 2);
+  // Colorado taxable income starts from FEDERAL TAXABLE income (C.R.S.
+  // §39-22-104(1.7)), so the federal standard deduction applies. Taxing the
+  // full AGI (the pre-fix $4,400) overstated Colorado tax by ~$693.
+  it('CO is 4.40% of AGI less the federal standard deduction', () => {
+    const r = computeStateTax('CO', si());
+    expect(r.taxableIncome).toBe(100_000 - 15_750); // 2025 single std deduction
+    expect(r.tax).toBeCloseTo(0.044 * 84_250, 2);   // 3,707.00
+    expect(r.marginalRate).toBe(0.044);
   });
 
-  it('AZ is 2.50% flat', () => {
-    expect(computeStateTax('AZ', si()).tax).toBeCloseTo(2_500, 2);
+  // A.R.S. §43-1041: Arizona's standard deduction is the federal amount.
+  it('AZ is 2.50% of AGI less the federal standard deduction', () => {
+    const r = computeStateTax('AZ', si());
+    expect(r.taxableIncome).toBe(100_000 - 15_750);
+    expect(r.tax).toBeCloseTo(0.025 * 84_250, 2);   // 2,106.25
+  });
+
+  // NCDOR: NC standard deduction is $12,750 single / $25,500 MFJ / $19,125 HOH.
+  it('NC applies its $12,750 standard deduction (2025: $3,708.13 on $100k)', () => {
+    const r = computeStateTax('NC', si());
+    expect(r.taxableIncome).toBe(87_250);
+    expect(r.tax).toBeCloseTo(3_708.13, 2);
+  });
+
+  it('NC doubles the standard deduction for joint filers', () => {
+    expect(computeStateTax('NC', si({ filingStatus: 'mfj' })).taxableIncome).toBe(74_500);
+    expect(computeStateTax('NC', si({ filingStatus: 'hoh' })).taxableIncome).toBe(80_875);
+  });
+
+  it('GA applies $12,000 / $24,000 (HB 1437)', () => {
+    expect(computeStateTax('GA', si()).taxableIncome).toBe(88_000);
+    expect(computeStateTax('GA', si({ filingStatus: 'mfj' })).taxableIncome).toBe(76_000);
+  });
+
+  it('KY standard deduction is indexed per filer', () => {
+    expect(computeStateTax('KY', si({ year: 2025 })).taxableIncome).toBe(100_000 - 3_270);
+    expect(computeStateTax('KY', si({ year: 2026 })).taxableIncome).toBe(100_000 - 3_360);
+    // Each spouse on a joint return claims one
+    expect(computeStateTax('KY', si({ year: 2025, filingStatus: 'mfj' })).taxableIncome)
+      .toBe(100_000 - 6_540);
+  });
+
+  it('IL / MI / IN / UT tax the full AGI — exemptions and credits are not modeled', () => {
+    for (const code of ['IL', 'MI', 'IN', 'UT']) {
+      expect(computeStateTax(code, si()).taxableIncome).toBe(100_000);
+    }
   });
 
   it('NC rate steps down by year: 4.50% / 4.25% / 3.99%', () => {

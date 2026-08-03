@@ -7,8 +7,11 @@
  * csv/ofx, PDF text-extract + AI for pdf) → replaceLines → set dates /
  * balances / currency + status 'parsed' (or 'error' with a message).
  *
- * This function NEVER throws — the worker relies on that (failures are
- * recorded on the batch row as status='error').
+ * This function NEVER throws — both inline callers (upload intake, manual
+ * re-parse route) rely on that, and failures are recorded on the batch row as
+ * status='error'. The BullMQ handler (queue/jobs/extract-statement.ts) reads
+ * the batch status back afterwards and throws, so a failed extraction still
+ * lands in the queue's `failed` set instead of being reported as `completed`.
  *
  * AMOUNT SIGN CONVENTION (shared): positive = money INTO the account.
  */
@@ -222,6 +225,8 @@ export async function runStatementExtraction(
         console.error(`${logPrefix} Failed to sync canonical document error state:`, indexError);
       }
     }
-    // Deliberately do NOT rethrow — the worker treats this as handled.
+    // Deliberately do NOT rethrow — see the module comment. The job handler
+    // converts a persisted 'error' (or a batch left stuck in 'parsing' because
+    // the status write above also failed) into a thrown job failure.
   }
 }

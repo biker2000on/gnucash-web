@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
 import { getPayslip, getMappingsForEmployer } from '@/lib/payslips';
-import { postPayslipTransaction } from '@/lib/services/payslip-post.service';
+import { postPayslipTransaction, PayslipPostConflictError } from '@/lib/services/payslip-post.service';
 import { PeriodLockedError, periodLockedResponse } from '@/lib/services/period-lock.service';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
@@ -92,6 +92,11 @@ export async function POST(request: Request, { params }: RouteParams) {
     return NextResponse.json({ transaction_guid: transactionGuid });
   } catch (error) {
     if (error instanceof PeriodLockedError) return periodLockedResponse(error);
+    // A concurrent post already claimed this payslip — that is the guard doing
+    // its job, not a server fault, and the client should say so.
+    if (error instanceof PayslipPostConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     console.error('Payslip post error:', error);
     return NextResponse.json({ error: 'Failed to post payslip' }, { status: 500 });
   }

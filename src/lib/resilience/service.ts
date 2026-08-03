@@ -611,21 +611,28 @@ let ensurePromise: Promise<void> | null = null;
 export function ensureResilienceTable(): Promise<void> {
   if (!ensurePromise) {
     ensurePromise = (async () => {
+      // Advisory lock (matching every other lazy-schema block): two concurrent
+      // first-touches would otherwise race inside CREATE TABLE IF NOT EXISTS
+      // and one would fail on pg_type's unique constraint.
       await query(`
-        CREATE TABLE IF NOT EXISTS gnucash_web_resilience_profiles (
-          book_guid VARCHAR(32) NOT NULL,
-          section VARCHAR(32) NOT NULL,
-          data JSONB NOT NULL DEFAULT '{}'::jsonb,
-          secret_encrypted TEXT,
-          updated_by INTEGER,
-          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-          PRIMARY KEY (book_guid, section)
-        )
-      `);
-      await query(`
-        CREATE INDEX IF NOT EXISTS idx_resilience_profiles_book
-          ON gnucash_web_resilience_profiles(book_guid)
+        DO $$
+        BEGIN
+          PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_resilience_schema'));
+
+          CREATE TABLE IF NOT EXISTS gnucash_web_resilience_profiles (
+            book_guid VARCHAR(32) NOT NULL,
+            section VARCHAR(32) NOT NULL,
+            data JSONB NOT NULL DEFAULT '{}'::jsonb,
+            secret_encrypted TEXT,
+            updated_by INTEGER,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (book_guid, section)
+          );
+
+          CREATE INDEX IF NOT EXISTS idx_resilience_profiles_book
+            ON gnucash_web_resilience_profiles(book_guid);
+        END $$;
       `);
     })().catch(error => {
       ensurePromise = null;

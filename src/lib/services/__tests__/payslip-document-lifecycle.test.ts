@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   raw: vi.fn(),
+  executeRaw: vi.fn(),
   payslipUpdate: vi.fn(),
   metaFind: vi.fn(),
   metaUpdate: vi.fn(),
@@ -10,15 +11,20 @@ const mocks = vi.hoisted(() => ({
   link: vi.fn(),
 }));
 
-vi.mock('@/lib/prisma', () => ({ default: {
-  $queryRaw: mocks.raw,
-  gnucash_web_payslips: { update: mocks.payslipUpdate },
-  gnucash_web_transaction_meta: {
-    findUnique: mocks.metaFind,
-    update: mocks.metaUpdate,
-    create: vi.fn(),
-  },
-} }));
+vi.mock('@/lib/prisma', () => {
+  const client = {
+    $queryRaw: mocks.raw,
+    $executeRaw: mocks.executeRaw,
+    gnucash_web_payslips: { update: mocks.payslipUpdate },
+    gnucash_web_transaction_meta: {
+      findUnique: mocks.metaFind,
+      update: mocks.metaUpdate,
+      create: vi.fn(),
+    },
+    $transaction: (fn: (tx: unknown) => unknown) => fn(client),
+  };
+  return { default: client };
+});
 vi.mock('@/lib/payslips', () => ({ upsertTemplate: mocks.upsertTemplate }));
 vi.mock('@/lib/services/period-lock.service', () => ({
   assertNotLocked: vi.fn(),
@@ -34,6 +40,7 @@ import { postPayslipTransaction } from '../payslip-post.service';
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.raw
+    .mockResolvedValueOnce([{ prior_status: 'ready' }]) // posting claim taken
     .mockResolvedValueOnce([]) // no SimpleFin match
     .mockResolvedValueOnce([{ guid: 'tx-existing', split_count: 2 }])
     .mockResolvedValueOnce([

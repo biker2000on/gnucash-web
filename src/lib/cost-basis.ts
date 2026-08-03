@@ -298,6 +298,16 @@ export async function traceCostBasis(
 }
 
 /**
+ * Order in which lots are consumed for a given method. `lots` is built in
+ * chronological (oldest-first) order, so FIFO consumes it as-is and LIFO
+ * consumes it reversed. The returned array holds the SAME lot objects, so
+ * mutating them through it updates the underlying lots.
+ */
+function consumptionOrder(lots: PurchaseLot[], method: CostBasisMethod): PurchaseLot[] {
+  return method === 'lifo' ? [...lots].reverse() : lots;
+}
+
+/**
  * Get the cost basis for a given number of shares from an account,
  * considering all purchases and prior transfers up to a given date.
  *
@@ -334,11 +344,15 @@ async function getAccountCostBasis(
     ? splits.filter(s => s.tx_guid !== excludeTxGuid)
     : splits;
 
-  // Sort in JS for reliability across Prisma versions
+  // Sort in JS for reliability across Prisma versions.
+  // ALWAYS replay chronologically ascending — a sale can only consume lots that
+  // existed when it happened. FIFO vs LIFO is expressed by which END of the lot
+  // array a sale (and the final allocation) consumes from, NOT by replaying the
+  // history backwards.
   const sortedSplits = [...replaySplits].sort((a, b) => {
     const dateA = a.transaction?.post_date?.getTime() || 0;
     const dateB = b.transaction?.post_date?.getTime() || 0;
-    return method === 'lifo' ? dateB - dateA : dateA - dateB;
+    return dateA - dateB;
   });
 
   if (method === 'average') {
@@ -373,9 +387,10 @@ async function getAccountCostBasis(
         });
       }
     } else if (qty < 0) {
-      // Sale: reduce lots using the same method
+      // Sale: reduce lots using the same method. FIFO consumes the oldest lots
+      // (front of the array); LIFO consumes the most recent (back).
       let soldRemaining = Math.abs(qty);
-      for (const lot of lots) {
+      for (const lot of consumptionOrder(lots, method)) {
         if (soldRemaining <= 0) break;
         const soldFromLot = Math.min(lot.shares, soldRemaining);
         lot.shares -= soldFromLot;
@@ -385,11 +400,12 @@ async function getAccountCostBasis(
     }
   }
 
-  // Allocate cost basis to the requested shares
+  // Allocate cost basis to the requested shares, in the same order a sale
+  // would consume them.
   let remainingShares = sharesNeeded;
   let totalCost = 0;
 
-  for (const lot of lots) {
+  for (const lot of consumptionOrder(lots, method)) {
     if (remainingShares <= 0 || lot.shares <= 0) continue;
     const allocated = Math.min(lot.shares, remainingShares);
     totalCost += allocated * lot.costPerShare;

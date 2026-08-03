@@ -31,10 +31,20 @@ export const EMAIL_BILL_EXPENSE_PATH = 'Expenses:Uncategorized';
 
 export type EmailBillStatus =
   | 'pending_extraction'
+  /** Transient claim held while a draft bill is being created (see CLAIM_TTL_MS). */
+  | 'processing'
   | 'needs_review'
   | 'drafted'
   | 'dismissed'
   | 'error';
+
+/**
+ * How long a `processing` claim is honored before another attempt may take it
+ * over. The OCR job runs tesseract WASM, which blocks the event loop long
+ * enough for BullMQ lock renewal to lapse and the job to be re-delivered; a
+ * crash mid-draft must not park the row forever.
+ */
+export const EMAIL_BILL_CLAIM_TTL_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit-tested)
@@ -325,10 +335,25 @@ async function createDraftBill(params: {
 export async function processPendingEmailBill(receiptId: number): Promise<void> {
   try {
     await ensureEmailBillTable();
+    // CLAIM the row before doing any work. The old SELECT-then-work-then-UPDATE
+    // shape let a re-delivered OCR job (tesseract WASM blocks the event loop,
+    // so BullMQ lock renewal can lapse) find the row still in
+    // 'pending_extraction' and create a SECOND vendor bill for the same email.
+    const staleBefore = new Date(Date.now() - EMAIL_BILL_CLAIM_TTL_MS);
     const rows = await prisma.$queryRaw<EmailBillRow[]>`
-      SELECT * FROM gnucash_web_email_bills
-      WHERE receipt_id = ${receiptId} AND status = 'pending_extraction'
-      LIMIT 1`;
+      UPDATE gnucash_web_email_bills b
+      SET status = 'processing', updated_at = NOW()
+      FROM (
+        SELECT id FROM gnucash_web_email_bills
+        WHERE receipt_id = ${receiptId}
+          AND (status = 'pending_extraction'
+               OR (status = 'processing' AND updated_at < ${staleBefore}))
+        ORDER BY id
+        LIMIT 1
+        FOR UPDATE
+      ) c
+      WHERE b.id = c.id
+      RETURNING b.*`;
     if (rows.length === 0) return;
     const bill = rowToEmailBill(rows[0]);
 
@@ -388,12 +413,15 @@ export async function processPendingEmailBill(receiptId: number): Promise<void> 
   } catch (err) {
     console.error(`[bill-capture] Failed to process email bill for receipt ${receiptId}:`, err);
     try {
+      // Release the claim into a terminal, user-visible state (the review
+      // queue shows 'error' rows) so the row is never stuck in 'processing'.
       await prisma.$executeRaw`
         UPDATE gnucash_web_email_bills
         SET status = 'error',
             detail = ${err instanceof Error ? err.message : String(err)},
             updated_at = NOW()
-        WHERE receipt_id = ${receiptId} AND status = 'pending_extraction'`;
+        WHERE receipt_id = ${receiptId}
+          AND status IN ('pending_extraction', 'processing')`;
     } catch { /* best effort */ }
   }
 }
@@ -435,53 +463,92 @@ export async function resolveEmailBill(params: {
   date?: string | null;
 }): Promise<EmailBill> {
   await ensureEmailBillTable();
-  const rows = await prisma.$queryRaw<EmailBillRow[]>`
-    SELECT * FROM gnucash_web_email_bills
-    WHERE id = ${params.id} AND book_guid = ${params.bookGuid}
-    LIMIT 1`;
-  if (rows.length === 0) throw new EmailBillNotFoundError(`Email bill not found: ${params.id}`);
-  const bill = rowToEmailBill(rows[0]);
-  // pending_extraction is resolvable too: extraction can be stuck (queue
-  // down) and the user shouldn't have to wait to draft the bill manually.
-  if (bill.status !== 'needs_review' && bill.status !== 'error' && bill.status !== 'pending_extraction') {
-    throw new EmailBillStateError(`Email bill ${params.id} is ${bill.status}, not awaiting review`);
+
+  // CLAIM before creating the bill. Without it a double-clicked "Resolve"
+  // has both requests read a resolvable row and each create its own draft
+  // vendor bill. `pending_extraction` is resolvable too: extraction can be
+  // stuck (queue down) and the user shouldn't have to wait.
+  const staleBefore = new Date(Date.now() - EMAIL_BILL_CLAIM_TTL_MS);
+  const claimed = await prisma.$queryRaw<Array<EmailBillRow & { prior_status: string }>>`
+    WITH candidate AS (
+      SELECT id, status AS prior_status
+      FROM gnucash_web_email_bills
+      WHERE id = ${params.id} AND book_guid = ${params.bookGuid}
+        AND (status IN ('needs_review', 'error', 'pending_extraction')
+             OR (status = 'processing' AND updated_at < ${staleBefore}))
+      FOR UPDATE
+    )
+    UPDATE gnucash_web_email_bills b
+    SET status = 'processing', updated_at = NOW()
+    FROM candidate c
+    WHERE b.id = c.id
+    RETURNING b.*, c.prior_status`;
+
+  if (claimed.length === 0) {
+    // Distinguish "no such bill" from "not in a resolvable state".
+    const existing = await prisma.$queryRaw<EmailBillRow[]>`
+      SELECT * FROM gnucash_web_email_bills
+      WHERE id = ${params.id} AND book_guid = ${params.bookGuid}
+      LIMIT 1`;
+    if (existing.length === 0) {
+      throw new EmailBillNotFoundError(`Email bill not found: ${params.id}`);
+    }
+    throw new EmailBillStateError(
+      `Email bill ${params.id} is ${existing[0].status}, not awaiting review`,
+    );
   }
 
-  const vendor = await prisma.vendors.findUnique({
-    where: { guid: params.vendorGuid },
-    select: { guid: true, name: true, currency: true },
-  });
-  if (!vendor) throw new EmailBillNotFoundError(`Vendor not found: ${params.vendorGuid}`);
+  const bill = rowToEmailBill(claimed[0]);
+  const priorStatus = claimed[0].prior_status;
 
-  const amount = params.amount ?? bill.amount;
-  if (amount === null || !Number.isFinite(amount) || amount <= 0) {
-    throw new EmailBillStateError('An amount greater than zero is required to draft the bill');
+  try {
+    const vendor = await prisma.vendors.findUnique({
+      where: { guid: params.vendorGuid },
+      select: { guid: true, name: true, currency: true },
+    });
+    if (!vendor) throw new EmailBillNotFoundError(`Vendor not found: ${params.vendorGuid}`);
+
+    const amount = params.amount ?? bill.amount;
+    if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+      throw new EmailBillStateError('An amount greater than zero is required to draft the bill');
+    }
+    const date = params.date ?? bill.docDate;
+
+    const invoiceGuid = await createDraftBill({
+      bookGuid: bill.bookGuid,
+      vendorGuid: vendor.guid,
+      vendorCurrencyGuid: vendor.currency,
+      amount,
+      date,
+      description: bill.subject?.replace(/^\s*bill\b[:\s-]*/i, '').trim()
+        || bill.filename
+        || 'Bill from email',
+    });
+
+    const updated = await prisma.$queryRaw<EmailBillRow[]>`
+      UPDATE gnucash_web_email_bills
+      SET status = 'drafted',
+          vendor_guid = ${vendor.guid},
+          amount = ${amount},
+          doc_date = ${date ? new Date(date + 'T12:00:00Z') : null},
+          invoice_guid = ${invoiceGuid},
+          detail = ${'Resolved manually to vendor: ' + vendor.name},
+          updated_at = NOW()
+      WHERE id = ${bill.id}
+      RETURNING *`;
+    return rowToEmailBill(updated[0]);
+  } catch (err) {
+    // Hand the claim back so the user can correct the input and retry.
+    try {
+      await prisma.$executeRaw`
+        UPDATE gnucash_web_email_bills
+        SET status = ${priorStatus}, updated_at = NOW()
+        WHERE id = ${bill.id} AND status = 'processing'`;
+    } catch (releaseErr) {
+      console.error(`[bill-capture] Failed to release claim on email bill ${bill.id}:`, releaseErr);
+    }
+    throw err;
   }
-  const date = params.date ?? bill.docDate;
-
-  const invoiceGuid = await createDraftBill({
-    bookGuid: bill.bookGuid,
-    vendorGuid: vendor.guid,
-    vendorCurrencyGuid: vendor.currency,
-    amount,
-    date,
-    description: bill.subject?.replace(/^\s*bill\b[:\s-]*/i, '').trim()
-      || bill.filename
-      || 'Bill from email',
-  });
-
-  const updated = await prisma.$queryRaw<EmailBillRow[]>`
-    UPDATE gnucash_web_email_bills
-    SET status = 'drafted',
-        vendor_guid = ${vendor.guid},
-        amount = ${amount},
-        doc_date = ${date ? new Date(date + 'T12:00:00Z') : null},
-        invoice_guid = ${invoiceGuid},
-        detail = ${'Resolved manually to vendor: ' + vendor.name},
-        updated_at = NOW()
-    WHERE id = ${bill.id}
-    RETURNING *`;
-  return rowToEmailBill(updated[0]);
 }
 
 /** Dismiss a capture from the review queue (the receipt itself remains). */

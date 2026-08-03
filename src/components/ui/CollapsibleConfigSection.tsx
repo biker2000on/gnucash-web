@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, ReactNode } from 'react';
+import { useState, ReactNode } from 'react';
 
 interface CollapsibleConfigSectionProps {
     title: string;
@@ -34,7 +34,10 @@ export function CollapsibleConfigSection({
     children,
     className = '',
 }: CollapsibleConfigSectionProps) {
-    const [open, setOpen] = useState(() => {
+    // The user's expand/collapse choice. A section that mounts unconfigured
+    // starts expanded and stays expanded after it becomes configured, until the
+    // user hits Done.
+    const [userOpen, setUserOpen] = useState(() => {
         if (!configured) return true;
         if (storageKey && typeof window !== 'undefined') {
             const saved = localStorage.getItem(storageKey);
@@ -43,14 +46,13 @@ export function CollapsibleConfigSection({
         return false;
     });
 
-    // If the section becomes unconfigured (e.g. selection cleared), reopen it.
-    useEffect(() => {
-        if (!configured) setOpen(true);
-    }, [configured]);
+    // Derived, not synchronised: an unconfigured section has nothing to collapse
+    // to, so it is always open regardless of the stored choice.
+    const open = !configured || userOpen;
 
     const toggle = () => {
         if (!configured) return; // nothing to collapse to yet
-        setOpen(o => {
+        setUserOpen(o => {
             const next = !o;
             if (storageKey) {
                 try {

@@ -11,6 +11,7 @@
 
 import prisma from '@/lib/prisma';
 import { serializeBigInts } from '@/lib/gnucash';
+import { maskStringLiterals } from './guardrails';
 
 export type QueryRow = Record<string, unknown>;
 
@@ -20,9 +21,23 @@ const STATEMENT_TIMEOUT_MS = 5000;
  * Prisma's raw parameter inference can mistype bare array parameters, so give
  * every un-cast $1 an explicit ::text[] cast (matches the ANY(${...}::text[])
  * convention used throughout the codebase). Idempotent for already-cast $1.
+ *
+ * Skips occurrences inside string literals: a search term like '%$1%' is data,
+ * and rewriting it would corrupt the query's meaning.
  */
 export function castScopeParameter(sql: string): string {
-    return sql.replace(/\$1(?!\d)(?!\s*::)/g, '$1::text[]');
+    const masked = maskStringLiterals(sql);
+    if (masked === null) return sql;
+
+    const re = /\$1(?!\d)(?!\s*::)/g;
+    let out = '';
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(masked)) !== null) {
+        out += sql.slice(last, m.index) + '$1::text[]';
+        last = m.index + m[0].length;
+    }
+    return out + sql.slice(last);
 }
 
 /**
@@ -34,7 +49,9 @@ export async function executeReadOnlyQuery(
     accountGuids: string[],
 ): Promise<QueryRow[]> {
     const finalSql = castScopeParameter(sql);
-    const usesParameter = finalSql.includes('$1');
+    const masked = maskStringLiterals(finalSql);
+    // A $1 that only appears inside a string literal is not a bound parameter.
+    const usesParameter = (masked ?? finalSql).includes('$1');
 
     const rows = await prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');

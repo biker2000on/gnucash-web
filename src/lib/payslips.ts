@@ -1,6 +1,13 @@
 import prisma from '@/lib/prisma';
 import type { PayslipStatus, PayslipLineItem } from '@/lib/types';
 
+/**
+ * Interactive-transaction client. Helpers that can be called from inside a
+ * `prisma.$transaction` accept this so their writes join the caller's
+ * transaction instead of committing on a second pooled connection.
+ */
+export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 export interface PayslipFilters {
   status?: PayslipStatus;
   employer?: string;
@@ -168,13 +175,20 @@ export async function getTemplate(bookGuid: string, employerName: string) {
 
 /**
  * Upsert a template for an employer. Stores line item structure (labels + categories, no amounts).
+ *
+ * `db` defaults to the global client. Callers running inside a
+ * `prisma.$transaction` MUST pass their `tx`: on the global client this write
+ * commits on a second connection (so it survives a rollback of the caller's
+ * transaction) and blocks a pooled connection while the caller still holds
+ * one, which deadlocks the pool under concurrency.
  */
 export async function upsertTemplate(
   bookGuid: string,
   employerName: string,
-  lineItems: TemplateLineItem[]
+  lineItems: TemplateLineItem[],
+  db: PrismaTx = prisma
 ) {
-  return prisma.gnucash_web_payslip_templates.upsert({
+  return db.gnucash_web_payslip_templates.upsert({
     where: {
       book_guid_employer_name: { book_guid: bookGuid, employer_name: employerName },
     },

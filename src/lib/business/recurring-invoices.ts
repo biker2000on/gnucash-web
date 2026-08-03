@@ -253,6 +253,9 @@ export function ensureRecurringInvoicesTable(): Promise<void> {
         END $$;
       `);
     })();
+    // A transient failure must not poison the memo for the process lifetime —
+    // the DDL is idempotent, so let the next call retry.
+    ensurePromise.catch(() => { ensurePromise = null; });
   }
   return ensurePromise;
 }

@@ -99,7 +99,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
     if (error) {
         return (
             <div className="flex items-center justify-center py-12">
-                <div className="text-rose-400">{error}</div>
+                <div className="text-negative">{error}</div>
             </div>
         );
     }
@@ -129,13 +129,13 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                     </div>
                     <div className="bg-background-secondary/30 rounded-lg p-2 text-center">
                         <div className="text-[10px] text-foreground-muted uppercase tracking-wider">Unrealized</div>
-                        <div className={`text-sm font-bold font-mono ${totalUnrealizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <div className={`text-sm font-bold font-mono ${totalUnrealizedGain >= 0 ? 'text-positive' : 'text-negative'}`}>
                             {totalUnrealizedGain >= 0 ? '+' : ''}{formatCurrency(totalUnrealizedGain, currencyMnemonic)}
                         </div>
                     </div>
                     <div className="bg-background-secondary/30 rounded-lg p-2 text-center">
                         <div className="text-[10px] text-foreground-muted uppercase tracking-wider">Realized</div>
-                        <div className={`text-sm font-bold font-mono ${totalRealizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <div className={`text-sm font-bold font-mono ${totalRealizedGain >= 0 ? 'text-positive' : 'text-negative'}`}>
                             {totalRealizedGain >= 0 ? '+' : ''}{formatCurrency(totalRealizedGain, currencyMnemonic)}
                         </div>
                     </div>
@@ -153,15 +153,15 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
 
                 {/* Unlinked splits */}
                 {freeSplits.length > 0 && (
-                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 flex items-center justify-between">
+                  <div className="bg-warning/10 border border-warning/20 rounded-lg p-2.5 flex items-center justify-between">
                     <div>
-                      <span className="text-xs font-medium text-amber-400">
+                      <span className="text-xs font-medium text-warning">
                         {freeSplits.length} unlinked split{freeSplits.length !== 1 ? 's' : ''}
                       </span>
                     </div>
                     <button
                       onClick={() => setShowAutoAssign(true)}
-                      className="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded hover:bg-amber-500/30 transition-colors"
+                      className="text-xs px-2 py-1 bg-warning/20 text-warning rounded hover:bg-warning/30 transition-colors"
                     >
                       Auto-Assign
                     </button>
@@ -196,7 +196,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                             <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${
                                                 lot.holdingPeriod === 'long_term'
                                                     ? 'bg-primary/20 text-primary'
-                                                    : 'bg-amber-500/20 text-amber-400'
+                                                    : 'bg-warning/20 text-warning'
                                             }`}>
                                                 {lot.holdingPeriod === 'long_term' ? 'LT' : 'ST'}
                                             </span>
@@ -215,7 +215,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                         {lot.totalShares.toFixed(sp)} shares
                                     </span>
                                     {gainValue !== null && (
-                                        <span className={`font-mono ${gainValue >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        <span className={`font-mono ${gainValue >= 0 ? 'text-positive' : 'text-negative'}`}>
                                             {gainValue >= 0 ? '+' : ''}{formatCurrency(gainValue, currencyMnemonic)}
                                             {gainPercent !== null && (
                                                 <span className="text-foreground-muted ml-1">
@@ -235,7 +235,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                 )}
                                 {lot.sourceLotGuid && (
                                     <div className="mt-0.5">
-                                        <span className="text-xs text-blue-400">
+                                        <span className="text-xs text-secondary">
                                             &#8599; Transferred
                                             {lot.acquisitionDate && (
                                                 <span className="text-foreground-muted"> (acquired {new Date(lot.acquisitionDate).toLocaleDateString()})</span>
@@ -245,7 +245,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                 )}
                                 {lot.isClosed && lot.realizedGain !== 0 && (
                                     <div className="text-[10px] mt-0.5">
-                                        <span className={lot.realizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                        <span className={lot.realizedGain >= 0 ? 'text-positive' : 'text-negative'}>
                                             {lot.realizedGain >= 0 ? 'Gain' : 'Loss'}: {formatCurrency(Math.abs(lot.realizedGain), currencyMnemonic)}
                                         </span>
                                         {lot.holdingPeriod && (
@@ -278,7 +278,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                     </p>
                                 )}
                                 {selectedLot.sourceLotGuid && (
-                                    <p className="text-xs text-blue-400 mt-0.5">
+                                    <p className="text-xs text-secondary mt-0.5">
                                         &#8599; Transferred
                                         {selectedLot.acquisitionDate && (
                                             <span className="text-foreground-muted"> &middot; acquired {new Date(selectedLot.acquisitionDate).toLocaleDateString()}</span>
@@ -287,7 +287,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                 )}
                                 {selectedLot.isClosed && selectedLot.realizedGain !== 0 && (
                                     <p className="text-xs mt-0.5">
-                                        <span className={selectedLot.realizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                        <span className={selectedLot.realizedGain >= 0 ? 'text-positive' : 'text-negative'}>
                                             Realized {selectedLot.realizedGain >= 0 ? 'gain' : 'loss'}: {formatCurrency(Math.abs(selectedLot.realizedGain), currencyMnemonic)}
                                         </span>
                                         {selectedLot.holdingPeriod && (
@@ -303,7 +303,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                     <span className={`text-xs font-bold px-2 py-1 rounded ${
                                         selectedLot.holdingPeriod === 'long_term'
                                             ? 'bg-primary/20 text-primary'
-                                            : 'bg-amber-500/20 text-amber-400'
+                                            : 'bg-warning/20 text-warning'
                                     }`}>
                                         {selectedLot.holdingPeriod === 'long_term' ? 'Long Term' : 'Short Term'}
                                     </span>
@@ -342,7 +342,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                     const gain = selectedLot.isClosed ? selectedLot.realizedGain : selectedLot.unrealizedGain;
                                     if (gain === null) return <div className="text-sm font-mono text-foreground-muted">N/A</div>;
                                     return (
-                                        <div className={`text-sm font-bold font-mono ${gain >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        <div className={`text-sm font-bold font-mono ${gain >= 0 ? 'text-positive' : 'text-negative'}`}>
                                             {gain >= 0 ? '+' : ''}{formatCurrency(gain, currencyMnemonic)}
                                         </div>
                                     );
@@ -373,7 +373,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                                 {
                                                     label: 'Shares',
                                                     value: (
-                                                        <span className={`font-mono ${split.shares > 0 ? 'text-emerald-400' : split.shares < 0 ? 'text-rose-400' : 'text-foreground-muted'}`}>
+                                                        <span className={`font-mono ${split.shares > 0 ? 'text-positive' : split.shares < 0 ? 'text-negative' : 'text-foreground-muted'}`}>
                                                             {split.shares > 0 ? '+' : ''}{split.shares.toFixed(sp)}
                                                         </span>
                                                     ),
@@ -381,7 +381,7 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                                 {
                                                     label: 'Value',
                                                     value: (
-                                                        <span className={`font-mono ${split.value < 0 ? 'text-rose-400' : split.value > 0 ? 'text-emerald-400' : 'text-foreground-muted'}`}>
+                                                        <span className={`font-mono ${split.value < 0 ? 'text-negative' : split.value > 0 ? 'text-positive' : 'text-foreground-muted'}`}>
                                                             {formatCurrency(split.value, currencyMnemonic)}
                                                         </span>
                                                     ),
@@ -419,10 +419,10 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                                 <td className="px-3 py-2 text-foreground">
                                                     {split.description}
                                                 </td>
-                                                <td className={`px-3 py-2 text-right font-mono ${split.shares > 0 ? 'text-emerald-400' : split.shares < 0 ? 'text-rose-400' : 'text-foreground-muted'}`}>
+                                                <td className={`px-3 py-2 text-right font-mono ${split.shares > 0 ? 'text-positive' : split.shares < 0 ? 'text-negative' : 'text-foreground-muted'}`}>
                                                     {split.shares > 0 ? '+' : ''}{split.shares.toFixed(sp)}
                                                 </td>
-                                                <td className={`px-3 py-2 text-right font-mono ${split.value < 0 ? 'text-rose-400' : split.value > 0 ? 'text-emerald-400' : 'text-foreground-muted'}`}>
+                                                <td className={`px-3 py-2 text-right font-mono ${split.value < 0 ? 'text-negative' : split.value > 0 ? 'text-positive' : 'text-foreground-muted'}`}>
                                                     {formatCurrency(split.value, currencyMnemonic)}
                                                 </td>
                                                 <td className="px-3 py-2 text-right font-mono font-bold text-foreground">

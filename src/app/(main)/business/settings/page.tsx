@@ -28,6 +28,7 @@ const EMPTY_BILLTERM: BilltermForm = {
 };
 
 interface EntryForm {
+    id: string; // Stable client-side key; rows are removable by index
     account: string;
     amount: string;
     type: 'percent' | 'value';
@@ -38,10 +39,14 @@ interface TaxtableForm {
     entries: EntryForm[];
 }
 
-const EMPTY_TAXTABLE: TaxtableForm = {
-    name: '',
-    entries: [{ account: '', amount: '0', type: 'percent' }],
-};
+const newEntry = (): EntryForm => ({
+    id: crypto.randomUUID(),
+    account: '',
+    amount: '0',
+    type: 'percent',
+});
+
+const emptyTaxtable = (): TaxtableForm => ({ name: '', entries: [newEntry()] });
 
 function BilltermsSection() {
     const { success, error } = useToast();
@@ -327,7 +332,7 @@ function TaxtablesSection() {
     const [tables, setTables] = useState<TaxtableDTO[]>([]);
     const [loading, setLoading] = useState(true);
     const [editing, setEditing] = useState<'new' | TaxtableDTO | null>(null);
-    const [form, setForm] = useState<TaxtableForm>(EMPTY_TAXTABLE);
+    const [form, setForm] = useState<TaxtableForm>(emptyTaxtable);
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState<TaxtableDTO | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
@@ -347,7 +352,7 @@ function TaxtablesSection() {
     useEffect(() => { fetchTables(); }, [fetchTables]);
 
     const openCreate = () => {
-        setForm({ name: '', entries: [{ account: '', amount: '0', type: 'percent' }] });
+        setForm(emptyTaxtable());
         setEditing('new');
     };
 
@@ -355,6 +360,7 @@ function TaxtablesSection() {
         setForm({
             name: table.name,
             entries: table.entries.map(e => ({
+                id: crypto.randomUUID(),
                 account: e.account,
                 amount: String(e.amount),
                 type: e.type,
@@ -373,7 +379,7 @@ function TaxtablesSection() {
     const addEntry = () => {
         setForm(prev => ({
             ...prev,
-            entries: [...prev.entries, { account: '', amount: '0', type: 'percent' }],
+            entries: [...prev.entries, newEntry()],
         }));
     };
 
@@ -553,7 +559,7 @@ function TaxtablesSection() {
                         <label className={labelClass}>Entries</label>
                         <div className="space-y-2">
                             {form.entries.map((entry, index) => (
-                                <div key={index} className="flex gap-2 items-start">
+                                <div key={entry.id} className="flex gap-2 items-start">
                                     <div className="flex-1 min-w-0">
                                         <AccountSelector
                                             value={entry.account}

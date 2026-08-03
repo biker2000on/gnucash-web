@@ -1,6 +1,6 @@
 import prisma from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
-import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
+import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
 import { toDecimal, buildHierarchy, resolveRootGuid, sumSplitsByAccount, AccountWithBalance } from './utils';
 import { allocatePaymentsToAccounts, PaymentLotSplit, PostingSplit } from './cash-basis';
 
@@ -123,6 +123,20 @@ async function getCashBasisAccountBalances(
 }
 
 /**
+ * Flip the sign of a line item and every descendant, so a section's children
+ * always agree in sign with the section total. Mirrors negateItem in
+ * income-statement-by-period.ts.
+ */
+function negateItem(item: LineItem): LineItem {
+    return {
+        ...item,
+        amount: -item.amount,
+        previousAmount: item.previousAmount !== undefined ? -item.previousAmount : undefined,
+        children: item.children?.map(negateItem),
+    };
+}
+
+/**
  * Generate Income Statement (Profit & Loss) report
  */
 export async function generateIncomeStatement(filters: ReportFilters): Promise<ReportData> {
@@ -180,12 +194,11 @@ export async function generateIncomeStatement(filters: ReportFilters): Promise<R
     const incomeAccounts = accountBalances.filter(a => a.account_type === 'INCOME');
     const expenseAccounts = accountBalances.filter(a => a.account_type === 'EXPENSE');
 
-    // Build hierarchies - income is typically negative in GnuCash, so we negate it
-    const incomeItems = buildHierarchy(incomeAccounts, rootGuid).map(item => ({
-        ...item,
-        amount: -item.amount, // Negate income to show as positive
-        previousAmount: item.previousAmount !== undefined ? -item.previousAmount : undefined,
-    }));
+    // Build hierarchies - income is typically negative in GnuCash, so we negate it.
+    // negateItem RECURSES into children: the table renders top-level rows
+    // expanded, so leaving children un-negated puts a -$45,000 Salary row under
+    // a +$50,000 Income total.
+    const incomeItems = buildHierarchy(incomeAccounts, rootGuid).map(negateItem);
     const expenseItems = buildHierarchy(expenseAccounts, rootGuid);
 
     // Calculate totals

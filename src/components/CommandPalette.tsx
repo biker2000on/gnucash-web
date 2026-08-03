@@ -71,20 +71,26 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     if (!isOpen) return
     const q = query.trim()
     if (q.length < 3) return
+    const controller = new AbortController()
     const timer = setTimeout(() => {
-      fetch(`/api/transactions?search=${encodeURIComponent(q)}&limit=5`)
+      fetch(`/api/transactions?search=${encodeURIComponent(q)}&limit=5`, { signal: controller.signal })
         .then(r => (r.ok ? r.json() : []))
         .then((data) => {
           const list = Array.isArray(data) ? data : data?.transactions
           setTxHits(Array.isArray(list) ? list.slice(0, 5) : [])
           setTxHitQuery(q)
         })
-        .catch(() => {
+        .catch((err) => {
+          // A superseded search must not land after a newer one.
+          if ((err as Error).name === 'AbortError') return
           setTxHits([])
           setTxHitQuery(q)
         })
     }, 250)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
   }, [query, isOpen])
 
   const rows = useMemo<PaletteRow[]>(() => {

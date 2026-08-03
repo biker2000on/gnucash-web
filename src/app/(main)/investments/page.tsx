@@ -248,8 +248,6 @@ export default function HoldingsPage() {
         totalValue={portfolio.summary.totalValue}
         totalCostBasis={portfolio.summary.totalCostBasis}
         totalGainLoss={portfolio.summary.totalGainLoss}
-        dayChange={portfolio.summary.dayChange}
-        dayChangePercent={portfolio.summary.dayChangePercent}
         performancePercent={safePerformancePercent}
         performanceMetric={performanceMetric}
       />

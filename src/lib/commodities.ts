@@ -6,16 +6,8 @@
  */
 
 import prisma from './prisma';
-import { toDecimal as toDecimalString } from './gnucash';
+import { toDecimalNumber as toDecimal } from './gnucash';
 import { traceCostBasis, isTransferIn, createCostBasisCache, type CostBasisMethod, type CostBasisCache  } from './cost-basis';
-
-/**
- * Convert GnuCash fraction to a number
- */
-function toDecimal(num: bigint | number | string | null, denom: bigint | number | string | null): number {
-    if (num === null || denom === null) return 0;
-    return parseFloat(toDecimalString(num, denom));
-}
 
 export interface PriceData {
     guid: string;

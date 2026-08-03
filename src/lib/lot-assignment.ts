@@ -904,11 +904,20 @@ export interface WashSaleResult {
   sellAccountGuid: string;
   sellAccountName: string;
   ticker: string;
+  /** Shares sold at a loss (positive). */
   shares: number;
+  /**
+   * DISALLOWED loss, stored negative. Already pro-rated by IRC §1091(b): when
+   * fewer replacement shares were acquired than were sold, only
+   * replacementShares/soldShares of the realized loss is disallowed.
+   */
   loss: number;
   washBuyDate: string;
   washBuyAccountGuid: string;
   washBuyAccountName: string;
+  /** Replacement shares acquired by the matched buy (capped at `shares`). */
+  replacementShares?: number;
+  /** Calendar days between the sale day and the replacement-buy day. */
   daysApart: number;
 }
 
@@ -948,7 +957,12 @@ export async function detectWashSales(
   }
 
   const washSales: WashSaleResult[] = [];
-  const WASH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+  // The 30-day window is a CALENDAR-DAY window. Comparing raw timestamps would
+  // miss a genuine day-30 replacement whenever the buy's time of day falls
+  // later than the sell's (post-date times of day vary across a real book).
+  const WASH_WINDOW_DAYS = 30;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const utcDayMs = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 
   for (const accounts of accountsByCommodity.values()) {
     const accountGuids = accounts.map(a => a.guid);
@@ -1028,18 +1042,25 @@ export async function detectWashSales(
     for (const sell of sells) {
       const sellDate = sell.transaction?.post_date;
       if (!sellDate) continue;
-      const sellMs = sellDate.getTime();
+      const sellDayMs = utcDayMs(sellDate);
+      const soldShares = Math.abs(toDecimalNumber(sell.quantity_num, sell.quantity_denom));
 
       for (const buy of buys) {
         const buyDate = buy.transaction?.post_date;
         if (!buyDate) continue;
-        const buyMs = buyDate.getTime();
-        const diff = Math.abs(buyMs - sellMs);
+        const daysApart = Math.abs(utcDayMs(buyDate) - sellDayMs) / MS_PER_DAY;
 
-        if (diff <= WASH_WINDOW_MS && buy.guid !== sell.guid) {
+        if (daysApart <= WASH_WINDOW_DAYS && buy.guid !== sell.guid) {
           const sellAccount = accounts.find(a => a.guid === sell.account_guid);
           const buyAccount = accounts.find(a => a.guid === buy.account_guid);
-          const daysApart = Math.round(diff / (24 * 60 * 60 * 1000));
+
+          // IRC §1091(b): when fewer replacement shares are acquired than were
+          // sold, only the PROPORTIONATE part of the loss is disallowed. The
+          // remainder stays deductible.
+          const replacementShares = toDecimalNumber(buy.quantity_num, buy.quantity_denom);
+          const disallowedRatio = soldShares > 0
+            ? Math.min(Math.max(0, replacementShares), soldShares) / soldShares
+            : 0;
 
           washSales.push({
             splitGuid: sell.guid,
@@ -1047,11 +1068,12 @@ export async function detectWashSales(
             sellAccountGuid: sell.account_guid,
             sellAccountName: sellAccount?.name || '',
             ticker,
-            shares: Math.abs(toDecimalNumber(sell.quantity_num, sell.quantity_denom)),
-            loss: sell.realizedLoss,
+            shares: soldShares,
+            loss: sell.realizedLoss * disallowedRatio,
             washBuyDate: buyDate.toISOString(),
             washBuyAccountGuid: buy.account_guid,
             washBuyAccountName: buyAccount?.name || '',
+            replacementShares: Math.min(Math.max(0, replacementShares), soldShares),
             daysApart,
           });
           break; // One wash match per sell is enough

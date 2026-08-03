@@ -8,8 +8,69 @@
  */
 
 import prisma from '@/lib/prisma';
-import { generateGuid, fromDecimal } from '@/lib/gnucash';
+import { generateGuid } from '@/lib/gnucash';
 import { resolveTemplateSplits } from '@/lib/scheduled-transactions';
+
+/**
+ * Denominator every posted split is written at. Template accounts are created
+ * with commodity_scu 100 in the book currency, so cents is the target scale
+ * even when the template itself stores finer fractions.
+ */
+export const POSTING_DENOM = 100;
+
+export type BalancedNumerators =
+  | { ok: true; nums: number[] }
+  | { ok: false; error: string };
+
+/**
+ * Convert decimal split amounts to integer numerators at a common denominator,
+ * guaranteeing `sum(nums) === 0`.
+ *
+ * Rounding each amount independently drops the residual: a balanced template of
+ * 33.333333 / 33.333333 / 33.333334 / -100.00 rounds to 3333 + 3333 + 3333 -
+ * 10000, a one-cent hole in the books. The residual is instead absorbed by the
+ * largest-magnitude split — deterministic, and the split where a sub-cent
+ * adjustment is proportionally smallest (ties go to the earliest, so the result
+ * does not depend on sort stability).
+ *
+ * Amounts that cannot balance within rounding error are REJECTED rather than
+ * corrected: absorbing a real imbalance would silently rewrite an amount the
+ * user entered.
+ */
+export function balanceSplitNumerators(
+  amounts: number[],
+  denom: number = POSTING_DENOM,
+): BalancedNumerators {
+  if (amounts.length === 0) {
+    return { ok: false, error: 'Transaction has no splits' };
+  }
+  if (amounts.some(amount => !Number.isFinite(amount))) {
+    return { ok: false, error: 'Every split amount must be a finite number' };
+  }
+
+  const nums = amounts.map(amount => Math.round(amount * denom));
+  const residual = nums.reduce((sum, num) => sum + num, 0);
+
+  // Rounding moves each split by at most half a unit, so a set that truly
+  // balances can never drift past ceil(n/2) units. Anything beyond that is a
+  // genuinely unbalanced set.
+  if (Math.abs(residual) > Math.ceil(amounts.length / 2)) {
+    return {
+      ok: false,
+      error: `Splits must balance (sum to zero); off by ${residual / denom}`,
+    };
+  }
+
+  if (residual !== 0) {
+    let absorber = 0;
+    for (let i = 1; i < nums.length; i++) {
+      if (Math.abs(nums[i]) > Math.abs(nums[absorber])) absorber = i;
+    }
+    nums[absorber] -= residual;
+  }
+
+  return { ok: true, nums };
+}
 
 export interface ExecuteResult {
   success: true;
@@ -80,7 +141,6 @@ interface SchedXAction {
 export async function executeOccurrence(
   sxGuid: string,
   occurrenceDate: string,
-  overrideAmounts?: Map<string, number>
 ): Promise<ExecuteResult | ErrorResult> {
   try {
     return await prisma.$transaction(async (tx) => {
@@ -112,16 +172,17 @@ export async function executeOccurrence(
 
       // Resolve template splits INSIDE the transaction so the reads share the
       // FOR UPDATE lock's snapshot instead of escaping to the global client.
-      const templateSplits = await resolveTemplateSplits(sx.template_act_guid, tx);
-      if (templateSplits.length === 0) {
+      const splits = await resolveTemplateSplits(sx.template_act_guid, tx);
+      if (splits.length === 0) {
         return { success: false as const, error: 'No template splits found for scheduled transaction' };
       }
 
-      // Apply override amounts if provided
-      const splits = templateSplits.map((split) => {
-        const amount = overrideAmounts?.get(split.accountGuid) ?? split.amount;
-        return { ...split, amount };
-      });
+      // Round to cents as a SET so the posted splits sum to exactly zero;
+      // rounding each one independently leaves a residual in the books.
+      const balanced = balanceSplitNumerators(splits.map(split => split.amount));
+      if (!balanced.ok) {
+        return { success: false as const, error: balanced.error };
+      }
 
       // Get book currency from root account
       const currencyRows = await tx.$queryRaw<{ commodity_guid: string }[]>`
@@ -149,9 +210,10 @@ export async function executeOccurrence(
       // template splits always carry quantity == value (dollar terms), so an
       // implied price would always be a meaningless 1.0. Same applies to the
       // SimpleFin sync path, which lacks share quantities (Phase 1).
-      for (const split of splits) {
+      const denom = BigInt(POSTING_DENOM);
+      for (const [index, split] of splits.entries()) {
         const splitGuid = generateGuid();
-        const { num, denom } = fromDecimal(split.amount);
+        const num = BigInt(balanced.nums[index]);
 
         await tx.$executeRaw`
           INSERT INTO splits (guid, tx_guid, account_guid, memo, action, reconcile_state, reconcile_date, value_num, value_denom, quantity_num, quantity_denom, lot_guid)

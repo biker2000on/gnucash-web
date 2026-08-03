@@ -181,6 +181,51 @@ describe('computeNextOccurrences', () => {
     expect(results).toEqual([]);
   });
 
+  // Month-end drift: re-anchoring on a CLAMPED last_occur pinned a 31st
+  // schedule to the 29th forever (Jan 31 → Feb 29 → Mar 29 → Apr 29 → ...).
+  it('returns to the anchor day after a clamped month', () => {
+    const pattern = mkPattern({
+      periodType: 'month',
+      periodStart: new Date(2024, 0, 31), // Jan 31, 2024 (leap year)
+    });
+
+    const afterJan = computeNextOccurrences(pattern, new Date(2024, 0, 31), null, null, 1, new Date(2024, 0, 31));
+    expect(afterJan[0]).toEqual(new Date(2024, 1, 29)); // Feb 29 (clamped)
+
+    const afterFeb = computeNextOccurrences(pattern, new Date(2024, 1, 29), null, null, 3, new Date(2024, 1, 29));
+    expect(afterFeb[0]).toEqual(new Date(2024, 2, 31)); // Mar 31, NOT Mar 29
+    expect(afterFeb[1]).toEqual(new Date(2024, 3, 30)); // Apr 30 (clamped)
+    expect(afterFeb[2]).toEqual(new Date(2024, 4, 31)); // May 31
+  });
+
+  it('does not drift when generating a run from a clamped last occurrence', () => {
+    const pattern = mkPattern({
+      periodType: 'month',
+      periodStart: new Date(2025, 0, 31), // Jan 31, 2025
+    });
+
+    const results = computeNextOccurrences(pattern, new Date(2025, 1, 28), null, null, 3, new Date(2025, 1, 28));
+
+    expect(results[0]).toEqual(new Date(2025, 2, 31)); // Mar 31
+    expect(results[1]).toEqual(new Date(2025, 3, 30)); // Apr 30
+    expect(results[2]).toEqual(new Date(2025, 4, 31)); // May 31
+  });
+
+  it('yearly does not drift off Feb 29 once clamped', () => {
+    const pattern = mkPattern({
+      periodType: 'year',
+      periodStart: new Date(2024, 1, 29), // Feb 29, 2024
+    });
+
+    // Last occurrence was the clamped Feb 28, 2025 → 2026 clamps again, but
+    // 2028 (a leap year) must land back on the 29th.
+    const results = computeNextOccurrences(pattern, new Date(2025, 1, 28), null, null, 3, new Date(2025, 1, 28));
+
+    expect(results[0]).toEqual(new Date(2026, 1, 28));
+    expect(results[1]).toEqual(new Date(2027, 1, 28));
+    expect(results[2]).toEqual(new Date(2028, 1, 29));
+  });
+
   // T40: endDate reached → stops
   it('stops generating when endDate is reached', () => {
     const pattern = mkPattern({
@@ -201,5 +246,98 @@ describe('computeNextOccurrences', () => {
     expect(results[0]).toEqual(new Date(2025, 0, 1));
     expect(results[1]).toEqual(new Date(2025, 1, 1));
     expect(results[2]).toEqual(new Date(2025, 2, 1));
+  });
+});
+
+// 'nth weekday' / 'last weekday' used to fall through to plain monthly
+// arithmetic, so every occurrence after the first landed on the wrong date.
+describe('weekday recurrences', () => {
+  it('generates the 3rd Friday of every month for a year', () => {
+    const pattern = mkPattern({
+      periodType: 'nth weekday',
+      periodStart: new Date(2025, 0, 17), // 3rd Friday of Jan 2025
+    });
+
+    const results = computeNextOccurrences(pattern, null, null, null, 12, new Date(2025, 0, 16));
+
+    expect(results).toEqual([
+      new Date(2025, 0, 17), new Date(2025, 1, 21), new Date(2025, 2, 21),
+      new Date(2025, 3, 18), new Date(2025, 4, 16), new Date(2025, 5, 20),
+      new Date(2025, 6, 18), new Date(2025, 7, 15), new Date(2025, 8, 19),
+      new Date(2025, 9, 17), new Date(2025, 10, 21), new Date(2025, 11, 19),
+    ]);
+    for (const d of results) expect(d.getDay()).toBe(5);
+  });
+
+  it('generates the last Tuesday of every month for a year', () => {
+    const pattern = mkPattern({
+      periodType: 'last weekday',
+      periodStart: new Date(2025, 0, 28), // last Tuesday of Jan 2025
+    });
+
+    const results = computeNextOccurrences(pattern, null, null, null, 12, new Date(2025, 0, 27));
+
+    expect(results).toEqual([
+      new Date(2025, 0, 28), new Date(2025, 1, 25), new Date(2025, 2, 25),
+      new Date(2025, 3, 29), new Date(2025, 4, 27), new Date(2025, 5, 24),
+      new Date(2025, 6, 29), new Date(2025, 7, 26), new Date(2025, 8, 30),
+      new Date(2025, 9, 28), new Date(2025, 10, 25), new Date(2025, 11, 30),
+    ]);
+    for (const d of results) {
+      expect(d.getDay()).toBe(2); // Tuesday
+      // Always within the final week of the month
+      expect(new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - d.getDate()).toBeLessThan(7);
+    }
+  });
+
+  it('falls back to the last weekday in months without an Nth one', () => {
+    const pattern = mkPattern({
+      periodType: 'nth weekday',
+      periodStart: new Date(2025, 3, 29), // 5th Tuesday of April 2025
+    });
+
+    const results = computeNextOccurrences(pattern, null, null, null, 6, new Date(2025, 3, 28));
+
+    expect(results).toEqual([
+      new Date(2025, 3, 29), // April has a 5th Tuesday
+      new Date(2025, 4, 27), // May does not → last Tuesday
+      new Date(2025, 5, 24), // June does not → last Tuesday
+      new Date(2025, 6, 29), // July has a 5th Tuesday
+      new Date(2025, 7, 26), // August does not
+      new Date(2025, 8, 30), // September has a 5th Tuesday
+    ]);
+  });
+
+  it('respects the month multiplier', () => {
+    const pattern = mkPattern({
+      periodType: 'nth weekday',
+      mult: 2,
+      periodStart: new Date(2025, 0, 17), // 3rd Friday
+    });
+
+    const results = computeNextOccurrences(pattern, null, null, null, 4, new Date(2025, 0, 16));
+
+    expect(results).toEqual([
+      new Date(2025, 0, 17), new Date(2025, 2, 21),
+      new Date(2025, 4, 16), new Date(2025, 6, 18),
+    ]);
+  });
+
+  it('advances correctly from a recorded last occurrence', () => {
+    const nthPattern = mkPattern({
+      periodType: 'nth weekday',
+      periodStart: new Date(2025, 0, 17), // 3rd Friday
+    });
+    const fromFeb = computeNextOccurrences(nthPattern, new Date(2025, 1, 21), null, null, 2, new Date(2025, 1, 21));
+    expect(fromFeb[0]).toEqual(new Date(2025, 2, 21));
+    expect(fromFeb[1]).toEqual(new Date(2025, 3, 18));
+
+    const lastPattern = mkPattern({
+      periodType: 'last weekday',
+      periodStart: new Date(2025, 0, 28), // last Tuesday
+    });
+    const fromJan = computeNextOccurrences(lastPattern, new Date(2025, 0, 28), null, null, 2, new Date(2025, 0, 28));
+    expect(fromJan[0]).toEqual(new Date(2025, 1, 25));
+    expect(fromJan[1]).toEqual(new Date(2025, 2, 25));
   });
 });

@@ -71,6 +71,29 @@ const DEFAULT_LIMITS: Record<number, LimitDefaults[]> = {
   ],
 };
 
+/**
+ * SECURE 2.0 §109 "super catch-up". For a participant who is 60, 61, 62, or 63
+ * at year end, the ordinary catch-up is REPLACED (not stacked) by a higher
+ * amount; at 64 the limit reverts to the ordinary catch-up.
+ *
+ * Effective for tax years beginning after 2024, so 2024 has none.
+ * Sources: Notice 2024-80 (2025) and Notice 2025-67 (2026) —
+ * $11,250 for 401(k)/403(b)/governmental 457(b) and $5,250 for SIMPLE plans in
+ * BOTH years. IRA catch-ups are not eligible for the super catch-up.
+ */
+const SUPER_CATCH_UP_LIMITS: Record<number, Record<string, number>> = {
+  2025: { '401k': 11_250, '403b': 11_250, '457': 11_250, simple_ira: 5_250 },
+  2026: { '401k': 11_250, '403b': 11_250, '457': 11_250, simple_ira: 5_250 },
+};
+
+const SUPER_CATCH_UP_MIN_AGE = 60;
+const SUPER_CATCH_UP_MAX_AGE = 63;
+
+/** The super catch-up amount for a year+type, or 0 when none applies. */
+export function getSuperCatchUpLimit(taxYear: number, accountType: string): number {
+  return SUPER_CATCH_UP_LIMITS[taxYear]?.[accountType] ?? 0;
+}
+
 export function getDefaultLimits(year: number): LimitDefaults[] {
   return DEFAULT_LIMITS[year] ?? [];
 }
@@ -90,9 +113,19 @@ export function calculateAge(birthday: string, asOfDate: Date): number | null {
 
 export interface ContributionLimitResult {
   base: number;
+  /** Ordinary catch-up amount for this plan type. */
   catchUp: number;
   total: number;
   catchUpAge: number;
+  /**
+   * SECURE 2.0 age 60-63 super catch-up for this year/type (0 when none).
+   * Present regardless of the filer's age so the UI can explain the rule.
+   */
+  superCatchUp?: number;
+  /** Catch-up actually included in `total` (0 when the filer is too young). */
+  catchUpApplied?: number;
+  /** True when `catchUpApplied` came from the age 60-63 super catch-up. */
+  superCatchUpApplied?: boolean;
 }
 
 export async function getContributionLimit(
@@ -123,15 +156,27 @@ export async function getContributionLimit(
     catchUpAge = match.catch_up_age;
   }
 
+  const superCatchUp = getSuperCatchUpLimit(taxYear, accountType);
+
   let total = base;
+  let catchUpApplied = 0;
+  let superCatchUpApplied = false;
   if (birthday) {
     const ageAtYearEnd = calculateAge(birthday, new Date(`${taxYear}-12-31`));
     if (ageAtYearEnd !== null && ageAtYearEnd >= catchUpAge) {
-      total = base + catchUp;
+      // SECURE 2.0: ages 60-63 use the super catch-up INSTEAD of the ordinary
+      // one (never both); 64+ reverts to the ordinary catch-up.
+      const inSuperWindow =
+        superCatchUp > 0 &&
+        ageAtYearEnd >= SUPER_CATCH_UP_MIN_AGE &&
+        ageAtYearEnd <= SUPER_CATCH_UP_MAX_AGE;
+      superCatchUpApplied = inSuperWindow && superCatchUp > catchUp;
+      catchUpApplied = superCatchUpApplied ? superCatchUp : catchUp;
+      total = base + catchUpApplied;
     }
   }
 
-  return { base, catchUp, total, catchUpAge };
+  return { base, catchUp, total, catchUpAge, superCatchUp, catchUpApplied, superCatchUpApplied };
 }
 
 export async function getAllLimitsForYear(taxYear: number): Promise<Array<LimitDefaults & { isOverride: boolean }>> {

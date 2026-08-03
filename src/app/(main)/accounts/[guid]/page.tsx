@@ -60,18 +60,21 @@ function AccountPageContent() {
     useEffect(() => {
         if (!isInitialized || !guid) return;
 
+        const controller = new AbortController();
+
         async function fetchData() {
             setLoading(true);
             setError(null);
             try {
                 // Fetch account metadata
-                const accountRes = await fetch(`/api/accounts/${guid}/info`);
+                const accountRes = await fetch(`/api/accounts/${guid}/info`, { signal: controller.signal });
                 if (!accountRes.ok) {
                     // Account doesn't belong to active book - redirect
                     router.push('/accounts');
                     return;
                 }
                 const accountData = await accountRes.json();
+                if (controller.signal.aborted) return;
                 setAccount(accountData);
 
                 // Fetch transactions with date filter
@@ -81,19 +84,26 @@ function AccountPageContent() {
                 if (startDate) txParams.set('startDate', startDate);
                 if (endDate) txParams.set('endDate', endDate);
 
-                const txRes = await fetch(`/api/accounts/${guid}/transactions?${txParams.toString()}`);
+                const txRes = await fetch(
+                    `/api/accounts/${guid}/transactions?${txParams.toString()}`,
+                    { signal: controller.signal },
+                );
                 if (!txRes.ok) throw new Error('Failed to fetch transactions');
                 const txData = await txRes.json();
+                if (controller.signal.aborted) return;
                 setTransactions(parseTransactionsResponse(txData));
                 setCurrentBalanceOverride(null);
             } catch (err) {
+                // A superseded request must not overwrite the current account's data.
+                if ((err as Error).name === 'AbortError') return;
                 setError(err instanceof Error ? err.message : 'An error occurred');
             } finally {
-                setLoading(false);
+                if (!controller.signal.aborted) setLoading(false);
             }
         }
 
         fetchData();
+        return () => controller.abort();
     }, [guid, startDate, endDate, isInitialized, activeBookGuid, router]);
 
     // Build breadcrumb path from the account hierarchy data

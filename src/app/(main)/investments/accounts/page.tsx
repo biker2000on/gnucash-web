@@ -83,8 +83,6 @@ export default function AccountsPage() {
         totalCostBasis: 0,
         totalGainLoss: 0,
         totalGainLossPercent: 0,
-        dayChange: 0,
-        dayChangePercent: 0,
       };
     }
     const totalValue = holdingsWithCash.reduce((sum, h) => sum + h.marketValue, 0);
@@ -98,8 +96,6 @@ export default function AccountsPage() {
       totalCostBasis,
       totalGainLoss,
       totalGainLossPercent,
-      dayChange: 0,
-      dayChangePercent: 0,
     };
   }, [holdingsWithCash]);
 
@@ -220,8 +216,6 @@ export default function AccountsPage() {
         totalValue={filteredSummary.totalValue}
         totalCostBasis={filteredSummary.totalCostBasis}
         totalGainLoss={filteredSummary.totalGainLoss}
-        dayChange={filteredSummary.dayChange}
-        dayChangePercent={filteredSummary.dayChangePercent}
         performancePercent={safePerformancePercent}
         performanceMetric={performanceMetric}
       />

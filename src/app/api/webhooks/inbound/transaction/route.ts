@@ -6,10 +6,16 @@
 // `gcw_...` personal access token (or a browser session) with the edit role;
 // the transaction lands in the token's book.
 //
-// Body: { date, description, amount, fromAccountGuid, toAccountGuid }
+// Body: { date, description, amount, fromAccountGuid, toAccountGuid,
+//         idempotencyKey? }
 // `amount` (positive, in book currency) moves FROM `fromAccountGuid`
 // (credited) TO `toAccountGuid` (debited). Both accounts must be currency
 // accounts denominated in the transaction currency.
+//
+// Idempotency: pass an `Idempotency-Key` header or an `idempotencyKey` body
+// field. The key is claimed against a UNIQUE index before the write, so an
+// n8n retry after a timeout is rejected by the database (and gets the
+// original response back) instead of posting a second ledger entry.
 
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
@@ -21,6 +27,13 @@ import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { logAudit } from '@/lib/services/audit.service';
 import { inboundTransactionSchema, parseInbound, toCents } from '@/lib/inbound-webhooks';
+import {
+    claimWebhookIdempotency,
+    completeWebhookIdempotency,
+    readIdempotencyKey,
+    releaseWebhookIdempotency,
+    validateIdempotencyKey,
+} from '@/lib/webhook-idempotency';
 
 export async function POST(request: Request) {
     try {
@@ -34,6 +47,14 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: parsed.error }, { status: 400 });
         }
         const input = parsed.data;
+
+        const keyCheck = validateIdempotencyKey(
+            readIdempotencyKey(request.headers.get('idempotency-key'), body)
+        );
+        if (!keyCheck.ok) {
+            return NextResponse.json({ error: keyCheck.error }, { status: 400 });
+        }
+        const idempotencyKey = keyCheck.key;
 
         // Period lock: reject postings into a closed period.
         const lockError = await withPeriodLockCheck(bookGuid, [input.date]);
@@ -90,12 +111,31 @@ export async function POST(request: Request) {
             }
         }
 
+        // Claim the idempotency key BEFORE the write. The UNIQUE index picks
+        // the winner, so a concurrent replay can never also reach the insert.
+        if (idempotencyKey) {
+            const claim = await claimWebhookIdempotency(bookGuid, 'transaction', idempotencyKey);
+            if (claim.status === 'replay') {
+                if (claim.result) {
+                    return NextResponse.json(
+                        { ...(claim.result as Record<string, unknown>), replayed: true },
+                        { status: 200 }
+                    );
+                }
+                return NextResponse.json(
+                    { error: 'A request with this idempotencyKey is already in progress' },
+                    { status: 409 }
+                );
+            }
+        }
+
         const cents = toCents(input.amount);
         const txGuid = generateGuid();
         const now = new Date();
         const postDate = new Date(`${input.date}T12:00:00Z`);
 
-        await prisma.$transaction([
+        try {
+            await prisma.$transaction([
             prisma.transactions.create({
                 data: {
                     guid: txGuid,
@@ -138,7 +178,15 @@ export async function POST(request: Request) {
                     },
                 ],
             }),
-        ]);
+            ]);
+        } catch (writeError) {
+            // The write failed, so the key must not stay burned — a genuine
+            // retry has to be able to proceed.
+            if (idempotencyKey) {
+                await releaseWebhookIdempotency(bookGuid, 'transaction', idempotencyKey);
+            }
+            throw writeError;
+        }
 
         // Best-effort audit trail + cache invalidation (non-fatal).
         await logAudit('CREATE', 'TRANSACTION', txGuid, null, {
@@ -156,16 +204,18 @@ export async function POST(request: Request) {
         }
         void publishDataChange(bookGuid, 'transactions', { guid: txGuid, action: 'create' });
 
-        return NextResponse.json(
-            {
-                success: true,
-                transactionGuid: txGuid,
-                date: input.date,
-                description: input.description,
-                amount: input.amount,
-            },
-            { status: 201 }
-        );
+        const payload = {
+            success: true,
+            transactionGuid: txGuid,
+            date: input.date,
+            description: input.description,
+            amount: input.amount,
+        };
+        if (idempotencyKey) {
+            await completeWebhookIdempotency(bookGuid, 'transaction', idempotencyKey, payload);
+        }
+
+        return NextResponse.json(payload, { status: 201 });
     } catch (error) {
         console.error('Error in inbound transaction webhook:', error);
         return NextResponse.json({ error: 'Failed to create transaction' }, { status: 500 });

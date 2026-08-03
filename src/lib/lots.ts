@@ -9,6 +9,7 @@
 import prisma from './prisma';
 import { toDecimalNumber } from './gnucash';
 import { getLatestPrice } from './commodities';
+import { isLongTerm } from './reports/capital-gains';
 
 export interface LotSplit {
     guid: string;
@@ -31,7 +32,12 @@ export interface LotSummary {
     totalCost: number;       // sum of value_decimal for buy splits (positive qty)
     realizedGain: number;    // proceeds - basis (positive = gain); see computeRealizedGain
     unrealizedGain: number | null; // (currentPrice * shares) - costBasis (null if no price)
-    holdingPeriod: 'short_term' | 'long_term' | null; // based on open date vs today (1 year threshold)
+    /**
+     * IRS holding term, measured acquisition -> CLOSE date for closed lots and
+     * acquisition -> today for still-open lots. Uses the same "more than one
+     * calendar year" rule as Form 8949 (see isLongTerm in reports/capital-gains).
+     */
+    holdingPeriod: 'short_term' | 'long_term' | null;
     currentPrice: number | null;
     sourceLotGuid: string | null;      // from source_lot_guid slot (transfer linking)
     acquisitionDate: string | null;     // from acquisition_date slot (original purchase date)
@@ -188,8 +194,7 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
         latestPrice = priceData?.value ?? null;
     }
 
-    const now = new Date();
-    const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+    const nowIso = new Date().toISOString();
 
     const summaries: LotSummary[] = lots.map((lot, index) => {
         const title = titleMap.get(lot.guid) || `Lot ${index + 1}`;
@@ -232,13 +237,16 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             unrealizedGain = marketValue - remainingBasis;
         }
 
-        // Holding period based on acquisition date (from transfer) or open date
+        // Holding period based on acquisition date (from transfer) or open date.
+        // A CLOSED lot's term was fixed on its close date — measuring against
+        // today would eventually reclassify every realized short-term sale as
+        // long-term, which is exactly backwards for tax-harvesting decisions.
+        // Only still-open lots are measured against today.
         let holdingPeriod: 'short_term' | 'long_term' | null = null;
         const effectiveOpenDate = acqDateMap.get(lot.guid) || openDate;
         if (effectiveOpenDate) {
-            const openMs = new Date(effectiveOpenDate).getTime();
-            const elapsed = now.getTime() - openMs;
-            holdingPeriod = elapsed > oneYearMs ? 'long_term' : 'short_term';
+            const termEndDate = isClosed && closeDate ? closeDate : nowIso;
+            holdingPeriod = isLongTerm(effectiveOpenDate, termEndDate) ? 'long_term' : 'short_term';
         }
 
         return {

@@ -101,6 +101,13 @@ END $$;
  * the canonical search row current while every specialised source row remains
  * untouched. Statement tables are optional/lazy and therefore use guarded
  * dynamic SQL.
+ *
+ * Every source SELECT carries `JOIN books bk_guard` because the source tables
+ * (receipts, payslips, home items, statement batches) have no FK on their own
+ * `book_guid`, while `gnucash_web_documents.book_guid` REFERENCES books(guid).
+ * Without the join a single orphaned source row aborts the whole backfill on
+ * every boot. Skipping orphans is correct here: a row pointing at a book that
+ * no longer exists has nothing to be indexed against.
  */
 export const LEGACY_DOCUMENT_BACKFILL_SQL = `
 INSERT INTO gnucash_web_documents (
@@ -125,6 +132,7 @@ SELECT
   r.ocr_text,
   r.extracted_data, 'receipt', r.id::TEXT, r.created_at, r.updated_at
 FROM gnucash_web_receipts r
+JOIN books bk_guard ON bk_guard.guid = r.book_guid
 ON CONFLICT (book_guid, source_kind, source_id) DO UPDATE SET
   owner_user_id = EXCLUDED.owner_user_id,
   storage_key = EXCLUDED.storage_key,
@@ -164,6 +172,7 @@ SELECT
   jsonb_build_object('line_items', p.line_items, 'raw_response', p.raw_response),
   'payslip', p.id::TEXT, p.created_at, p.updated_at
 FROM gnucash_web_payslips p
+JOIN books bk_guard ON bk_guard.guid = p.book_guid
 ON CONFLICT (book_guid, source_kind, source_id) DO UPDATE SET
   owner_user_id = EXCLUDED.owner_user_id,
   title = EXCLUDED.title,
@@ -192,6 +201,7 @@ SELECT
   ),
   'entity_document', e.id::TEXT, e.uploaded_at, e.uploaded_at
 FROM gnucash_web_entity_documents e
+JOIN books bk_guard ON bk_guard.guid = e.book_guid
 ON CONFLICT (book_guid, source_kind, source_id) DO UPDATE SET
   title = EXCLUDED.title,
   storage_key = EXCLUDED.storage_key,
@@ -220,6 +230,7 @@ SELECT
   jsonb_build_object('item_id', p.item_id, 'sort_order', p.sort_order),
   'home_item_photo', p.id::TEXT, p.created_at, p.created_at
 FROM gnucash_web_home_item_photos p
+JOIN books bk_guard ON bk_guard.guid = p.book_guid
 JOIN gnucash_web_home_items i ON i.id = p.item_id AND i.book_guid = p.book_guid
 ON CONFLICT (book_guid, source_kind, source_id) DO UPDATE SET
   title = EXCLUDED.title,
@@ -274,6 +285,7 @@ BEGIN
         ),
         'statement_batch', b.id::TEXT, b.created_at, b.updated_at
       FROM gnucash_web_statement_batches b
+      JOIN books bk_guard ON bk_guard.guid = b.book_guid
       ON CONFLICT (book_guid, source_kind, source_id) DO UPDATE SET
         title = EXCLUDED.title,
         storage_key = EXCLUDED.storage_key,
@@ -372,6 +384,7 @@ SELECT r.book_guid, d.id, 'transaction', r.transaction_guid, 'receipt',
          'autoSource', 'gnucash_web_receipts.transaction_guid'
        )
 FROM gnucash_web_receipts r
+JOIN books bk_guard ON bk_guard.guid = r.book_guid
 JOIN gnucash_web_documents d
   ON d.book_guid = r.book_guid
  AND d.source_kind = 'receipt'
@@ -403,6 +416,7 @@ SELECT p.book_guid, d.id, 'transaction', p.transaction_guid, 'payslip',
          'autoSource', 'gnucash_web_payslips.transaction_guid'
        )
 FROM gnucash_web_payslips p
+JOIN books bk_guard ON bk_guard.guid = p.book_guid
 JOIN gnucash_web_documents d
   ON d.book_guid = p.book_guid
  AND d.source_kind = 'payslip'
@@ -416,6 +430,7 @@ INSERT INTO gnucash_web_document_links (
 SELECT p.book_guid, d.id, 'home_item', p.item_id::TEXT, 'photo',
        jsonb_build_object('legacy_photo_id', p.id)
 FROM gnucash_web_home_item_photos p
+JOIN books bk_guard ON bk_guard.guid = p.book_guid
 JOIN gnucash_web_documents d
   ON d.book_guid = p.book_guid
  AND d.source_kind = 'home_item_photo'
@@ -450,6 +465,7 @@ SELECT i.book_guid, d.id, 'home_item', i.id::TEXT, 'purchase_receipt',
          'autoSource', 'home_item.receipt_id'
        )
 FROM gnucash_web_home_items i
+JOIN books bk_guard ON bk_guard.guid = i.book_guid
 JOIN gnucash_web_documents d
   ON d.book_guid = i.book_guid
  AND d.source_kind = 'receipt'
@@ -487,6 +503,7 @@ BEGIN
                'autoSource', 'gnucash_web_statement_batches.account_guid'
              )
       FROM gnucash_web_statement_batches b
+      JOIN books bk_guard ON bk_guard.guid = b.book_guid
       JOIN gnucash_web_documents d
         ON d.book_guid = b.book_guid
        AND d.source_kind = 'statement_batch'

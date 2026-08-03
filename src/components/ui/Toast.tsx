@@ -11,9 +11,9 @@ interface ToastProps {
 export function Toast({ toast, onClose }: ToastProps) {
     const typeConfig = {
         success: {
-            bg: 'bg-green-50 dark:bg-green-900/20',
-            border: 'border-green-200 dark:border-green-800',
-            text: 'text-green-800 dark:text-green-200',
+            bg: 'bg-success-light',
+            border: 'border-success/40',
+            text: 'text-success',
             icon: (
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path
@@ -25,9 +25,9 @@ export function Toast({ toast, onClose }: ToastProps) {
             ),
         },
         error: {
-            bg: 'bg-red-50 dark:bg-red-900/20',
-            border: 'border-red-200 dark:border-red-800',
-            text: 'text-red-800 dark:text-red-200',
+            bg: 'bg-error-light',
+            border: 'border-error/40',
+            text: 'text-error',
             icon: (
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path
@@ -39,9 +39,9 @@ export function Toast({ toast, onClose }: ToastProps) {
             ),
         },
         warning: {
-            bg: 'bg-amber-50 dark:bg-amber-900/20',
-            border: 'border-amber-200 dark:border-amber-800',
-            text: 'text-amber-800 dark:text-amber-200',
+            bg: 'bg-warning-light',
+            border: 'border-warning/40',
+            text: 'text-warning',
             icon: (
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path
@@ -53,9 +53,9 @@ export function Toast({ toast, onClose }: ToastProps) {
             ),
         },
         info: {
-            bg: 'bg-blue-50 dark:bg-blue-900/20',
-            border: 'border-blue-200 dark:border-blue-800',
-            text: 'text-blue-800 dark:text-blue-200',
+            bg: 'bg-secondary-light',
+            border: 'border-secondary/40',
+            text: 'text-secondary',
             icon: (
                 <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                     <path

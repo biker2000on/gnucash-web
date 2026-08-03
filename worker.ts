@@ -12,8 +12,31 @@ import { PrismaClient } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+/**
+ * Connection budget for the short-lived helper clients below.
+ *
+ * The worker process already holds the module-level pools in src/lib/db.ts and
+ * src/lib/prisma.ts (DB_POOL_MAX each, default 20) as soon as a job handler is
+ * imported, and the web process holds two more. Leaving these ad-hoc pools on
+ * pg's default of 10 pushed the deployment past Postgres' default
+ * max_connections of 100. They only run a handful of queries before
+ * $disconnect(), so a small slice of DB_POOL_MAX is plenty.
+ */
+const WORKER_POOL_MAX =
+  Number.parseInt(process.env.WORKER_DB_POOL_MAX ?? '', 10) ||
+  Math.max(2, Math.floor((Number.parseInt(process.env.DB_POOL_MAX ?? '', 10) || 20) / 4));
+
 function createWorkerPrisma() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: WORKER_POOL_MAX,
+  });
+  // pg emits 'error' on IDLE pooled clients; without a listener Node turns a
+  // Postgres restart into an uncaught exception that kills the worker and
+  // abandons every in-flight BullMQ job.
+  pool.on('error', (err) => {
+    console.error('Postgres pool (worker) idle client error:', err);
+  });
   const adapter = new PrismaPg(pool);
   return new PrismaClient({ adapter });
 }
@@ -453,10 +476,13 @@ async function main() {
             console.error(`SimpleFin sync errors:`, syncResult.errors);
           }
           if (syncResult.status !== 'success') {
-            // Surface the failure on the progress bus, then let the normal
-            // return path stand (the service already persisted status +
-            // notification).
-            await emit?.failed(syncResult.errors[0]?.error ?? `Sync ${syncResult.status}`);
+            // Throw so the job lands in BullMQ's `failed` set. The outer catch
+            // emits 'failed' on the progress bus and rethrows; previously this
+            // returned normally and the failed sync was recorded as
+            // `completed` (the service still persisted status + notification).
+            throw new Error(
+              syncResult.errors[0]?.error ?? `SimpleFin sync ${syncResult.status}`,
+            );
           }
           break;
         }
@@ -596,16 +622,28 @@ async function main() {
         case 'sync-fuel-tracker': {
           const { syncEnabledFuelTrackers } = await import('./src/lib/resilience/service');
           const outcomes = await syncEnabledFuelTrackers();
+          const failedCount = outcomes.filter(outcome => outcome.error).length;
           jobSummary = {
+            // `status` is what the completed/failed decision below reads — a
+            // run where every connection errored must not report success.
+            status: outcomes.length > 0 && failedCount === outcomes.length ? 'error' : 'success',
             connections: outcomes.length,
             imported: outcomes.reduce((sum, outcome) => sum + outcome.imported, 0),
             matched: outcomes.reduce((sum, outcome) => sum + outcome.matched, 0),
-            failed: outcomes.filter(outcome => outcome.error).length,
+            failed: failedCount,
           };
+          if (outcomes.length > 0 && failedCount === outcomes.length) {
+            throw new Error(
+              outcomes[0].error ?? `Fuel Tracker sync failed for all ${failedCount} connection(s)`,
+            );
+          }
           break;
         }
         default:
-          console.warn(`Unknown job type: ${job.name}`);
+          // A renamed/removed job type used to fall through to the success
+          // path and vanish silently. Fail loudly so it lands in BullMQ's
+          // `failed` set and shows up in monitoring.
+          throw new Error(`Unknown job type: ${job.name}`);
       }
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

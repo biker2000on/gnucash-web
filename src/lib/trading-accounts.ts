@@ -33,6 +33,12 @@ export function needsTradingAccounts(splits: SplitWithCommodity[]): boolean {
   return commodities.size > 1;
 }
 
+/** Transaction-currency precision used for every trading split's value. */
+const VALUE_DENOM = 100;
+
+/** Quantities below this are representation noise, not a real commodity imbalance. */
+const QUANTITY_EPSILON = 0.0001;
+
 export interface CommodityImbalance {
   mnemonic: string;
   namespace: string;
@@ -70,10 +76,14 @@ export function calculateImbalances(
     imbalances.set(split.commodityGuid, existing);
   }
 
-  // Filter to only non-zero quantity imbalances (use small epsilon for floating point).
-  // Value imbalance can legitimately be zero on a multi-currency split that already balances.
+  // Drop a commodity only when BOTH its quantity and its value net to zero.
+  // A commodity can net to zero shares while still carrying value — a return
+  // of capital posts 0 shares and -$500 basis to the security account — and
+  // dropping it there would leave that $500 with nothing to offset it.
   for (const [guid, data] of imbalances) {
-    if (Math.abs(data.quantityImbalance) < 0.0001) {
+    const quantityMaterial = Math.abs(data.quantityImbalance) >= QUANTITY_EPSILON;
+    const valueMaterial = Math.round(data.valueImbalance * VALUE_DENOM) !== 0;
+    if (!quantityMaterial && !valueMaterial) {
       imbalances.delete(guid);
     }
   }
@@ -271,26 +281,67 @@ export function generateTradingSplits(
     quantityDenom: number;
   }> = [];
 
-  const VALUE_DENOM = 100; // Transaction currency precision (USD)
-
   for (const [commodityGuid, { quantityImbalance, valueImbalance, fraction }] of imbalances) {
     const tradingAccountGuid = tradingAccountGuids.get(commodityGuid);
     if (!tradingAccountGuid) continue;
 
     const quantityDenom = fraction > 0 ? fraction : 100;
-    const quantityValue = -quantityImbalance;
-    const valueValue = -valueImbalance;
 
     tradingSplits.push({
       accountGuid: tradingAccountGuid,
-      valueNum: Math.round(valueValue * VALUE_DENOM),
+      valueNum: roundToInt(-valueImbalance, VALUE_DENOM),
       valueDenom: VALUE_DENOM,
-      quantityNum: Math.round(quantityValue * quantityDenom),
+      quantityNum: roundToInt(-quantityImbalance, quantityDenom),
       quantityDenom,
     });
   }
 
   return tradingSplits;
+}
+
+/** Round to an integer numerator, normalizing -0 (which Postgres would reject as a surprise). */
+function roundToInt(value: number, denom: number): number {
+  const num = Math.round(value * denom);
+  return num === 0 ? 0 : num;
+}
+
+function gcd(a: bigint, b: bigint): bigint {
+  while (b !== 0n) [a, b] = [b, a % b];
+  return a < 0n ? -a : a;
+}
+
+/**
+ * Post-condition for the trading-split generator: the full split set must sum
+ * to exactly zero in value. Compared over the least common denominator so the
+ * check is exact integer arithmetic rather than float tolerance.
+ *
+ * Throws rather than returning a flag: `processMultiCurrencySplits` runs after
+ * the API route's own validation and its output is never re-validated, so an
+ * unbalanced set here would be written straight to the books.
+ */
+export function assertValueBalanced(
+  splits: Array<{ value_num: number; value_denom: number }>,
+): void {
+  if (splits.length === 0) return;
+
+  let common = 1n;
+  for (const s of splits) {
+    const d = BigInt(s.value_denom);
+    if (d === 0n) throw new Error('Split has a zero value denominator');
+    common = (common / gcd(common, d)) * d;
+  }
+
+  let total = 0n;
+  for (const s of splits) {
+    total += BigInt(s.value_num) * (common / BigInt(s.value_denom));
+  }
+
+  if (total !== 0n) {
+    throw new Error(
+      `Trading splits do not balance: value sums to ${Number(total) / Number(common)} instead of 0. `
+      + 'Refusing to write an unbalanced transaction.',
+    );
+  }
 }
 
 /**
@@ -395,6 +446,8 @@ export async function processMultiCurrencySplits(
       reconcile_state: 'n' as const,
     })),
   ];
+
+  assertValueBalanced(allSplits);
 
   return {
     isMultiCurrency: true,

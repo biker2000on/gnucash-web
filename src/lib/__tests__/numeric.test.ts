@@ -55,6 +55,57 @@ describe('toDecimal', () => {
   it('should handle investment fractions (10000 denominator)', () => {
     expect(toDecimal(123456n, 10000n)).toBe('12.3456');
   });
+
+  // GCD-reduced price rows (implied-price service) leave arbitrary
+  // denominators in the prices table; these must decode exactly, not by
+  // padding the remainder against the denominator's digit count.
+  describe('non-power-of-ten denominators', () => {
+    it('should convert 1/8 to "0.125"', () => {
+      expect(toDecimal(1n, 8n)).toBe('0.125');
+    });
+
+    it('should convert 5/16 to "0.3125"', () => {
+      expect(toDecimal(5n, 16n)).toBe('0.3125');
+    });
+
+    it('should convert 3/64 to "0.046875"', () => {
+      expect(toDecimal(3n, 64n)).toBe('0.046875');
+    });
+
+    it('should convert 1/256 to "0.00390625"', () => {
+      expect(toDecimal(1n, 256n)).toBe('0.00390625');
+    });
+
+    it('should convert 7/2000 to "0.0035"', () => {
+      expect(toDecimal(7n, 2000n)).toBe('0.0035');
+    });
+
+    // Non-terminating quotients are capped at a display-sane scale because
+    // these strings reach the UI raw via the Prisma computed decimal fields.
+    it('should round repeating fractions half-up at the capped scale', () => {
+      expect(toDecimal(1n, 3n)).toBe('0.3333333333');
+      expect(toDecimal(2n, 3n)).toBe('0.6666666667');
+      expect(toDecimal(1n, 6n)).toBe('0.1666666667');
+    });
+
+    it('should decode a real GCD-reduced price row', () => {
+      expect(toDecimal(8727032n, 58502535n)).toBe('0.14917357');
+    });
+
+    it('should keep the sign on non-power-of-ten denominators', () => {
+      expect(toDecimal(-1n, 8n)).toBe('-0.125');
+      expect(toDecimal(-3n, 64n)).toBe('-0.046875');
+    });
+
+    it('should still return the bare integer when the fraction divides evenly', () => {
+      expect(toDecimal(16n, 8n)).toBe('2');
+      expect(toDecimal(-24n, 8n)).toBe('-3');
+    });
+
+    it('should carry the integer part alongside an odd denominator', () => {
+      expect(toDecimal(25n, 8n)).toBe('3.125');
+    });
+  });
 });
 
 describe('toDecimalNumber', () => {
@@ -68,6 +119,15 @@ describe('toDecimalNumber', () => {
   });
   it('should handle negative values', () => {
     expect(toDecimalNumber(-50n, 100n)).toBe(-0.5);
+  });
+  it('should handle non-power-of-ten denominators', () => {
+    expect(toDecimalNumber(1n, 8n)).toBe(0.125);
+    expect(toDecimalNumber(1n, 256n)).toBe(0.00390625);
+    expect(toDecimalNumber(1n, 3n)).toBeCloseTo(1 / 3, 9);
+    expect(toDecimalNumber(8727032n, 58502535n)).toBe(0.14917357);
+  });
+  it('should return 0 for a zero denominator', () => {
+    expect(toDecimalNumber(100n, 0n)).toBe(0);
   });
 });
 

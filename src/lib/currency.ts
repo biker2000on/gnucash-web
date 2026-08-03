@@ -6,13 +6,8 @@
  */
 
 import prisma from './prisma';
-import { toDecimal as toDecimalString } from './gnucash';
+import { toDecimalNumber as toDecimal } from './gnucash';
 import { getActiveBookRootGuid } from './book-scope';
-
-function toDecimal(num: bigint | number | string | null, denom: bigint | number | string | null): number {
-    if (num === null || denom === null) return 0;
-    return parseFloat(toDecimalString(num, denom));
-}
 
 export interface ExchangeRate {
     fromCurrency: string;

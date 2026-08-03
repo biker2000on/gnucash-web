@@ -274,6 +274,12 @@ export interface FederalTaxResult {
   deductionTaken: number;
   /** OBBBA senior deduction (2025+), after phase-out */
   seniorDeduction: number;
+  /**
+   * §199A qualified business income deduction, applied AFTER the standard /
+   * itemized and senior deductions. Simplified below-threshold model — see the
+   * header of src/lib/tax/federal.ts for what it does not cover.
+   */
+  qbiDeduction: number;
 
   taxableIncome: number;
   ordinaryTaxableIncome: number;

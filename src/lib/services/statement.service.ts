@@ -282,6 +282,11 @@ export function ensureStatementTables(): Promise<void> {
         END $$;
       `);
     })();
+    // A transient failure must not poison the memo for the process lifetime —
+    // the DDL is idempotent, so let the next call retry.
+    ensurePromise.catch(() => {
+      ensurePromise = null;
+    });
   }
   return ensurePromise;
 }
@@ -512,14 +517,19 @@ export async function getMappedAccountGuid(
 // Line CRUD
 // ---------------------------------------------------------------------------
 
-/** Replace ALL lines for a batch with the provided set. Returns the count inserted. */
+/**
+ * Replace ALL lines for a batch with the provided set. Returns the count inserted.
+ *
+ * DELETE and INSERT run in ONE transaction. Separately they lose data: a failed
+ * INSERT after a committed DELETE wipes every parsed line for the batch —
+ * including the user's `matched_split_guid` reconciliation decisions — and two
+ * concurrent extractions of the same batch interleave to double every line.
+ */
 export async function replaceLines(
   batchId: number,
   lines: StatementLineInput[],
 ): Promise<number> {
   await ensureStatementTables();
-  await prisma.$executeRaw`DELETE FROM gnucash_web_statement_lines WHERE batch_id = ${batchId}`;
-  if (lines.length === 0) return 0;
 
   const params: unknown[] = [];
   const tuples = lines.map((l, idx) => {
@@ -537,14 +547,19 @@ export async function replaceLines(
     return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8})`;
   });
 
-  await prisma.$executeRawUnsafe(
-    `
-      INSERT INTO gnucash_web_statement_lines
-        (batch_id, line_date, description, amount, running_balance, matched_split_guid, match_state, suggested_account_guid)
-      VALUES ${tuples.join(', ')}
-    `,
-    ...params,
-  );
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`DELETE FROM gnucash_web_statement_lines WHERE batch_id = ${batchId}`;
+    if (tuples.length === 0) return;
+    await tx.$executeRawUnsafe(
+      `
+        INSERT INTO gnucash_web_statement_lines
+          (batch_id, line_date, description, amount, running_balance, matched_split_guid, match_state, suggested_account_guid)
+        VALUES ${tuples.join(', ')}
+      `,
+      ...params,
+    );
+  });
+
   return lines.length;
 }
 

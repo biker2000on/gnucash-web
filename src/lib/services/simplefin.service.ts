@@ -21,8 +21,26 @@ function deriveKey(secret: string, salt: Buffer): Buffer {
   return scryptSync(secret, salt, 32);
 }
 
+/**
+ * Access URLs written before 2026-08 were sealed with a constant that shipped in
+ * this (public) repository, so anything encrypted under it must be treated as
+ * disclosed. It stays here only so existing connections keep working until they
+ * are re-linked; it is never used to encrypt.
+ */
+const LEGACY_FALLBACK_SECRET = 'complex_password_at_least_32_characters_long_12345';
+
+function encryptionSecret(): string {
+  const secret = process.env.SESSION_SECRET || process.env.NEXTAUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      'SESSION_SECRET (or NEXTAUTH_SECRET) is required to encrypt SimpleFin credentials'
+    );
+  }
+  return secret;
+}
+
 export function encryptAccessUrl(url: string): string {
-  const secret = process.env.SESSION_SECRET || 'complex_password_at_least_32_characters_long_12345';
+  const secret = encryptionSecret();
   const salt = randomBytes(16);
   const key = deriveKey(secret, salt);
   const iv = randomBytes(16);
@@ -34,8 +52,7 @@ export function encryptAccessUrl(url: string): string {
   return `${salt.toString('hex')}:${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
 }
 
-export function decryptAccessUrl(encrypted: string): string {
-  const secret = process.env.SESSION_SECRET || 'complex_password_at_least_32_characters_long_12345';
+function decryptWith(secret: string, encrypted: string): string {
   const [saltHex, ivHex, authTagHex, data] = encrypted.split(':');
   const salt = Buffer.from(saltHex, 'hex');
   const key = deriveKey(secret, salt);
@@ -46,6 +63,41 @@ export function decryptAccessUrl(encrypted: string): string {
   let decrypted = decipher.update(data, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return decrypted;
+}
+
+/** True when the value could only be opened with the retired constant. */
+export function isLegacyEncryptedAccessUrl(encrypted: string): boolean {
+  try {
+    decryptWith(encryptionSecret(), encrypted);
+    return false;
+  } catch {
+    try {
+      decryptWith(LEGACY_FALLBACK_SECRET, encrypted);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function decryptAccessUrl(encrypted: string): string {
+  try {
+    return decryptWith(encryptionSecret(), encrypted);
+  } catch (err) {
+    // GCM authentication fails on a key mismatch, which is how a credential
+    // sealed with the retired constant is recognised. Re-link the connection
+    // to rotate it; the old ciphertext's key is public.
+    try {
+      const url = decryptWith(LEGACY_FALLBACK_SECRET, encrypted);
+      console.warn(
+        'SimpleFin access URL is still sealed with the retired fallback secret. ' +
+        'Re-link this connection to rotate the credential.'
+      );
+      return url;
+    } catch {
+      throw err;
+    }
+  }
 }
 
 // --- Errors ---

@@ -72,13 +72,14 @@ export default function RetirementPlannerPage() {
   const [salary, setSalary] = useState<number | ''>('');
   const [data, setData] = useState<RetirementResponse | null>(null);
   const [notApplicable, setNotApplicable] = useState<NotApplicableResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  // Which inputs the settled data/error belongs to. `loading` is derived from it
+  // rather than reset at the top of the effect.
+  const [settledKey, setSettledKey] = useState<string | null>(null);
+  const requestKey = `${year}|${salary}`;
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     const params = new URLSearchParams({ year: String(year) });
     if (salary !== '') params.set('salary', String(salary));
@@ -99,12 +100,13 @@ export default function RetirementPlannerPage() {
             return;
           }
           setData(payload);
+          setFetchError(null);
         })
         .catch(err => {
-          if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
+          if (!cancelled) setFetchError(err instanceof Error ? err.message : 'Failed to load');
         })
         .finally(() => {
-          if (!cancelled) setLoading(false);
+          if (!cancelled) setSettledKey(`${year}|${salary}`);
         });
     }, 250);
 
@@ -113,6 +115,10 @@ export default function RetirementPlannerPage() {
       clearTimeout(timer);
     };
   }, [year, salary]);
+
+  const loading = settledKey !== requestKey;
+  // A previous request's failure is not shown while a new one is in flight.
+  const error = loading ? null : fetchError;
 
   if (notApplicable) {
     const entityLabel = ENTITY_TYPE_LABELS[notApplicable.entityType] ?? notApplicable.entityType;

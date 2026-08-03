@@ -47,7 +47,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 
 ### Key Libraries (src/lib/)
 
-- `db.ts` - PostgreSQL connection pool; `toDecimal()` converts GnuCash fraction-based numerics
+- `db.ts` - PostgreSQL connection pool and advisory-lock helpers
 - `db-init.ts` - Creates `account_hierarchy` view on app startup (recursive CTE)
 - `gnucash.ts` - GnuCash utilities: fraction conversion (`toDecimal`, `toDecimalNumber`, `fromDecimal`), GUID generation, `findOrCreateAccount` for account hierarchy creation
 - `lot-scrub.ts` - GnuCash-compatible lot scrub engine (sell splitting across lots, transfer lot linking, auto capital gains generation)
@@ -90,7 +90,7 @@ docker run -p 3000:3000 -e DATABASE_URL="..." gnucash-web
 ## Key Technical Details
 
 - **Database**: PostgreSQL with GnuCash schema. The `account_hierarchy` view is auto-created on startup.
-- **Numeric Handling**: GnuCash stores amounts as fractions. Use `toDecimal()` from `db.ts` for conversion.
+- **Numeric Handling**: GnuCash stores amounts as fractions. Use `toDecimal()` / `toDecimalNumber()` from `gnucash.ts` — the single canonical implementation. Denominators are NOT always powers of ten (`impliedPriceFraction()` stores GCD-reduced fractions), so never reconstruct a decimal by string-padding against the denominator's digit count.
 - **UI State**: AccountHierarchy persists expansion, sorting, and visibility toggles to localStorage.
 - **Infinite Scroll**: TransactionJournal and AccountLedger use IntersectionObserver.
 - **Path Alias**: `@/*` resolves to `./src/*` (configured in tsconfig.json).

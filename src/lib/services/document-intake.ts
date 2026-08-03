@@ -269,18 +269,35 @@ export async function intakeStatement(input: StatementIntakeInput): Promise<Stat
     return { ok: false, error: 'Failed to save statement record', status: 500 };
   }
 
-  const jobId = await enqueueExtractStatement({
-    batchId: batch.id,
-    bookGuid: input.bookGuid,
-    userId: input.userId,
-  });
+  // Deterministic job id: `enqueueJob` cannot cancel a slow `queue.add` that
+  // later succeeds, so without it a >5s enqueue would have BOTH the worker and
+  // this request run the extraction (double AI call, double replaceLines).
+  const jobId = await enqueueExtractStatement(
+    {
+      batchId: batch.id,
+      bookGuid: input.bookGuid,
+      userId: input.userId,
+    },
+    { jobId: `extract-statement:${batch.id}` },
+  );
   if (!jobId) {
     // Redis unavailable — run extraction inline.
     try {
       const { runStatementExtraction } = await import('@/lib/statement-ingest');
       await runStatementExtraction(batch.id, input.bookGuid, `[inline-${batch.id}]`, input.userId);
     } catch (extractErr) {
+      // Record the failure on the batch (mirrors the receipt path's
+      // `enqueue_failed`) — the upload itself succeeded, but the user must be
+      // able to see that extraction did not.
       console.error(`Inline statement extraction failed for batch ${batch.id}:`, extractErr);
+      try {
+        const { setBatchStatus } = await import('@/lib/services/statement.service');
+        await setBatchStatus(batch.id, 'error', {
+          error: extractErr instanceof Error ? extractErr.message : String(extractErr),
+        });
+      } catch (statusErr) {
+        console.error(`Failed to record extraction error for batch ${batch.id}:`, statusErr);
+      }
     }
   }
 

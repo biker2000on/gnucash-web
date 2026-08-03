@@ -8,9 +8,16 @@ import { AccountSelector } from '@/components/ui/AccountSelector';
 // ---------------------------------------------------------------------------
 
 interface SplitInput {
+  id: string; // Stable client-side key; rows are removable, so the index is not one
   accountGuid: string;
   amount: string;
 }
+
+const newSplit = (accountGuid = '', amount = ''): SplitInput => ({
+  id: crypto.randomUUID(),
+  accountGuid,
+  amount,
+});
 
 export interface ScheduledPanelValue {
   guid?: string;
@@ -80,10 +87,7 @@ export function CreateScheduledPanel({
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [weekendAdjust, setWeekendAdjust] = useState('none');
-  const [splits, setSplits] = useState<SplitInput[]>([
-    { accountGuid: '', amount: '' },
-    { accountGuid: '', amount: '' },
-  ]);
+  const [splits, setSplits] = useState<SplitInput[]>(() => [newSplit(), newSplit()]);
   const [autoCreate, setAutoCreate] = useState(false);
   const [autoNotify, setAutoNotify] = useState(false);
 
@@ -102,10 +106,7 @@ export function CreateScheduledPanel({
     setStartDate(initialValue.startDate ?? initialValue.recurrence.periodStart);
     setEndDate(initialValue.endDate ?? '');
     setWeekendAdjust(initialValue.recurrence.weekendAdjust);
-    setSplits(initialValue.splits.map(split => ({
-      accountGuid: split.accountGuid,
-      amount: String(split.amount),
-    })));
+    setSplits(initialValue.splits.map(split => newSplit(split.accountGuid, String(split.amount))));
     setAutoCreate(initialValue.autoCreate);
     setAutoNotify(initialValue.autoNotify);
   }, [initialValue]);
@@ -127,7 +128,7 @@ export function CreateScheduledPanel({
         setName(data.description ? `${data.description} schedule` : 'Scheduled transaction');
         setStartDate(new Date().toISOString().slice(0, 10));
         const nextSplits = (data.splits ?? [])
-          .map(split => ({ accountGuid: split.account_guid, amount: String(Number(split.value_decimal)) }))
+          .map(split => newSplit(split.account_guid, String(Number(split.value_decimal))))
           .filter(split => split.accountGuid && Number.isFinite(Number(split.amount)));
         if (nextSplits.length >= 2) setSplits(nextSplits);
       })
@@ -171,7 +172,7 @@ export function CreateScheduledPanel({
   }, []);
 
   const addSplit = () => {
-    setSplits(prev => [...prev, { accountGuid: '', amount: '' }]);
+    setSplits(prev => [...prev, newSplit()]);
   };
 
   const removeSplit = (index: number) => {
@@ -376,7 +377,7 @@ export function CreateScheduledPanel({
             <legend className="text-sm font-medium text-foreground">Splits</legend>
 
             {splits.map((split, idx) => (
-              <div key={idx} className="flex items-start gap-2">
+              <div key={split.id} className="flex items-start gap-2">
                 <div className="flex-1 space-y-1">
                   <label className="text-xs text-foreground-secondary block">Account</label>
                   <AccountSelector
@@ -448,7 +449,7 @@ export function CreateScheduledPanel({
 
           {/* Error message */}
           {error && (
-            <p className="text-red-400 text-sm">{error}</p>
+            <p className="text-negative text-sm">{error}</p>
           )}
 
           {command && (

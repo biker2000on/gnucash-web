@@ -66,6 +66,8 @@ export function DescriptionAutocomplete({
       clearTimeout(debounceTimerRef.current);
     }
 
+    const controller = new AbortController();
+
     // Set new timer
     debounceTimerRef.current = setTimeout(async () => {
       setLoading(true);
@@ -77,7 +79,9 @@ export function DescriptionAutocomplete({
         if (accountGuid) {
           params.append('account_guid', accountGuid);
         }
-        const response = await fetch(`/api/transactions/descriptions?${params.toString()}`);
+        const response = await fetch(`/api/transactions/descriptions?${params.toString()}`, {
+          signal: controller.signal,
+        });
         const data = await response.json();
         setSuggestions(data.suggestions || []);
         if (data.suggestions && data.suggestions.length > 0 && isFocusedRef.current) {
@@ -87,11 +91,13 @@ export function DescriptionAutocomplete({
           setIsOpen(false);
         }
       } catch (error) {
+        // A superseded lookup must not overwrite the suggestions for a newer query.
+        if ((error as Error).name === 'AbortError') return;
         console.error('Error fetching suggestions:', error);
         setSuggestions([]);
         setIsOpen(false);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     }, 200);
 
@@ -99,6 +105,7 @@ export function DescriptionAutocomplete({
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
+      controller.abort();
     };
   }, [value, accountGuid]);
 
@@ -248,7 +255,7 @@ export function DescriptionAutocomplete({
         placeholder={placeholder}
         data-field="description"
         className={`w-full bg-input-bg border rounded-lg ${compact ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'} text-foreground placeholder-foreground-muted focus:outline-none ${
-          isOpen ? 'border-primary/50 ring-1 ring-primary/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border focus:border-primary/50'
+          isOpen ? 'border-primary/50 ring-1 ring-primary/20' : hasError ? 'border-negative ring-1 ring-negative/30' : 'border-border focus:border-primary/50'
         }`}
       />
 

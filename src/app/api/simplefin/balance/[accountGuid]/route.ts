@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole } from '@/lib/auth';
+import { isAccountInActiveBook } from '@/lib/book-scope';
 
 export async function GET(
     request: Request,
@@ -11,6 +12,12 @@ export async function GET(
         if (roleResult instanceof NextResponse) return roleResult;
 
         const { accountGuid } = await params;
+
+        // requireRole authorizes the book, not this account. Without this the
+        // synced bank balance of any account guid in any book is readable.
+        if (!(await isAccountInActiveBook(accountGuid))) {
+            return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+        }
 
         const result = await prisma.$queryRaw<{
             last_balance: number | null;

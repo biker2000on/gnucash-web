@@ -1128,6 +1128,65 @@ targets.
 
 # Correctness and reliability backlog
 
+## P1 - Book-Scope the Native Business Entities
+
+**Status:** Open. Raised by the 2026-08-03 audit (finding S5); the only audit
+finding deliberately not fixed in that pass.
+
+Customers, vendors, employees, invoices, jobs, billterms, and taxtables are
+native GnuCash tables with no `book_guid` column, and the app never added one.
+`contactWhere()` (`src/lib/services/business.service.ts:367`) filters on
+`active` and `search` only, and `getCustomer(guid)` is a bare `findUnique`, so
+`GET /api/business/customers` and `/api/business/invoices` return every book's
+rows. With `edit`, `PUT`/`DELETE` on another book's invoice succeeds. The header
+comment in `customers/route.ts:3-5` acknowledges a "single-business-database
+assumption" that the rest of the product outgrew.
+
+**Why it was deferred rather than rushed:** the fix is an ownership side-table
+plus threading `bookGuid` through 30 service functions, 41 call sites, and 73
+route files — and a partial rollout is worse than none, because entities would
+appear in some surfaces and vanish from others. It was not safe to land in the
+same change as the rest of the audit remediation.
+
+**Why it is not currently exploitable:** production has one user account and
+zero business entities (verified 2026-08-03); dev has six, all test data. The
+exposure is latent and becomes real the moment a second user or a real business
+book exists.
+
+**Approach:** mirror `src/lib/budget-ownership.ts` — a
+`gnucash_web_business_entity_ownership` table keyed by (entity_type,
+entity_guid) with "missing == foreign" semantics, created in `db-init.ts`
+alongside the other app tables. Backfill by deriving each invoice's book from
+`post_acc` -> account -> root -> book, then attributing its customer/vendor/job;
+entities with no derivable link need an explicit operator choice, so surface
+them rather than guessing. Ship the backfill and the read filters together.
+
+**Acceptance:** every business list and single-entity read is filtered by the
+caller's authorized book; writes verify book ownership before mutating; a
+backfill assigns every pre-existing entity or reports it as unattributed; and a
+test asserts that a user with a role on only one book sees no entity from
+another.
+
+**Effort:** M-L.
+
+---
+
+## P4 - Ledger Inline Save Drops Memos and Reconcile State
+
+**Status:** Proposed 2026-08-03, found while fixing the inline-edit quantity
+corruption.
+
+`handleInlineSave` in `src/components/AccountLedger.tsx` rebuilds splits from
+its payload, so every inline save discards split memos and resets the
+counter-account's `reconcile_state` to `'n'`. A user correcting a typo silently
+un-reconciles the other side of the transaction. Pre-existing and independent of
+the quantity fix that shipped alongside it; it touches reconciliation semantics,
+so it wants its own change and its own test.
+
+**Effort:** S.
+
+---
+
 ## P4 - Semantic Color Token Pass
 
 **Status:** Proposed 2026-08-02.
@@ -1137,17 +1196,24 @@ DESIGN.md defines the palette as semantic tokens (`--positive`, `--negative`,
 Tailwind palette classes, so they do not follow the light/dark themes and drift
 from the design system.
 
-Known offenders found during the 2026-08-02 form audit:
+The 2026-08-03 audit measured the split: 429 semantic-token usages against 314
+raw-palette usages for the same semantics, across 624 lines in 132 files. The
+raw values are hardcoded *dark*-theme colors, so they degrade in light theme.
 
-- `src/components/ledger/LotViewer.tsx` — `text-emerald-400`, `text-rose-400`
-- `src/components/TransactionEditModal.tsx` — delete button `bg-rose-600`,
-  `text-white`
+Already retokenized on 2026-08-03: `src/components/ui/Toast.tsx` (the shared
+design-system component was the worst offender — it bypassed tokens entirely and
+hand-rolled `dark:` pairs) and `src/components/ledger/LotViewer.tsx`.
+
+Remaining offenders:
+
 - `src/components/AccountHierarchy.tsx` — `bg-amber-500/10`, `text-amber-400`
 - `src/app/(main)/scheduled-transactions/page.tsx` — `bg-gray-600/50`, `amber-*`
 
 Sweep for raw palette classes (`emerald-`, `rose-`, `amber-`, `gray-`, `white`)
-outside `ThemeToggle.tsx`, which intentionally hardcodes light-mode colors, and
-map each to its semantic equivalent. Presentation only.
+and map each to its semantic equivalent. Presentation only. Note there is no
+longer a sanctioned exception: `ThemeToggle.tsx`, which used to hold one, was
+deleted on 2026-08-03 as dead code (theme switching lives in
+`src/contexts/ThemeContext.tsx`).
 
 **Effort:** S.
 

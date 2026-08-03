@@ -211,10 +211,13 @@ export function ProvenanceModal({
   const [redockPayload, setRedockPayload] = useState<ExplainPayload | null>(null);
 
   const handleRedock = useCallback((lastPayload: unknown) => {
+    // The host's own selection supersedes a re-docked one, so a trace arriving
+    // while the modal is already open is dropped rather than stored and cleared.
+    if (isOpen) return;
     if (lastPayload && typeof lastPayload === 'object') {
       setRedockPayload(lastPayload as ExplainPayload);
     }
-  }, []);
+  }, [isOpen]);
   const popout = usePopoutHost('explain', handleRedock);
   const { isPopoutOpen, show: showInPopout, open: openPopout } = popout;
 
@@ -225,10 +228,6 @@ export function ProvenanceModal({
     setRedockPayload(null);
     onClose();
   }, [onClose]);
-
-  useEffect(() => {
-    if (isOpen) setRedockPayload(null);
-  }, [isOpen, traceId, trace]);
 
   // While a pop-out explain window is open, traces route there instead of the
   // modal. Layout effect so the modal never paints before forwarding.

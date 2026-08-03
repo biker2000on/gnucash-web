@@ -37,6 +37,13 @@ const EUR = {
   fraction: 100,
 };
 
+const GBP = {
+  guid: 'gbp-guid',
+  mnemonic: 'GBP',
+  fullname: 'Pound Sterling',
+  fraction: 100,
+};
+
 function pricePair(commodityGuid: string, currencyGuid: string, value: number) {
   const denom = 1000000;
   return {
@@ -139,6 +146,44 @@ describe('buildAccountValuationContext', () => {
       commodityNamespace: 'NASDAQ',
     })).toBe(123.45);
     expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('triangulates securities quoted in a currency other than the report currency', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([
+      pricePair('vti-guid', 'usd-guid', 250),
+      pricePair('gbp-guid', 'usd-guid', 1.25),
+    ]);
+
+    const stock = {
+      accountType: 'STOCK',
+      commodityGuid: 'vti-guid',
+      commodityNamespace: 'NASDAQ',
+    };
+
+    const valuation = await buildAccountValuationContext([stock], new Date('2026-07-28'), GBP);
+
+    // USD 250/share at USD->GBP 0.8 is GBP 200/share, not GBP 0.
+    expect(valuation.getMultiplier(stock)).toBeCloseTo(200);
+    expect(valuation.isConvertible?.(stock)).toBe(true);
+    expect(valuation.warnings).toEqual([]);
+  });
+
+  it('flags securities with no price path instead of silently valuing them at zero', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+
+    const stock = {
+      accountType: 'STOCK',
+      commodityGuid: 'illiquid-guid',
+      commodityNamespace: 'PRIVATE',
+    };
+
+    const valuation = await buildAccountValuationContext([stock], new Date('2026-07-28'), GBP);
+
+    expect(valuation.getMultiplier(stock)).toBe(0);
+    expect(valuation.isConvertible?.(stock)).toBe(false);
+    expect(valuation.warnings).toHaveLength(1);
+    expect(valuation.warnings?.[0]).toContain('illiquid-guid');
+    expect(valuation.warnings?.[0]).toContain('GBP');
   });
 
   it('uses an explicit report currency for cross-book valuation', async () => {

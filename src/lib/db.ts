@@ -12,6 +12,15 @@ const poolConfig: PoolConfig = {
 
 const pool = new Pool(poolConfig);
 
+// pg emits 'error' on IDLE pooled clients (Postgres restart/upgrade, OOM kill,
+// container cycle, network drop). Node treats an unhandled 'error' event on an
+// EventEmitter as an uncaught exception, which would take the whole Next.js
+// server down. Log it instead: pg discards the broken client and the next
+// checkout opens a fresh connection.
+pool.on('error', (err) => {
+    console.error('Postgres pool (db.ts) idle client error:', err);
+});
+
 export const query = (text: string, params?: readonly unknown[]) =>
     params ? pool.query(text, [...params]) : pool.query(text);
 
@@ -118,32 +127,6 @@ export async function tryWithDatabaseAdvisoryLock<T>(
     }
 }
 
-/**
- * Converts GnuCash split values (integer + denominator) to a decimal string.
- * @param num The numerator (bigint/number)
- * @param denom The denominator (bigint/number)
- * @returns A string representation of the decimal value.
- */
-export function toDecimal(num: number | string | bigint, denom: number | string | bigint): string {
-    const n = BigInt(num);
-    const d = BigInt(denom);
-    if (d === 0n) return "0";
-
-    const isNegative = n < 0n;
-    const absoluteN = isNegative ? -n : n;
-
-    const integerPart = absoluteN / d;
-    const remainder = absoluteN % d;
-
-    if (remainder === 0n) {
-        return (isNegative ? "-" : "") + integerPart.toString();
-    }
-
-    // Pad the remainder to match the scale of the denominator
-    // GnuCash denominators are usually powers of 10 (e.g., 100, 1000)
-    let fractionStr = remainder.toString();
-    const precision = d.toString().length - 1;
-    fractionStr = fractionStr.padStart(precision, '0');
-
-    return (isNegative ? "-" : "") + integerPart.toString() + "." + fractionStr;
-}
+// NOTE: the GnuCash fraction -> decimal helper lives in `src/lib/gnucash.ts`
+// (`toDecimal`). A byte-for-byte duplicate used to live here with no importers;
+// it was removed so there is a single implementation.

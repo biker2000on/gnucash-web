@@ -335,6 +335,8 @@ export function ensureEnvelopesTable(): Promise<void> {
                 END $$;
             `);
         })();
+        // Transient failure must not poison the memo for the process lifetime.
+        ensurePromise.catch(() => { ensurePromise = null; });
     }
     return ensurePromise;
 }
@@ -463,9 +465,43 @@ interface ScanBudgetAccount {
 }
 
 /**
+ * Map each budgeted (root) account to every guid in its subtree (itself + all
+ * descendants). Mirrors loadSubtreeMap in budget-actuals.ts, which is private
+ * there. A descendant under more than one budgeted root maps to each of them.
+ */
+async function loadSubtreeMap(rootGuids: string[]): Promise<Map<string, string[]>> {
+    if (rootGuids.length === 0) return new Map();
+    const rows = await prisma.$queryRaw<Array<{ root_guid: string; descendant_guid: string }>>`
+        WITH RECURSIVE subtree AS (
+            SELECT guid AS root_guid, guid AS descendant_guid
+            FROM accounts WHERE guid = ANY(${rootGuids}::text[])
+            UNION ALL
+            SELECT s.root_guid, a.guid
+            FROM accounts a JOIN subtree s ON a.parent_guid = s.descendant_guid
+        )
+        SELECT root_guid, descendant_guid FROM subtree
+    `;
+    const descendantToRoots = new Map<string, string[]>();
+    for (const { root_guid, descendant_guid } of rows) {
+        let roots = descendantToRoots.get(descendant_guid);
+        if (!roots) {
+            roots = [];
+            descendantToRoots.set(descendant_guid, roots);
+        }
+        roots.push(root_guid);
+    }
+    return descendantToRoots;
+}
+
+/**
  * Session-free actuals for one budget through the current period: buckets
- * split quantities into per-period matrices keyed by account. Mirrors the
- * loader in budget-actuals without touching the session-scoped book helpers.
+ * split quantities into per-period matrices keyed by BUDGETED account.
+ *
+ * Uses the same budget-the-parent SUBTREE ROLLUP the budget page uses: a
+ * budget set on Expenses:Food must see spend posted to its children, or the
+ * alert scan compares a $600 budget against $0 of actuals and never fires.
+ * Sign correction uses the budgeted ROOT's account type, matching
+ * bucketSplitsRollup in budget-actuals.ts.
  */
 async function loadActualMatrices(
     accountGuids: string[],
@@ -477,11 +513,15 @@ async function loadActualMatrices(
     const matrices = new Map<string, number[]>();
     if (accountGuids.length === 0) return matrices;
 
+    const descendantToRoots = await loadSubtreeMap(accountGuids);
+    const allGuids = [...descendantToRoots.keys()];
+    if (allGuids.length === 0) return matrices;
+
     const startKey = ranges[0].start;
     const endKey = ranges[throughPeriod].end;
     const splits = await prisma.splits.findMany({
         where: {
-            account_guid: { in: accountGuids },
+            account_guid: { in: allGuids },
             transaction: {
                 post_date: {
                     gte: new Date(`${startKey}T00:00:00.000Z`),
@@ -498,19 +538,23 @@ async function loadActualMatrices(
     });
 
     for (const split of splits) {
+        const roots = descendantToRoots.get(split.account_guid);
+        if (!roots) continue;
         const postDate = split.transaction.post_date;
         if (!postDate) continue;
         const dateKey = isoDateUTC(postDate);
         const periodIdx = ranges.findIndex(r => dateKey >= r.start && dateKey <= r.end);
         if (periodIdx < 0) continue;
 
-        let row = matrices.get(split.account_guid);
-        if (!row) {
-            row = new Array(numPeriods).fill(0);
-            matrices.set(split.account_guid, row);
-        }
         const raw = toDecimalNumber(split.quantity_num, split.quantity_denom);
-        row[periodIdx] += signCorrectAmount(accountTypes.get(split.account_guid) || '', raw);
+        for (const root of roots) {
+            let row = matrices.get(root);
+            if (!row) {
+                row = new Array(numPeriods).fill(0);
+                matrices.set(root, row);
+            }
+            row[periodIdx] += signCorrectAmount(accountTypes.get(root) || '', raw);
+        }
     }
     return matrices;
 }

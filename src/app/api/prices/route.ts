@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { toDecimal, fromDecimal, generateGuid } from '@/lib/prisma';
+import { MAX_INT64 } from '@/lib/gnucash';
+import { PRICE_DENOM } from '@/lib/yahoo-price-service';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth';
 import { cacheInvalidateFrom } from '@/lib/cache';
@@ -126,9 +128,17 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Generate GUID and convert value to fraction
+        // Generate GUID and convert value to fraction.
+        // Quotes are stored at PRICE_DENOM, not the currency's 1/100 fraction,
+        // so sub-cent assets don't round to a stored price of zero.
         const guid = generateGuid();
-        const { num, denom } = fromDecimal(data.value, currency.fraction);
+        const { num, denom } = fromDecimal(data.value, PRICE_DENOM);
+        if (num <= 0n || num > MAX_INT64) {
+            return NextResponse.json(
+                { error: 'Price is outside the storable range' },
+                { status: 400 }
+            );
+        }
         const priceDate = new Date(data.date + 'T12:00:00Z');
 
         // Upsert on the (commodity, currency, date) unique key: a same-day

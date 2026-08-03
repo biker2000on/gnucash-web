@@ -1,7 +1,23 @@
 import prisma from '@/lib/prisma';
 import { buildAccountValuationContext } from '@/lib/account-valuation';
-import { ReportType, ReportData, ReportSection, ReportFilters } from './types';
+import { ReportType, ReportData, ReportSection, ReportFilters, LineItem } from './types';
 import { buildHierarchy, resolveRootGuid, sumSplitsByAccount } from './utils';
+
+/**
+ * Flip the sign of a line item and every descendant. Credit-normal sections
+ * (liabilities, equity) carry negative raw GnuCash balances; only the section
+ * TOTAL used to be negated, which left a -$200 Credit Card row sitting under a
+ * +$500 Total Liabilities. Negating the items too keeps children and totals in
+ * the same sign convention (and a genuine contra balance still shows negative).
+ */
+function negateItem(item: LineItem): LineItem {
+    return {
+        ...item,
+        amount: -item.amount,
+        previousAmount: item.previousAmount !== undefined ? -item.previousAmount : undefined,
+        children: item.children?.map(negateItem),
+    };
+}
 
 /**
  * Generate Balance Sheet report
@@ -74,19 +90,20 @@ export async function generateBalanceSheet(filters: ReportFilters): Promise<Repo
     const liabilityAccounts = accountBalances.filter(a => liabilityTypes.includes(a.account_type));
     const equityAccounts = accountBalances.filter(a => equityTypes.includes(a.account_type));
 
-    // Build hierarchies
+    // Build hierarchies. Liabilities and equity are credit-normal: their raw
+    // GnuCash balances are negative when normal, so the whole tree is negated
+    // for display. Using the signed sum (instead of Math.abs per item) means a
+    // contra balance — e.g. an overpaid credit card carrying a debit balance —
+    // correctly reduces the section total rather than adding to it.
     const assetItems = buildHierarchy(assetAccounts, rootGuid);
-    const liabilityItems = buildHierarchy(liabilityAccounts, rootGuid);
-    const equityItems = buildHierarchy(equityAccounts, rootGuid);
+    const liabilityItems = buildHierarchy(liabilityAccounts, rootGuid).map(negateItem);
+    const equityItems = buildHierarchy(equityAccounts, rootGuid).map(negateItem);
 
-    // Calculate totals. Liabilities and equity are credit-normal: their raw
-    // GnuCash balances are negative when normal, so negate the signed sum to
-    // display a positive total. Using the signed sum (instead of Math.abs per
-    // item) means a contra balance — e.g. an overpaid credit card carrying a
-    // debit balance — correctly reduces the section total rather than adding to it.
+    // Calculate totals — now a plain sum of the (already sign-corrected) items,
+    // so every section's top-level rows add up to its stated total.
     const totalAssets = assetItems.reduce((sum, item) => sum + item.amount, 0);
-    const totalLiabilities = -liabilityItems.reduce((sum, item) => sum + item.amount, 0);
-    const totalEquity = -equityItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalLiabilities = liabilityItems.reduce((sum, item) => sum + item.amount, 0);
+    const totalEquity = equityItems.reduce((sum, item) => sum + item.amount, 0);
 
     const sections: ReportSection[] = [
         {

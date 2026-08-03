@@ -5,12 +5,20 @@ const mocks = vi.hoisted(() => {
     const clientRelease = vi.fn();
     const poolConnect = vi.fn();
     const poolQuery = vi.fn();
+    // Kept outside the vi.fn so vi.clearAllMocks() cannot erase the handler
+    // registered at module-import time.
+    const poolHandlers = new Map<string, (...args: unknown[]) => void>();
+    const poolOn = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+        poolHandlers.set(event, handler);
+    });
 
     return {
         clientQuery,
         clientRelease,
         poolConnect,
         poolQuery,
+        poolOn,
+        poolHandlers,
     };
 });
 
@@ -19,6 +27,9 @@ vi.mock('pg', () => ({
         return {
             connect: mocks.poolConnect,
             query: mocks.poolQuery,
+            // db.ts attaches an 'error' listener so an idle-client failure
+            // (Postgres restart) cannot become an uncaught exception.
+            on: mocks.poolOn,
         };
     }),
 }));
@@ -79,5 +90,17 @@ describe('withDatabaseAdvisoryLock', () => {
         ).rejects.toBe(unlockError);
 
         expect(mocks.clientRelease).toHaveBeenCalledWith(true);
+    });
+});
+
+describe('pool error handling', () => {
+    it('attaches an error listener so an idle-client failure cannot crash the process', () => {
+        // pg emits 'error' on IDLE pooled clients (Postgres restart, OOM kill,
+        // container cycle). Without a listener Node raises an uncaught
+        // exception and takes the whole server down.
+        const errorHandler = mocks.poolHandlers.get('error');
+        expect(errorHandler).toBeTypeOf('function');
+        expect(() => errorHandler!(new Error('terminating connection due to administrator command')))
+            .not.toThrow();
     });
 });

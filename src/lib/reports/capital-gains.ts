@@ -174,12 +174,18 @@ function toDay(dateStr: string): string {
  * IRS long-term = held MORE than one year. The holding period begins the day
  * after acquisition, so a sale is long-term only if it falls strictly after
  * the same calendar date one year later.
+ *
+ * Both arguments are normalized to their CALENDAR DAY first: post-date times of
+ * day vary across a real book (legacy rows carry 05:59-10:59Z clock times,
+ * app-written rows are T12:00:00Z) and the time of day must never decide the
+ * holding term. Everything is anchored in UTC so the runtime timezone cannot
+ * shift a day boundary either.
  */
 export function isLongTerm(dateAcquired: string, dateSold: string): boolean {
-  const acquired = new Date(dateAcquired);
-  const sold = new Date(dateSold);
+  const acquired = new Date(`${toDay(dateAcquired)}T00:00:00.000Z`);
+  const sold = new Date(`${toDay(dateSold)}T00:00:00.000Z`);
   const oneYearLater = new Date(acquired);
-  oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+  oneYearLater.setUTCFullYear(oneYearLater.getUTCFullYear() + 1);
   return sold.getTime() > oneYearLater.getTime();
 }
 

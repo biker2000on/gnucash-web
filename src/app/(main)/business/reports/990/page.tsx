@@ -92,13 +92,13 @@ export default function Form990Page() {
   const [year, setYear] = useState<number | null>(null);
   const [data, setData] = useState<Form990Response | null>(null);
   const [notApplicable, setNotApplicable] = useState<NotApplicableResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  // Which selection the settled data/error belongs to. `loading` is derived from
+  // it rather than reset at the top of the effect.
+  const [settledYear, setSettledYear] = useState<{ year: number | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     const qs = year !== null ? `?year=${year}` : '';
     fetch(`/api/business/990${qs}`)
       .then(async res => {
@@ -115,17 +115,22 @@ export default function Form990Page() {
           return;
         }
         setData(payload);
+        setFetchError(null);
       })
       .catch(err => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
+        if (!cancelled) setFetchError(err instanceof Error ? err.message : 'Failed to load');
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setSettledYear({ year });
       });
     return () => {
       cancelled = true;
     };
   }, [year]);
+
+  const loading = settledYear === null || settledYear.year !== year;
+  // A previous selection's failure is not shown while a new one is in flight.
+  const error = loading ? null : fetchError;
 
   if (notApplicable) {
     const entityLabel = ENTITY_TYPE_LABELS[notApplicable.entityType] ?? notApplicable.entityType;

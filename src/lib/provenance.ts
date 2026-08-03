@@ -75,6 +75,9 @@ export function ensureProvenanceTable(): Promise<void> {
         ${CALCULATION_TRACES_SCHEMA_SQL}
       END $$;
     `).then(() => undefined);
+    // A transient failure must not poison the memo for the process lifetime —
+    // the DDL is idempotent, so let the next call retry.
+    ensurePromise.catch(() => { ensurePromise = null; });
   }
   return ensurePromise;
 }

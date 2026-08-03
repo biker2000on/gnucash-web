@@ -11,7 +11,7 @@ import { cookies, headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import prisma from './prisma';
 import { SessionData, sessionOptions } from './session-config';
-import { getUserRoleForBook, roleAtLeast, hasTimesheetAccess, type Role } from './services/permission.service';
+import { getUserBooks, getUserRoleForBook, roleAtLeast, hasTimesheetAccess, type Role } from './services/permission.service';
 import { authenticateBearer, parseBearerToken } from './api-tokens';
 
 export type { SessionData };
@@ -223,9 +223,10 @@ export async function requireRole(minimumRole: Role): Promise<
     const { user, session } = authResult;
     let bookGuid = session.activeBookGuid;
 
-    // If no active book in session, fall back to the first available book
+    // If no active book in session, fall back to the first book this user can
+    // actually reach — never simply the first book in the database.
     if (!bookGuid) {
-        const firstBook = await prisma.books.findFirst({ select: { guid: true } });
+        const [firstBook] = await getUserBooks(user.id);
         if (!firstBook) {
             return NextResponse.json({ error: 'No active book selected' }, { status: 400 });
         }
@@ -295,7 +296,7 @@ export async function requireTimesheetRole(access: 'read' | 'write' = 'write'): 
     const { user, session } = authResult;
     let bookGuid = session.activeBookGuid;
     if (!bookGuid) {
-        const firstBook = await prisma.books.findFirst({ select: { guid: true } });
+        const [firstBook] = await getUserBooks(user.id);
         if (!firstBook) {
             return NextResponse.json({ error: 'No active book selected' }, { status: 400 });
         }

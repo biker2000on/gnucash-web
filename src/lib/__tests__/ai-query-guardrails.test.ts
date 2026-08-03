@@ -2,6 +2,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { validateGeneratedSql, MAX_LIMIT } from '../ai-query/guardrails';
+import { castScopeParameter } from '../ai-query/execute';
 
 const SCOPED_SELECT =
     "SELECT ROUND(SUM(s.value_num::numeric / s.value_denom), 2) AS total " +
@@ -241,6 +242,99 @@ describe('validateGeneratedSql', () => {
 
         it('blocks unterminated string literals', () => {
             expect(validateGeneratedSql("SELECT 'unterminated FROM accounts LIMIT 1").ok).toBe(false);
+        });
+    });
+
+    // Regression tests for the 2026-08-03 audit. Each case was ALLOWED by the
+    // pre-audit guardrails; see docs/audit-2026-08-03.md finding S3.
+    describe('relation allowlist', () => {
+        const offLimits: [string, string][] = [
+            ['password hashes', 'SELECT username, password_hash FROM gnucash_web_users'],
+            ['AI provider keys', 'SELECT api_key_encrypted FROM gnucash_web_ai_config'],
+            ['API token hashes', 'SELECT token_hash, user_id FROM gnucash_web_api_tokens'],
+            ['TOTP seeds', 'SELECT secret FROM gnucash_web_totp'],
+            ['every book', 'SELECT guid, root_account_guid FROM books'],
+            ['other tenants', 'SELECT name, addr_email FROM customers'],
+            ['joined via an allowed table',
+                'SELECT u.password_hash FROM accounts a JOIN gnucash_web_users u ON true WHERE a.guid = ANY($1)'],
+        ];
+
+        for (const [label, sql] of offLimits) {
+            it(`refuses to read ${label}`, () => {
+                expect(validateGeneratedSql(sql).ok).toBe(false);
+            });
+        }
+
+        it('refuses schema-qualified relation names', () => {
+            expect(validateGeneratedSql(
+                'SELECT a.name FROM public.accounts a WHERE a.guid = ANY($1) LIMIT 10'
+            ).ok).toBe(false);
+        });
+
+        it('still allows a CTE name defined in the same statement', () => {
+            const sql =
+                'WITH scoped AS (SELECT guid FROM accounts WHERE guid = ANY($1)) ' +
+                'SELECT COUNT(*) FROM scoped LIMIT 10';
+            expect(validateGeneratedSql(sql).ok).toBe(true);
+        });
+    });
+
+    describe('book scope must be BOUND, not merely mentioned', () => {
+        it('rejects an always-true predicate that only name-drops $1', () => {
+            // Returned every account in the database — all books, all users.
+            const sql = 'SELECT a.name, a.guid FROM accounts a WHERE $1 IS NOT NULL';
+            expect(validateGeneratedSql(sql).ok).toBe(false);
+        });
+
+        it('rejects $1 used in an unrelated comparison', () => {
+            const sql = 'SELECT a.name FROM accounts a WHERE array_length($1, 1) > 0';
+            expect(validateGeneratedSql(sql).ok).toBe(false);
+        });
+
+        it('accepts account_guid = ANY($1)', () => {
+            const sql = 'SELECT s.guid FROM splits s WHERE s.account_guid = ANY($1) LIMIT 5';
+            expect(validateGeneratedSql(sql).ok).toBe(true);
+        });
+
+        it('accepts a cast binding', () => {
+            const sql = 'SELECT s.guid FROM splits s WHERE s.account_guid = ANY($1::text[]) LIMIT 5';
+            expect(validateGeneratedSql(sql).ok).toBe(true);
+        });
+    });
+
+    describe('LIMIT must bound the outer result set', () => {
+        it('injects a top-level LIMIT when the only LIMIT is inside a CTE', () => {
+            // Returned 100 x every split without an outer bound.
+            const sql =
+                'WITH t AS (SELECT guid FROM accounts WHERE guid = ANY($1) LIMIT 100) ' +
+                'SELECT t.guid, s.value_num FROM t CROSS JOIN splits s';
+            const result = validateGeneratedSql(sql);
+            expect(result.ok).toBe(true);
+            expect(result.sql).toMatch(new RegExp(`LIMIT ${MAX_LIMIT}$`));
+        });
+
+        it('does not double-append when a top-level LIMIT is already present', () => {
+            const sql = 'SELECT s.guid FROM splits s WHERE s.account_guid = ANY($1) LIMIT 10';
+            const result = validateGeneratedSql(sql);
+            expect(result.ok).toBe(true);
+            expect(result.sql!.match(/LIMIT/gi)).toHaveLength(1);
+        });
+    });
+
+    describe('castScopeParameter', () => {
+        it('casts a real parameter', () => {
+            expect(castScopeParameter('WHERE a.guid = ANY($1)')).toBe('WHERE a.guid = ANY($1::text[])');
+        });
+
+        it('leaves $1 inside a string literal alone', () => {
+            // Previously rewrote the search term to '%$1::text[]%'.
+            const sql = "WHERE a.name LIKE '%$1%' AND a.guid = ANY($1)";
+            expect(castScopeParameter(sql)).toBe("WHERE a.name LIKE '%$1%' AND a.guid = ANY($1::text[])");
+        });
+
+        it('is idempotent for an already-cast parameter', () => {
+            const sql = 'WHERE a.guid = ANY($1::text[])';
+            expect(castScopeParameter(sql)).toBe(sql);
         });
     });
 });

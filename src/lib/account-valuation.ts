@@ -1,5 +1,5 @@
 import prisma from '@/lib/prisma';
-import { toDecimal as toDecimalString } from '@/lib/gnucash';
+import { toDecimalNumber as toDecimal } from '@/lib/gnucash';
 import { getBaseCurrency, type Currency } from '@/lib/currency';
 
 const INVESTMENT_TYPES = ['STOCK', 'MUTUAL'];
@@ -15,6 +15,14 @@ export interface AccountValuationContext {
   reportCurrencyGuid: string | null;
   reportCurrencyMnemonic: string;
   getMultiplier(account: AccountValuationInput): number;
+  /**
+   * False when getMultiplier() returned 0 only because no price path to the
+   * report currency exists -- not because the holding is genuinely worthless.
+   * Optional so existing test doubles of this context stay valid.
+   */
+  isConvertible?(account: AccountValuationInput): boolean;
+  /** Human-readable reasons for each unconvertible commodity. */
+  warnings?: string[];
 }
 
 interface PricePairRow {
@@ -34,15 +42,15 @@ function isInvestmentAccount(account: AccountValuationInput): boolean {
   );
 }
 
-function toDecimal(num: bigint | number | string, denom: bigint | number | string): number {
-  return parseFloat(toDecimalString(num, denom));
-}
-
 function pairKey(fromGuid: string, toGuid: string): string {
   return `${fromGuid}:${toGuid}`;
 }
 
-async function loadLatestPricePairs(commodityGuids: string[], asOfDate: Date): Promise<Map<string, number>> {
+async function loadLatestPricePairs(
+  commodityGuids: string[],
+  asOfDate: Date,
+  mnemonics?: Map<string, string>,
+): Promise<Map<string, number>> {
   const uniqueGuids = [...new Set(commodityGuids.filter(Boolean))];
   if (uniqueGuids.length === 0) return new Map();
 
@@ -64,6 +72,13 @@ async function loadLatestPricePairs(commodityGuids: string[], asOfDate: Date): P
     ORDER BY p.commodity_guid, p.currency_guid, p.date DESC
   `;
 
+  if (mnemonics) {
+    for (const row of rows) {
+      mnemonics.set(row.commodity_guid, row.commodity_mnemonic);
+      mnemonics.set(row.currency_guid, row.currency_mnemonic);
+    }
+  }
+
   return new Map(
     rows.map(row => [
       pairKey(row.commodity_guid, row.currency_guid),
@@ -84,7 +99,12 @@ function getPairRate(pricePairs: Map<string, number>, fromGuid: string, toGuid: 
   return null;
 }
 
-function getCurrencyRate(
+/**
+ * Direct, inverse, or pivot-triangulated rate from one commodity to another.
+ * Used for both currency holdings and securities quoted in a currency other
+ * than the report currency.
+ */
+function getConversionRate(
   pricePairs: Map<string, number>,
   fromGuid: string,
   toGuid: string,
@@ -149,7 +169,11 @@ export async function buildAccountValuationContext(
     }
   }
 
-  const pricePairs = await loadLatestPricePairs([...commodityGuids], asOf);
+  const mnemonics = new Map<string, string>();
+  const pricePairs = await loadLatestPricePairs([...commodityGuids], asOf, mnemonics);
+  const unconvertible = new Set<string>();
+  const warnings: string[] = [];
+  const reportMnemonic = reportCurrency?.mnemonic ?? 'the report currency';
 
   for (const account of accounts) {
     const commodityGuid = account.commodityGuid;
@@ -158,14 +182,20 @@ export async function buildAccountValuationContext(
     if (!reportCurrencyGuid) {
       multiplierCache.set(commodityGuid, 1);
     } else if (isInvestmentAccount(account)) {
-      multiplierCache.set(
-        commodityGuid,
-        pricePairs.get(pairKey(commodityGuid, reportCurrencyGuid)) ?? 0
-      );
+      // Securities quoted in a currency other than the report currency still
+      // have a value; triangulate rather than valuing the holding at zero.
+      const rate = getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids);
+      if (rate === null) {
+        unconvertible.add(commodityGuid);
+        warnings.push(
+          `${mnemonics.get(commodityGuid) ?? commodityGuid} excluded: no price path to ${reportMnemonic} as of ${asOf.toISOString().slice(0, 10)}.`
+        );
+      }
+      multiplierCache.set(commodityGuid, rate ?? 0);
     } else if (account.commodityNamespace === 'CURRENCY') {
       multiplierCache.set(
         commodityGuid,
-        getCurrencyRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids) ?? 1
+        getConversionRate(pricePairs, commodityGuid, reportCurrencyGuid, pivotGuids) ?? 1
       );
     } else {
       multiplierCache.set(commodityGuid, 1);
@@ -179,5 +209,10 @@ export async function buildAccountValuationContext(
       if (!account.commodityGuid) return 1;
       return multiplierCache.get(account.commodityGuid) ?? 1;
     },
+    isConvertible(account: AccountValuationInput) {
+      if (!account.commodityGuid) return true;
+      return !unconvertible.has(account.commodityGuid);
+    },
+    warnings,
   };
 }

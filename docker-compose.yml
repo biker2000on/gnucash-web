@@ -54,6 +54,10 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379
       - WORKER_HEALTH_PORT=9090
+      # Needed to decrypt stored connector credentials and to load the session
+      # module; the process refuses to start without one of these.
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-}
       - AI_API_KEY=${AI_API_KEY:-}

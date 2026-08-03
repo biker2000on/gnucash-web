@@ -8,8 +8,38 @@
  */
 
 /**
+ * Decimal places kept when long-dividing a non-power-of-ten denominator.
+ * Capped for display: these strings surface raw via the Prisma computed
+ * `value_decimal`/`quantity_decimal` fields, so a non-terminating quotient
+ * must not render as a 20-digit wall. 10 clears the stored precision --
+ * quotes top out at PRICE_DENOM (1e8) and split denominators are all powers
+ * of ten -- while keeping 1/3 readable.
+ */
+const ARBITRARY_DENOM_SCALE = 10;
+const ARBITRARY_DENOM_POW = 10n ** BigInt(ARBITRARY_DENOM_SCALE);
+
+/**
+ * Returns p when d === 10^p, otherwise null.
+ */
+function powerOfTenExponent(d: bigint): number | null {
+  let value = d;
+  let exponent = 0;
+  while (value % 10n === 0n) {
+    value /= 10n;
+    exponent++;
+  }
+  return value === 1n ? exponent : null;
+}
+
+/**
  * Converts GnuCash fraction values (numerator/denominator) to a decimal string.
  * Handles negative values and zero denominators safely.
+ *
+ * Power-of-ten denominators (the overwhelming majority: 100, 1000, 1e8, ...)
+ * keep their full scale, so 150/100 stays "1.50". Any other denominator --
+ * GCD-reduced price rows produce these -- is long-divided in BigInt at
+ * ARBITRARY_DENOM_SCALE places and trimmed, so 1/8 is "0.125" rather than a
+ * digit-count guess.
  *
  * @param num - The numerator (BigInt, number, or string)
  * @param denom - The denominator (BigInt, number, or string)
@@ -18,31 +48,48 @@
  * @example
  * toDecimal(150n, 100n) // Returns "1.50"
  * toDecimal(-50n, 100n) // Returns "-0.50"
+ * toDecimal(1n, 8n)     // Returns "0.125"
  */
 export function toDecimal(num: bigint | number | string, denom: bigint | number | string): string {
   const n = BigInt(num);
-  const d = BigInt(denom);
+  const rawD = BigInt(denom);
 
-  if (d === 0n) return "0";
+  if (rawD === 0n) return "0";
 
-  const isNegative = n < 0n;
-  const absoluteN = isNegative ? -n : n;
+  const d = rawD < 0n ? -rawD : rawD;
+  const absoluteN = n < 0n ? -n : n;
 
+  if (absoluteN === 0n) return "0";
+
+  const sign = (n < 0n) !== (rawD < 0n) ? "-" : "";
   const integerPart = absoluteN / d;
   const remainder = absoluteN % d;
 
   if (remainder === 0n) {
-    return (isNegative ? "-" : "") + integerPart.toString();
+    return sign + integerPart.toString();
   }
 
-  // Pad the remainder to match the scale of the denominator
-  // GnuCash denominators are usually powers of 10 (e.g., 100, 1000)
-  let fractionStr = remainder.toString();
-  const precision = d.toString().length - 1;
-  fractionStr = fractionStr.padStart(precision, '0');
+  const exponent = powerOfTenExponent(d);
+  if (exponent !== null) {
+    return sign + integerPart.toString() + "." + remainder.toString().padStart(exponent, '0');
+  }
 
-  return (isNegative ? "-" : "") + integerPart.toString() + "." + fractionStr;
+  // Half-up rounding via integer arithmetic: floor((r * 10^s) / d + 1/2)
+  const scaled = (remainder * ARBITRARY_DENOM_POW * 2n + d) / (d * 2n);
+  if (scaled >= ARBITRARY_DENOM_POW) {
+    return sign + (integerPart + 1n).toString();
+  }
+
+  const fraction = scaled.toString().padStart(ARBITRARY_DENOM_SCALE, '0').replace(/0+$/, '');
+  if (fraction === '') {
+    return sign + integerPart.toString();
+  }
+
+  return sign + integerPart.toString() + "." + fraction;
 }
+
+/** Largest value storable in the int64 `*_num` columns. */
+export const MAX_INT64 = 9223372036854775807n;
 
 /**
  * Converts GnuCash fraction values to a number (not a string).

@@ -1,6 +1,6 @@
 "use client";
 
-import { Transaction } from '@/lib/types';
+import { Split, Transaction } from '@/lib/types';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatCurrency, applyBalanceReversal } from '@/lib/format';
@@ -37,7 +37,7 @@ import { JumpToAccountButton } from './ledger/JumpToAccountButton';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import AccountPickerDialog from './AccountPickerDialog';
-import EditableSplitRows, { EditableSplitRowsHandle } from '@/components/ledger/EditableSplitRows';
+import EditableSplitRows, { EditableSplitRowsHandle, hasNonCurrencySplit, isNonCurrencySplit } from '@/components/ledger/EditableSplitRows';
 import { Modal } from '@/components/ui/Modal';
 import LotViewer from './ledger/LotViewer';
 import TransactionTypeIcon from './ledger/TransactionTypeIcon';
@@ -86,6 +86,50 @@ export function invalidateTransactionAccountCaches(queryClient: Pick<QueryClient
         queryClient.invalidateQueries({ queryKey: ['accounts', 'reconcile-summary'] }),
         queryClient.invalidateQueries({ queryKey: ['accounts', 'review-status'] }),
     ]);
+}
+
+/**
+ * Fractions for one side of an inline two-split save.
+ *
+ * `keepStored` means the user did not touch this side's amount, so the stored
+ * numerator/denominator pair is returned verbatim. Recomputing it at denom 100
+ * would rewrite a 100000/10000 quantity (10.0000 shares) as 250000/100 (2,500
+ * shares) — the value still balances, so nothing would flag the corruption.
+ *
+ * When the amount did change, only the VALUE is recomputed, at the split's own
+ * denominator. A non-currency quantity is left as stored because it cannot be
+ * derived from a dollar figure.
+ */
+export function splitFractions(original: Split | undefined, amount: number, keepStored: boolean) {
+    const valueDenom = Number(original?.value_denom) || 100;
+    const quantityDenom = Number(original?.quantity_denom) || valueDenom;
+
+    if (original && keepStored) {
+        return {
+            value_num: Number(original.value_num),
+            value_denom: valueDenom,
+            quantity_num: Number(original.quantity_num),
+            quantity_denom: quantityDenom,
+        };
+    }
+
+    const valueNum = Math.round(amount * valueDenom);
+
+    if (original && isNonCurrencySplit(original)) {
+        return {
+            value_num: valueNum,
+            value_denom: valueDenom,
+            quantity_num: Number(original.quantity_num),
+            quantity_denom: quantityDenom,
+        };
+    }
+
+    return {
+        value_num: valueNum,
+        value_denom: valueDenom,
+        quantity_num: valueNum,
+        quantity_denom: valueDenom,
+    };
 }
 
 type HoldingPeriod = 'short_term' | 'long_term' | null;
@@ -581,6 +625,39 @@ export default function AccountLedger({
             const isMultiSplitSave = !!(data.splits && data.splits.length > 0);
             let bodySplits: Array<Record<string, unknown>>;
 
+            // The inline row edits ONE dollar amount, but the PUT handler
+            // deletes and recreates every split verbatim from this payload.
+            // Anything not carried through here is destroyed.
+            const originalSplits = tx.splits ?? [];
+            const nonTradingSplits = originalSplits.filter(
+                s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
+            );
+            const ownSplit = nonTradingSplits.find(s => s.account_guid === accountGuid);
+            const otherSplit = nonTradingSplits.find(s => s.account_guid !== accountGuid);
+
+            const originalAmount = parseFloat(tx.account_split_value);
+            const signedAmount = parseFloat(data.amount);
+            const amountChanged = !Number.isFinite(originalAmount)
+                || !Number.isFinite(signedAmount)
+                || Math.abs(signedAmount - originalAmount) >= 0.005;
+            const transferChanged = !!data.accountGuid
+                && data.accountGuid !== (otherSplit?.account_guid ?? '');
+
+            // Share counts and foreign-currency quantities cannot be derived
+            // from the single dollar amount this row edits, so money changes on
+            // such a transaction go to the full editor. Date/description edits
+            // still save inline — they carry the stored fractions through below.
+            if (
+                !isNewTransaction
+                && hasNonCurrencySplit(originalSplits)
+                && (isMultiSplitSave || amountChanged || transferChanged)
+            ) {
+                setEditingGuid(null);
+                handleEdit(guid);
+                error('This transaction has share or multi-currency amounts — opening the full editor');
+                return;
+            }
+
             if (isMultiSplitSave) {
                 bodySplits = data.splits!.map(s => {
                     const { num, denom } = toNumDenom(s.amount);
@@ -596,27 +673,15 @@ export default function AccountLedger({
                     };
                 });
             } else {
-                const signedAmount = parseFloat(data.amount);
-                const absAmount = Math.abs(signedAmount);
-                const isDebit = signedAmount >= 0;
-                const { num: valueNum, denom: valueDenom } = toNumDenom(absAmount);
-                const { num: negValueNum, denom: negValueDenom } = toNumDenom(-absAmount);
-
                 bodySplits = [
                     {
                         account_guid: accountGuid,
-                        value_num: isDebit ? valueNum : negValueNum,
-                        value_denom: valueDenom,
-                        quantity_num: isDebit ? valueNum : negValueNum,
-                        quantity_denom: valueDenom,
+                        ...splitFractions(ownSplit, signedAmount, !amountChanged),
                         reconcile_state: tx.account_split_reconcile_state || 'n',
                     },
                     {
                         account_guid: data.accountGuid,
-                        value_num: isDebit ? negValueNum : valueNum,
-                        value_denom: negValueDenom,
-                        quantity_num: isDebit ? negValueNum : valueNum,
-                        quantity_denom: negValueDenom,
+                        ...splitFractions(otherSplit, -signedAmount, !amountChanged && !transferChanged),
                         reconcile_state: 'n',
                     },
                 ];
@@ -697,7 +762,7 @@ export default function AccountLedger({
             console.error('Inline save failed:', err);
             error(err instanceof Error && err.message !== 'Failed to save' ? err.message : 'Failed to save transaction');
         }
-    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode]);
+    }, [transactions, accountGuid, accountCommodityGuid, fetchTransactions, success, error, isEditMode, handleEdit]);
 
     // Journal/autosplit save orchestration (combines EditableRow + EditableSplitRows)
     const handleJournalSave = useCallback(async (txGuid: string): Promise<boolean> => {

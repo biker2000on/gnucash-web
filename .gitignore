@@ -53,3 +53,6 @@ test-results/
 .gstack/
 .worktrees/
 data/
+
+# Syncthing conflict copies (working tree is synced across machines)
+*sync-conflict*

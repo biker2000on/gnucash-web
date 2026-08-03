@@ -15,6 +15,19 @@ interface SankeyHierarchyNode {
     children: SankeyHierarchyNode[];
 }
 
+/**
+ * Drop non-positive nodes for DIAGRAM rendering only — a Sankey cannot draw a
+ * negative flow. Totals must be computed from the UNFILTERED tree first, or a
+ * refund/rebate subtree silently inflates the reported income/expense (e.g.
+ * Auto with Gas +500 and Rebate -100 would report 500 instead of 400) and the
+ * KPI card on the same screen disagrees.
+ */
+function pruneForDisplay(nodes: SankeyHierarchyNode[]): SankeyHierarchyNode[] {
+    return nodes
+        .filter(n => n.value > 0)
+        .map(n => ({ ...n, children: pruneForDisplay(n.children) }));
+}
+
 function computeMaxDepth(nodes: SankeyHierarchyNode[]): number {
     if (nodes.length === 0) return 0;
     let max = 0;
@@ -209,8 +222,7 @@ export async function GET(request: NextRequest) {
                         depth,
                         children: subChildren,
                     };
-                })
-                .filter(n => n.value > 0);
+                });
         }
 
         const incomeTree = buildHierarchy(incomeParent.guid, 0, true);
@@ -240,15 +252,21 @@ export async function GET(request: NextRequest) {
             });
         }
 
+        // Totals come from the UNFILTERED tree so negative (refund/rebate)
+        // subtrees still net against their siblings and match the KPI card.
         const finalTotalIncome = incomeTree.reduce((sum, n) => sum + n.value, 0);
         const finalTotalExpenses = expenseTree.reduce((sum, n) => sum + n.value, 0);
         const savings = Math.round((finalTotalIncome - finalTotalExpenses) * 100) / 100;
 
-        const maxDepth = Math.max(computeMaxDepth(incomeTree), computeMaxDepth(expenseTree));
+        // Filtering happens last, and only for what the diagram draws.
+        const incomeDisplayTree = pruneForDisplay(incomeTree);
+        const expenseDisplayTree = pruneForDisplay(expenseTree);
+
+        const maxDepth = Math.max(computeMaxDepth(incomeDisplayTree), computeMaxDepth(expenseDisplayTree));
 
         const responseData = {
-            income: incomeTree,
-            expense: expenseTree,
+            income: incomeDisplayTree,
+            expense: expenseDisplayTree,
             totalIncome: Math.round(finalTotalIncome * 100) / 100,
             totalExpenses: Math.round(finalTotalExpenses * 100) / 100,
             savings,

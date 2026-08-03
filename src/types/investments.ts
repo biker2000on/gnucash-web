@@ -76,8 +76,6 @@ export interface PortfolioData {
     totalCostBasis: number;
     totalGainLoss: number;
     totalGainLossPercent: number;
-    dayChange: number;
-    dayChangePercent: number;
   };
   holdings: Array<{
     accountGuid: string;

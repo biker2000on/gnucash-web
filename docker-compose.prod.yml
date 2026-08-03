@@ -29,6 +29,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
+      - SESSION_SECRET=${SESSION_SECRET:-}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
       - AI_BASE_URL=${AI_BASE_URL:-}
@@ -70,6 +71,11 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-gnucash}:${POSTGRES_PASSWORD:-gnucash}@postgres:5432/${POSTGRES_DB:-gnucash}
       - REDIS_URL=redis://redis:6379
+      # The worker decrypts stored connector credentials (SimpleFin, Fuel
+      # Tracker) and loads modules that seal sessions, so it needs the same
+      # secret as the app. Without it the process refuses to start.
+      - SESSION_SECRET=${SESSION_SECRET:-}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
       - AI_BASE_URL=${AI_BASE_URL:-}
       - AI_MODEL=${AI_MODEL:-}
       - AI_API_KEY=${AI_API_KEY:-}

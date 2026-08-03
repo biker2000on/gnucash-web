@@ -22,7 +22,7 @@ export { yahooSymbolFor };
  * currency's 1/100 fraction so sub-cent assets (many cryptos) don't round to
  * zero. 1e8 keeps num within int64 for any realistic price.
  */
-const PRICE_DENOM = 100_000_000;
+export const PRICE_DENOM = 100_000_000;
 
 /**
  * Result of a price fetch operation for a single symbol

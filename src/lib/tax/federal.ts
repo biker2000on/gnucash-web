@@ -9,6 +9,23 @@
  *   deduction $15,750/$31,500/$23,625, senior deduction $6,000, SALT cap $40,000
  * - 2026: Rev. Proc. 2025-32 (https://www.irs.gov/pub/irs-drop/rp-25-32.pdf)
  * - SS wage base: 2024 $168,600 / 2025 $176,100 / 2026 $184,500 (SSA)
+ * - Additional Medicare thresholds (IRC §1401(b)(2)/§3101(b)(2), NOT indexed):
+ *   $250,000 MFJ, $125,000 MFS, $200,000 any other case — QSS included.
+ *
+ * §199A (qualified business income) SIMPLIFICATIONS — see computeQbiDeduction:
+ * - Only the BELOW-THRESHOLD case is modeled: 20% of QBI, limited to 20% of
+ *   (taxable income before QBI − net capital gain). The SSTB phase-out and the
+ *   W-2 wage / UBIA-of-qualified-property limitations that apply above the
+ *   §199A threshold ($197,300 single / $394,600 MFJ for 2025) are NOT applied,
+ *   because this estimator has no input for W-2 wages PAID BY the business, the
+ *   unadjusted basis of its qualified property, or whether it is a specified
+ *   service trade or business. Above-threshold filers will see the deduction
+ *   OVERSTATED.
+ * - QBI is taken as Schedule C/F net profit reduced by the deductible half of
+ *   SE tax. Self-employed health insurance and self-employed retirement plan
+ *   contributions are NOT netted out of QBI (they should be), and rental
+ *   income is NOT treated as QBI (it may be, under the Rev. Proc. 2019-38 safe
+ *   harbor). Qualified REIT dividends and PTP income are not modeled.
  *
  * ESTIMATES ONLY — not tax advice.
  */
@@ -327,6 +344,39 @@ export function netCapitalGains(
 }
 
 /* ------------------------------------------------------------------ */
+/* §199A qualified business income deduction                           */
+/* ------------------------------------------------------------------ */
+
+/** Additional Medicare (0.9%) MAGI threshold — statutory, never indexed. */
+export function additionalMedicareThreshold(filingStatus: FilingStatus): number {
+  if (filingStatus === 'mfj') return 250_000;
+  if (filingStatus === 'mfs') return 125_000;
+  // IRC §3101(b)(2)(C) "any other case" — single, HOH, and QSS.
+  return 200_000;
+}
+
+/**
+ * Simplified §199A deduction (Form 8995, below the threshold):
+ *   min( 20% × QBI, 20% × (taxable income before QBI − net capital gain) )
+ *
+ * See the file header for everything this deliberately does not model.
+ *
+ * @param qualifiedBusinessIncome Net qualified business income (>= 0).
+ * @param taxableIncomeBeforeQbi  AGI less the standard/itemized and senior deductions.
+ * @param netCapitalGain          Net LTCG + qualified dividends (Form 8995 line 12).
+ */
+export function computeQbiDeduction(
+  qualifiedBusinessIncome: number,
+  taxableIncomeBeforeQbi: number,
+  netCapitalGain: number,
+): number {
+  const qbi = Math.max(0, qualifiedBusinessIncome);
+  if (qbi <= 0) return 0;
+  const incomeLimit = Math.max(0, taxableIncomeBeforeQbi - Math.max(0, netCapitalGain));
+  return round2(Math.min(0.20 * qbi, 0.20 * incomeLimit));
+}
+
+/* ------------------------------------------------------------------ */
 /* Main engine                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -346,7 +396,9 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     inputs.interest +
     inputs.ordinaryDividends +
     cg.includedInAgi +
-    Math.max(0, inputs.selfEmploymentIncome) +
+    // A Schedule C/F LOSS genuinely reduces AGI — do NOT clamp at 0 here.
+    // (computeSeTax keeps its own clamp: there is no SE tax on a loss.)
+    inputs.selfEmploymentIncome +
     inputs.rentalIncome +
     inputs.retirementIncome +
     inputs.otherIncome;
@@ -416,7 +468,20 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     seniorDeduction = Math.max(0, gross - phaseOut);
   }
 
-  const taxableIncome = Math.max(0, agi - deductionTaken - seniorDeduction);
+  const taxableIncomeBeforeQbi = Math.max(0, agi - deductionTaken - seniorDeduction);
+
+  /* --- §199A qualified business income deduction (below-threshold model) --- */
+  // QBI = Schedule C/F net profit less the deductible half of SE tax.
+  const qualifiedBusinessIncome = Math.max(0, inputs.selfEmploymentIncome - se.halfDeduction);
+  // Form 8995 line 12: net capital gain = net LTCG + qualified dividends.
+  const netCapitalGainForQbi = Math.max(0, cg.preferentialLtcg) + qualifiedDividends;
+  const qbiDeduction = computeQbiDeduction(
+    qualifiedBusinessIncome,
+    taxableIncomeBeforeQbi,
+    netCapitalGainForQbi,
+  );
+
+  const taxableIncome = Math.max(0, taxableIncomeBeforeQbi - qbiDeduction);
 
   /* --- Ordinary vs preferential split --- */
   const preferentialIncome = Math.min(taxableIncome, cg.preferentialLtcg + qualifiedDividends);
@@ -447,9 +512,14 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
   const magi = agi; // common case: MAGI == AGI
   const niit = NIIT_RATE * Math.min(netInvestmentIncome, Math.max(0, magi - p.niitThreshold));
 
-  /* --- Additional Medicare 0.9% --- */
+  /* --- Additional Medicare 0.9% ---
+   * Its thresholds are NOT the NIIT thresholds: §1411 puts a qualifying
+   * surviving spouse at the $250k joint threshold, while §3101(b)(2) puts QSS
+   * in the "any other case" bucket at $200,000.
+   */
   const medicareEarnings = Math.max(0, inputs.wages) + se.netEarningsFromSe;
-  const additionalMedicareTax = ADDL_MEDICARE_RATE * Math.max(0, medicareEarnings - p.niitThreshold);
+  const addlMedicareThreshold = additionalMedicareThreshold(inputs.filingStatus);
+  const additionalMedicareTax = ADDL_MEDICARE_RATE * Math.max(0, medicareEarnings - addlMedicareThreshold);
 
   /* --- Child Tax Credit (non-refundable portion only) ---
    * 2024: $2,000/qualifying child under 17 (TCJA); 2025-2026: $2,200 (OBBBA).
@@ -506,6 +576,7 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     usedItemized,
     deductionTaken: round2(deductionTaken),
     seniorDeduction: round2(seniorDeduction),
+    qbiDeduction,
     taxableIncome: round2(taxableIncome),
     ordinaryTaxableIncome: round2(ordinaryTaxableIncome),
     preferentialIncome: round2(preferentialIncome),
