@@ -31,8 +31,16 @@ function resolveSessionSecret(): string {
 }
 
 // Session configuration -- shared between middleware and auth.ts
+//
+// `password` is a getter so the secret is demanded when a session is actually
+// sealed or read, not when this module is imported. `next build` imports every
+// route to collect page data, and no secret exists at image-build time; a
+// module-level throw fails the build. Resolving per request keeps the check
+// fail-closed without baking a placeholder into the image.
 export const sessionOptions: SessionOptions = {
-    password: resolveSessionSecret(),
+    get password(): string {
+        return resolveSessionSecret();
+    },
     cookieName: 'gnucash_web_session',
     cookieOptions: {
         secure: process.env.NODE_ENV === 'production',
