@@ -19,9 +19,9 @@ interface AuditEntry {
 const PAGE_SIZE = 50;
 
 const ACTION_STYLES: Record<string, string> = {
-    CREATE: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    UPDATE: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
-    DELETE: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+    CREATE: 'bg-positive/10 text-positive border-positive/20',
+    UPDATE: 'bg-warning/10 text-warning border-warning/20',
+    DELETE: 'bg-negative/10 text-negative border-negative/20',
 };
 
 const UNDO_LABEL: Record<string, string> = {
@@ -120,9 +120,9 @@ export default function HistoryPage() {
 
             <div className="border border-border rounded-xl overflow-hidden divide-y divide-border">
                 {!loaded ? (
-                    <div className="px-4 py-10 text-center text-sm text-foreground-tertiary">Loading…</div>
+                    <div className="px-4 py-10 text-center text-sm text-foreground-muted">Loading…</div>
                 ) : entries.length === 0 ? (
-                    <div className="px-4 py-10 text-center text-sm text-foreground-tertiary">
+                    <div className="px-4 py-10 text-center text-sm text-foreground-muted">
                         No history yet. Mutations are recorded from now on as you work.
                     </div>
                 ) : (
@@ -132,7 +132,7 @@ export default function HistoryPage() {
                                 <span className={`shrink-0 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${ACTION_STYLES[entry.action] ?? 'border-border text-foreground-muted'}`}>
                                     {entry.action}
                                 </span>
-                                <span className="shrink-0 text-xs text-foreground-tertiary w-28">{entry.entityType.toLowerCase().replace(/_/g, ' ')}</span>
+                                <span className="shrink-0 text-xs text-foreground-muted w-28">{entry.entityType.toLowerCase().replace(/_/g, ' ')}</span>
                                 <button
                                     onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}
                                     className="flex-1 min-w-0 text-left text-foreground truncate hover:text-primary transition-colors"
@@ -140,8 +140,8 @@ export default function HistoryPage() {
                                 >
                                     {summarize(entry)}
                                 </button>
-                                <span className="shrink-0 text-xs text-foreground-tertiary hidden sm:inline">{entry.user ?? '—'}</span>
-                                <span className="shrink-0 text-xs text-foreground-tertiary font-mono">
+                                <span className="shrink-0 text-xs text-foreground-muted hidden sm:inline">{entry.user ?? '—'}</span>
+                                <span className="shrink-0 text-xs text-foreground-muted font-mono">
                                     {new Date(entry.createdAt).toLocaleString()}
                                 </span>
                                 {entry.undoable && (
@@ -157,13 +157,13 @@ export default function HistoryPage() {
                             {expanded === entry.id && (
                                 <div className="px-4 pb-3 grid sm:grid-cols-2 gap-3 bg-background-secondary/40">
                                     <div>
-                                        <div className="text-[10px] uppercase tracking-wider text-foreground-tertiary py-1.5">Before</div>
+                                        <div className="text-[10px] uppercase tracking-wider text-foreground-muted py-1.5">Before</div>
                                         <pre className="text-xs font-mono text-foreground-secondary bg-background border border-border rounded-lg p-2 overflow-x-auto max-h-64">
                                             {entry.oldValues ? JSON.stringify(entry.oldValues, null, 2) : '—'}
                                         </pre>
                                     </div>
                                     <div>
-                                        <div className="text-[10px] uppercase tracking-wider text-foreground-tertiary py-1.5">After</div>
+                                        <div className="text-[10px] uppercase tracking-wider text-foreground-muted py-1.5">After</div>
                                         <pre className="text-xs font-mono text-foreground-secondary bg-background border border-border rounded-lg p-2 overflow-x-auto max-h-64">
                                             {entry.newValues ? JSON.stringify(entry.newValues, null, 2) : '—'}
                                         </pre>

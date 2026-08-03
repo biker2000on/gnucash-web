@@ -32,8 +32,9 @@ import { getResilienceProfile, loadResilienceActions } from '@/lib/resilience/se
 import { analyzeRetirementIncome } from '@/lib/resilience/retirement-income-core';
 import type { RetirementIncomeProfile } from '@/lib/resilience/types';
 import {
-  getDocumentBySource,
+  getDocumentsBySources,
   listLinkedDocuments,
+  type CanonicalDocument,
   type DocumentLinkRole,
   type LinkedDocument,
 } from '@/lib/documents';
@@ -503,15 +504,23 @@ export async function complianceActions(
     });
   }));
   const certificateObligations = await getFarmCertificateObligations(bookGuid);
-  const certificates = await Promise.all(certificateObligations
-    .filter(item => daysUntil(item.dueDate, now) <= 90)
+  const dueCertificates = certificateObligations.filter(item => daysUntil(item.dueDate, now) <= 90);
+  // One book-scoped batch instead of a lookup per certificate obligation.
+  let certificateDocuments = new Map<string, CanonicalDocument>();
+  if (dueCertificates.length > 0) {
+    try {
+      certificateDocuments = await getDocumentsBySources(
+        bookGuid,
+        'entity_document',
+        dueCertificates.map(item => String(item.documentId)),
+      );
+    } catch (error) {
+      console.warn('Farm certificate document evidence failed:', error);
+    }
+  }
+  const certificates = await Promise.all(dueCertificates
     .map(async item => {
-      let canonical: Awaited<ReturnType<typeof getDocumentBySource>> = null;
-      try {
-        canonical = await getDocumentBySource(bookGuid, 'entity_document', String(item.documentId));
-      } catch (error) {
-        console.warn(`Farm certificate document evidence failed for ${item.documentId}:`, error);
-      }
+      const canonical = certificateDocuments.get(String(item.documentId)) ?? null;
       const evidence: EvidenceRef[] = [{
         kind: 'rule',
         id: item.key,

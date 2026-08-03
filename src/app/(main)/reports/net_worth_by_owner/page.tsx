@@ -31,7 +31,7 @@ const ACCOUNT_TYPE_LABELS: Record<string, string> = {
 
 function Amount({ value, currency }: { value: number; currency: string }) {
     return (
-        <span className={`font-mono ${value < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+        <span className={`font-mono ${value < 0 ? 'text-negative' : 'text-positive'}`}>
             {formatCurrency(value, currency)}
         </span>
     );
@@ -41,7 +41,7 @@ function OwnerSummaryCard({ bucket, currency }: { bucket: OwnerBucket; currency:
     return (
         <div className="bg-surface/30 border border-border rounded-xl p-4">
             <div className="text-xs text-foreground-muted uppercase tracking-wider">{bucket.label}</div>
-            <div className={`mt-1 text-xl font-bold font-mono ${bucket.netWorth < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+            <div className={`mt-1 text-xl font-bold font-mono ${bucket.netWorth < 0 ? 'text-negative' : 'text-positive'}`}>
                 {formatCurrency(bucket.netWorth, currency)}
             </div>
             <div className="mt-2 space-y-0.5 text-sm">

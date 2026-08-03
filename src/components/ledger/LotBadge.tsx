@@ -21,7 +21,9 @@ interface LotBadgeProps {
     sharePrecision?: number;
 }
 
-// Consistent color palette for lot badges (up to 12 distinct colors, then cycle)
+// Consistent color palette for lot badges (up to 12 distinct colors, then cycle).
+// Categorical, not semantic: the hue identifies the lot, so these stay raw
+// palette values — semantic tokens would render different lots identically.
 const LOT_COLORS = [
     'bg-blue-500/20 text-blue-400 border-blue-500/30',
     'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
@@ -66,7 +68,7 @@ export default function LotBadge({ lotIndex, isClosed, tooltip, className = '', 
                             {tooltip.unrealizedGain !== null && (
                                 <div>
                                     Unrealized:{' '}
-                                    <span className={`font-mono ${tooltip.unrealizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    <span className={`font-mono ${tooltip.unrealizedGain >= 0 ? 'text-positive' : 'text-negative'}`}>
                                         {tooltip.unrealizedGain >= 0 ? '+' : ''}{formatCurrency(tooltip.unrealizedGain, tooltip.currencyMnemonic)}
                                     </span>
                                 </div>
@@ -76,7 +78,7 @@ export default function LotBadge({ lotIndex, isClosed, tooltip, className = '', 
                                     <span className={`inline-flex items-center px-1 py-0.5 rounded text-[9px] font-bold ${
                                         tooltip.holdingPeriod === 'long_term'
                                             ? 'bg-primary/20 text-primary'
-                                            : 'bg-amber-500/20 text-amber-400'
+                                            : 'bg-warning/20 text-warning'
                                     }`}>
                                         {tooltip.holdingPeriod === 'long_term' ? 'LT' : 'ST'}
                                     </span>

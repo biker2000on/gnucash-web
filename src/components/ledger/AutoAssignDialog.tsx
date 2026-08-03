@@ -143,7 +143,7 @@ export default function AutoAssignDialog({
                 {result.gainsTransactions > 0 && (
                   <div className="mt-2 text-sm">
                     <p>{result.gainsTransactions} capital gains transaction{result.gainsTransactions !== 1 ? 's' : ''} generated</p>
-                    <p>Total realized: <span className={result.totalRealizedGain >= 0 ? 'text-green-600' : 'text-red-600'}>
+                    <p>Total realized: <span className={result.totalRealizedGain >= 0 ? 'text-success' : 'text-error'}>
                       ${Math.abs(result.totalRealizedGain).toFixed(2)} {result.totalRealizedGain >= 0 ? 'gain' : 'loss'}
                     </span></p>
                   </div>
@@ -151,13 +151,13 @@ export default function AutoAssignDialog({
               </div>
 
               {result.warnings && result.warnings.length > 0 && (
-                <div className="mt-2 text-sm text-amber-600 space-y-1">
+                <div className="mt-2 text-sm text-warning space-y-1">
                   {result.warnings.map((w, i) => <p key={i}>&#9888; {w}</p>)}
                 </div>
               )}
 
               {revertError && (
-                <p className="text-xs text-rose-400">{revertError}</p>
+                <p className="text-xs text-negative">{revertError}</p>
               )}
 
               <div className="flex items-center justify-between pt-1">
@@ -165,7 +165,7 @@ export default function AutoAssignDialog({
                   <button
                     onClick={() => handleRevert(result.runId)}
                     disabled={revertLoading}
-                    className="text-xs text-gray-500 hover:text-red-600 underline disabled:opacity-50 transition-colors"
+                    className="text-xs text-foreground-muted hover:text-error underline disabled:opacity-50 transition-colors"
                   >
                     {revertLoading ? 'Undoing...' : 'Undo this assignment'}
                   </button>
@@ -215,11 +215,11 @@ export default function AutoAssignDialog({
                 <div>
                   {confirmClear ? (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-rose-400">Are you sure?</span>
+                      <span className="text-xs text-negative">Are you sure?</span>
                       <button
                         onClick={handleClear}
                         disabled={loading}
-                        className="px-3 py-1.5 text-xs bg-rose-500/20 text-rose-400 rounded hover:bg-rose-500/30 disabled:opacity-50 transition-colors"
+                        className="px-3 py-1.5 text-xs bg-negative/20 text-negative rounded hover:bg-negative/30 disabled:opacity-50 transition-colors"
                       >
                         Yes, Clear All
                       </button>
@@ -233,7 +233,7 @@ export default function AutoAssignDialog({
                   ) : (
                     <button
                       onClick={() => setConfirmClear(true)}
-                      className="px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                      className="px-3 py-1.5 text-xs text-negative hover:bg-negative/10 rounded transition-colors"
                     >
                       Clear All Assignments
                     </button>

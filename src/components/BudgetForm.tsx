@@ -59,7 +59,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-rose-400 text-sm">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
                     {error}
                 </div>
             )}
@@ -67,7 +67,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
             {/* Name */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    Budget Name <span className="text-rose-400">*</span>
+                    Budget Name <span className="text-negative">*</span>
                 </label>
                 <input
                     type="text"
@@ -99,7 +99,7 @@ export function BudgetForm({ mode, initialData, onSave, onCancel }: BudgetFormPr
                     Period Settings
                 </label>
                 {mode === 'edit' && (
-                    <p className="mb-2 text-xs text-amber-400">
+                    <p className="mb-2 text-xs text-warning">
                         Period settings are read-only after creation.
                     </p>
                 )}

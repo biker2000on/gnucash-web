@@ -336,7 +336,7 @@ export function AccountPicker({
                                 key={type}
                                 type="button"
                                 onClick={() => selectByType(type)}
-                                className="text-xs text-foreground-tertiary hover:text-foreground px-1.5 py-0.5 rounded bg-background-tertiary hover:bg-surface-hover transition-colors"
+                                className="text-xs text-foreground-muted hover:text-foreground px-1.5 py-0.5 rounded bg-background-tertiary hover:bg-surface-hover transition-colors"
                             >
                                 All {type}
                             </button>
@@ -393,7 +393,7 @@ export function AccountPicker({
                                             </span>
 
                                             {/* Type badge */}
-                                            <span className="ml-auto text-xs px-1.5 py-0.5 rounded bg-background-tertiary text-foreground-tertiary flex-shrink-0">
+                                            <span className="ml-auto text-xs px-1.5 py-0.5 rounded bg-background-tertiary text-foreground-muted flex-shrink-0">
                                                 {node.account_type}
                                             </span>
                                         </div>

@@ -96,13 +96,13 @@ export function BatchEditModal({
                             onChange={(e) => setAmount(e.target.value)}
                             placeholder="0.00"
                             className={`w-full pl-7 pr-3 py-2 bg-background-tertiary border rounded-md text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
-                                error ? 'border-rose-500' : 'border-border-hover'
+                                error ? 'border-negative' : 'border-border-hover'
                             }`}
                             autoFocus
                         />
                     </div>
                     {error && (
-                        <p className="mt-1 text-sm text-rose-400">{error}</p>
+                        <p className="mt-1 text-sm text-negative">{error}</p>
                     )}
                 </div>
 

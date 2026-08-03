@@ -207,6 +207,13 @@ export interface LinkedDocument {
   link: DocumentLink;
 }
 
+export interface DocumentPage {
+  documents: CanonicalDocument[];
+  hasMore: boolean;
+  /** Offset for the next page, or null when the current page is the last. */
+  nextOffset: number | null;
+}
+
 interface DocumentRow {
   id: number;
   book_guid: string;
@@ -517,6 +524,32 @@ export async function validateDocumentBookScope(
 /** Book-scoped canonical-id lookup for generic document consumers. */
 export const getDocument = validateDocumentBookScope;
 
+/**
+ * Fail-closed batch of {@link validateDocumentBookScope}: one query for many
+ * ids. Ids outside the book are simply absent from the map, so every caller
+ * still has to decide what a missing id means for its own surface.
+ */
+export async function getDocumentsByIds(
+  bookGuid: string,
+  documentIds: readonly number[],
+): Promise<Map<number, CanonicalDocument>> {
+  nonEmpty(bookGuid, 'bookGuid', 32);
+  for (const documentId of documentIds) {
+    if (!Number.isInteger(documentId) || documentId <= 0) {
+      throw new DocumentValidationError('documentId must be a positive integer');
+    }
+  }
+  const unique = [...new Set(documentIds)];
+  if (unique.length === 0) return new Map();
+  await ensureCanonicalDocumentTables();
+  const rows = await prisma.$queryRawUnsafe<DocumentRow[]>(`
+    SELECT ${DOCUMENT_COLUMNS}
+    FROM gnucash_web_documents
+    WHERE id = ANY($1::int[]) AND book_guid = $2
+  `, unique, bookGuid.trim());
+  return new Map(rows.map((row) => [row.id, mapDocument(row)]));
+}
+
 /** Resolve a specialised source id (for example entity_document/42). */
 export async function getDocumentBySource(
   bookGuid: string,
@@ -535,6 +568,36 @@ export async function getDocumentBySource(
     LIMIT 1
   `, bookGuid.trim(), sourceKind, nonEmpty(sourceId, 'sourceId', 255));
   return rows[0] ? mapDocument(rows[0]) : null;
+}
+
+/**
+ * Batch of {@link getDocumentBySource} for one source kind. Unresolved source
+ * ids are absent from the map, matching the single-row `null` contract.
+ */
+export async function getDocumentsBySources(
+  bookGuid: string,
+  sourceKind: DocumentSourceKind,
+  sourceIds: readonly string[],
+): Promise<Map<string, CanonicalDocument>> {
+  nonEmpty(bookGuid, 'bookGuid', 32);
+  if (!sourceKindSet.has(sourceKind)) {
+    throw new DocumentValidationError('Unsupported sourceKind');
+  }
+  const unique = [...new Set(sourceIds.map((id) => nonEmpty(id, 'sourceId', 255)))];
+  if (unique.length === 0) return new Map();
+  await ensureCanonicalDocumentTables();
+  const rows = await prisma.$queryRawUnsafe<DocumentRow[]>(`
+    SELECT ${DOCUMENT_COLUMNS}
+    FROM gnucash_web_documents
+    WHERE book_guid = $1 AND source_kind = $2 AND source_id = ANY($3::text[])
+  `, bookGuid.trim(), sourceKind, unique);
+  const resolved = new Map<string, CanonicalDocument>();
+  for (const row of rows) {
+    if (row.source_id != null && !resolved.has(row.source_id)) {
+      resolved.set(row.source_id, mapDocument(row));
+    }
+  }
+  return resolved;
 }
 
 /**
@@ -683,21 +746,32 @@ export async function listDocumentLinks(options: ListDocumentLinksOptions): Prom
   return rows.map(mapLink);
 }
 
-/** Resolve link rows and their canonical documents for generic picker/detail UIs. */
+/**
+ * Resolve link rows and their canonical documents for generic picker/detail UIs.
+ *
+ * The document read is a single batched query regardless of link count. A link
+ * whose document is missing or owned by another book still fails the whole call
+ * with {@link DocumentNotFoundError}, exactly as the per-link scope check did.
+ */
 export async function listLinkedDocuments(
   options: ListDocumentLinksOptions,
 ): Promise<LinkedDocument[]> {
   const links = await listDocumentLinks(options);
-  const documents = await Promise.all(
-    links.map((link) => validateDocumentBookScope(options.bookGuid, link.documentId)),
+  if (links.length === 0) return [];
+  const documents = await getDocumentsByIds(
+    options.bookGuid,
+    links.map((link) => link.documentId),
   );
-  return links.map((link, index) => ({ link, document: documents[index] }));
+  return links.map((link) => {
+    const document = documents.get(link.documentId);
+    if (!document) throw new DocumentNotFoundError();
+    return { link, document };
+  });
 }
 
-export async function listDocuments(options: ListDocumentsOptions): Promise<CanonicalDocument[]> {
-  nonEmpty(options.bookGuid, 'bookGuid', 32);
-  await ensureCanonicalDocumentTables();
-
+function buildDocumentFilter(
+  options: ListDocumentsOptions,
+): { conditions: string[]; params: unknown[] } {
   const conditions = ['book_guid = $1'];
   const params: unknown[] = [options.bookGuid.trim()];
   if (options.sourceKinds?.length) {
@@ -738,19 +812,54 @@ export async function listDocuments(options: ListDocumentsOptions): Promise<Cano
     )`);
   }
 
-  const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 100);
-  const offset = Math.max(Math.floor(options.offset ?? 0), 0);
-  params.push(limit);
+  return { conditions, params };
+}
+
+function pageBounds(options: ListDocumentsOptions): { limit: number; offset: number } {
+  return {
+    limit: Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 100),
+    offset: Math.max(Math.floor(options.offset ?? 0), 0),
+  };
+}
+
+async function selectDocuments(
+  options: ListDocumentsOptions,
+  fetchLimit: number,
+  offset: number,
+): Promise<DocumentRow[]> {
+  nonEmpty(options.bookGuid, 'bookGuid', 32);
+  await ensureCanonicalDocumentTables();
+  const { conditions, params } = buildDocumentFilter(options);
+  params.push(fetchLimit);
   const limitIndex = params.length;
   params.push(offset);
   const offsetIndex = params.length;
-
-  const rows = await prisma.$queryRawUnsafe<DocumentRow[]>(`
+  return prisma.$queryRawUnsafe<DocumentRow[]>(`
     SELECT ${DOCUMENT_COLUMNS}
     FROM gnucash_web_documents
     WHERE ${conditions.join(' AND ')}
     ORDER BY created_at DESC, id DESC
     LIMIT $${limitIndex} OFFSET $${offsetIndex}
   `, ...params);
+}
+
+export async function listDocuments(options: ListDocumentsOptions): Promise<CanonicalDocument[]> {
+  const { limit, offset } = pageBounds(options);
+  const rows = await selectDocuments(options, limit, offset);
   return rows.map(mapDocument);
+}
+
+/**
+ * Paged {@link listDocuments} for search-backed pickers. One extra row is read
+ * to report `hasMore` without a second COUNT query.
+ */
+export async function listDocumentsPage(options: ListDocumentsOptions): Promise<DocumentPage> {
+  const { limit, offset } = pageBounds(options);
+  const rows = await selectDocuments(options, limit + 1, offset);
+  const hasMore = rows.length > limit;
+  return {
+    documents: rows.slice(0, limit).map(mapDocument),
+    hasMore,
+    nextOffset: hasMore ? offset + limit : null,
+  };
 }

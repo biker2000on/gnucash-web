@@ -6,11 +6,12 @@ import { AccountCell } from '@/components/ledger/cells/AccountCell';
 import { AmountCell } from '@/components/ledger/cells/AmountCell';
 import type { Split } from '@/lib/types';
 
-/** The stored GnuCash fractions of a split, carried through edits untouched. */
+/** The stored state of a split, carried through edits untouched. */
 interface StoredFractions {
     debit: string;
     credit: string;
     shares: string;
+    account_guid: string;
     value_num: number;
     value_denom: number;
     quantity_num: number;
@@ -118,6 +119,7 @@ function initSplitsFromTransaction(transaction: AccountTransaction, includeTradi
                     debit,
                     credit,
                     shares,
+                    account_guid: s.account_guid,
                     value_num: Number(s.value_num),
                     value_denom: Number(s.value_denom) || 100,
                     quantity_num: Number(s.quantity_num),
@@ -306,6 +308,13 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                     const orig = s.original;
                     const amountEdited = !orig || s.debit !== orig.debit || s.credit !== orig.credit;
                     const sharesEdited = Boolean(orig) && s.shares !== orig!.shares;
+                    const accountEdited = Boolean(orig) && s.account_guid !== orig!.account_guid;
+                    // A split stays reconciled only while its amount and account
+                    // are untouched — an edited amount no longer agrees with the
+                    // statement it was reconciled against. Memos always survive.
+                    const reconcileState = amountEdited || sharesEdited || accountEdited
+                        ? 'n'
+                        : s.reconcile_state;
 
                     // Untouched amount: hand the stored fractions straight back.
                     // Recomputing them would flatten a 10.0000-share quantity
@@ -319,7 +328,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                             quantity_num: orig.quantity_num,
                             quantity_denom: orig.quantity_denom,
                             memo: s.memo,
-                            reconcile_state: s.reconcile_state,
+                            reconcile_state: reconcileState,
                         };
                     }
 
@@ -358,7 +367,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                         quantity_num: quantityNum,
                         quantity_denom: quantityDenom,
                         memo: s.memo,
-                        reconcile_state: s.reconcile_state,
+                        reconcile_state: reconcileState,
                     };
                 });
         },
@@ -681,7 +690,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 e.stopPropagation();
                                                 deleteSplit(index);
                                             }}
-                                            className="text-xs text-foreground-muted hover:text-red-400 transition-colors"
+                                            className="text-xs text-foreground-muted hover:text-error transition-colors"
                                             title="Delete split"
                                         >
                                             &times;
@@ -698,7 +707,7 @@ const EditableSplitRows = forwardRef<EditableSplitRowsHandle, EditableSplitRowsP
                                                 e.stopPropagation();
                                                 deleteSplit(index);
                                             }}
-                                            className="text-xs text-foreground-muted hover:text-red-400 transition-colors"
+                                            className="text-xs text-foreground-muted hover:text-error transition-colors"
                                             title="Delete split"
                                         >
                                             &times;

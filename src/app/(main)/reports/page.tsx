@@ -211,7 +211,7 @@ export default function ReportsPage() {
             {starredReports.length > 0 && (
                 <section className="space-y-4">
                     <h2 className="text-lg font-semibold text-foreground-secondary uppercase tracking-wider flex items-center gap-2">
-                        <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-5 h-5 text-warning" fill="currentColor" viewBox="0 0 24 24">
                             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                         </svg>
                         Starred Reports
@@ -237,7 +237,7 @@ export default function ReportsPage() {
                         Your Saved Reports
                     </h2>
                     <div className="relative w-full sm:max-w-sm">
-                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                         <input
@@ -245,7 +245,7 @@ export default function ReportsPage() {
                             value={savedSearch}
                             onChange={(e) => setSavedSearch(e.target.value)}
                             placeholder="Search saved reports..."
-                            className="w-full pl-10 pr-3 py-2 bg-input-bg border border-border rounded-lg text-foreground text-sm placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="w-full pl-10 pr-3 py-2 bg-input-bg border border-border rounded-lg text-foreground text-sm placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -260,7 +260,7 @@ export default function ReportsPage() {
                         ))}
                     </div>
                     {savedSearch && filteredSavedReports.length === 0 && (
-                        <p className="text-sm text-foreground-tertiary">No saved reports match your search.</p>
+                        <p className="text-sm text-foreground-muted">No saved reports match your search.</p>
                     )}
                 </section>
             )}

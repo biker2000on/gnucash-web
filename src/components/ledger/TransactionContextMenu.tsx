@@ -113,9 +113,9 @@ export function TransactionContextMenu({
                     }}
                     className={`flex min-h-9 w-full items-center rounded-md px-3 py-2 text-left text-sm transition-colors ${
                         item.variant === 'danger'
-                            ? 'text-rose-300 hover:bg-rose-500/10 hover:text-rose-200'
+                            ? 'text-negative hover:bg-negative/10 hover:text-negative'
                             : 'text-foreground-secondary hover:bg-surface-hover hover:text-foreground'
-                    } ${activeIndex === index ? item.variant === 'danger' ? 'bg-rose-500/10 text-rose-200' : 'bg-surface-hover text-foreground' : ''}`}
+                    } ${activeIndex === index ? item.variant === 'danger' ? 'bg-negative/10 text-negative' : 'bg-surface-hover text-foreground' : ''}`}
                 >
                     {item.label}
                 </button>

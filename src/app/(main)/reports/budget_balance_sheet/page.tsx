@@ -224,7 +224,7 @@ export default function BudgetBalanceSheetPage() {
                         </select>
                     </div>
                 </div>
-                <p className="text-xs text-foreground-tertiary mt-3">
+                <p className="text-xs text-foreground-muted mt-3">
                     Budgeted column: actual opening balance plus budgeted flows through the selected period for
                     budgeted accounts; unbudgeted accounts carry their actual balance. Actual Basis column: the
                     real balance at the end of the selected period. Equity includes a synthetic period net income

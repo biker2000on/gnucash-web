@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import { getStorageBackend } from '@/lib/storage/storage-backend';
+import type { PdfTextSource } from '@/lib/pdf-text-extract';
 import {
   getDocumentBySource,
   updateDocumentExtraction,
@@ -45,7 +46,9 @@ export function buildGenericDocumentSuggestionPrompt(text: string): string {
 /**
  * Extract searchable text from a vault document. This deliberately stops at
  * OCR/text indexing: it never writes inferred dates, types, or other business
- * fields back to the specialised entity-document row.
+ * fields back to the specialised entity-document row. Scanned PDFs fall back to
+ * OCR; a document that yields no text ends as `failed` (or `not_applicable` for
+ * file types with no extractor) rather than as a completed empty index.
  */
 export async function runEntityDocumentExtraction(
   documentId: number,
@@ -87,13 +90,30 @@ export async function runEntityDocumentExtraction(
     if (!row.file_key) throw new Error('Document has no stored file');
     const storage = await getStorageBackend();
     const buffer = await storage.get(row.file_key);
+    const mimeType = row.mime_type ?? 'application/octet-stream';
     let text = '';
+    let textSource: PdfTextSource | 'unsupported' = 'unsupported';
+    let extractionError: string | null = null;
+
     if (row.mime_type === 'application/pdf') {
-      const { extractTextFromPdf } = await import('@/lib/pdf-text-extract');
-      text = await extractTextFromPdf(buffer);
+      const { extractPdfText } = await import('@/lib/pdf-text-extract');
+      const extracted = await extractPdfText(buffer, {
+        // Imported lazily so PDFs that carry a text layer never load tesseract.
+        ocr: async (pdf) => {
+          const { extractTextFromPdfViaOcr } = await import('@/lib/queue/jobs/ocr-receipt');
+          return extractTextFromPdfViaOcr(pdf);
+        },
+      });
+      text = extracted.text;
+      textSource = extracted.source;
+      extractionError = extracted.ocrError;
     } else if (row.mime_type?.startsWith('image/')) {
       const { extractTextFromImage } = await import('@/lib/queue/jobs/ocr-receipt');
-      text = await extractTextFromImage(buffer);
+      text = (await extractTextFromImage(buffer)).trim();
+      textSource = text ? 'ocr' : 'none';
+      extractionError = text ? null : `OCR produced no text for ${mimeType}`;
+    } else {
+      extractionError = `No text extractor for ${mimeType}`;
     }
 
     let suggestionMetadata: Record<string, unknown> = {};
@@ -143,15 +163,32 @@ export async function runEntityDocumentExtraction(
       }
     }
 
+    const extractedText = text.trim();
+    const metadata = {
+      ...(canonical.extractionMetadata ?? {}),
+      extraction: 'ocr',
+      textSource,
+      characterCount: extractedText.length,
+      ...(extractionError ? { extractionError } : {}),
+      ...suggestionMetadata,
+    };
+
+    if (!extractedText) {
+      // Explicit failure state: an unextractable file stays visible as failed
+      // instead of being recorded as a completed index over empty text.
+      await updateDocumentExtraction(bookGuid, canonical.id, {
+        status: textSource === 'unsupported' ? 'not_applicable' : 'failed',
+        text: row.notes,
+        metadata,
+        error: extractionError,
+      });
+      return;
+    }
+
     await updateDocumentExtraction(bookGuid, canonical.id, {
       status: 'completed',
-      text: text.trim() || row.notes,
-      metadata: {
-        ...(canonical.extractionMetadata ?? {}),
-        extraction: 'ocr',
-        characterCount: text.trim().length,
-        ...suggestionMetadata,
-      },
+      text: extractedText,
+      metadata,
       error: null,
       extractedAt: new Date(),
     });

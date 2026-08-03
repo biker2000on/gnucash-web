@@ -460,13 +460,13 @@ export default function ScheduledTransactionsPage() {
                   }
                 }}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  tx.enabled ? 'bg-primary' : 'bg-gray-600'
+                  tx.enabled ? 'bg-primary' : 'bg-foreground-muted'
                 }`}
                 role="switch"
                 aria-checked={tx.enabled}
                 aria-label={`${tx.enabled ? 'Disable' : 'Enable'} ${tx.name}`}
               >
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-primary-foreground transition-transform ${
                   tx.enabled ? 'translate-x-4' : 'translate-x-1'
                 }`} />
               </button>
@@ -511,13 +511,13 @@ export default function ScheduledTransactionsPage() {
                   }
                 }}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  tx.enabled ? 'bg-primary' : 'bg-gray-600'
+                  tx.enabled ? 'bg-primary' : 'bg-foreground-muted'
                 }`}
                 role="switch"
                 aria-checked={tx.enabled}
                 aria-label={`${tx.enabled ? 'Disable' : 'Enable'} ${tx.name}`}
               >
-                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-primary-foreground transition-transform ${
                   tx.enabled ? 'translate-x-4' : 'translate-x-1'
                 }`} />
               </button>
@@ -612,11 +612,11 @@ export default function ScheduledTransactionsPage() {
         {/* Mobile action buttons */}
         <div className="sm:hidden mt-2 flex gap-2">
           {actionState === 'executed' ? (
-            <span className="text-xs text-emerald-400 font-medium">Executed ✓</span>
+            <span className="text-xs text-positive font-medium">Executed ✓</span>
           ) : actionState === 'skipped' ? (
             <span className="text-xs text-foreground-muted font-medium">Skipped</span>
           ) : actionState === 'error' ? (
-            <span className="text-xs text-red-400 font-medium">Failed — try again</span>
+            <span className="text-xs text-error font-medium">Failed — try again</span>
           ) : (
             <>
               <button
@@ -631,7 +631,7 @@ export default function ScheduledTransactionsPage() {
                 onClick={() => handleSkip(occ.scheduledTransactionGuid, occ.date)}
                 disabled={actionState === 'loading' || isReadonly}
                 title={isReadonly ? READONLY_TOOLTIP : undefined}
-                className="px-3 py-1 text-xs font-medium rounded-md bg-gray-600/50 hover:bg-gray-500/50 text-foreground-muted transition-colors disabled:opacity-50"
+                className="px-3 py-1 text-xs font-medium rounded-md bg-background-tertiary hover:bg-border-hover text-foreground-muted transition-colors disabled:opacity-50"
               >
                 {actionState === 'loading' ? '...' : 'Skip'}
               </button>
@@ -660,11 +660,11 @@ export default function ScheduledTransactionsPage() {
               {formatCurrency(amount)}
             </span>
             {actionState === 'executed' ? (
-              <span className="text-xs text-emerald-400 font-medium whitespace-nowrap">Executed ✓</span>
+              <span className="text-xs text-positive font-medium whitespace-nowrap">Executed ✓</span>
             ) : actionState === 'skipped' ? (
               <span className="text-xs text-foreground-muted font-medium whitespace-nowrap">Skipped</span>
             ) : actionState === 'error' ? (
-              <span className="text-xs text-red-400 font-medium whitespace-nowrap">Failed — try again</span>
+              <span className="text-xs text-error font-medium whitespace-nowrap">Failed — try again</span>
             ) : (
               <>
                 <button
@@ -679,7 +679,7 @@ export default function ScheduledTransactionsPage() {
                   onClick={() => handleSkip(occ.scheduledTransactionGuid, occ.date)}
                   disabled={actionState === 'loading' || isReadonly}
                   title={isReadonly ? READONLY_TOOLTIP : undefined}
-                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-600/50 hover:bg-gray-500/50 text-foreground-muted transition-colors disabled:opacity-50 whitespace-nowrap"
+                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-background-tertiary hover:bg-border-hover text-foreground-muted transition-colors disabled:opacity-50 whitespace-nowrap"
                 >
                   {actionState === 'loading' ? '...' : 'Skip'}
                 </button>
@@ -825,7 +825,7 @@ export default function ScheduledTransactionsPage() {
           </div>
         ) : error ? (
           <div className="p-12 flex flex-col items-center justify-center gap-3">
-            <p className="text-rose-400">{error}</p>
+            <p className="text-negative">{error}</p>
             <button
               onClick={fetchData}
               className="px-4 py-2 text-sm font-medium bg-surface-elevated hover:bg-surface-hover text-foreground rounded-lg transition-colors border border-border"
@@ -852,15 +852,15 @@ export default function ScheduledTransactionsPage() {
         ) : (
           <div>
             {overdueOccurrences.length > 0 && (
-              <div className="px-4 py-3 sm:px-6 bg-amber-500/10 border-b border-amber-500/30 flex items-center justify-between gap-3">
-                <span className="text-sm text-amber-400 font-medium">
+              <div className="px-4 py-3 sm:px-6 bg-warning/10 border-b border-warning/30 flex items-center justify-between gap-3">
+                <span className="text-sm text-warning font-medium">
                   {overdueOccurrences.length} overdue transaction{overdueOccurrences.length !== 1 ? 's' : ''}
                 </span>
                 <button
                   onClick={handleBatchExecute}
                   disabled={batchLoading || isReadonly}
                   title={isReadonly ? READONLY_TOOLTIP : undefined}
-                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 transition-colors disabled:opacity-50"
+                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-warning/20 hover:bg-warning/30 text-warning border border-warning/30 transition-colors disabled:opacity-50"
                 >
                   {batchLoading ? 'Processing...' : 'Process All'}
                 </button>

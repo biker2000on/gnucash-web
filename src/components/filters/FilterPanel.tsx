@@ -47,7 +47,7 @@ export function FilterPanel({ children, activeFilterCount, onClearAll }: FilterP
                                     onClearAll();
                                     setIsOpen(false);
                                 }}
-                                className="w-full min-h-[44px] text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
+                                className="w-full min-h-[44px] text-sm text-foreground-secondary hover:text-negative transition-colors"
                             >
                                 Clear all filters
                             </button>

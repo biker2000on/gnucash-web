@@ -694,7 +694,7 @@ export default function CommodityPriceSettingsPage() {
           <button
             onClick={handleSaveAll}
             disabled={dirtyRows.length === 0 || savingAll}
-            className="px-4 py-2 text-sm bg-success hover:bg-success/80 disabled:bg-success/30 text-white rounded-lg transition-colors disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm bg-success hover:bg-success/80 disabled:bg-success/30 text-primary-foreground rounded-lg transition-colors disabled:cursor-not-allowed"
           >
             {savingAll ? 'Saving…' : dirtyRows.length > 0 ? `Save All (${dirtyRows.length})` : 'Save All'}
           </button>
@@ -778,7 +778,7 @@ export default function CommodityPriceSettingsPage() {
                             title="Sort"
                           >
                             {flexRender(header.column.columnDef.header, header.getContext())}
-                            <span className="text-xs text-foreground-tertiary w-3">
+                            <span className="text-xs text-foreground-muted w-3">
                               {header.column.getIsSorted() === 'asc' ? '▲' : header.column.getIsSorted() === 'desc' ? '▼' : ''}
                             </span>
                           </button>

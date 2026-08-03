@@ -609,8 +609,8 @@ export function InvestmentTransactionForm({
 
             {/* Error Messages */}
             {errors.length > 0 && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4">
-                    <ul className="list-disc list-inside text-sm text-rose-400 space-y-1">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
+                    <ul className="list-disc list-inside text-sm text-negative space-y-1">
                         {errors.map((error, i) => (
                             <li key={i}>{error}</li>
                         ))}
@@ -972,7 +972,7 @@ export function InvestmentTransactionForm({
                 >
                     {saving ? (
                         <>
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                             Saving...
                         </>
                     ) : (

@@ -57,7 +57,7 @@ export default function TaxPackagePage() {
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-6 space-y-4">
                 <div className="flex flex-wrap items-end gap-4">
                     <label className="block">
-                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Tax year</span>
+                        <span className="text-xs uppercase tracking-wider text-foreground-muted">Tax year</span>
                         <select
                             value={year}
                             onChange={e => setYear(parseInt(e.target.value, 10))}
@@ -77,7 +77,7 @@ export default function TaxPackagePage() {
                     </button>
                 </div>
                 {error && (
-                    <div className="text-sm text-rose-400 border border-rose-500/30 bg-rose-500/10 rounded-lg px-3 py-2">
+                    <div className="text-sm text-negative border border-negative/30 bg-negative/10 rounded-lg px-3 py-2">
                         {error}
                     </div>
                 )}
@@ -90,7 +90,7 @@ export default function TaxPackagePage() {
                 <ul className="space-y-3">
                     {CONTENTS.map(item => (
                         <li key={item.name} className="flex gap-3 text-sm">
-                            <svg className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <svg className="w-4 h-4 mt-0.5 shrink-0 text-positive" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                             </svg>
                             <div>
@@ -100,7 +100,7 @@ export default function TaxPackagePage() {
                         </li>
                     ))}
                 </ul>
-                <p className="mt-4 text-xs text-foreground-tertiary">
+                <p className="mt-4 text-xs text-foreground-muted">
                     Sections without data for the selected year are omitted and noted in the README.
                     Figures are estimates from your books — verify against official forms before filing.
                 </p>

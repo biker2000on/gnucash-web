@@ -5,6 +5,7 @@ import { getStorageBackend } from '@/lib/storage/storage-backend';
 import { query } from '@/lib/db';
 import { createHash } from 'node:crypto';
 import { linkDocument, upsertDocument } from '@/lib/documents';
+import { extractPdfText } from '@/lib/pdf-text-extract';
 
 interface ReceiptDocumentRow {
   id: number;
@@ -91,36 +92,20 @@ export async function extractTextFromImage(buffer: Buffer): Promise<string> {
   return result.data.text.trim();
 }
 
+/**
+ * OCR the raw bytes of a scanned PDF with WASM tesseract. Kept separate from
+ * `extractTextFromImage`: the system tesseract binary cannot read PDF input, so
+ * scanned PDFs always take the WASM path. We OCR the buffer, not a thumbnail.
+ */
+export async function extractTextFromPdfViaOcr(buffer: Buffer): Promise<string> {
+  const Tesseract = await import('tesseract.js');
+  const result = await Tesseract.recognize(buffer, 'eng');
+  return result.data.text.trim();
+}
+
 export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
-
-  const textParts: string[] = [];
-  for (let i = 1; i <= doc.numPages; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item: unknown) => (item as { str?: string }).str || '')
-      .join(' ');
-    textParts.push(pageText);
-  }
-
-  const directText = textParts.join('\n').trim();
-
-  // If PDF has no text layer (scanned document), fall back to OCR via WASM tesseract
-  // Note: We OCR the raw buffer, not the placeholder thumbnail
-  if (!directText) {
-    try {
-      // Use tesseract.js directly on the PDF buffer — it can handle PDFs
-      const Tesseract = await import('tesseract.js');
-      const result = await Tesseract.recognize(buffer, 'eng');
-      return result.data.text.trim();
-    } catch {
-      return '';
-    }
-  }
-
-  return directText;
+  const { text } = await extractPdfText(buffer, { ocr: extractTextFromPdfViaOcr });
+  return text;
 }
 
 export async function handleOcrReceipt(job: Job): Promise<void> {

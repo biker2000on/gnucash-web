@@ -93,7 +93,7 @@ export default function LotAssignmentPopover({
               <button
                 onClick={() => handleAssign(null)}
                 disabled={loading}
-                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-background-secondary/40 text-rose-400 transition-colors"
+                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-background-secondary/40 text-negative transition-colors"
               >
                 Unassign
               </button>

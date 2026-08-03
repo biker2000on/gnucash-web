@@ -6,7 +6,7 @@ const {
   getResilienceProfile,
   storageGet,
   listLinkedDocuments,
-  getDocumentBySource,
+  getDocumentsBySources,
   getEntityDocumentFile,
   findItems,
   findReceipt,
@@ -15,7 +15,7 @@ const {
   getResilienceProfile: vi.fn(),
   storageGet: vi.fn(),
   listLinkedDocuments: vi.fn(),
-  getDocumentBySource: vi.fn(),
+  getDocumentsBySources: vi.fn(),
   getEntityDocumentFile: vi.fn(),
   findItems: vi.fn(),
   findReceipt: vi.fn(),
@@ -26,7 +26,7 @@ vi.mock('@/lib/resilience/service', () => ({ getResilienceProfile }));
 vi.mock('@/lib/storage/storage-backend', () => ({
   getStorageBackend: vi.fn(async () => ({ get: storageGet })),
 }));
-vi.mock('@/lib/documents', () => ({ listLinkedDocuments, getDocumentBySource }));
+vi.mock('@/lib/documents', () => ({ listLinkedDocuments, getDocumentsBySources }));
 vi.mock('@/lib/services/entity-documents.service', () => ({ getEntityDocumentFile }));
 vi.mock('@/lib/prisma', () => ({
   default: {
@@ -101,7 +101,7 @@ describe('home claims package canonical documents', () => {
       if (targetType === 'entity_document') return [];
       return [];
     });
-    getDocumentBySource.mockResolvedValue(document(40, 'policy-key', 'entity_document', '9'));
+    getDocumentsBySources.mockResolvedValue(new Map([['9', document(40, 'policy-key', 'entity_document', '9')]]));
     storageGet.mockImplementation(async (key: string) => {
       if (key === 'photo-key') return Buffer.from(png);
       return Buffer.from(pdf);
@@ -123,7 +123,8 @@ describe('home claims package canonical documents', () => {
     expect(storageGet.mock.calls.filter(call => call[0] === 'receipt-key')).toHaveLength(1);
     expect(listLinkedDocuments).toHaveBeenCalledWith({ bookGuid: BOOK, targetType: 'home_item' });
     expect(listLinkedDocuments).toHaveBeenCalledWith({ bookGuid: BOOK, targetType: 'entity_document' });
-    expect(getDocumentBySource).toHaveBeenCalledWith(BOOK, 'entity_document', '9');
+    expect(getDocumentsBySources).toHaveBeenCalledTimes(1);
+    expect(getDocumentsBySources).toHaveBeenCalledWith(BOOK, 'entity_document', ['9']);
     expect(findReceipt).toHaveBeenCalledWith({ where: { id: 4, book_guid: BOOK } });
     expect(getEntityDocumentFile).not.toHaveBeenCalled();
   });
@@ -133,7 +134,7 @@ describe('home claims package canonical documents', () => {
   });
 
   it('falls back to the legacy policy vault with the authorized book scope', async () => {
-    getDocumentBySource.mockResolvedValue(null);
+    getDocumentsBySources.mockResolvedValue(new Map());
     getEntityDocumentFile.mockResolvedValue({
       buffer: Buffer.from(pdf),
       fileName: 'legacy-policy.pdf',

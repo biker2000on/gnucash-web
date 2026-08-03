@@ -103,6 +103,16 @@ export default function DocumentSearchPage() {
                     Search vault documents, receipts (OCR text), statement lines, payslips,
                     and transaction descriptions and memos in the active book.
                 </p>
+                {/* Every hit here belongs to the active book, so its href always
+                    renders in the book you are already in. Cross-book search
+                    lives in the Family Office, which switches books on open. */}
+                <p className="text-xs text-foreground-muted mt-1">
+                    Results are limited to the active book.{' '}
+                    <Link href="/family-office" className="text-primary hover:underline">
+                        Search every authorized book in the Family Office
+                    </Link>
+                    .
+                </p>
             </div>
 
             <input

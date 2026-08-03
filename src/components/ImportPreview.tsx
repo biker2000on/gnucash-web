@@ -48,7 +48,7 @@ export function ImportPreview({ counts, onConfirm, onCancel, importing }: Import
       </div>
 
       {counts.transactions > 10000 && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 text-sm text-amber-300">
+        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 text-sm text-warning">
           Large dataset detected. The import may take several minutes.
         </div>
       )}
@@ -68,7 +68,7 @@ export function ImportPreview({ counts, onConfirm, onCancel, importing }: Import
         >
           {importing ? (
             <>
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               Importing...
             </>
           ) : (

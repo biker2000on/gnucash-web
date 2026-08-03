@@ -256,7 +256,7 @@ export default function IncomeStatementByPeriodPage() {
                                     <td
                                         key={i}
                                         className={`text-right px-3 py-3 font-mono ${
-                                            v >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                            v >= 0 ? 'text-positive' : 'text-negative'
                                         }`}
                                     >
                                         {formatCurrency(v, 'USD')}
@@ -264,7 +264,7 @@ export default function IncomeStatementByPeriodPage() {
                                 ))}
                                 <td
                                     className={`text-right px-3 py-3 font-mono border-l border-border ${
-                                        reportData.netTotal >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                        reportData.netTotal >= 0 ? 'text-positive' : 'text-negative'
                                     }`}
                                 >
                                     {formatCurrency(reportData.netTotal, 'USD')}
@@ -353,7 +353,7 @@ function PeriodicSectionRows({
                                     ? 'text-foreground-muted'
                                     : v >= 0
                                         ? 'text-foreground-secondary'
-                                        : 'text-rose-400'
+                                        : 'text-negative'
                             }`;
                             if (isZero) {
                                 return (

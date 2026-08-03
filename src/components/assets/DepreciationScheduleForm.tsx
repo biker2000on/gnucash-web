@@ -155,7 +155,7 @@ export function DepreciationScheduleForm({
             onClick={() => handleChange('isAppreciation', false)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               !form.isAppreciation
-                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                ? 'bg-warning/20 text-warning border border-warning/40'
                 : 'bg-background-tertiary text-foreground-secondary border border-border hover:border-foreground-muted'
             }`}
           >
@@ -340,7 +340,7 @@ export function DepreciationScheduleForm({
           <button
             onClick={handleProcessPending}
             disabled={processing}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors disabled:opacity-50 font-medium"
+            className="px-4 py-2 bg-secondary hover:bg-secondary-hover text-primary-foreground rounded-lg transition-colors disabled:opacity-50 font-medium"
           >
             {processing ? 'Generating...' : 'Generate Pending Transactions'}
           </button>

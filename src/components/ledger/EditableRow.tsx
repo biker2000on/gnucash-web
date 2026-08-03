@@ -271,7 +271,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             ? applyBalanceReversal(parseFloat(transaction.running_balance), accountType, balanceReversal)
             : null;
 
-        const rowClass = `transition-colors ${isActive ? 'ring-2 ring-primary/30 ring-inset bg-primary/5' : 'hover:bg-white/[0.02]'} ${saveError ? 'ring-2 ring-rose-500/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-amber-500' : ''}`;
+        const rowClass = `transition-colors ${isActive ? 'ring-2 ring-primary/30 ring-inset bg-primary/5' : 'hover:bg-surface-hover'} ${saveError ? 'ring-2 ring-negative/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-warning' : ''}`;
 
         const sourceBadge = (
             <>
@@ -282,7 +282,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">Payslip</span>
                 )}
                 {transaction.source && transaction.source !== 'manual' && transaction.source !== 'payslip' && (
-                    <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                    <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">Imported</span>
                 )}
             </>
         );
@@ -418,17 +418,17 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         ),
                         transfer: <td className="px-4 py-2 text-xs text-foreground-muted italic">-- {otherSplits.length + 1} splits --</td>,
                         debit: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-positive">
                                 {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
                             </td>
                         ),
                         credit: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-negative">
                                 {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                             </td>
                         ),
                         balance: (
-                            <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                            <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-negative' : 'text-positive'}`}>
                                 {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                             </td>
                         ),
@@ -460,7 +460,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         debit: <td className="px-4 py-2"></td>,
                         credit: <td className="px-4 py-2"></td>,
                         balance: (
-                            <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                            <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-negative' : 'text-positive'}`}>
                                 {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                             </td>
                         ),
@@ -494,17 +494,17 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                             </td>
                         ),
                         debit: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-positive">
                                 {splitValue >= 0 ? formatCurrency(splitValue, transaction.commodity_mnemonic) : ''}
                             </td>
                         ),
                         credit: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-negative">
                                 {splitValue < 0 ? formatCurrency(Math.abs(splitValue), transaction.commodity_mnemonic) : ''}
                             </td>
                         ),
                         balance: (
-                            <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                            <td className={`px-4 py-2 text-sm font-mono text-right font-bold ${balanceValue !== null && balanceValue < 0 ? 'text-negative' : 'text-positive'}`}>
                                 {balanceValue !== null ? formatCurrency(balanceValue, transaction.commodity_mnemonic) : '\u2014'}
                             </td>
                         ),

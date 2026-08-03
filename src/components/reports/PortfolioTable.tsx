@@ -26,8 +26,8 @@ function fmtPercent(n: number): string {
 }
 
 function gainColor(value: number): string {
-    if (value > 0) return 'text-emerald-400';
-    if (value < 0) return 'text-rose-400';
+    if (value > 0) return 'text-positive';
+    if (value < 0) return 'text-negative';
     return 'text-foreground';
 }
 

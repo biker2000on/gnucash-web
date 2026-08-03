@@ -315,7 +315,7 @@ function TreasurerReportContent() {
                             <label className="block text-xs text-foreground-muted uppercase tracking-wider mb-1">
                                 Account Selection
                             </label>
-                            <p className="text-xs text-foreground-tertiary mb-2">
+                            <p className="text-xs text-foreground-muted mb-2">
                                 By default, all Asset, Bank, and Cash accounts are included. Select specific accounts below to customize.
                             </p>
                             <AccountPicker

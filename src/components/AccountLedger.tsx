@@ -132,6 +132,71 @@ export function splitFractions(original: Split | undefined, amount: number, keep
     };
 }
 
+/** One split as the transaction PUT/POST handlers expect it. */
+export type InlineSplitPayload = {
+    guid?: string;
+    account_guid: string;
+    value_num: number;
+    value_denom: number;
+    quantity_num: number;
+    quantity_denom: number;
+    memo: string;
+    reconcile_state: string;
+};
+
+/**
+ * Both sides of an inline two-split save.
+ *
+ * The PUT handler deletes and recreates every split from this payload, so a
+ * field omitted here is destroyed: memos vanish and reconciled splits fall back
+ * to 'n'. Carrying the split guid additionally lets the handler keep `action`,
+ * `lot_guid`, and the reconcile_date that belongs to a preserved state.
+ *
+ * Reconcile rule: a split keeps its stored reconcile_state only while its own
+ * amount and account are untouched. An edited amount no longer agrees with the
+ * statement it was reconciled against, and a retargeted transfer is a different
+ * split entirely — both reset to 'n'. A date/description-only edit leaves both
+ * sides exactly as they were.
+ */
+export function inlineTwoSplitPayload({
+    accountGuid,
+    ownSplit,
+    otherSplit,
+    transferAccountGuid,
+    signedAmount,
+    amountChanged,
+    transferChanged,
+    ownReconcileState,
+}: {
+    accountGuid: string;
+    ownSplit?: Split;
+    otherSplit?: Split;
+    transferAccountGuid: string;
+    signedAmount: number;
+    amountChanged: boolean;
+    transferChanged: boolean;
+    ownReconcileState?: string | null;
+}): InlineSplitPayload[] {
+    return [
+        {
+            ...(ownSplit ? { guid: ownSplit.guid } : {}),
+            account_guid: accountGuid,
+            ...splitFractions(ownSplit, signedAmount, !amountChanged),
+            memo: ownSplit?.memo ?? '',
+            reconcile_state: amountChanged ? 'n' : (ownReconcileState || 'n'),
+        },
+        {
+            ...(otherSplit && !transferChanged ? { guid: otherSplit.guid } : {}),
+            account_guid: transferAccountGuid,
+            ...splitFractions(otherSplit, -signedAmount, !amountChanged && !transferChanged),
+            memo: transferChanged ? '' : (otherSplit?.memo ?? ''),
+            reconcile_state: amountChanged || transferChanged
+                ? 'n'
+                : (otherSplit?.reconcile_state || 'n'),
+        },
+    ];
+}
+
 type HoldingPeriod = 'short_term' | 'long_term' | null;
 
 interface LotSummary {
@@ -659,32 +724,41 @@ export default function AccountLedger({
             }
 
             if (isMultiSplitSave) {
+                // The suggestion replaces the whole split structure; a split that
+                // lands on the same account with the same amount is the same
+                // split. Each prior split may be claimed once — two suggestion
+                // rows on one account must not be recreated with the same guid.
+                const claimed = new Set<string>();
                 bodySplits = data.splits!.map(s => {
                     const { num, denom } = toNumDenom(s.amount);
+                    const prior = nonTradingSplits.find(
+                        p => p.account_guid === s.accountGuid && !claimed.has(p.guid)
+                    );
+                    if (prior) claimed.add(prior.guid);
+                    const priorAmount = prior ? Number(prior.value_num) / Number(prior.value_denom) : NaN;
+                    const priorIntact = Boolean(prior) && Math.abs(priorAmount - s.amount) < 0.005;
                     return {
                         account_guid: s.accountGuid,
                         value_num: num,
                         value_denom: denom,
                         quantity_num: num,
                         quantity_denom: denom,
-                        reconcile_state: s.accountGuid === accountGuid
-                            ? (tx.account_split_reconcile_state || 'n')
-                            : 'n',
+                        memo: prior?.memo ?? '',
+                        reconcile_state: priorIntact ? (prior!.reconcile_state || 'n') : 'n',
+                        ...(priorIntact ? { guid: prior!.guid } : {}),
                     };
                 });
             } else {
-                bodySplits = [
-                    {
-                        account_guid: accountGuid,
-                        ...splitFractions(ownSplit, signedAmount, !amountChanged),
-                        reconcile_state: tx.account_split_reconcile_state || 'n',
-                    },
-                    {
-                        account_guid: data.accountGuid,
-                        ...splitFractions(otherSplit, -signedAmount, !amountChanged && !transferChanged),
-                        reconcile_state: 'n',
-                    },
-                ];
+                bodySplits = inlineTwoSplitPayload({
+                    accountGuid,
+                    ownSplit,
+                    otherSplit,
+                    transferAccountGuid: data.accountGuid,
+                    signedAmount,
+                    amountChanged,
+                    transferChanged,
+                    ownReconcileState: tx.account_split_reconcile_state,
+                });
             }
 
             const body: Record<string, unknown> = {
@@ -2021,7 +2095,7 @@ export default function AccountLedger({
     const getReconcileIcon = (state: string) => {
         switch (state) {
             case 'y': return { icon: 'Y', color: 'text-primary bg-primary/10', label: 'Reconciled' };
-            case 'c': return { icon: 'C', color: 'text-amber-400 bg-amber-500/10', label: 'Cleared' };
+            case 'c': return { icon: 'C', color: 'text-warning bg-warning/10', label: 'Cleared' };
             default: return { icon: 'N', color: 'text-foreground-muted bg-surface/10', label: 'Not Reconciled' };
         }
     };
@@ -2159,7 +2233,7 @@ export default function AccountLedger({
                             {activeFilterCount > 0 && (
                                 <button
                                     onClick={clearAllFilters}
-                                    className="min-h-[44px] text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
+                                    className="min-h-[44px] text-sm text-foreground-secondary hover:text-negative transition-colors"
                                 >
                                     Clear all filters
                                 </button>
@@ -2217,7 +2291,7 @@ export default function AccountLedger({
                             onClick={() => setShowLotsView(!showLotsView)}
                             className={`px-3 py-2 min-h-[44px] text-xs rounded-lg border transition-colors ${
                                 showLotsView
-                                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                                    ? 'bg-secondary/10 border-secondary/30 text-secondary'
                                     : 'border-border text-foreground-muted hover:text-foreground hover:bg-surface-hover'
                             }`}
                         >
@@ -2265,14 +2339,14 @@ export default function AccountLedger({
                                     <button
                                         onClick={() => setShowMoveDialog(true)}
                                         title="Move to Account (m)"
-                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-blue-400 hover:border-blue-500/30 hover:bg-blue-500/10 transition-colors flex items-center"
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-secondary hover:border-secondary/30 hover:bg-secondary/10 transition-colors flex items-center"
                                     >
                                         Move to Account ({editSelectedGuids.size})
                                     </button>
                                     <button
                                         onClick={() => setBulkDeleteConfirmOpen(true)}
                                         title="Delete Selected (x)"
-                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 transition-colors flex items-center"
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-negative hover:border-negative/30 hover:bg-negative/10 transition-colors flex items-center"
                                     >
                                         Delete Selected ({editSelectedGuids.size})
                                     </button>
@@ -2286,7 +2360,7 @@ export default function AccountLedger({
                                     <button
                                         onClick={() => setBulkRecatOpen(true)}
                                         title="Recategorize the counter-split of selected transactions"
-                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-colors flex items-center"
+                                        className="px-3 py-2 min-h-[44px] text-xs rounded-lg border border-border text-foreground-muted hover:text-positive hover:border-positive/30 hover:bg-positive/10 transition-colors flex items-center"
                                     >
                                         Recategorize ({editSelectedGuids.size})
                                     </button>
@@ -2362,7 +2436,7 @@ export default function AccountLedger({
                                 disabled={!isUnreviewed}
                                 onCommit={() => toggleReviewed(tx.guid)}
                             >
-                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-xl ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
+                                <div className={`bg-surface/30 backdrop-blur p-3 space-y-2 border-b border-border/30 sm:border sm:border-border sm:rounded-xl ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`} onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}>
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <div className="text-xs text-foreground-muted">
@@ -2372,10 +2446,10 @@ export default function AccountLedger({
                                                 <TransactionTypeIcon type={invRow.transactionType} className="mr-0.5" />
                                                 {tx.description}
                                                 {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
-                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>
+                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">Imported</span>
                                                 )}
                                                 {tx.match_type === 'manual_reconciliation' && (
-                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>
+                                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">Bank-verified</span>
                                                 )}
                                                 {(() => {
                                                     const mLotSplit = tx.splits?.find(s => s.lot_guid && s.account_guid === accountGuid);
@@ -2419,7 +2493,7 @@ export default function AccountLedger({
                                         </div>
                                         <div className="text-right">
                                             {invRow.shares !== null && (
-                                                <div className={`text-sm font-mono ${invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                <div className={`text-sm font-mono ${invRow.shares > 0 ? 'text-positive' : 'text-negative'}`}>
                                                     {invRow.shares > 0 ? '+' : ''}{invRow.shares.toFixed(sharePrecision)} shares
                                                 </div>
                                             )}
@@ -2432,25 +2506,25 @@ export default function AccountLedger({
                                     </div>
                                     <div className="flex justify-between text-xs border-t border-border/30 pt-1.5">
                                         {invRow.buyAmount !== null && (
-                                            <span className="text-emerald-400">Buy: {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}</span>
+                                            <span className="text-positive">Buy: {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}</span>
                                         )}
                                         {invRow.sellAmount !== null && (
-                                            <span className="text-rose-400">Sell: {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}</span>
+                                            <span className="text-negative">Sell: {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}</span>
                                         )}
                                         {invRow.transactionType === 'dividend' && (
                                             <span className="text-foreground-muted">Dividend</span>
                                         )}
                                         {invRow.transactionType === 'stock_split' && (
-                                            <span className="text-blue-400">Stock Split</span>
+                                            <span className="text-secondary">Stock Split</span>
                                         )}
                                         {invRow.transactionType === 'reinvested_dividend' && (
                                             <span className="text-primary">DRIP</span>
                                         )}
                                         {invRow.transactionType === 'return_of_capital' && (
-                                            <span className="text-amber-400">Return of Capital</span>
+                                            <span className="text-warning">Return of Capital</span>
                                         )}
                                         {invRow.transactionType === 'realized_gain' && invRow.gainAmount !== null && (
-                                            <span className={invRow.gainAmount >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                            <span className={invRow.gainAmount >= 0 ? 'text-positive' : 'text-negative'}>
                                                 Realized {invRow.gainAmount >= 0 ? 'Gain' : 'Loss'}: {formatCurrency(Math.abs(invRow.gainAmount), invRow.currencyMnemonic)}
                                             </span>
                                         )}
@@ -2467,17 +2541,17 @@ export default function AccountLedger({
                             >
                                 <MobileCard
                                     onClick={() => { setSelectedTxGuid(tx.guid); setIsViewModalOpen(true); }}
-                                    className={isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}
+                                    className={isUnreviewed ? 'border-l-2 border-l-warning' : ''}
                                     fields={[
                                         { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
-                                        { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
+                                        { label: 'Description', value: <span className="font-medium flex items-center gap-2">{tx.description}{tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">Imported</span>}{tx.match_type === 'manual_reconciliation' && <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">Bank-verified</span>}</span> },
                                         { label: 'Transfer', value: transferName },
                                         ...(amount >= 0
                                             ? [{ label: 'Debit', value: <span className="text-primary font-mono">{formatCurrency(amount, tx.commodity_mnemonic)}</span> }]
-                                            : [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
+                                            : [{ label: 'Credit', value: <span className="text-negative font-mono">{formatCurrency(Math.abs(amount), tx.commodity_mnemonic)}</span> }]
                                         ),
                                         { label: 'Balance', value: balanceValue !== null
-                                            ? <span className={`font-mono font-bold ${balanceValue < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{formatCurrency(balanceValue, tx.commodity_mnemonic)}</span>
+                                            ? <span className={`font-mono font-bold ${balanceValue < 0 ? 'text-negative' : 'text-positive'}`}>{formatCurrency(balanceValue, tx.commodity_mnemonic)}</span>
                                             : <span className="text-foreground-muted">{'\u2014'}</span>
                                         },
                                         { label: 'Reconcile', value: <span className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold ${reconcileInfo.color}`}>{reconcileInfo.icon}</span> },
@@ -2864,7 +2938,7 @@ export default function AccountLedger({
                                 return (
                                     <React.Fragment key={row.id}>
                                     <tr
-                                        className={`hover:bg-white/[0.02] transition-colors group cursor-pointer ${isSelected ? 'bg-amber-500/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-white/[0.03]' : ''} ${isUnreviewed ? 'border-l-2 border-l-amber-500' : ''}`}
+                                        className={`hover:bg-surface-hover transition-colors group cursor-pointer ${isSelected ? 'bg-warning/5' : ''} ${index === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-primary/5' : ''} ${isUnreviewed ? 'border-l-2 border-l-warning' : ''}`}
                                         onContextMenu={(e) => openContextMenu(e, tx)}
                                         onClick={(e) => {
                                             // Don't trigger on checkbox or button clicks
@@ -2883,7 +2957,7 @@ export default function AccountLedger({
                                                                 type="checkbox"
                                                                 checked={isSelected}
                                                                 onChange={() => toggleTransactionSelection(tx)}
-                                                                className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-amber-500 focus:ring-amber-500/50 cursor-pointer"
+                                                                className="w-4 h-4 rounded border-border-hover bg-background-tertiary text-warning focus:ring-warning/50 cursor-pointer"
                                                             />
                                                         )}
                                                     </td>
@@ -2952,12 +3026,12 @@ export default function AccountLedger({
                                                                 <TagChip key={tag.id} name={tag.name} color={tag.color} title={`#${tag.name}`} />
                                                             ))}
                                                             {tx.source && tx.source !== 'manual' && tx.match_type !== 'manual_reconciliation' && (
-                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase tracking-wider font-bold">
+                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 uppercase tracking-wider font-bold">
                                                                     Imported
                                                                 </span>
                                                             )}
                                                             {tx.match_type === 'manual_reconciliation' && (
-                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-wider font-bold">
+                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 uppercase tracking-wider font-bold">
                                                                     Bank-verified
                                                                 </span>
                                                             )}
@@ -3032,7 +3106,7 @@ export default function AccountLedger({
                                                                                 />
                                                                             )}
                                                                         </span>
-                                                                        <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                        <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-negative/70' : 'text-positive/70'}`}>
                                                                             {formatCurrency(split.value_decimal || split.quantity_decimal || '0', split.commodity_mnemonic || tx.commodity_mnemonic)}
                                                                         </span>
                                                                     </div>
@@ -3066,7 +3140,7 @@ export default function AccountLedger({
                                                                             )}
                                                                         </span>
                                                                         {isExpanded && (
-                                                                            <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-rose-400/70' : 'text-emerald-400/70'}`}>
+                                                                            <span className={`font-mono ml-2 ${parseFloat(split.value_decimal || split.quantity_decimal || '0') < 0 ? 'text-negative/70' : 'text-positive/70'}`}>
                                                                                 {formatCurrency(split.value_decimal || split.quantity_decimal || '0', split.commodity_mnemonic || tx.commodity_mnemonic)}
                                                                             </span>
                                                                         )}
@@ -3088,7 +3162,7 @@ export default function AccountLedger({
 
                                             if (colId === 'debit') {
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle text-emerald-400">
+                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle text-positive">
                                                         {amount >= 0 ? formatCurrency(amount, tx.commodity_mnemonic) : ''}
                                                     </td>
                                                 );
@@ -3096,7 +3170,7 @@ export default function AccountLedger({
 
                                             if (colId === 'credit') {
                                                 return (
-                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle text-rose-400">
+                                                    <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle text-negative">
                                                         {amount < 0 ? formatCurrency(Math.abs(amount), tx.commodity_mnemonic) : ''}
                                                     </td>
                                                 );
@@ -3104,7 +3178,7 @@ export default function AccountLedger({
 
                                             if (colId === 'balance') {
                                                 return (
-                                                    <td key={cell.id} className={`px-4 py-2 text-sm font-mono text-right align-middle font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400') : 'text-foreground-muted'}`}>
+                                                    <td key={cell.id} className={`px-4 py-2 text-sm font-mono text-right align-middle font-bold ${tx.running_balance ? (applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal) < 0 ? 'text-negative' : 'text-positive') : 'text-foreground-muted'}`}>
                                                         {tx.running_balance ? formatCurrency(applyBalanceReversal(parseFloat(tx.running_balance), accountType, balanceReversal), tx.commodity_mnemonic) : '\u2014'}
                                                     </td>
                                                 );
@@ -3118,7 +3192,7 @@ export default function AccountLedger({
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.shares != null ? (
-                                                                <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                                <span className={invRow.shares > 0 ? 'text-positive' : 'text-negative'}>
                                                                     {invRow.shares.toFixed(sharePrecision)}
                                                                 </span>
                                                             ) : (
@@ -3152,11 +3226,11 @@ export default function AccountLedger({
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.buyAmount != null ? (
-                                                                <span className="text-emerald-400">
+                                                                <span className="text-positive">
                                                                     {formatCurrency(invRow.buyAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : gainHere !== null ? (
-                                                                <span className="text-emerald-400" title="Realized gain">
+                                                                <span className="text-positive" title="Realized gain">
                                                                     {formatCurrency(gainHere, invRow!.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
@@ -3173,11 +3247,11 @@ export default function AccountLedger({
                                                     return (
                                                         <td key={cell.id} className="px-4 py-2 text-sm font-mono text-right align-middle">
                                                             {invRow?.sellAmount != null ? (
-                                                                <span className="text-rose-400">
+                                                                <span className="text-negative">
                                                                     {formatCurrency(invRow.sellAmount, invRow.currencyMnemonic)}
                                                                 </span>
                                                             ) : lossHere !== null ? (
-                                                                <span className="text-rose-400" title="Realized loss">
+                                                                <span className="text-negative" title="Realized loss">
                                                                     {formatCurrency(lossHere, invRow!.currencyMnemonic)}
                                                                 </span>
                                                             ) : (
@@ -3448,7 +3522,7 @@ export default function AccountLedger({
                             }
                             setImbalanceDialogTx(null);
                         }}
-                        className="px-3 py-2 text-sm rounded-lg bg-accent-primary text-white hover:bg-accent-primary/90 transition-colors"
+                        className="px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground hover:bg-primary-hover transition-colors"
                     >
                         Continue Editing
                     </button>

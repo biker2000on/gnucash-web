@@ -331,8 +331,8 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
 
     if (error) {
         return (
-            <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-8 text-center">
-                <div className="text-rose-400">{error}</div>
+            <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-8 text-center">
+                <div className="text-negative">{error}</div>
             </div>
         );
     }
@@ -435,7 +435,7 @@ export function InvestmentAccount({ accountGuid }: InvestmentAccountProps) {
                     <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-xl p-4 overflow-hidden">
                         <div className="text-xs text-foreground-muted uppercase tracking-wider">Gain/Loss</div>
                         <div className={`font-mono font-semibold mt-1 ${
-                            holdings.gainLoss >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                            holdings.gainLoss >= 0 ? 'text-positive' : 'text-negative'
                         }`}>
                             <div className="text-lg sm:text-xl">{holdings.gainLoss >= 0 ? '+' : ''}{formatCurrency(holdings.gainLoss, 'USD')}</div>
                             <div className="text-xs sm:text-sm">

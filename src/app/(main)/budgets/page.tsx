@@ -250,8 +250,8 @@ export default function BudgetsPage() {
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
-                    <div className="text-rose-400">{error}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 text-center">
+                    <div className="text-negative">{error}</div>
                 </div>
             ) : (
                 <BudgetList
@@ -294,7 +294,7 @@ export default function BudgetsPage() {
             >
                 <div className="p-6 space-y-4">
                     {scenarioError && (
-                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-3 text-rose-400 text-sm">
+                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-3 text-negative text-sm">
                             {scenarioError}
                         </div>
                     )}
@@ -390,7 +390,7 @@ export default function BudgetsPage() {
             >
                 <div className="p-6 space-y-4">
                     {deleteError && (
-                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-rose-400 text-sm">
+                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
                             {deleteError}
                         </div>
                     )}
@@ -410,7 +410,7 @@ export default function BudgetsPage() {
                         <button
                             onClick={handleDelete}
                             disabled={deleting}
-                            className="px-4 py-2 text-sm bg-rose-600 hover:bg-rose-500 disabled:bg-rose-600/50 text-white rounded-lg transition-colors"
+                            className="px-4 py-2 text-sm bg-error hover:bg-error/85 disabled:bg-error/50 text-primary-foreground rounded-lg transition-colors"
                         >
                             {deleting ? 'Deleting...' : 'Delete Budget'}
                         </button>

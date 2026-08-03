@@ -16,7 +16,7 @@ interface CandidateTableProps {
 /** Badge styling matches AccountLedger's reconcile-state display. */
 function stateBadge(state: 'n' | 'c') {
     return state === 'c'
-        ? { icon: 'C', color: 'text-amber-400 bg-amber-500/10', label: 'Cleared' }
+        ? { icon: 'C', color: 'text-warning bg-warning/10', label: 'Cleared' }
         : { icon: 'N', color: 'text-foreground-muted bg-surface/10', label: 'Not Reconciled' };
 }
 

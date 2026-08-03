@@ -84,11 +84,11 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
       <div className="relative w-full max-w-md bg-background-secondary border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-          <svg className="w-5 h-5 text-foreground-tertiary shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+          <svg className="w-5 h-5 text-foreground-muted shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.25278C12 6.25278 10.5 3 7 3C3.5 3 2 5 2 7.5V19.5C2 19.5 3.5 18 7 18C10.5 18 12 20 12 20M12 6.25278C12 6.25278 13.5 3 17 3C20.5 3 22 5 22 7.5V19.5C22 19.5 20.5 18 17 18C13.5 18 12 20 12 20M12 6.25278V20" />
           </svg>
           <span className="text-sm font-medium text-foreground">Switch Book</span>
-          <kbd className="ml-auto hidden sm:inline-flex text-xs text-foreground-tertiary bg-surface-hover px-1.5 py-0.5 rounded border border-border">
+          <kbd className="ml-auto hidden sm:inline-flex text-xs text-foreground-muted bg-surface-hover px-1.5 py-0.5 rounded border border-border">
             esc
           </kbd>
         </div>
@@ -109,11 +109,11 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{book.name}</div>
                 {book.description && (
-                  <div className="text-xs text-foreground-tertiary truncate mt-0.5">{book.description}</div>
+                  <div className="text-xs text-foreground-muted truncate mt-0.5">{book.description}</div>
                 )}
               </div>
               {book.guid === activeBookGuid && (
-                <svg className="w-4 h-4 shrink-0 text-accent-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <svg className="w-4 h-4 shrink-0 text-primary" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                 </svg>
               )}
@@ -122,7 +122,7 @@ export function QuickBookSwitcher({ isOpen, onClose }: QuickBookSwitcherProps) {
         </div>
 
         {/* Footer hint */}
-        <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-xs text-foreground-tertiary">
+        <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-xs text-foreground-muted">
           <span className="flex items-center gap-1">
             <kbd className="px-1 py-0.5 rounded border border-border bg-surface-hover">&uarr;</kbd>
             <kbd className="px-1 py-0.5 rounded border border-border bg-surface-hover">&darr;</kbd>

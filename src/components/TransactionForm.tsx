@@ -703,8 +703,8 @@ export function TransactionForm({
             <form onSubmit={handleSubmit} className="space-y-6">
                 {/* Error Messages */}
             {errors.length > 0 && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4">
-                    <ul className="list-disc list-inside text-sm text-rose-400 space-y-1">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
+                    <ul className="list-disc list-inside text-sm text-negative space-y-1">
                         {errors.map((error, i) => (
                             <li key={i}>{error}</li>
                         ))}
@@ -714,15 +714,15 @@ export function TransactionForm({
 
             {/* Multi-Currency Info Banner */}
             {isMultiCurrency && multiCurrencyInfo && (
-                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/30 text-sm text-blue-400">
+                <div className="p-3 rounded-lg bg-secondary/10 border border-secondary/30 text-sm text-secondary">
                     <div className="flex items-start gap-2">
                         <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <div>
                             <span className="font-medium">Multi-currency transaction detected</span>
-                            <span className="text-blue-400/80"> ({multiCurrencyInfo.join(' / ')})</span>
-                            <p className="text-blue-400/70 mt-1">
+                            <span className="text-secondary/80"> ({multiCurrencyInfo.join(' / ')})</span>
+                            <p className="text-secondary/70 mt-1">
                                 Trading splits will be automatically generated to balance this transaction across currencies.
                             </p>
                         </div>
@@ -968,35 +968,35 @@ export function TransactionForm({
                     {/* Totals - Desktop */}
                     <div className="hidden md:grid grid-cols-12 gap-2 text-sm font-mono py-3 border-t border-border-hover mt-2">
                         <div className="col-span-5 text-foreground-secondary text-right pr-2">Totals:</div>
-                        <div className="col-span-2 text-right text-emerald-400">
+                        <div className="col-span-2 text-right text-positive">
                             {totalDebit.toFixed(2)}
                         </div>
-                        <div className="col-span-2 text-right text-rose-400">
+                        <div className="col-span-2 text-right text-negative">
                             {totalCredit.toFixed(2)}
                         </div>
                         <div className="col-span-3 text-right">
                             {Math.abs(difference) > 0.01 ? (
-                                <span className="text-amber-400">
+                                <span className="text-warning">
                                     Difference: {difference.toFixed(2)}
                                 </span>
                             ) : (
-                                <span className="text-emerald-400">Balanced</span>
+                                <span className="text-positive">Balanced</span>
                             )}
                         </div>
                     </div>
                     {/* Totals - Mobile */}
                     <div className="md:hidden flex justify-between text-sm font-mono py-3 border-t border-border-hover mt-2">
                         <div className="flex gap-3">
-                            <span className="text-emerald-400">Dr: {totalDebit.toFixed(2)}</span>
-                            <span className="text-rose-400">Cr: {totalCredit.toFixed(2)}</span>
+                            <span className="text-positive">Dr: {totalDebit.toFixed(2)}</span>
+                            <span className="text-negative">Cr: {totalCredit.toFixed(2)}</span>
                         </div>
                         <div>
                             {Math.abs(difference) > 0.01 ? (
-                                <span className="text-amber-400">
+                                <span className="text-warning">
                                     Diff: {difference.toFixed(2)}
                                 </span>
                             ) : (
-                                <span className="text-emerald-400">Balanced</span>
+                                <span className="text-positive">Balanced</span>
                             )}
                         </div>
                     </div>
@@ -1036,7 +1036,7 @@ export function TransactionForm({
                     >
                         {saving ? (
                             <>
-                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                                 Saving...
                             </>
                         ) : (

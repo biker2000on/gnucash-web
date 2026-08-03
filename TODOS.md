@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-08-02.
+Updated 2026-08-03.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -1063,6 +1063,8 @@ without client-side root stripping.
 
 ## P4 - Canonical Document Platform Follow-Ups
 
+**Status:** Implemented 2026-08-03.
+
 Harden the shared document store now used by feature packs without creating
 another document silo:
 
@@ -1086,6 +1088,34 @@ book while preserving RBAC boundaries.
 search, Family Office authorization graph, and active-book session switching.
 
 **Effort:** M.
+
+**Delivered:** The picker is search-backed and paged (25 rows, debounced, one
+in-flight `AbortController`) against `listDocumentsPage`, so nothing is stranded
+behind the old 100-row ceiling; the selected document is pinned into the option
+list so a later search cannot silently drop it.
+
+The N+1 was larger than reported: `listLinkedDocuments` itself resolved one
+document per link. It now issues 2 queries regardless of link count (1 when
+there are none) via `getDocumentsByIds`, and the two per-record call sites
+(claims package, farm certificate obligations) batch to 1 each through
+`getDocumentsBySources`. Every batch query carries `book_guid` explicitly — the
+optimization did not widen scope. A missing or foreign document still throws
+rather than being skipped, so a cross-book reference stays *refused* instead of
+quietly becoming invisible.
+
+Scanned and image-only PDFs get OCR through an injected hook, so
+`pdf-text-extract.ts` keeps its no-heavy-deps property (the Dockerfile guard
+exists to protect exactly that) and the two duplicate `extractTextFromPdf`
+implementations collapsed into one. A PDF with no text layer and no working OCR
+now lands in an explicit `failed` state with a specific reason, instead of being
+recorded as a completed index over empty text.
+
+Family Office global-document results are the only genuinely cross-book
+navigation (`/search` is already active-book scoped and now says so); they route
+through `switchBook`, render as buttons so a middle-click cannot bypass the
+switch, and label the owning book before and during the switch. `switchBook`
+also stopped swallowing a non-OK response — a revoked grant used to make the
+click do nothing at all on both this surface and the Action Center.
 
 ---
 
@@ -1204,7 +1234,7 @@ and Money Timeline joined `employees` unconstrained.
 
 ## P4 - Ledger Inline Save Drops Memos and Reconcile State
 
-**Status:** Proposed 2026-08-03, found while fixing the inline-edit quantity
+**Status:** Implemented 2026-08-03. Found while fixing the inline-edit quantity
 corruption.
 
 `handleInlineSave` in `src/components/AccountLedger.tsx` rebuilds splits from
@@ -1216,11 +1246,21 @@ so it wants its own change and its own test.
 
 **Effort:** S.
 
+**Delivered:** Inline save carries each split's `memo`, `reconcile_state` and
+`guid` through the payload (the guid matters — the PUT handler keys `action`,
+`lot_guid` and `reconcile_date` off it, so a preserved `'y'` without it came
+back with a null reconcile date). The rule: **a split keeps its stored
+reconcile state only while its own amount and account are untouched.** A
+description, date or memo edit preserves both sides; an amount edit resets both
+to `'n'`, including the account's own split, because an edited amount no longer
+agrees with the statement it was reconciled against and leaving it reconciled
+silently corrupts the reconciled balance. Applied to `EditableSplitRows` too.
+
 ---
 
 ## P4 - Semantic Color Token Pass
 
-**Status:** Proposed 2026-08-02.
+**Status:** Implemented 2026-08-03.
 
 DESIGN.md defines the palette as semantic tokens (`--positive`, `--negative`,
 `--warning`, `--primary`, `--foreground`), but several components still use raw
@@ -1248,11 +1288,31 @@ deleted on 2026-08-03 as dead code (theme switching lives in
 
 **Effort:** S.
 
+**Delivered:** 545 raw-palette lines converted across 121 files, every emitted
+utility checked against `@theme inline`. The authors' two-palette split is
+preserved (`emerald`/`rose` -> positive/negative for financial gain and loss,
+`green`/`red` -> success/error for status and destructive UI).
+
+Deliberate exceptions, each now carrying a one-line comment: `TagChip.tsx`,
+`LotBadge.tsx` and `AccountTypeFilter.tsx` use categorical palettes where the
+hue *is* the datum (tag identity, lot index, account type) and the design system
+has no categorical scale — tokenizing would render distinct categories in
+identical colors. Also left raw: text over a fixed chart color or a photo scrim,
+the light-only swagger-ui docs page, and `print:` overrides.
+
+Separately fixed a real defect this surfaced: `text-foreground-tertiary` was
+used 74 times and `bg-`/`text-accent-primary` 4 times, and **neither token
+exists** — DESIGN.md defines exactly three foreground steps. Those elements were
+silently inheriting their color. Confirmed in the browser before and after:
+`text-foreground-tertiary` computed to `rgb(226,232,240)`, identical to the
+inherited body color, while `text-foreground-muted` correctly resolves to
+`#64748b`. All 78 now use defined tokens.
+
 ---
 
 ## P4 - Test Suite Flakiness
 
-**Status:** Proposed 2026-08-02.
+**Status:** Implemented 2026-08-03.
 
 Two suites fail intermittently under parallel load and pass in isolation, which
 produces false alarms on every full run and erodes trust in the suite:
@@ -1272,6 +1332,31 @@ and repeated extraction works, and that Action Center keyboard focus survives a
 card leaving its lane.
 
 **Effort:** S.
+
+**Delivered:** Both guards are intact; neither was serialized and no assertion
+was loosened.
+
+The PDF one is genuinely load-sensitive but was not reproducing on demand —
+the same test measured 399ms, 3136ms and 2137ms across identical runs, an 8x
+spread that makes the 5s default reachable under contention. The esbuild bundle
+moved into a shared `beforeAll` (built once for the file instead of per test)
+with explicit, commented per-test timeouts; `testTimeout` was left alone.
+
+The Action Center one had a different cause than the entry assumed — **not**
+leaked focus or timer state. Vitest runs each file in its own forked process
+with `isolate: true`, so cross-file leakage is architecturally impossible here.
+Reproduced under `--sequence.shuffle`: one test fired `ArrowRight` before the
+passive-effect flush that registers the keydown listener, so the handler closed
+over an empty action list and dropped the key, which no later `waitFor` can
+recover. Every other keyboard test in the file already awaited initial focus —
+that one was the outlier. Fixed by awaiting focus first, verified across
+repeated shuffled runs.
+
+Noted for later, not fixed: `--sequence.shuffle` repacks files across workers
+and produces scattered *timeout* failures in unrelated suites (PayslipDetailPanel,
+bulk-upload-ui, InvestmentTransactionForm, the docs layout). Those are
+contention-sensitive rather than order-dependent, and none recur in normal runs —
+worth knowing if CI ever gets slower.
 
 ---
 

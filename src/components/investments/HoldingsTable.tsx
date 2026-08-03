@@ -189,8 +189,8 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                       { label: 'Price', value: formatCurrency(holding.latestPrice) },
                       { label: 'Market Value', value: formatCurrency(holding.totalMarketValue) },
                       { label: 'Cost Basis', value: formatCurrency(holding.totalCostBasis) },
-                      { label: 'Gain/Loss', value: <span className={holding.totalGainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(holding.totalGainLoss)}</span> },
-                      { label: 'Gain %', value: <span className={holding.totalGainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}>{holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%</span> },
+                      { label: 'Gain/Loss', value: <span className={holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}>{formatCurrency(holding.totalGainLoss)}</span> },
+                      { label: 'Gain %', value: <span className={holding.totalGainLossPercent >= 0 ? 'text-positive' : 'text-error'}>{holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%</span> },
                     ]}
                   />
                   {/* Expanded sub-accounts */}
@@ -204,8 +204,8 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                         { label: 'Shares', value: account.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                         { label: 'Market Value', value: formatCurrency(account.marketValue) },
                         { label: 'Cost Basis', value: formatCurrency(account.costBasis) },
-                        { label: 'Gain/Loss', value: <span className={account.gainLoss >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>{formatCurrency(account.gainLoss)}</span> },
-                        { label: 'Gain %', value: <span className={account.gainLossPercent >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}>{account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%</span> },
+                        { label: 'Gain/Loss', value: <span className={account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}>{formatCurrency(account.gainLoss)}</span> },
+                        { label: 'Gain %', value: <span className={account.gainLossPercent >= 0 ? 'text-positive/70' : 'text-error/70'}>{account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%</span> },
                       ]}
                     />
                   ))}
@@ -291,8 +291,8 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                 { label: 'Shares', value: holding.isCash ? 'Cash' : holding.shares.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
                 { label: 'Market Value', value: formatCurrency(holding.marketValue) },
                 { label: 'Cost Basis', value: formatCurrency(holding.costBasis) },
-                { label: 'Gain/Loss', value: <span className={holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(holding.gainLoss)}</span> },
-                { label: 'Gain %', value: <span className={holding.gainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}>{holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%</span> },
+                { label: 'Gain/Loss', value: <span className={holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}>{formatCurrency(holding.gainLoss)}</span> },
+                { label: 'Gain %', value: <span className={holding.gainLossPercent >= 0 ? 'text-positive' : 'text-error'}>{holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%</span> },
               ]}
             />
           ))}
@@ -326,10 +326,10 @@ export function HoldingsTable({ holdings, consolidatedHoldings }: HoldingsTableP
                   </td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.costBasis)}</td>
                   <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.marketValue)}</td>
-                  <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  <td className={`px-4 py-3 ${holding.gainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
                     {formatCurrency(holding.gainLoss)}
                   </td>
-                  <td className={`px-4 py-3 ${holding.gainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  <td className={`px-4 py-3 ${holding.gainLossPercent >= 0 ? 'text-positive' : 'text-error'}`}>
                     {holding.gainLossPercent >= 0 ? '+' : ''}{holding.gainLossPercent.toFixed(2)}%
                   </td>
                 </tr>
@@ -386,10 +386,10 @@ function ConsolidatedRow({
         </td>
         <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.totalCostBasis)}</td>
         <td className="px-4 py-3 text-foreground-secondary">{formatCurrency(holding.totalMarketValue)}</td>
-        <td className={`px-4 py-3 ${holding.totalGainLoss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+        <td className={`px-4 py-3 ${holding.totalGainLoss >= 0 ? 'text-positive' : 'text-error'}`}>
           {formatCurrency(holding.totalGainLoss)}
         </td>
-        <td className={`px-4 py-3 ${holding.totalGainLossPercent >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+        <td className={`px-4 py-3 ${holding.totalGainLossPercent >= 0 ? 'text-positive' : 'text-error'}`}>
           {holding.totalGainLossPercent >= 0 ? '+' : ''}{holding.totalGainLossPercent.toFixed(2)}%
         </td>
       </tr>
@@ -410,10 +410,10 @@ function ConsolidatedRow({
           </td>
           <td className="px-4 py-2 text-sm text-foreground-muted">{formatCurrency(account.costBasis)}</td>
           <td className="px-4 py-2 text-sm text-foreground-muted">{formatCurrency(account.marketValue)}</td>
-          <td className={`px-4 py-2 text-sm ${account.gainLoss >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>
+          <td className={`px-4 py-2 text-sm ${account.gainLoss >= 0 ? 'text-positive/70' : 'text-error/70'}`}>
             {formatCurrency(account.gainLoss)}
           </td>
-          <td className={`px-4 py-2 text-sm ${account.gainLossPercent >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>
+          <td className={`px-4 py-2 text-sm ${account.gainLossPercent >= 0 ? 'text-positive/70' : 'text-error/70'}`}>
             {account.gainLossPercent >= 0 ? '+' : ''}{account.gainLossPercent.toFixed(2)}%
           </td>
         </tr>

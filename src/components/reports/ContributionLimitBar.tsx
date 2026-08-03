@@ -17,7 +17,7 @@ export function ContributionLimitBar({ current, limit, label, catchUp }: Contrib
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span className="text-foreground-secondary">{label}</span>
-        <span className={isOver ? 'text-red-400 font-medium' : 'text-foreground-secondary'}>
+        <span className={isOver ? 'text-error font-medium' : 'text-foreground-secondary'}>
           {formatCurrency(current)} / {formatCurrency(limit)}
           {catchUp ? ` (incl. ${formatCurrency(catchUp)} catch-up)` : ''}
         </span>
@@ -25,12 +25,12 @@ export function ContributionLimitBar({ current, limit, label, catchUp }: Contrib
       <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${
-            isOver ? 'bg-red-500' : percent >= 90 ? 'bg-yellow-500' : 'bg-primary'
+            isOver ? 'bg-error' : percent >= 90 ? 'bg-warning' : 'bg-primary'
           }`}
           style={{ width: `${Math.min(100, percent)}%` }}
         />
       </div>
-      <div className="text-right text-xs text-foreground-tertiary">
+      <div className="text-right text-xs text-foreground-muted">
         {percent}% of limit
       </div>
     </div>

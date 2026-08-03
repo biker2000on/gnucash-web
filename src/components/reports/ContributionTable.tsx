@@ -21,14 +21,14 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  contribution: 'text-green-400',
-  income_contribution: 'text-green-400',
+  contribution: 'text-success',
+  income_contribution: 'text-success',
   employer_match: 'text-primary',
   transfer: 'text-foreground-secondary',
-  fee: 'text-red-400',
-  withdrawal: 'text-red-400',
-  dividend: 'text-yellow-400',
-  other: 'text-foreground-tertiary',
+  fee: 'text-error',
+  withdrawal: 'text-error',
+  dividend: 'text-warning',
+  other: 'text-foreground-muted',
 };
 
 const RETIREMENT_TYPE_LABELS: Record<string, string> = {
@@ -103,7 +103,7 @@ function TransactionRow({
         {item.sourceAccountName}
       </td>
       <td className="px-4 py-2 text-sm text-right font-mono">
-        <span className={item.amount < 0 ? 'text-red-400' : 'text-foreground'}>
+        <span className={item.amount < 0 ? 'text-error' : 'text-foreground'}>
           {formatCurrency(item.amount)}
         </span>
       </td>
@@ -120,14 +120,14 @@ function TransactionRow({
             />
             <button
               onClick={handleSave}
-              className="text-green-400 hover:text-green-300 text-xs px-1"
+              className="text-success hover:text-success text-xs px-1"
               title="Save"
             >
               Save
             </button>
             <button
               onClick={handleCancel}
-              className="text-foreground-tertiary hover:text-foreground-secondary text-xs px-1"
+              className="text-foreground-muted hover:text-foreground-secondary text-xs px-1"
               title="Cancel"
             >
               Cancel
@@ -171,7 +171,7 @@ function AccountCard({
       >
         <div className="flex items-center gap-3 min-w-0">
           <svg
-            className={`w-4 h-4 text-foreground-tertiary transition-transform flex-shrink-0 ${
+            className={`w-4 h-4 text-foreground-muted transition-transform flex-shrink-0 ${
               expanded ? 'rotate-90' : ''
             }`}
             fill="none"
@@ -191,7 +191,7 @@ function AccountCard({
         </div>
         <div className="flex items-center gap-6 text-xs flex-shrink-0">
           {(account.contributions !== 0 || account.incomeContributions !== 0) && (
-            <span className="text-green-400">
+            <span className="text-success">
               Contributions: {formatCurrency(account.contributions + account.incomeContributions)}
             </span>
           )}
@@ -206,12 +206,12 @@ function AccountCard({
             </span>
           )}
           {account.fees !== 0 && (
-            <span className="text-red-400">
+            <span className="text-error">
               Fees: {formatCurrency(account.fees)}
             </span>
           )}
           {account.withdrawals !== 0 && (
-            <span className="text-red-400">
+            <span className="text-error">
               Withdrawals: {formatCurrency(account.withdrawals)}
             </span>
           )}
@@ -237,14 +237,14 @@ function AccountCard({
       {expanded && (
         <div className="border-t border-border/50">
           {account.transactions.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-foreground-tertiary">
+            <div className="px-4 py-6 text-center text-sm text-foreground-muted">
               No transactions in this period
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="text-xs text-foreground-tertiary">
+                  <tr className="text-xs text-foreground-muted">
                     <th className="px-4 py-2 text-left font-medium">Date</th>
                     <th className="px-4 py-2 text-left font-medium">Description</th>
                     <th className="px-4 py-2 text-left font-medium">Type</th>
@@ -287,7 +287,7 @@ export function ContributionByTypeTable({
       <div className="overflow-x-auto border-t border-border/50">
         <table className="w-full">
           <thead>
-            <tr className="text-xs text-foreground-tertiary">
+            <tr className="text-xs text-foreground-muted">
               <th className="px-4 py-2 text-left font-medium">Type</th>
               <th className="px-4 py-2 text-right font-medium">Contributions</th>
               <th className="px-4 py-2 text-right font-medium">Employer Match</th>
@@ -336,7 +336,7 @@ function FragmentRow({
             {label}
           </span>
         </td>
-        <td className="px-4 py-2 text-sm text-right font-mono text-green-400">
+        <td className="px-4 py-2 text-sm text-right font-mono text-success">
           {formatCurrency(employeeContributions)}
         </td>
         <td className="px-4 py-2 text-sm text-right font-mono text-primary">
@@ -345,10 +345,10 @@ function FragmentRow({
         <td className="px-4 py-2 text-sm text-right font-mono text-foreground-secondary">
           {t.transfers !== 0 ? formatCurrency(t.transfers) : '—'}
         </td>
-        <td className="px-4 py-2 text-sm text-right font-mono text-red-400">
+        <td className="px-4 py-2 text-sm text-right font-mono text-error">
           {t.withdrawals !== 0 ? formatCurrency(t.withdrawals) : '—'}
         </td>
-        <td className="px-4 py-2 text-sm text-right font-mono text-red-400">
+        <td className="px-4 py-2 text-sm text-right font-mono text-error">
           {t.fees !== 0 ? formatCurrency(t.fees) : '—'}
         </td>
         <td className="px-4 py-2 text-sm text-right font-mono font-medium text-foreground">
@@ -374,7 +374,7 @@ function FragmentRow({
 export function ContributionTable({ accounts, year, onTaxYearChange }: ContributionTableProps) {
   if (accounts.length === 0) {
     return (
-      <div className="text-center py-8 text-foreground-tertiary text-sm">
+      <div className="text-center py-8 text-foreground-muted text-sm">
         No contribution data for {year}
       </div>
     );

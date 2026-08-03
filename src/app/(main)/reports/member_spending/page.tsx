@@ -24,7 +24,7 @@ function getDefaultFilters(): ReportFilters {
 
 function Amount({ value, currency }: { value: number; currency: string }) {
     return (
-        <span className={`font-mono ${value < 0 ? 'text-emerald-400' : 'text-foreground'}`}>
+        <span className={`font-mono ${value < 0 ? 'text-positive' : 'text-foreground'}`}>
             {formatCurrency(value, currency)}
         </span>
     );

@@ -141,7 +141,7 @@ export function GoalCard({ goal, onEdit, onDelete }: GoalCardProps) {
                     onClick={() => onDelete(goal)}
                     disabled={isReadonly}
                     title={isReadonly ? READONLY_TOOLTIP : undefined}
-                    className="px-3 py-1.5 text-xs rounded-md border border-rose-500/30 text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    className="px-3 py-1.5 text-xs rounded-md border border-negative/30 text-negative hover:text-negative hover:bg-negative/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                     Delete
                 </button>

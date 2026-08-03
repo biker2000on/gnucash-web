@@ -3,7 +3,7 @@ import { requireRole } from '@/lib/auth';
 import {
     DocumentValidationError,
     ensureCanonicalDocumentPlatform,
-    listDocuments,
+    listDocumentsPage,
 } from '@/lib/documents';
 
 function integerParam(value: string | null, fallback: number): number {
@@ -12,19 +12,24 @@ function integerParam(value: string | null, fallback: number): number {
     return Number.isInteger(parsed) ? parsed : fallback;
 }
 
-/** GET /api/documents — book-scoped canonical document metadata for pickers. */
+/**
+ * GET /api/documents — book-scoped canonical document metadata for pickers.
+ * Search-backed and paged: `q` filters, `offset`/`hasMore` walk past one page.
+ */
 export async function GET(request: NextRequest) {
     try {
         const roleResult = await requireRole('readonly');
         if (roleResult instanceof NextResponse) return roleResult;
         await ensureCanonicalDocumentPlatform();
-        const documents = await listDocuments({
+        const { documents, hasMore, nextOffset } = await listDocumentsPage({
             bookGuid: roleResult.bookGuid,
             query: request.nextUrl.searchParams.get('q')?.trim() || undefined,
             limit: integerParam(request.nextUrl.searchParams.get('limit'), 100),
             offset: integerParam(request.nextUrl.searchParams.get('offset'), 0),
         });
         return NextResponse.json({
+            hasMore,
+            nextOffset,
             documents: documents.map(document => ({
                 id: document.id,
                 title: document.title,

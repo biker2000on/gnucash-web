@@ -3,7 +3,9 @@
 /**
  * Small colored tag chip (modeled on ledger/LotBadge).
  * Colors are stored by name in gnucash_web_tags.color and mapped to
- * tailwind tint/border classes here.
+ * tailwind tint/border classes here. Categorical, not semantic: the hue is
+ * the user's chosen tag identity, so these stay raw palette values —
+ * semantic tokens would render different tags in identical colors.
  */
 
 export const TAG_COLOR_CLASSES: Record<string, string> = {
@@ -57,7 +59,7 @@ export default function TagChip({ name, color, size = 'xs', onClick, onRemove, c
                         onRemove();
                     }}
                     aria-label={`Remove tag ${name}`}
-                    className="ml-0.5 -mr-0.5 rounded hover:bg-white/10 leading-none"
+                    className="ml-0.5 -mr-0.5 rounded hover:bg-foreground/10 leading-none"
                 >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />

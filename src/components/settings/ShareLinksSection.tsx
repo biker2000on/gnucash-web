@@ -206,7 +206,7 @@ export function ShareLinksSection() {
                     type="button"
                     onClick={() => setShowCreate(true)}
                     disabled={busy}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                     Create share link
                 </button>
@@ -267,7 +267,7 @@ export function ShareLinksSection() {
                                             type="button"
                                             onClick={() => void create()}
                                             disabled={busy || !label.trim() || sections.length === 0}
-                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                                         >
                                             {busy ? 'Creating…' : 'Create'}
                                         </button>
@@ -296,7 +296,7 @@ export function ShareLinksSection() {
                                         <button
                                             type="button"
                                             onClick={closeCreate}
-                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90"
+                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90"
                                         >
                                             Done
                                         </button>

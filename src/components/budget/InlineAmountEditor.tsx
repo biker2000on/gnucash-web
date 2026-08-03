@@ -156,7 +156,7 @@ export function InlineAmountEditor({
             disabled={isSaving}
             className={`w-full text-right px-2 py-1 rounded hover:bg-surface-hover/50 transition-colors ${
                 isSaving ? 'opacity-50' : ''
-            } ${value === 0 ? 'text-foreground-muted' : displayValue < 0 ? 'text-rose-400' : 'text-foreground'}`}
+            } ${value === 0 ? 'text-foreground-muted' : displayValue < 0 ? 'text-negative' : 'text-foreground'}`}
             title="Click to edit"
         >
             {value === 0 ? '—' : formatCurrency(displayValue, currency)}

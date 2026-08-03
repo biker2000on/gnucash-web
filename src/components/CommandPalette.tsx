@@ -208,7 +208,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
       <div className="relative w-full max-w-2xl bg-background-secondary border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-          <svg className="w-5 h-5 text-foreground-tertiary shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+          <svg className="w-5 h-5 text-foreground-muted shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
@@ -217,16 +217,16 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search commands, pages, accounts, transactions…"
-            className="flex-1 bg-transparent text-foreground placeholder:text-foreground-tertiary outline-none text-sm"
+            className="flex-1 bg-transparent text-foreground placeholder:text-foreground-muted outline-none text-sm"
           />
-          <kbd className="hidden sm:inline-flex text-xs text-foreground-tertiary bg-surface-hover px-1.5 py-0.5 rounded border border-border">
+          <kbd className="hidden sm:inline-flex text-xs text-foreground-muted bg-surface-hover px-1.5 py-0.5 rounded border border-border">
             esc
           </kbd>
         </div>
 
         <div ref={listRef} className="max-h-96 overflow-y-auto py-1">
           {rows.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-foreground-tertiary">
+            <div className="px-4 py-8 text-center text-sm text-foreground-muted">
               {query ? 'No matches' : 'Loading…'}
             </div>
           ) : (
@@ -238,7 +238,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
               return (
                 <div key={row.kind === 'command' ? row.command.id : row.kind === 'account' ? row.account.guid : row.tx.guid}>
                   {showHeader && (
-                    <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-foreground-tertiary font-semibold">
+                    <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-foreground-muted font-semibold">
                       {GROUP_LABELS[group] ?? group}
                     </div>
                   )}
@@ -248,7 +248,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                     onMouseMove={() => setSelectedIndex(index)}
                     className={`w-full px-4 py-2 text-left text-sm transition-colors flex items-center justify-between gap-3 ${
                       selected
-                        ? 'bg-accent-primary/15 text-foreground'
+                        ? 'bg-primary/15 text-foreground'
                         : 'text-foreground-secondary hover:bg-surface-hover'
                     }`}
                   >
@@ -256,7 +256,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                       <>
                         <span>{row.command.title}</span>
                         {row.command.shortcut && (
-                          <kbd className="shrink-0 text-[10px] text-foreground-tertiary bg-surface-hover px-1.5 py-0.5 rounded border border-border">
+                          <kbd className="shrink-0 text-[10px] text-foreground-muted bg-surface-hover px-1.5 py-0.5 rounded border border-border">
                             {row.command.shortcut}
                           </kbd>
                         )}
@@ -268,7 +268,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                     {row.kind === 'transaction' && (
                       <>
                         <span className="truncate">{row.tx.description}</span>
-                        <span className="shrink-0 text-xs text-foreground-tertiary font-mono">
+                        <span className="shrink-0 text-xs text-foreground-muted font-mono">
                           {new Date(row.tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' })}
                           {row.tx.splits?.[0]?.value_decimal != null && (
                             <> · {formatCurrency(Math.abs(parseFloat(row.tx.splits[0].value_decimal)), row.tx.splits[0].commodity_mnemonic || 'USD')}</>
@@ -283,7 +283,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-xs text-foreground-tertiary">
+        <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-xs text-foreground-muted">
           <span className="flex items-center gap-1">
             <kbd className="px-1 py-0.5 rounded border border-border bg-surface-hover">&uarr;</kbd>
             <kbd className="px-1 py-0.5 rounded border border-border bg-surface-hover">&darr;</kbd>

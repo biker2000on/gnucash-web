@@ -97,7 +97,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
 
             {/* Income Summary */}
             <section>
-                <h3 className="text-lg font-semibold text-emerald-400 mb-3 border-b border-border pb-2">
+                <h3 className="text-lg font-semibold text-positive mb-3 border-b border-border pb-2">
                     Income Summary
                 </h3>
                 <table className="w-full border-collapse">
@@ -115,7 +115,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                                 <td className="py-2 px-3 text-sm text-foreground">{tx.date}</td>
                                 <td className="py-2 px-3 text-sm text-foreground">{tx.description}</td>
                                 <td className="py-2 px-3 text-sm text-foreground-secondary">{tx.category}</td>
-                                <td className="py-2 px-3 text-sm text-right font-mono text-emerald-400">
+                                <td className="py-2 px-3 text-sm text-right font-mono text-positive">
                                     {fmtCurrency(tx.amount)}
                                 </td>
                             </tr>
@@ -131,7 +131,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                     <tfoot>
                         <tr className="border-t-2 border-border">
                             <td colSpan={3} className="py-2 px-3 text-sm font-bold text-foreground">Total Income</td>
-                            <td className="py-2 px-3 text-sm text-right font-mono font-bold text-emerald-400">
+                            <td className="py-2 px-3 text-sm text-right font-mono font-bold text-positive">
                                 {fmtCurrency(incomeSummary.total)}
                             </td>
                         </tr>
@@ -141,7 +141,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
 
             {/* Expense Summary */}
             <section>
-                <h3 className="text-lg font-semibold text-rose-400 mb-3 border-b border-border pb-2">
+                <h3 className="text-lg font-semibold text-negative mb-3 border-b border-border pb-2">
                     Expense Summary
                 </h3>
                 <table className="w-full border-collapse">
@@ -159,7 +159,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                                 <td className="py-2 px-3 text-sm text-foreground">{tx.date}</td>
                                 <td className="py-2 px-3 text-sm text-foreground">{tx.description}</td>
                                 <td className="py-2 px-3 text-sm text-foreground-secondary">{tx.category}</td>
-                                <td className="py-2 px-3 text-sm text-right font-mono text-rose-400">
+                                <td className="py-2 px-3 text-sm text-right font-mono text-negative">
                                     {fmtCurrency(tx.amount)}
                                 </td>
                             </tr>
@@ -175,7 +175,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                     <tfoot>
                         <tr className="border-t-2 border-border">
                             <td colSpan={3} className="py-2 px-3 text-sm font-bold text-foreground">Total Expenses</td>
-                            <td className="py-2 px-3 text-sm text-right font-mono font-bold text-rose-400">
+                            <td className="py-2 px-3 text-sm text-right font-mono font-bold text-negative">
                                 {fmtCurrency(expenseSummary.total)}
                             </td>
                         </tr>
@@ -242,11 +242,11 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                         </tr>
                         <tr>
                             <td className="py-1 text-foreground-secondary">+ Total Income</td>
-                            <td className="py-1 text-right text-emerald-400">{fmtCurrency(incomeSummary.total)}</td>
+                            <td className="py-1 text-right text-positive">{fmtCurrency(incomeSummary.total)}</td>
                         </tr>
                         <tr>
                             <td className="py-1 text-foreground-secondary">- Total Expenses</td>
-                            <td className="py-1 text-right text-rose-400">{fmtCurrency(expenseSummary.total)}</td>
+                            <td className="py-1 text-right text-negative">{fmtCurrency(expenseSummary.total)}</td>
                         </tr>
                         <tr className="border-t border-border">
                             <td className="py-1 text-foreground font-semibold">= Expected Closing Balance</td>
@@ -257,7 +257,7 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                             <td className="py-1 text-right text-foreground">{fmtCurrency(closingBalance.total)}</td>
                         </tr>
                         {!balancesMatch && (
-                            <tr className="text-amber-400">
+                            <tr className="text-warning">
                                 <td className="py-1">Difference</td>
                                 <td className="py-1 text-right">{fmtCurrency(closingBalance.total - expectedClosing)}</td>
                             </tr>
@@ -266,9 +266,9 @@ export function TreasurerReport({ data }: TreasurerReportProps) {
                 </table>
                 <div className="mt-2 text-xs">
                     {balancesMatch ? (
-                        <span className="text-emerald-400">Balances match - report verified</span>
+                        <span className="text-positive">Balances match - report verified</span>
                     ) : (
-                        <span className="text-amber-400">
+                        <span className="text-warning">
                             Note: Difference may be due to transfers between asset accounts or currency conversions
                         </span>
                     )}

@@ -313,7 +313,7 @@ export default function ImportExportPage() {
 
         {/* Error Display */}
         {importError && (
-          <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-sm text-rose-400">
+          <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
             {importError}
           </div>
         )}
@@ -342,7 +342,7 @@ export default function ImportExportPage() {
               >
                 {previewing ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                     Analyzing...
                   </>
                 ) : (
@@ -407,11 +407,11 @@ export default function ImportExportPage() {
             </div>
 
             {importResult.warnings.length > 0 && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
-                <h4 className="text-amber-400 font-medium text-sm mb-2">
+              <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
+                <h4 className="text-warning font-medium text-sm mb-2">
                   Warnings ({importResult.warnings.length})
                 </h4>
-                <ul className="text-xs text-amber-300/80 space-y-1 max-h-40 overflow-y-auto">
+                <ul className="text-xs text-warning/80 space-y-1 max-h-40 overflow-y-auto">
                   {importResult.warnings.map((w, i) => (
                     <li key={i}>{w}</li>
                   ))}
@@ -600,7 +600,7 @@ export default function ImportExportPage() {
         </div>
 
         {exportError && (
-          <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-sm text-rose-400">
+          <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
             {exportError}
           </div>
         )}
@@ -612,7 +612,7 @@ export default function ImportExportPage() {
         >
           {exporting ? (
             <>
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               Exporting...
             </>
           ) : (

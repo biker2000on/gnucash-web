@@ -154,7 +154,7 @@ export function ScrubAllButton() {
                     checked={clearFirst}
                     onChange={(e) => setClearFirst(e.target.checked)}
                     disabled={loading}
-                    className="accent-cyan-500 w-4 h-4 mt-0.5"
+                    className="accent-primary w-4 h-4 mt-0.5"
                   />
                   <div>
                     <span className="text-sm text-foreground-secondary group-hover:text-foreground transition-colors">
@@ -168,7 +168,7 @@ export function ScrubAllButton() {
                 </label>
 
                 {error && (
-                  <div className="mb-4 bg-red-900/30 border border-red-600/50 rounded-lg px-4 py-3 text-sm text-red-300">
+                  <div className="mb-4 bg-error-light border border-error/50 rounded-lg px-4 py-3 text-sm text-error">
                     {error}
                   </div>
                 )}
@@ -229,20 +229,20 @@ export function ScrubAllButton() {
                   </div>
                   <div className="flex justify-between border-t border-border pt-2">
                     <dt className="text-foreground-muted">Total realized gain/loss</dt>
-                    <dd className={`font-semibold ${result.totalRealizedGain >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    <dd className={`font-semibold ${result.totalRealizedGain >= 0 ? 'text-positive' : 'text-error'}`}>
                       {formatCurrency(result.totalRealizedGain)}
                     </dd>
                   </div>
                 </dl>
 
                 {result.warnings.length > 0 && (
-                  <div className="mb-4 bg-amber-900/30 border border-amber-600/50 rounded-lg p-3">
-                    <p className="text-amber-300 text-xs font-medium mb-1">
+                  <div className="mb-4 bg-warning-light border border-warning/50 rounded-lg p-3">
+                    <p className="text-warning text-xs font-medium mb-1">
                       {result.warnings.length} warning{result.warnings.length !== 1 ? 's' : ''}
                     </p>
                     <ul className="space-y-1 max-h-32 overflow-y-auto">
                       {result.warnings.map((w, i) => (
-                        <li key={i} className="text-amber-300/80 text-xs">
+                        <li key={i} className="text-warning/80 text-xs">
                           {w}
                         </li>
                       ))}

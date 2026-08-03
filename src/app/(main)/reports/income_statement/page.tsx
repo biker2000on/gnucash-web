@@ -75,7 +75,7 @@ export default function IncomeStatementPage() {
                             <span className="text-lg font-bold text-foreground">Net Income</span>
                             <div className="flex items-center gap-4">
                                 <span className={`text-xl font-mono font-bold ${
-                                    (reportData.grandTotal || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                    (reportData.grandTotal || 0) >= 0 ? 'text-positive' : 'text-negative'
                                 }`}>
                                     {formatCurrency(reportData.grandTotal || 0, 'USD')}
                                 </span>

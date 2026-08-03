@@ -669,7 +669,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                             {activeFilterCount > 0 && (
                                 <button
                                     onClick={clearAllFilters}
-                                    className="min-h-[44px] text-sm text-foreground-secondary hover:text-rose-400 transition-colors"
+                                    className="min-h-[44px] text-sm text-foreground-secondary hover:text-negative transition-colors"
                                 >
                                     Clear all filters
                                 </button>
@@ -736,8 +736,8 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                         { label: 'Date', value: new Date(tx.post_date).toLocaleDateString('en-US', { timeZone: 'UTC' }) },
                                         { label: 'Description', value: <><span className="font-medium">{tx.description}</span>{tx.num && <span className="text-xs text-foreground-muted ml-1">#{tx.num}</span>}</> },
                                         { label: 'Accounts', value: <div className="text-right">{tx.splits?.map(s => <div key={s.guid} className="text-foreground-secondary text-xs">{s.account_name}</div>)}</div> },
-                                        ...(debitTotal > 0 ? [{ label: 'Debit', value: <span className="text-emerald-400 font-mono">{formatCurrency(debitTotal)}</span> }] : []),
-                                        ...(creditTotal > 0 ? [{ label: 'Credit', value: <span className="text-rose-400 font-mono">{formatCurrency(creditTotal)}</span> }] : []),
+                                        ...(debitTotal > 0 ? [{ label: 'Debit', value: <span className="text-positive font-mono">{formatCurrency(debitTotal)}</span> }] : []),
+                                        ...(creditTotal > 0 ? [{ label: 'Credit', value: <span className="text-negative font-mono">{formatCurrency(creditTotal)}</span> }] : []),
                                     ]}
                                 />
                             );
@@ -780,7 +780,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                 transactions.map(tx => (
                                     <tr
                                         key={tx.guid}
-                                        className="hover:bg-white/[0.02] transition-colors group cursor-pointer"
+                                        className="hover:bg-surface-hover transition-colors group cursor-pointer"
                                         onContextMenu={(e) => openContextMenu(e, tx)}
                                         onClick={() => handleRowClick(tx.guid)}
                                     >
@@ -835,7 +835,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                                     const qty = parseFloat(split.quantity_decimal ?? '0');
                                                     const isCurrencyLeg = qty === val;
                                                     return (
-                                                        <div key={split.guid} className="text-emerald-400">
+                                                        <div key={split.guid} className="text-positive">
                                                             {val > 0 ? formatCurrency(val, isCurrencyLeg ? split.commodity_mnemonic : undefined)
                                                                 : val === 0 && qty > 0 ? <span className="text-foreground-muted">{`+${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic ?? ''}`}</span>
                                                                 : '\u00A0'}
@@ -851,7 +851,7 @@ export default function TransactionJournal({ initialTransactions, startDate, end
                                                     const qty = parseFloat(split.quantity_decimal ?? '0');
                                                     const isCurrencyLeg = qty === val;
                                                     return (
-                                                        <div key={split.guid} className="text-rose-400">
+                                                        <div key={split.guid} className="text-negative">
                                                             {val < 0 ? formatCurrency(Math.abs(val), isCurrencyLeg ? split.commodity_mnemonic : undefined)
                                                                 : val === 0 && qty < 0 ? <span className="text-foreground-muted">{`${qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${split.commodity_mnemonic ?? ''}`}</span>
                                                                 : '\u00A0'}

@@ -38,11 +38,11 @@ interface Payslip {
 // ---------------------------------------------------------------------------
 
 const STATUS_STYLES: Record<string, string> = {
-  processing: 'bg-blue-500/10 text-blue-400',
-  needs_mapping: 'bg-yellow-500/10 text-yellow-400',
-  ready: 'bg-green-500/10 text-green-400',
+  processing: 'bg-secondary/10 text-secondary',
+  needs_mapping: 'bg-warning/10 text-warning',
+  ready: 'bg-success/10 text-success',
   posted: 'bg-primary/10 text-primary',
-  error: 'bg-red-500/10 text-red-400',
+  error: 'bg-error/10 text-error',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -372,7 +372,7 @@ export default function PayslipsPage() {
             <button
               onClick={() => setShowBulkDeleteConfirm(true)}
               disabled={deleting}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-red-500/10 text-red-400 border border-red-500/30 hover:bg-red-500/20 disabled:opacity-40 transition-colors"
+              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-error/10 text-error border border-error/30 hover:bg-error/20 disabled:opacity-40 transition-colors"
             >
               {deleting ? 'Deleting...' : `Delete ${selectedCount} selected`}
             </button>
@@ -541,7 +541,7 @@ export default function PayslipsPage() {
 
           {bulkPostResults && (
             <div className={`text-sm rounded-lg px-3 py-2 whitespace-pre-line ${
-              bulkPostResults.includes('failed') ? 'bg-yellow-500/10 text-yellow-400' : 'bg-primary/10 text-primary'
+              bulkPostResults.includes('failed') ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'
             }`}>
               {bulkPostResults}
             </div>
@@ -559,7 +559,7 @@ export default function PayslipsPage() {
             <button
               onClick={handleBulkPost}
               disabled={!bulkPostAccountGuid || bulkPosting}
-              className="px-4 py-2 text-sm font-medium text-white rounded-lg bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium text-primary-foreground rounded-lg bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-2"
             >
               {bulkPosting && (
                 <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">

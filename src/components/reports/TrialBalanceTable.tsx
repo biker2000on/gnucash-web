@@ -39,9 +39,9 @@ export function TrialBalanceTable({ data }: TrialBalanceTableProps) {
                 <div className="flex items-center justify-between p-3 border-b border-border text-sm text-foreground-secondary">
                     <span>{entries.length} account{entries.length !== 1 ? 's' : ''}</span>
                     {isBalanced ? (
-                        <span className="text-emerald-400 text-xs font-medium">Balanced</span>
+                        <span className="text-positive text-xs font-medium">Balanced</span>
                     ) : (
-                        <span className="text-rose-400 text-xs font-medium">
+                        <span className="text-negative text-xs font-medium">
                             Imbalance: {fmtCurrencyTotal(Math.abs(totalDebits - totalCredits))}
                         </span>
                     )}
@@ -66,11 +66,11 @@ export function TrialBalanceTable({ data }: TrialBalanceTableProps) {
                 )}
 
                 {/* Totals */}
-                <div className={`border-t-2 p-4 ${isBalanced ? 'border-border-hover bg-background-tertiary/50' : 'border-rose-500/50 bg-rose-500/10'}`}>
+                <div className={`border-t-2 p-4 ${isBalanced ? 'border-border-hover bg-background-tertiary/50' : 'border-negative/50 bg-negative/10'}`}>
                     <div className="text-sm font-semibold text-foreground mb-1">Totals</div>
                     <div className="flex justify-between text-sm font-mono font-semibold">
-                        <span className={isBalanced ? 'text-foreground' : 'text-rose-400'}>Debits: {fmtCurrencyTotal(totalDebits)}</span>
-                        <span className={isBalanced ? 'text-foreground' : 'text-rose-400'}>Credits: {fmtCurrencyTotal(totalCredits)}</span>
+                        <span className={isBalanced ? 'text-foreground' : 'text-negative'}>Debits: {fmtCurrencyTotal(totalDebits)}</span>
+                        <span className={isBalanced ? 'text-foreground' : 'text-negative'}>Credits: {fmtCurrencyTotal(totalCredits)}</span>
                     </div>
                 </div>
             </div>
@@ -83,9 +83,9 @@ export function TrialBalanceTable({ data }: TrialBalanceTableProps) {
             <div className="flex items-center justify-between p-3 border-b border-border text-sm text-foreground-secondary">
                 <span>{entries.length} account{entries.length !== 1 ? 's' : ''}</span>
                 {isBalanced ? (
-                    <span className="text-emerald-400 text-xs font-medium">Balanced</span>
+                    <span className="text-positive text-xs font-medium">Balanced</span>
                 ) : (
-                    <span className="text-rose-400 text-xs font-medium">
+                    <span className="text-negative text-xs font-medium">
                         Imbalance: {fmtCurrencyTotal(Math.abs(totalDebits - totalCredits))}
                     </span>
                 )}
@@ -127,15 +127,15 @@ export function TrialBalanceTable({ data }: TrialBalanceTableProps) {
                     )}
                 </tbody>
                 <tfoot>
-                    <tr className={`border-t-2 ${isBalanced ? 'border-border-hover bg-background-tertiary/50' : 'border-rose-500/50 bg-rose-500/10'}`}>
+                    <tr className={`border-t-2 ${isBalanced ? 'border-border-hover bg-background-tertiary/50' : 'border-negative/50 bg-negative/10'}`}>
                         <td className="py-3 px-4 font-semibold text-foreground">
                             Totals
                         </td>
                         <td className="py-3 px-4" />
-                        <td className={`py-3 px-4 text-right font-mono font-semibold ${isBalanced ? 'text-foreground' : 'text-rose-400'}`}>
+                        <td className={`py-3 px-4 text-right font-mono font-semibold ${isBalanced ? 'text-foreground' : 'text-negative'}`}>
                             {fmtCurrencyTotal(totalDebits)}
                         </td>
-                        <td className={`py-3 px-4 text-right font-mono font-semibold ${isBalanced ? 'text-foreground' : 'text-rose-400'}`}>
+                        <td className={`py-3 px-4 text-right font-mono font-semibold ${isBalanced ? 'text-foreground' : 'text-negative'}`}>
                             {fmtCurrencyTotal(totalCredits)}
                         </td>
                     </tr>

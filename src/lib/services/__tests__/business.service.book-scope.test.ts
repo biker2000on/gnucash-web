@@ -54,6 +54,7 @@ import {
     parseInput,
     customerInputSchema,
     jobInputSchema,
+    recomputeBilltermRefcount,
 } from '../business.service';
 
 const BOOK_A = 'a'.repeat(32);
@@ -325,5 +326,52 @@ describe('job book scope', () => {
         expect(await deleteJob(BOOK_A, JOB_B)).toBeNull();
         expect(jobs.update).not.toHaveBeenCalled();
         expect(jobs.delete).not.toHaveBeenCalled();
+    });
+});
+
+describe('reference counts stay inside the owning book', () => {
+    beforeEach(resetAll);
+
+    const TERM = 'e'.repeat(32);
+
+    it('counts only references from the book that owns the bill term', async () => {
+        seedOwnership({ [`billterm:${TERM}`]: BOOK_A });
+        customers.count.mockResolvedValue(1);
+        vendors.count.mockResolvedValue(0);
+        db.invoices.count.mockResolvedValue(0);
+        db.billterms.updateMany.mockResolvedValue({ count: 1 });
+
+        await recomputeBilltermRefcount(TERM);
+
+        // Validation forbids referencing another book's term, so a cross-book
+        // reference can only be legacy data — counting it would stop this book
+        // from hard-deleting a term it no longer uses.
+        for (const call of [
+            ...customers.count.mock.calls,
+            ...vendors.count.mock.calls,
+            ...db.invoices.count.mock.calls,
+        ]) {
+            expect(call[0].where).toMatchObject({ ownership: { book_guid: BOOK_A } });
+        }
+        expect(db.billterms.updateMany).toHaveBeenCalledWith({
+            where: { guid: TERM },
+            data: { refcount: 1 },
+        });
+    });
+
+    it('falls back to the unscoped count for an unattributed term', async () => {
+        seedOwnership({});
+        customers.count.mockResolvedValue(0);
+        vendors.count.mockResolvedValue(0);
+        db.invoices.count.mockResolvedValue(0);
+        db.billterms.updateMany.mockResolvedValue({ count: 1 });
+
+        await recomputeBilltermRefcount(TERM);
+
+        // Over-counting is the safe direction: an unowned term is invisible,
+        // and a high refcount blocks deletion rather than exposing anything.
+        for (const call of customers.count.mock.calls) {
+            expect(call[0].where).not.toHaveProperty('ownership');
+        }
     });
 });

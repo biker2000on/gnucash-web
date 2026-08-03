@@ -95,8 +95,8 @@ export default function InviteAcceptPage() {
         return (
             <div className="max-w-lg mx-auto mt-20">
                 <div className="bg-surface rounded-xl border border-border p-8 text-center">
-                    <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-rose-500/10 flex items-center justify-center">
-                        <svg className="w-6 h-6 text-rose-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-negative/10 flex items-center justify-center">
+                        <svg className="w-6 h-6 text-negative" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
                         </svg>
                     </div>
@@ -130,7 +130,7 @@ export default function InviteAcceptPage() {
                     <div className="flex justify-between py-2 px-3 bg-background-tertiary rounded-lg">
                         <span className="text-sm text-foreground-secondary">Role</span>
                         <span className={`text-sm font-medium ${
-                            invitation.role === 'edit' ? 'text-primary' : 'text-gray-400'
+                            invitation.role === 'edit' ? 'text-primary' : 'text-foreground-muted'
                         }`}>
                             {invitation.role === 'edit' ? 'Edit' : 'Read Only'}
                         </span>
@@ -153,7 +153,7 @@ export default function InviteAcceptPage() {
                     className="w-full bg-primary hover:bg-primary-hover disabled:opacity-50 text-primary-foreground font-medium px-4 py-3 rounded-lg transition-all disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                     {accepting && (
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                     )}
                     <span>{accepting ? 'Accepting...' : 'Accept Invitation'}</span>
                 </button>

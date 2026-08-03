@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
   link: vi.fn(),
   recognize: vi.fn(),
+  pdfExtract: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({ query: mocks.query }));
@@ -28,6 +29,7 @@ vi.mock('tesseract.js', () => ({
   recognize: mocks.recognize,
   default: { recognize: mocks.recognize },
 }));
+vi.mock('@/lib/pdf-text-extract', () => ({ extractPdfText: mocks.pdfExtract }));
 
 import { handleOcrReceipt } from '../ocr-receipt';
 
@@ -73,5 +75,34 @@ describe('handleOcrReceipt canonical sync', () => {
 
     expect(mocks.updateOcr).toHaveBeenLastCalledWith(5, 'Store total 12.34', 'complete');
     expect(mocks.updateOcr).not.toHaveBeenCalledWith(5, null, 'failed');
+  });
+});
+
+describe('scanned PDF receipts', () => {
+  beforeEach(() => {
+    mocks.query.mockResolvedValue({ rows: [{
+      id: 5,
+      book_guid: 'book-1',
+      transaction_guid: null,
+      filename: 'receipt.pdf',
+      storage_key: 'receipts/5.pdf',
+      mime_type: 'application/pdf',
+      file_size: 4,
+      created_by: null,
+    }] });
+  });
+
+  it('still reaches tesseract through the shared PDF extractor', async () => {
+    mocks.pdfExtract.mockImplementation(async (buffer, options) => ({
+      text: await options.ocr(buffer),
+      source: 'ocr',
+      ocrError: null,
+    }));
+    mocks.recognize.mockResolvedValue({ data: { text: '  Scanned receipt 42.00  ' } });
+
+    await handleOcrReceipt({ id: 'job-2', data: { receiptId: 5 } } as never);
+
+    expect(mocks.recognize).toHaveBeenCalledOnce();
+    expect(mocks.updateOcr).toHaveBeenLastCalledWith(5, 'Scanned receipt 42.00', 'complete');
   });
 });

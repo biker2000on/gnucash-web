@@ -36,10 +36,10 @@ export function JournalTable({ data }: JournalTableProps) {
                                             <div className="text-sm text-foreground-secondary">{split.accountPath}</div>
                                             <div className="flex gap-4 text-sm font-mono">
                                                 {split.debit > 0 && (
-                                                    <span className="text-emerald-400">Dr {formatCurrency(split.debit, 'USD')}</span>
+                                                    <span className="text-positive">Dr {formatCurrency(split.debit, 'USD')}</span>
                                                 )}
                                                 {split.credit > 0 && (
-                                                    <span className="text-rose-400">Cr {formatCurrency(split.credit, 'USD')}</span>
+                                                    <span className="text-negative">Cr {formatCurrency(split.credit, 'USD')}</span>
                                                 )}
                                             </div>
                                             {split.memo && (
@@ -58,8 +58,8 @@ export function JournalTable({ data }: JournalTableProps) {
                         Totals ({data.entryCount} {data.entryCount === 1 ? 'entry' : 'entries'})
                     </div>
                     <div className="flex justify-between text-sm font-mono font-semibold">
-                        <span className="text-emerald-400">Debits: {formatCurrency(data.totalDebits, 'USD')}</span>
-                        <span className="text-rose-400">Credits: {formatCurrency(data.totalCredits, 'USD')}</span>
+                        <span className="text-positive">Debits: {formatCurrency(data.totalDebits, 'USD')}</span>
+                        <span className="text-negative">Credits: {formatCurrency(data.totalCredits, 'USD')}</span>
                     </div>
                 </div>
             </div>
@@ -103,10 +103,10 @@ export function JournalTable({ data }: JournalTableProps) {
                             Totals ({data.entryCount} {data.entryCount === 1 ? 'entry' : 'entries'})
                         </td>
                         <td></td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold text-emerald-400">
+                        <td className="py-3 px-4 text-right font-mono font-semibold text-positive">
                             {formatCurrency(data.totalDebits, 'USD')}
                         </td>
-                        <td className="py-3 px-4 text-right font-mono font-semibold text-rose-400">
+                        <td className="py-3 px-4 text-right font-mono font-semibold text-negative">
                             {formatCurrency(data.totalCredits, 'USD')}
                         </td>
                         <td></td>
@@ -154,12 +154,12 @@ function JournalEntryRows({ entry, isEven }: JournalEntryRowsProps) {
                     </td>
                     <td className="py-1.5 px-4 text-right font-mono text-sm">
                         {split.debit > 0 ? (
-                            <span className="text-emerald-400">{formatCurrency(split.debit, 'USD')}</span>
+                            <span className="text-positive">{formatCurrency(split.debit, 'USD')}</span>
                         ) : null}
                     </td>
                     <td className="py-1.5 px-4 text-right font-mono text-sm">
                         {split.credit > 0 ? (
-                            <span className="text-rose-400">{formatCurrency(split.credit, 'USD')}</span>
+                            <span className="text-negative">{formatCurrency(split.credit, 'USD')}</span>
                         ) : null}
                     </td>
                     <td className="py-1.5 px-4 text-sm text-foreground-muted">

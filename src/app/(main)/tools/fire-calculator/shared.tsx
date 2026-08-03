@@ -157,7 +157,7 @@ export function Toggle({ checked, onChange, label, description }: ToggleProps) {
         }`}
       >
         <span
-          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
+          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-primary-foreground shadow ring-0 transition duration-200 ${
             checked ? 'translate-x-5' : 'translate-x-0'
           }`}
         />
@@ -327,20 +327,20 @@ export function ResultCard({ label, value, sublabel, color, progress }: ResultCa
   const backgrounds: Record<string, string> = {
     primary: 'bg-primary/10',
     emerald: 'bg-primary/10',
-    purple: 'bg-purple-500/10',
-    amber: 'bg-amber-500/10',
+    purple: 'bg-secondary/10',
+    amber: 'bg-warning/10',
   };
   const accents: Record<string, string> = {
     primary: 'text-primary',
     emerald: 'text-primary',
-    purple: 'text-purple-400',
-    amber: 'text-amber-400',
+    purple: 'text-secondary',
+    amber: 'text-warning',
   };
   const bars: Record<string, string> = {
     primary: 'bg-primary',
     emerald: 'bg-primary',
-    purple: 'bg-purple-500',
-    amber: 'bg-amber-500',
+    purple: 'bg-secondary',
+    amber: 'bg-warning',
   };
 
   return (

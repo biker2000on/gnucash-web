@@ -43,7 +43,7 @@ export interface TransactionDetail extends Transaction {
 function getReconcileLabel(state: string) {
     switch (state) {
         case 'y': return { label: 'Reconciled', color: 'text-primary bg-primary/10' };
-        case 'c': return { label: 'Cleared', color: 'text-amber-400 bg-amber-500/10' };
+        case 'c': return { label: 'Cleared', color: 'text-warning bg-warning/10' };
         default: return { label: 'Not Reconciled', color: 'text-foreground-secondary bg-surface/10' };
     }
 }
@@ -117,7 +117,7 @@ export function TransactionDetailContent({
         );
     }
     if (error) {
-        return <div className="p-8 text-center text-rose-400">{error}</div>;
+        return <div className="p-8 text-center text-negative">{error}</div>;
     }
     if (!transaction) return null;
 
@@ -368,7 +368,7 @@ export function TransactionModal({
                         {onDelete && (
                             <button
                                 onClick={handleDeleteClick}
-                                className="px-4 py-2 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                className="px-4 py-2 text-sm text-negative hover:text-negative hover:bg-negative/10 rounded-lg transition-colors"
                             >
                                 Delete
                             </button>

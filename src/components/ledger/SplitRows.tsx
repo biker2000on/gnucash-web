@@ -96,7 +96,7 @@ export default function SplitRows({ splits, currencyMnemonic, columns, trailingC
               {/* Shares */}
               <td className="px-3 py-1.5 text-right text-xs text-foreground-secondary font-mono">
                 {absQty > 0.0001 && qty !== val ? (
-                  <span className={qty < 0 ? 'text-rose-400' : ''}>
+                  <span className={qty < 0 ? 'text-negative' : ''}>
                     {qty < 0 ? `(${absQty.toFixed(sp)})` : absQty.toFixed(sp)}
                   </span>
                 ) : ''}

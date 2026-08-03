@@ -84,7 +84,7 @@ export default function SaveReportDialog({
       <div className="p-6 space-y-4">
         <div>
           <label htmlFor="report-name" className="block text-sm font-medium text-foreground mb-1.5">
-            Name <span className="text-red-400">*</span>
+            Name <span className="text-error">*</span>
           </label>
           <input
             id="report-name"
@@ -92,7 +92,7 @@ export default function SaveReportDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={255}
-            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary"
+            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary"
             placeholder="Report name"
             disabled={loading}
           />
@@ -107,7 +107,7 @@ export default function SaveReportDialog({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+            className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
             placeholder="Optional description"
             disabled={loading}
           />
@@ -128,7 +128,7 @@ export default function SaveReportDialog({
         </div>
 
         {error && (
-          <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+          <div className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
             {error}
           </div>
         )}

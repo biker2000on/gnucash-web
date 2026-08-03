@@ -175,7 +175,7 @@ function InvestmentLotsContent() {
                             <div className="bg-background-secondary/30 rounded-lg p-3">
                                 <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Unrealized Gain</div>
                                 <div className={`text-lg font-bold font-mono ${
-                                    (reportData.summary.totalUnrealizedGain ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                    (reportData.summary.totalUnrealizedGain ?? 0) >= 0 ? 'text-positive' : 'text-negative'
                                 }`}>
                                     {reportData.summary.totalUnrealizedGain !== null
                                         ? `${reportData.summary.totalUnrealizedGain >= 0 ? '+' : ''}${formatCurrency(reportData.summary.totalUnrealizedGain, 'USD')}`
@@ -185,7 +185,7 @@ function InvestmentLotsContent() {
                             <div className="bg-background-secondary/30 rounded-lg p-3">
                                 <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Realized Gain</div>
                                 <div className={`text-lg font-bold font-mono ${
-                                    reportData.summary.totalRealizedGain >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                    reportData.summary.totalRealizedGain >= 0 ? 'text-positive' : 'text-negative'
                                 }`}>
                                     {reportData.summary.totalRealizedGain >= 0 ? '+' : ''}{formatCurrency(reportData.summary.totalRealizedGain, 'USD')}
                                 </div>
@@ -233,7 +233,7 @@ function InvestmentLotsContent() {
                                                             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                                                                 row.isClosed
                                                                     ? 'bg-foreground-muted/10 text-foreground-muted'
-                                                                    : 'bg-emerald-500/10 text-emerald-400'
+                                                                    : 'bg-positive/10 text-positive'
                                                             }`}>
                                                                 {row.isClosed ? 'Closed' : 'Open'}
                                                             </span>
@@ -252,7 +252,7 @@ function InvestmentLotsContent() {
                                                         </td>
                                                         <td className="px-3 py-2 text-right font-mono">
                                                             {gain !== null ? (
-                                                                <span className={gain >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                                <span className={gain >= 0 ? 'text-positive' : 'text-negative'}>
                                                                     {gain >= 0 ? '+' : ''}{formatCurrency(gain, 'USD')}
                                                                     {gainPct !== null && (
                                                                         <span className="text-foreground-muted ml-1 text-[10px]">
@@ -266,8 +266,8 @@ function InvestmentLotsContent() {
                                                             {row.holdingPeriod && (
                                                                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                                                                     row.holdingPeriod === 'long_term'
-                                                                        ? 'bg-emerald-500/20 text-emerald-400'
-                                                                        : 'bg-amber-500/20 text-amber-400'
+                                                                        ? 'bg-positive/20 text-positive'
+                                                                        : 'bg-warning/20 text-warning'
                                                                 }`}>
                                                                     {row.holdingPeriod === 'long_term' ? 'LT' : 'ST'}
                                                                 </span>

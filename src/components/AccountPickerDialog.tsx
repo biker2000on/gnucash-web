@@ -152,7 +152,7 @@ export default function AccountPickerDialog({
                                 onClick={() => handleSelect(account)}
                                 className={`w-full px-3 py-2 text-sm text-left transition-colors border-b border-border last:border-0 ${
                                     index === selectedIndex
-                                        ? 'bg-accent-primary/15 text-foreground'
+                                        ? 'bg-primary/15 text-foreground'
                                         : 'text-foreground-secondary hover:bg-surface-hover'
                                 }`}
                             >
@@ -163,7 +163,7 @@ export default function AccountPickerDialog({
                 </div>
 
                 {/* Footer hint */}
-                <div className="flex items-center gap-4 text-xs text-foreground-tertiary">
+                <div className="flex items-center gap-4 text-xs text-foreground-muted">
                     <span className="flex items-center gap-1">
                         <kbd className="px-1 py-0.5 rounded border border-border bg-surface-hover">&uarr;</kbd>
                         <kbd className="px-1 py-0.5 rounded border border-border bg-surface-hover">&darr;</kbd>

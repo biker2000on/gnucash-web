@@ -154,7 +154,7 @@ export function SplitRow({
                             onChange={(e) => handleDebitChange(e.target.value)}
                             onBlur={handleDebitBlur}
                             onKeyDown={(e) => handleAmountKeyDown(e, 'debit')}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-emerald-400 placeholder-foreground-muted focus:outline-none focus:border-primary/50 text-right font-mono"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-positive placeholder-foreground-muted focus:outline-none focus:border-primary/50 text-right font-mono"
                         />
                         {containsMathExpression(split.debit) && (
                             <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
@@ -171,7 +171,7 @@ export function SplitRow({
                             onChange={(e) => handleCreditChange(e.target.value)}
                             onBlur={handleCreditBlur}
                             onKeyDown={(e) => handleAmountKeyDown(e, 'credit')}
-                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-rose-400 placeholder-foreground-muted focus:outline-none focus:border-primary/50 text-right font-mono"
+                            className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-negative placeholder-foreground-muted focus:outline-none focus:border-primary/50 text-right font-mono"
                         />
                         {containsMathExpression(split.credit) && (
                             <span className="absolute right-8 top-1/2 -translate-y-1/2 text-xs text-primary pointer-events-none">=</span>
@@ -198,7 +198,7 @@ export function SplitRow({
                             <button
                                 type="button"
                                 onClick={() => onRemove(index)}
-                                className="p-2 text-foreground-muted hover:text-rose-400 transition-colors"
+                                className="p-2 text-foreground-muted hover:text-negative transition-colors"
                                 title="Remove split"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -213,7 +213,7 @@ export function SplitRow({
             {/* Exchange Rate (shown when account currency differs from transaction currency) */}
             {showExchangeRate && (
                 <div className="mt-2 ml-1 flex items-center gap-2">
-                    <label className="text-xs text-amber-400">
+                    <label className="text-xs text-warning">
                         Exchange Rate:
                     </label>
                     <input
@@ -221,7 +221,7 @@ export function SplitRow({
                         step="any"
                         value={split.exchange_rate || ''}
                         onChange={(e) => onChange(index, 'exchange_rate', e.target.value)}
-                        className="w-28 px-2 py-1 bg-amber-950/30 border border-amber-600/50 rounded text-amber-200 text-xs font-mono focus:outline-none focus:border-amber-500"
+                        className="w-28 px-2 py-1 bg-warning-light border border-warning/50 rounded text-warning text-xs font-mono focus:outline-none focus:border-warning"
                         placeholder="1.0000"
                     />
                     <span className="text-xs text-foreground-muted">

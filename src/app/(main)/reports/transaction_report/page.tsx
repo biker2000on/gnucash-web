@@ -19,9 +19,9 @@ function getDefaultFilters(): ReportFilters {
 function ReconcileIcon({ state }: { state: string }) {
     switch (state) {
         case 'y':
-            return <span className="text-emerald-400" title="Reconciled">R</span>;
+            return <span className="text-positive" title="Reconciled">R</span>;
         case 'c':
-            return <span className="text-yellow-400" title="Cleared">C</span>;
+            return <span className="text-warning" title="Cleared">C</span>;
         default:
             return <span className="text-foreground-muted" title="Not reconciled">-</span>;
     }
@@ -76,19 +76,19 @@ export default function TransactionReportPage() {
                     <div className="grid grid-cols-3 gap-4 p-4 border-b border-border">
                         <div className="text-center">
                             <div className="text-sm text-foreground-secondary">Total Debits</div>
-                            <div className="text-lg font-mono text-emerald-400">
+                            <div className="text-lg font-mono text-positive">
                                 {formatCurrency(reportData.totalDebits, 'USD')}
                             </div>
                         </div>
                         <div className="text-center">
                             <div className="text-sm text-foreground-secondary">Total Credits</div>
-                            <div className="text-lg font-mono text-rose-400">
+                            <div className="text-lg font-mono text-negative">
                                 {formatCurrency(reportData.totalCredits, 'USD')}
                             </div>
                         </div>
                         <div className="text-center">
                             <div className="text-sm text-foreground-secondary">Net Amount</div>
-                            <div className={`text-lg font-mono ${reportData.netAmount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            <div className={`text-lg font-mono ${reportData.netAmount >= 0 ? 'text-positive' : 'text-negative'}`}>
                                 {formatCurrency(reportData.netAmount, 'USD')}
                             </div>
                         </div>
@@ -129,7 +129,7 @@ export default function TransactionReportPage() {
                                                 {tx.account}
                                             </td>
                                             <td className="py-2 px-4 text-right font-mono">
-                                                <span className={tx.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                <span className={tx.amount >= 0 ? 'text-positive' : 'text-negative'}>
                                                     {formatCurrency(tx.amount, 'USD')}
                                                 </span>
                                             </td>

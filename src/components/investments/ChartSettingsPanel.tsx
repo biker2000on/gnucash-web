@@ -213,7 +213,7 @@ export function ChartSettingsPanel({ currentDefaults, onSettingsChange }: ChartS
             disabled={saving}
             className={`w-full px-3 py-1.5 text-sm rounded transition-colors ${
               saveError
-                ? 'bg-red-600 text-white'
+                ? 'bg-error text-primary-foreground'
                 : saved
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-primary hover:bg-primary-hover text-primary-foreground disabled:opacity-50'

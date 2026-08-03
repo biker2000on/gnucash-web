@@ -186,8 +186,13 @@ describe('FinancialActionCenterPage mutations', () => {
     }));
 
     render(<FinancialActionCenterPage />);
-    const firstDecideCard = (await screen.findByText('Decide first')).closest('article')!;
+    const firstFixCard = (await screen.findByText('Fix first')).closest('article')!;
+    const firstDecideCard = screen.getByText('Decide first').closest('article')!;
     const secondDecideCard = screen.getByText('Decide second').closest('article')!;
+    // The keydown listener is registered by the same passive-effect flush that
+    // applies initial card focus. Firing the key before that flush drops it,
+    // and a one-shot key event cannot be retried by waitFor.
+    await waitFor(() => expect(firstFixCard).toHaveFocus());
     fireEvent.keyDown(window, { key: 'ArrowRight' });
     await waitFor(() => expect(firstDecideCard).toHaveFocus());
 
@@ -411,7 +416,7 @@ describe('FinancialActionCenterPage mutations', () => {
 
   it('switches book context before opening a cross-book family action', async () => {
     searchParamsMock.current = new URLSearchParams('scope=family');
-    switchBookMock.mockResolvedValue(undefined);
+    switchBookMock.mockResolvedValue({ ok: true });
     const businessAction = {
       ...action('business-action', 'Review business books'),
       bookGuid: 'c'.repeat(32),

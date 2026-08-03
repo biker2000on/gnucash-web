@@ -155,7 +155,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         </p>
 
         {error && (
-          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
+          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
           </div>
         )}
@@ -212,7 +212,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
         </p>
 
         {error && (
-          <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
+          <div className="mb-4 p-3 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
             {error}
           </div>
         )}
@@ -245,7 +245,7 @@ export function CreateBookWizard({ onBookCreated, isOnboarding = false }: Create
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                 Creating...
               </span>
             ) : (

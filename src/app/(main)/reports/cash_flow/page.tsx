@@ -75,7 +75,7 @@ export default function CashFlowPage() {
                         <div className="flex items-center justify-between">
                             <span className="text-lg font-bold text-foreground">Net Change in Cash</span>
                             <span className={`text-xl font-mono font-bold ${
-                                netCashChange >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                netCashChange >= 0 ? 'text-positive' : 'text-negative'
                             }`}>
                                 {formatCurrency(netCashChange, 'USD')}
                             </span>

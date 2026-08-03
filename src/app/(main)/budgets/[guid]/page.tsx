@@ -730,8 +730,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                     </Link>
                     <h1 className="text-3xl font-bold text-foreground">Budget Not Found</h1>
                 </div>
-                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
-                    <div className="text-rose-400">{error || 'Budget not found'}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 text-center">
+                    <div className="text-negative">{error || 'Budget not found'}</div>
                     <Link
                         href="/budgets"
                         className="inline-block mt-4 px-4 py-2 bg-background-tertiary hover:bg-border-hover text-foreground rounded-lg transition-colors"
@@ -855,7 +855,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                             </div>
                         </div>
                     ) : actualsError ? (
-                        <div className="bg-surface border border-rose-800/50 rounded-lg p-8 text-center text-rose-400">
+                        <div className="bg-surface border border-error/50 rounded-lg p-8 text-center text-negative">
                             {actualsError}
                         </div>
                     ) : actuals ? (
@@ -990,7 +990,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                         const isUnbudgeted = !account.hasOwnBudget && account.rolledUpTotal === 0;
 
                                         return (
-                                            <tr key={account.guid} className={`hover:bg-white/[0.02] transition-colors ${isUnbudgeted ? 'opacity-50' : ''}`}>
+                                            <tr key={account.guid} className={`hover:bg-surface-hover transition-colors ${isUnbudgeted ? 'opacity-50' : ''}`}>
                                                 <td className="px-4 py-3 max-md:px-1.5 max-md:py-1 font-medium text-foreground sticky left-0 bg-background/90 backdrop-blur-sm z-10">
                                                     <div
                                                         className="flex items-center gap-2"
@@ -1092,8 +1092,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                         return (
                                                             <td key={i} className={`px-2 py-1 max-md:px-1.5 text-right font-mono text-sm max-md:text-xs ${
                                                                 isSubtotal
-                                                                    ? `italic ${displayValue < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
-                                                                    : displayValue < 0 ? 'text-rose-400' : 'text-primary'
+                                                                    ? `italic ${displayValue < 0 ? 'text-negative' : 'text-foreground-muted'}`
+                                                                    : displayValue < 0 ? 'text-negative' : 'text-primary'
                                                             }`}>
                                                                 {value === 0 ? '—' : formatCurrency(displayValue, account.mnemonic)}
                                                             </td>
@@ -1107,8 +1107,8 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             isUnbudgeted
                                                                 ? 'text-foreground-muted'
                                                                 : showRolledUp && !account.hasOwnBudget
-                                                                    ? `italic ${totalDisplay < 0 ? 'text-rose-400' : 'text-foreground-muted'}`
-                                                                    : totalDisplay < 0 ? 'text-rose-400' : 'text-emerald-400'
+                                                                    ? `italic ${totalDisplay < 0 ? 'text-negative' : 'text-foreground-muted'}`
+                                                                    : totalDisplay < 0 ? 'text-negative' : 'text-positive'
                                                         }`}>
                                                             {isUnbudgeted
                                                                 ? '—'
@@ -1141,7 +1141,7 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                                             <button
                                                                 onClick={() => handleDeleteAccount(account.guid)}
                                                                 disabled={isDeleting === account.guid}
-                                                                className="p-1.5 text-foreground-secondary hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors disabled:opacity-50"
+                                                                className="p-1.5 text-foreground-secondary hover:text-negative hover:bg-negative/10 rounded transition-colors disabled:opacity-50"
                                                                 title="Remove from budget"
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1168,30 +1168,30 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                 <tfoot className="sticky bottom-0 z-20">
                                     {/* Income row */}
                                     <tr className="bg-background-tertiary/80 font-semibold border-t border-border">
-                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-emerald-400 sticky left-0 bg-background-tertiary/80 z-30">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-positive sticky left-0 bg-background-tertiary/80 z-30">
                                             Income
                                         </td>
                                         {incomePeriods.map((val, i) => (
-                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-emerald-400">
+                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-positive">
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-emerald-400 bg-emerald-500/10">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-positive bg-positive/10">
                                             {formatCurrency(incomeTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-2"></td>
                                     </tr>
                                     {/* Expense row */}
                                     <tr className="bg-background-tertiary/80 font-semibold">
-                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-rose-400 sticky left-0 bg-background-tertiary/80 z-30">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-negative sticky left-0 bg-background-tertiary/80 z-30">
                                             Expenses
                                         </td>
                                         {expensePeriods.map((val, i) => (
-                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-rose-400">
+                                            <td key={i} className="px-3 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-negative">
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-rose-400 bg-rose-500/10">
+                                        <td className="px-4 py-2 max-md:px-1.5 max-md:py-1 text-right font-mono text-negative bg-negative/10">
                                             {formatCurrency(expenseTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-2"></td>
@@ -1217,11 +1217,11 @@ export default function BudgetDetailPage({ params }: BudgetDetailPageProps) {
                                             Remaining to Budget
                                         </td>
                                         {remainingPeriods.map((val, i) => (
-                                            <td key={i} className={`px-3 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono ${val < 0 ? 'text-rose-400' : 'text-primary'}`}>
+                                            <td key={i} className={`px-3 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono ${val < 0 ? 'text-negative' : 'text-primary'}`}>
                                                 {formatCurrency(val.toString(), budgetCurrency)}
                                             </td>
                                         ))}
-                                        <td className={`px-4 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono font-bold ${remainingTotal < 0 ? 'text-rose-400 bg-rose-500/10' : 'text-emerald-400 bg-emerald-500/10'}`}>
+                                        <td className={`px-4 py-3 max-md:px-1.5 max-md:py-1 text-right font-mono font-bold ${remainingTotal < 0 ? 'text-negative bg-negative/10' : 'text-positive bg-positive/10'}`}>
                                             {formatCurrency(remainingTotal.toString(), budgetCurrency)}
                                         </td>
                                         <td className="px-2 py-3"></td>

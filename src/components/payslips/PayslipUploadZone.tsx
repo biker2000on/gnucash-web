@@ -117,9 +117,9 @@ export default function PayslipUploadZone({ onUploadComplete }: PayslipUploadZon
             <div
               key={i}
               className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
-                upload.status === 'uploading' ? 'bg-blue-500/10 text-blue-400' :
+                upload.status === 'uploading' ? 'bg-secondary/10 text-secondary' :
                 upload.status === 'success' ? 'bg-primary/10 text-primary' :
-                'bg-red-500/10 text-red-400'
+                'bg-error/10 text-error'
               }`}
             >
               {upload.status === 'uploading' && (

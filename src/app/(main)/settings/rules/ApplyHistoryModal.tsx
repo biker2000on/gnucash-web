@@ -181,7 +181,7 @@ export default function ApplyHistoryModal({ rule, onClose }: ApplyHistoryModalPr
         </div>
 
         {!onlyUncategorized && (
-          <p className="text-xs text-amber-500">
+          <p className="text-xs text-warning">
             Warning: this will also move splits already sitting on expense/income accounts.
           </p>
         )}

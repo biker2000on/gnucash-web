@@ -20,8 +20,13 @@ import {
   DocumentValidationError,
   backfillLegacyDocuments,
   deleteDocumentBySource,
+  getDocumentsByIds,
+  getDocumentsBySources,
   linkDocument,
   listDocumentLinks,
+  listDocuments,
+  listDocumentsPage,
+  listLinkedDocuments,
   registerDocument,
   updateDocumentExtraction,
   upsertDocument,
@@ -189,6 +194,63 @@ describe('scope and links', () => {
     expect(mocks.raw.mock.calls[0].slice(1)).toEqual([BOOK, 'home_item']);
   });
 
+  it('resolves linked documents with a bounded query count regardless of link count', async () => {
+    const resolveWith = (linkCount: number) => {
+      const links = Array.from({ length: linkCount }, (_, index) => linkRow({
+        id: index + 1,
+        document_id: index + 1,
+      }));
+      const documents = links.map(link => documentRow({ id: link.document_id }));
+      mocks.raw.mockReset();
+      mocks.raw
+        .mockResolvedValueOnce(links)
+        .mockResolvedValueOnce(documents);
+      return listLinkedDocuments({ bookGuid: BOOK, targetType: 'home_item' });
+    };
+
+    await expect(resolveWith(1)).resolves.toHaveLength(1);
+    const queriesForOne = mocks.raw.mock.calls.length;
+    const many = await resolveWith(25);
+    const queriesForMany = mocks.raw.mock.calls.length;
+
+    expect(many).toHaveLength(25);
+    expect(queriesForOne).toBe(2);
+    expect(queriesForMany).toBe(queriesForOne);
+    expect(mocks.raw.mock.calls[1][0]).toContain('id = ANY($1::int[]) AND book_guid = $2');
+    expect(mocks.raw.mock.calls[1][2]).toBe(BOOK);
+  });
+
+  it('keeps the returned order aligned with the link rows', async () => {
+    mocks.raw
+      .mockResolvedValueOnce([
+        linkRow({ id: 1, document_id: 30 }),
+        linkRow({ id: 2, document_id: 10 }),
+        linkRow({ id: 3, document_id: 20 }),
+      ])
+      // Postgres returns the batch in its own order, not the link order.
+      .mockResolvedValueOnce([documentRow({ id: 10 }), documentRow({ id: 20 }), documentRow({ id: 30 })]);
+
+    const linked = await listLinkedDocuments({ bookGuid: BOOK, targetType: 'home_item' });
+    expect(linked.map(item => item.link.id)).toEqual([1, 2, 3]);
+    expect(linked.map(item => item.document.id)).toEqual([30, 10, 20]);
+  });
+
+  it('still refuses a link whose document belongs to another book', async () => {
+    mocks.raw
+      .mockResolvedValueOnce([linkRow({ document_id: 12 }), linkRow({ id: 6, document_id: 99 })])
+      // The foreign-book row is filtered out by the book predicate.
+      .mockResolvedValueOnce([documentRow({ id: 12 })]);
+
+    await expect(listLinkedDocuments({ bookGuid: BOOK, targetType: 'home_item' }))
+      .rejects.toBeInstanceOf(DocumentNotFoundError);
+  });
+
+  it('never reads documents when there are no links', async () => {
+    mocks.raw.mockResolvedValueOnce([]);
+    await expect(listLinkedDocuments({ bookGuid: BOOK, targetType: 'home_item' })).resolves.toEqual([]);
+    expect(mocks.raw).toHaveBeenCalledTimes(1);
+  });
+
   it('updates extraction metadata only after scope validation', async () => {
     mocks.raw
       .mockResolvedValueOnce([documentRow()])
@@ -199,6 +261,78 @@ describe('scope and links', () => {
     });
     expect(updated.extractionStatus).toBe('failed');
     expect(mocks.raw.mock.calls[1][0]).toContain('WHERE id = $1 AND book_guid = $2');
+  });
+});
+
+describe('batched lookups', () => {
+  it('reads many ids in one book-scoped query and omits ids from other books', async () => {
+    mocks.raw.mockResolvedValueOnce([documentRow({ id: 12 })]);
+    const resolved = await getDocumentsByIds(BOOK, [12, 12, 77]);
+
+    expect(mocks.raw).toHaveBeenCalledTimes(1);
+    expect(mocks.raw.mock.calls[0][0]).toContain('id = ANY($1::int[]) AND book_guid = $2');
+    expect(mocks.raw.mock.calls[0][1]).toEqual([12, 77]);
+    expect(mocks.raw.mock.calls[0][2]).toBe(BOOK);
+    expect(resolved.get(12)?.id).toBe(12);
+    expect(resolved.has(77)).toBe(false);
+  });
+
+  it('rejects a non-positive id before touching the database', async () => {
+    await expect(getDocumentsByIds(BOOK, [0])).rejects.toBeInstanceOf(DocumentValidationError);
+    expect(mocks.raw).not.toHaveBeenCalled();
+  });
+
+  it('resolves many source ids in one query keyed by source id', async () => {
+    mocks.raw.mockResolvedValueOnce([documentRow({ id: 12, source_id: '44' })]);
+    const resolved = await getDocumentsBySources(BOOK, 'entity_document', ['44', '44', '45']);
+
+    expect(mocks.raw).toHaveBeenCalledTimes(1);
+    expect(mocks.raw.mock.calls[0][0]).toContain(
+      "book_guid = $1 AND source_kind = $2 AND source_id = ANY($3::text[])",
+    );
+    expect(mocks.raw.mock.calls[0].slice(1)).toEqual([BOOK, 'entity_document', ['44', '45']]);
+    expect(resolved.get('44')?.id).toBe(12);
+    expect(resolved.has('45')).toBe(false);
+  });
+
+  it('skips the query entirely for an empty batch', async () => {
+    await expect(getDocumentsByIds(BOOK, [])).resolves.toEqual(new Map());
+    await expect(getDocumentsBySources(BOOK, 'entity_document', [])).resolves.toEqual(new Map());
+    expect(mocks.raw).not.toHaveBeenCalled();
+  });
+});
+
+describe('document search paging', () => {
+  it('filters by the search term and stays inside the requested book', async () => {
+    mocks.raw.mockResolvedValueOnce([documentRow()]);
+    await listDocuments({ bookGuid: BOOK, query: 'lease', limit: 25, offset: 100 });
+
+    const [sql, ...params] = mocks.raw.mock.calls[0];
+    expect(String(sql)).toContain('book_guid = $1');
+    expect(String(sql)).toContain("websearch_to_tsquery('english', $2)");
+    expect(params[0]).toBe(BOOK);
+    expect(params.at(-2)).toBe(25);
+    expect(params.at(-1)).toBe(100);
+  });
+
+  it('reports another page by reading one extra row without a second query', async () => {
+    mocks.raw.mockResolvedValueOnce(
+      Array.from({ length: 3 }, (_, index) => documentRow({ id: index + 1 })),
+    );
+    const page = await listDocumentsPage({ bookGuid: BOOK, limit: 2, offset: 4 });
+
+    expect(mocks.raw).toHaveBeenCalledTimes(1);
+    expect(mocks.raw.mock.calls[0].at(-2)).toBe(3);
+    expect(page.documents.map(document => document.id)).toEqual([1, 2]);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextOffset).toBe(6);
+  });
+
+  it('ends paging when the page is not full', async () => {
+    mocks.raw.mockResolvedValueOnce([documentRow()]);
+    const page = await listDocumentsPage({ bookGuid: BOOK, limit: 2 });
+    expect(page).toMatchObject({ hasMore: false, nextOffset: null });
+    expect(page.documents).toHaveLength(1);
   });
 });
 

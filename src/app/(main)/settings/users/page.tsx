@@ -221,7 +221,7 @@ export default function UsersPage() {
                                                         className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${
                                                             badge === 'OIDC'
                                                                 ? 'bg-secondary-light text-secondary'
-                                                                : 'bg-gray-500/20 text-gray-400'
+                                                                : 'bg-foreground-muted/20 text-foreground-muted'
                                                         }`}
                                                     >
                                                         {badge}
@@ -308,7 +308,7 @@ export default function UsersPage() {
                         className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {creating && (
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                         )}
                         <span>{creating ? 'Creating...' : 'Create Invitation Link'}</span>
                     </button>
@@ -329,7 +329,7 @@ export default function UsersPage() {
                                         </code>
                                         <span className={`text-xs px-2 py-0.5 rounded-full ${
                                             inv.role === 'edit' ? 'bg-primary/20 text-primary' :
-                                            'bg-gray-500/20 text-gray-400'
+                                            'bg-foreground-muted/20 text-foreground-muted'
                                         }`}>
                                             {inv.role}
                                         </span>
@@ -349,7 +349,7 @@ export default function UsersPage() {
                                     </button>
                                     <button
                                         onClick={() => handleRevoke(inv.code)}
-                                        className="px-3 py-1.5 text-xs bg-rose-600/10 border border-rose-600/30 rounded-lg hover:bg-rose-600/20 transition-colors text-rose-400"
+                                        className="px-3 py-1.5 text-xs bg-negative/10 border border-error/30 rounded-lg hover:bg-negative/20 transition-colors text-negative"
                                     >
                                         Revoke
                                     </button>

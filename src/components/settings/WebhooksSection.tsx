@@ -250,7 +250,7 @@ export function WebhooksSection() {
                     type="button"
                     onClick={() => setForm({ ...EMPTY_FORM, secret: randomSecret() })}
                     disabled={busy}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                     Add webhook
                 </button>
@@ -346,7 +346,7 @@ export function WebhooksSection() {
                                     type="button"
                                     onClick={() => void save()}
                                     disabled={busy || !form.url.trim()}
-                                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                                 >
                                     {busy ? 'Saving…' : 'Save'}
                                 </button>

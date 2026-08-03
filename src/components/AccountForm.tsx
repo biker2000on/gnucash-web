@@ -340,7 +340,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-rose-400 text-sm">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-negative text-sm">
                     {error}
                 </div>
             )}
@@ -348,7 +348,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {/* Name */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    Account Name <span className="text-rose-400">*</span>
+                    Account Name <span className="text-negative">*</span>
                 </label>
                 <input
                     type="text"
@@ -357,12 +357,12 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
                     className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all ${
-                        fieldErrors.name ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
+                        fieldErrors.name ? 'border-negative ring-1 ring-negative/30' : 'border-border'
                     }`}
                     placeholder="e.g., Checking Account"
                 />
                 {fieldErrors.name && (
-                    <p className="mt-1 text-xs text-rose-400">{fieldErrors.name}</p>
+                    <p className="mt-1 text-xs text-negative">{fieldErrors.name}</p>
                 )}
             </div>
 
@@ -370,7 +370,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {mode === 'create' && (
                 <div>
                     <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                        Account Type <span className="text-rose-400">*</span>
+                        Account Type <span className="text-negative">*</span>
                     </label>
                     <select
                         required
@@ -422,7 +422,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
             {/* Commodity (currency or security depending on account type) */}
             <div>
                 <label className="block text-sm font-medium text-foreground-secondary mb-2">
-                    {isSecurityAccount ? 'Security' : 'Currency'} <span className="text-rose-400">*</span>
+                    {isSecurityAccount ? 'Security' : 'Currency'} <span className="text-negative">*</span>
                 </label>
                 <select
                     required
@@ -446,7 +446,7 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                     className={`w-full bg-input-bg border rounded-xl px-4 py-3 text-foreground focus:outline-none focus:border-primary/50 transition-all ${
                         commodityLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
                     } ${
-                        fieldErrors.commodity_guid ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'
+                        fieldErrors.commodity_guid ? 'border-negative ring-1 ring-negative/30' : 'border-border'
                     }`}
                 >
                     <option value="">
@@ -463,12 +463,12 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                         Locked: this account has {splitsCount} transaction split{splitsCount === 1 ? '' : 's'}. Remove all transactions to change the {isSecurityAccount ? 'security' : 'currency'}.
                     </p>
                 ) : isSecurityAccount && commodityOptions.length === 0 ? (
-                    <p className="mt-1 text-xs text-amber-400">
+                    <p className="mt-1 text-xs text-warning">
                         No securities defined yet. Add one in the Commodities editor first.
                     </p>
                 ) : null}
                 {fieldErrors.commodity_guid && (
-                    <p className="mt-1 text-xs text-rose-400">{fieldErrors.commodity_guid}</p>
+                    <p className="mt-1 text-xs text-negative">{fieldErrors.commodity_guid}</p>
                 )}
             </div>
 

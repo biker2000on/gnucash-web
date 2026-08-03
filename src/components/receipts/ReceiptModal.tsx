@@ -193,7 +193,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
                   </a>
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm transition-colors min-h-[44px]"
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-error/10 hover:bg-error/20 text-error rounded-lg text-sm transition-colors min-h-[44px]"
                   >
                     Delete
                   </button>
@@ -227,7 +227,7 @@ export function ReceiptModal({ isOpen, onClose, transactionGuid, transactionDesc
                 <p className="text-xs text-foreground-secondary">OCR processing...</p>
               )}
               {activeReceipt?.ocr_status === 'failed' && (
-                <p className="text-xs text-red-400">OCR failed</p>
+                <p className="text-xs text-error">OCR failed</p>
               )}
             </div>
           )}

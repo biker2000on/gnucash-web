@@ -58,7 +58,7 @@ function LineItemRow({ item, showComparison, currencyCode, expanded, toggleExpan
                     </div>
                 </td>
                 <td className="py-2 px-4 text-right font-mono">
-                    <span className={item.amount >= 0 ? 'text-foreground' : 'text-rose-400'}>
+                    <span className={item.amount >= 0 ? 'text-foreground' : 'text-negative'}>
                         {formatCurrency(item.amount, currencyCode)}
                     </span>
                 </td>
@@ -72,7 +72,7 @@ function LineItemRow({ item, showComparison, currencyCode, expanded, toggleExpan
                         </td>
                         <td className="py-2 px-4 text-right font-mono">
                             {change !== undefined ? (
-                                <span className={change >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                <span className={change >= 0 ? 'text-positive' : 'text-negative'}>
                                     {change >= 0 ? '+' : ''}{formatCurrency(change, currencyCode)}
                                     {changePercent !== undefined && (
                                         <span className="text-xs ml-1">
@@ -248,7 +248,7 @@ export function ReportTable({ sections, showComparison, currencyCode = 'USD' }: 
                                         </td>
                                         <td className="py-3 px-4 text-right font-mono">
                                             {section.previousTotal !== undefined ? (
-                                                <span className={section.total - section.previousTotal >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                <span className={section.total - section.previousTotal >= 0 ? 'text-positive' : 'text-negative'}>
                                                     {section.total - section.previousTotal >= 0 ? '+' : ''}
                                                     {formatCurrency(section.total - section.previousTotal, currencyCode)}
                                                 </span>

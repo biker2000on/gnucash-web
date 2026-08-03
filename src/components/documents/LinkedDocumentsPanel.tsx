@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { INPUT, LABEL } from '@/components/ui/form';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 
@@ -41,37 +41,37 @@ interface LinkedDocumentResponse {
     document: CanonicalDocument;
 }
 
-let documentListCache: CanonicalDocument[] | null = null;
-let documentListRequest: Promise<CanonicalDocument[]> | null = null;
-let documentListCachedAt = 0;
-const DOCUMENT_LIST_CACHE_MS = 30_000;
-
-async function fetchDocumentList(force = false): Promise<CanonicalDocument[]> {
-    if (force) {
-        documentListCache = null;
-        documentListRequest = null;
-    }
-    if (documentListCache && Date.now() - documentListCachedAt < DOCUMENT_LIST_CACHE_MS) return documentListCache;
-    if (!documentListRequest) {
-        documentListRequest = fetch('/api/documents?limit=100', { cache: 'no-store' })
-            .then(async response => {
-                const body = await response.json().catch(() => null) as { documents?: CanonicalDocument[]; error?: string } | null;
-                if (!response.ok) throw new Error(responseError(body, 'Failed to load the document vault'));
-                documentListCache = body?.documents ?? [];
-                documentListCachedAt = Date.now();
-                return documentListCache;
-            })
-            .finally(() => {
-                documentListRequest = null;
-            });
-    }
-    return documentListRequest;
+interface DocumentSearchPage {
+    documents: CanonicalDocument[];
+    hasMore: boolean;
+    nextOffset: number | null;
 }
 
-function invalidateDocumentList() {
-    documentListCache = null;
-    documentListRequest = null;
-    documentListCachedAt = 0;
+/** Page size for the vault picker; the server pages beyond it via `offset`. */
+const SEARCH_PAGE_SIZE = 25;
+const SEARCH_DEBOUNCE_MS = 250;
+
+function documentSearchUrl(search: string, offset: number): string {
+    const params = new URLSearchParams({ limit: String(SEARCH_PAGE_SIZE) });
+    if (search) params.set('q', search);
+    if (offset > 0) params.set('offset', String(offset));
+    return `/api/documents?${params.toString()}`;
+}
+
+async function fetchDocumentPage(
+    search: string,
+    offset: number,
+    signal?: AbortSignal,
+): Promise<DocumentSearchPage> {
+    const response = await fetch(documentSearchUrl(search, offset), { cache: 'no-store', signal });
+    const body = await response.json().catch(() => null) as Partial<DocumentSearchPage> & { error?: string } | null;
+    if (!response.ok) throw new Error(responseError(body, 'Failed to search the document vault'));
+    const documents = body?.documents ?? [];
+    return {
+        documents,
+        hasMore: body?.hasMore ?? false,
+        nextOffset: body?.nextOffset ?? (offset + documents.length),
+    };
 }
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -133,14 +133,20 @@ export function LinkedDocumentsPanel({
 }: LinkedDocumentsPanelProps) {
     const { isReadonly } = useCurrentUser();
     const mutationsHidden = readonly || isReadonly;
-    const [documents, setDocuments] = useState<CanonicalDocument[]>([]);
+    const [linkedDocuments, setLinkedDocuments] = useState<CanonicalDocument[]>([]);
     const [links, setLinks] = useState<DocumentLink[]>([]);
-    const [selectedDocumentId, setSelectedDocumentId] = useState('');
+    const [search, setSearch] = useState('');
+    const [results, setResults] = useState<CanonicalDocument[]>([]);
+    const [nextOffset, setNextOffset] = useState<number | null>(null);
+    const [searching, setSearching] = useState(false);
+    const [selectedDocument, setSelectedDocument] = useState<CanonicalDocument | null>(null);
     const [selectedRole, setSelectedRole] = useState(roles[0]?.value ?? '');
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [vaultToken, setVaultToken] = useState(0);
+    const searchRequestRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         setSelectedRole(current => roles.some(role => role.value === current) ? current : (roles[0]?.value ?? ''));
@@ -152,16 +158,11 @@ export function LinkedDocumentsPanel({
         setError(null);
         try {
             const params = new URLSearchParams({ targetType, targetId });
-            const [vaultDocuments, linksResponse] = await Promise.all([
-                fetchDocumentList(),
-                fetch(`/api/documents/links?${params.toString()}`, { cache: 'no-store' }),
-            ]);
+            const linksResponse = await fetch(`/api/documents/links?${params.toString()}`, { cache: 'no-store' });
             const linksBody = await linksResponse.json().catch(() => null) as { links?: LinkedDocumentResponse[] } | null;
             if (!linksResponse.ok) throw new Error(responseError(linksBody, 'Failed to load linked documents'));
             const linked = linksBody?.links ?? [];
-            const mergedDocuments = new Map(vaultDocuments.map(document => [document.id, document]));
-            for (const item of linked) mergedDocuments.set(item.document.id, item.document);
-            setDocuments([...mergedDocuments.values()]);
+            setLinkedDocuments(linked.map(item => item.document));
             setLinks(linked.map(item => item.link));
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : 'Failed to load supporting documents');
@@ -174,10 +175,47 @@ export function LinkedDocumentsPanel({
         void load();
     }, [load]);
 
+    // Search-backed paging: only the requested page reaches the client, so the
+    // vault stays fully reachable no matter how many documents the book holds.
+    const loadVaultPage = useCallback(async (term: string, offset: number) => {
+        searchRequestRef.current?.abort();
+        const controller = new AbortController();
+        searchRequestRef.current = controller;
+        setSearching(true);
+        try {
+            const page = await fetchDocumentPage(term.trim(), offset, controller.signal);
+            if (controller.signal.aborted) return;
+            setResults(previous => offset > 0 ? [...previous, ...page.documents] : page.documents);
+            setNextOffset(page.hasMore ? page.nextOffset : null);
+        } catch (searchError) {
+            // A superseded search must not land after a newer one.
+            if ((searchError as Error).name === 'AbortError') return;
+            setError(searchError instanceof Error ? searchError.message : 'Failed to search the document vault');
+        } finally {
+            if (searchRequestRef.current === controller) {
+                searchRequestRef.current = null;
+                setSearching(false);
+            }
+        }
+    }, []);
+
+    useEffect(() => {
+        if (mutationsHidden) return;
+        const timer = setTimeout(() => { void loadVaultPage(search, 0); }, SEARCH_DEBOUNCE_MS);
+        return () => clearTimeout(timer);
+    }, [search, vaultToken, mutationsHidden, loadVaultPage]);
+
+    useEffect(() => () => searchRequestRef.current?.abort(), []);
+
     const documentsById = useMemo(
-        () => new Map(documents.map(document => [document.id, document])),
-        [documents],
+        () => new Map([...results, ...linkedDocuments].map(document => [document.id, document])),
+        [results, linkedDocuments],
     );
+    const pickerOptions = useMemo(() => (
+        selectedDocument && !results.some(document => document.id === selectedDocument.id)
+            ? [selectedDocument, ...results]
+            : results
+    ), [results, selectedDocument]);
     const roleLabels = useMemo(
         () => new Map(roles.map(role => [role.value, role.label])),
         [roles],
@@ -194,13 +232,13 @@ export function LinkedDocumentsPanel({
     };
 
     const handleAttach = async () => {
-        const documentId = Number(selectedDocumentId);
+        const documentId = selectedDocument?.id ?? 0;
         if (!Number.isInteger(documentId) || documentId <= 0 || !selectedRole) return;
         setBusy(true);
         setError(null);
         try {
             await attach(documentId, selectedRole);
-            setSelectedDocumentId('');
+            setSelectedDocument(null);
             await load();
         } catch (attachError) {
             setError(attachError instanceof Error ? attachError.message : 'Failed to attach document');
@@ -225,18 +263,18 @@ export function LinkedDocumentsPanel({
             } | null;
             if (!response.ok) throw new Error(responseError(body, 'Upload failed'));
 
-            invalidateDocumentList();
             let documentId = body?.document?.canonicalDocumentId ?? null;
             if (!documentId) {
-                const refreshedDocuments = await fetchDocumentList(true);
                 const sourceId = body?.document?.id == null ? null : String(body.document.id);
-                documentId = refreshedDocuments.find(
+                const page = await fetchDocumentPage(uploadFile.name, 0);
+                documentId = page.documents.find(
                     document => document.sourceKind === 'entity_document' && document.sourceId === sourceId,
                 )?.id ?? null;
             }
             if (!documentId) throw new Error('Uploaded, but the new document could not be resolved');
             await attach(documentId, selectedRole);
             setUploadFile(null);
+            setVaultToken(token => token + 1);
             await load();
         } catch (uploadError) {
             setError(uploadError instanceof Error ? uploadError.message : 'Failed to upload document');
@@ -322,16 +360,30 @@ export function LinkedDocumentsPanel({
 
                     {!mutationsHidden && (
                         <div className="mt-4 space-y-3 border-t border-border pt-3">
+                            <label className="block">
+                                <span className={LABEL}>Search the document vault</span>
+                                <input
+                                    type="search"
+                                    className={INPUT}
+                                    value={search}
+                                    placeholder="Title, filename, or text inside the document"
+                                    onChange={event => setSearch(event.target.value)}
+                                />
+                            </label>
                             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(160px,0.55fr)_auto] sm:items-end">
                                 <label>
                                     <span className={LABEL}>Document in vault</span>
                                     <select
                                         className={INPUT}
-                                        value={selectedDocumentId}
-                                        onChange={event => setSelectedDocumentId(event.target.value)}
+                                        value={selectedDocument ? String(selectedDocument.id) : ''}
+                                        onChange={event => setSelectedDocument(
+                                            pickerOptions.find(document => String(document.id) === event.target.value) ?? null,
+                                        )}
                                     >
-                                        <option value="">Select a document</option>
-                                        {documents.map(document => (
+                                        <option value="">
+                                            {searching ? 'Searching…' : pickerOptions.length ? 'Select a document' : 'No matching documents'}
+                                        </option>
+                                        {pickerOptions.map(document => (
                                             <option key={document.id} value={document.id}>
                                                 {document.title || document.filename} ({SOURCE_LABELS[document.sourceKind] ?? document.sourceKind})
                                             </option>
@@ -351,12 +403,22 @@ export function LinkedDocumentsPanel({
                                 <button
                                     type="button"
                                     onClick={() => void handleAttach()}
-                                    disabled={busy || !selectedDocumentId || !selectedRole}
+                                    disabled={busy || !selectedDocument || !selectedRole}
                                     className="rounded-md border border-primary px-3 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     Attach
                                 </button>
                             </div>
+                            {nextOffset !== null && (
+                                <button
+                                    type="button"
+                                    onClick={() => void loadVaultPage(search, nextOffset)}
+                                    disabled={searching}
+                                    className="text-xs font-medium text-primary underline underline-offset-2 transition-colors hover:text-primary-hover disabled:opacity-50"
+                                >
+                                    {searching ? 'Loading more results…' : 'Load more results'}
+                                </button>
+                            )}
                             <div className="flex flex-wrap items-center gap-3">
                                 <input
                                     type="file"

@@ -191,7 +191,7 @@ export function ApiTokensSection() {
                     type="button"
                     onClick={() => setShowCreate(true)}
                     disabled={busy}
-                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                     Create token
                 </button>
@@ -249,7 +249,7 @@ export function ApiTokensSection() {
                                             type="button"
                                             onClick={() => void create()}
                                             disabled={busy || !name.trim()}
-                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
                                         >
                                             {busy ? 'Creating…' : 'Create'}
                                         </button>
@@ -277,7 +277,7 @@ export function ApiTokensSection() {
                                         <button
                                             type="button"
                                             onClick={closeCreate}
-                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:opacity-90"
+                                            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground hover:opacity-90"
                                         >
                                             Done
                                         </button>

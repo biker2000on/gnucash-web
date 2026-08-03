@@ -16,7 +16,7 @@ import EditableSplitRows, {
     isNonCurrencySplit,
     type EditableSplitRowsHandle,
 } from '../EditableSplitRows';
-import { splitFractions } from '@/components/AccountLedger';
+import { splitFractions, inlineTwoSplitPayload } from '@/components/AccountLedger';
 import type { AccountTransaction } from '@/components/AccountLedger';
 
 const CASH_GUID = 'cash0000000000000000000000000001';
@@ -142,6 +142,105 @@ describe('splitFractions', () => {
     });
 });
 
+describe('inlineTwoSplitPayload', () => {
+    // The PUT handler recreates splits verbatim, so anything the inline row
+    // omits is destroyed: memos vanish and the counter-split un-reconciles.
+    const OWN = makeSplit({
+        guid: 'split000000000000000000000000010',
+        account_guid: CASH_GUID,
+        account_name: 'Checking',
+        memo: 'paycheck stub 42',
+        reconcile_state: 'y',
+        value_num: 150_000, value_denom: 100,
+        quantity_num: 150_000, quantity_denom: 100,
+    });
+    const OTHER = makeSplit({
+        guid: 'split000000000000000000000000011',
+        account_guid: 'inco0000000000000000000000000001',
+        account_name: 'Salary',
+        memo: 'employer deposit',
+        reconcile_state: 'c',
+        value_num: -150_000, value_denom: 100,
+        quantity_num: -150_000, quantity_denom: 100,
+    });
+
+    const base = {
+        accountGuid: CASH_GUID,
+        ownSplit: OWN,
+        otherSplit: OTHER,
+        transferAccountGuid: OTHER.account_guid,
+        signedAmount: 1500,
+        ownReconcileState: 'y',
+    };
+
+    it('round-trips memos and reconcile states through a description-only save', () => {
+        const [own, other] = inlineTwoSplitPayload({
+            ...base,
+            amountChanged: false,
+            transferChanged: false,
+        });
+
+        expect(own.memo).toBe('paycheck stub 42');
+        expect(own.reconcile_state).toBe('y');
+        expect(own.guid).toBe(OWN.guid);
+
+        // The counter-split was not touched at all: it must come back intact.
+        expect(other.memo).toBe('employer deposit');
+        expect(other.reconcile_state).toBe('c');
+        expect(other.guid).toBe(OTHER.guid);
+
+        expect(own.value_num).toBe(150_000);
+        expect(other.value_num).toBe(-150_000);
+    });
+
+    it('un-reconciles both sides when the amount changes', () => {
+        const [own, other] = inlineTwoSplitPayload({
+            ...base,
+            signedAmount: 1600,
+            amountChanged: true,
+            transferChanged: false,
+        });
+
+        expect(own.reconcile_state).toBe('n');
+        expect(other.reconcile_state).toBe('n');
+        // Memos are user annotations, unrelated to the amount.
+        expect(own.memo).toBe('paycheck stub 42');
+        expect(other.memo).toBe('employer deposit');
+        expect(own.value_num).toBe(160_000);
+        expect(other.value_num).toBe(-160_000);
+    });
+
+    it('treats a retargeted transfer as a fresh split', () => {
+        const [own, other] = inlineTwoSplitPayload({
+            ...base,
+            transferAccountGuid: 'othr0000000000000000000000000001',
+            amountChanged: false,
+            transferChanged: true,
+        });
+
+        expect(own.reconcile_state).toBe('y');
+        expect(own.memo).toBe('paycheck stub 42');
+        expect(other.account_guid).toBe('othr0000000000000000000000000001');
+        expect(other.reconcile_state).toBe('n');
+        expect(other.memo).toBe('');
+        expect(other.guid).toBeUndefined();
+    });
+
+    it('defaults cleanly when the transaction has no stored counter-split', () => {
+        const [own, other] = inlineTwoSplitPayload({
+            accountGuid: CASH_GUID,
+            transferAccountGuid: 'othr0000000000000000000000000001',
+            signedAmount: 12.34,
+            amountChanged: true,
+            transferChanged: false,
+        });
+
+        expect(own).toMatchObject({ memo: '', reconcile_state: 'n', value_num: 1_234, value_denom: 100 });
+        expect(other).toMatchObject({ memo: '', reconcile_state: 'n', value_num: -1_234, value_denom: 100 });
+        expect(own.guid).toBeUndefined();
+    });
+});
+
 describe('EditableSplitRows.getSplitPayload', () => {
     const transaction = {
         guid: 'tx00000000000000000000000000001',
@@ -182,5 +281,38 @@ describe('EditableSplitRows.getSplitPayload', () => {
         expect(stock.value_denom).toBe(100);
 
         expect(payload.reduce((sum, s) => sum + s.value_num / s.value_denom, 0)).toBe(0);
+    });
+
+    it('carries memos and reconcile states of untouched splits', () => {
+        const reconciled = {
+            ...transaction,
+            splits: [
+                { ...CASH_SPLIT, memo: 'check 1042', reconcile_state: 'y' },
+                { ...STOCK_SPLIT, memo: 'lot A', reconcile_state: 'c' },
+            ],
+        } as AccountTransaction;
+
+        const ref = createRef<EditableSplitRowsHandle>();
+        render(
+            <table><tbody>
+                <EditableSplitRows
+                    ref={ref}
+                    transaction={reconciled}
+                    accountGuid={CASH_GUID}
+                    columns={6}
+                    isActive={false}
+                />
+            </tbody></table>,
+        );
+
+        const payload = ref.current!.getSplitPayload();
+        expect(payload.find(s => s.account_guid === CASH_GUID)).toMatchObject({
+            memo: 'check 1042',
+            reconcile_state: 'y',
+        });
+        expect(payload.find(s => s.account_guid === STOCK_GUID)).toMatchObject({
+            memo: 'lot A',
+            reconcile_state: 'c',
+        });
     });
 });

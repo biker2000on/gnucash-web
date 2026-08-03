@@ -335,7 +335,7 @@ export function BudgetProgress({ data }: BudgetProgressProps) {
                                 const config = configByAccount.get(account.guid);
                                 const linkedGoal = config?.goalId != null ? goalById.get(config.goalId) ?? null : null;
                                 return (
-                                    <tr key={account.guid} className="hover:bg-white/[0.02] transition-colors">
+                                    <tr key={account.guid} className="hover:bg-surface-hover transition-colors">
                                         <td className="px-4 py-2 font-medium text-foreground">
                                             <Link
                                                 href={`/accounts/${account.guid}`}

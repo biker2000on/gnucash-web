@@ -24,14 +24,14 @@ interface CashAllocationCardProps {
 }
 
 function getCashColor(percent: number): string {
-  if (percent > 20) return 'text-red-400';
-  if (percent > 10) return 'text-amber-400';
+  if (percent > 20) return 'text-error';
+  if (percent > 10) return 'text-warning';
   return 'text-primary';
 }
 
 function getBarColor(percent: number): string {
-  if (percent > 20) return 'bg-red-400/70';
-  if (percent > 10) return 'bg-amber-400/70';
+  if (percent > 20) return 'bg-error/70';
+  if (percent > 10) return 'bg-warning/70';
   return 'bg-primary/70';
 }
 

@@ -606,7 +606,10 @@ export default function FinancialActionCenterPage() {
     if (familyScope && action.bookGuid !== activeBookGuid) {
       // Cross-book resolution switches the shared session book, so it must
       // reload this window; the pop-out window cannot host it safely.
-      await switchBook(action.bookGuid, href);
+      // A server refusal (revoked grant, stale book list) has to be shown —
+      // otherwise the card just looks unclickable.
+      const result = await switchBook(action.bookGuid, href);
+      if (!result.ok) setError(result.error ?? 'Could not switch to that book.');
       return;
     }
     if (popOutResolution && openResolutionWindow(href, href)) return;

@@ -116,10 +116,10 @@ function ContributionSummaryContent() {
                         {reportData.periods.length === 0 ? (
                             /* Empty state */
                             <div className="p-12 text-center">
-                                <div className="text-foreground-tertiary text-lg mb-2">
+                                <div className="text-foreground-muted text-lg mb-2">
                                     No retirement accounts configured
                                 </div>
-                                <p className="text-foreground-tertiary text-sm max-w-md mx-auto">
+                                <p className="text-foreground-muted text-sm max-w-md mx-auto">
                                     To track contributions, flag your retirement accounts with the appropriate
                                     account type (e.g., 401k, IRA) in your account settings.
                                 </p>
@@ -129,27 +129,27 @@ function ContributionSummaryContent() {
                                 {/* Summary cards */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                                     <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
-                                        <div className="text-xs text-foreground-tertiary mb-1">Total Contributions</div>
-                                        <div className="text-2xl font-bold text-green-400">
+                                        <div className="text-xs text-foreground-muted mb-1">Total Contributions</div>
+                                        <div className="text-2xl font-bold text-success">
                                             {formatCurrency(reportData.grandTotalContributions + reportData.grandTotalIncomeContributions)}
                                         </div>
-                                        <div className="text-xs text-foreground-tertiary mt-1">Direct + payroll deferrals</div>
+                                        <div className="text-xs text-foreground-muted mt-1">Direct + payroll deferrals</div>
                                     </div>
                                     <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
-                                        <div className="text-xs text-foreground-tertiary mb-1">Employer Match</div>
+                                        <div className="text-xs text-foreground-muted mb-1">Employer Match</div>
                                         <div className="text-2xl font-bold text-primary">
                                             {formatCurrency(reportData.grandTotalEmployerMatch)}
                                         </div>
                                     </div>
                                     <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
-                                        <div className="text-xs text-foreground-tertiary mb-1">Transfers (net)</div>
+                                        <div className="text-xs text-foreground-muted mb-1">Transfers (net)</div>
                                         <div className="text-2xl font-bold text-foreground-secondary">
                                             {formatCurrency(reportData.grandTotalTransfers)}
                                         </div>
-                                        <div className="text-xs text-foreground-tertiary mt-1">Rollovers/conversions, excluded from net</div>
+                                        <div className="text-xs text-foreground-muted mt-1">Rollovers/conversions, excluded from net</div>
                                     </div>
                                     <div className="bg-background-tertiary/50 rounded-xl p-4 border border-border/50">
-                                        <div className="text-xs text-foreground-tertiary mb-1">Net Contributions</div>
+                                        <div className="text-xs text-foreground-muted mb-1">Net Contributions</div>
                                         <div className="text-2xl font-bold text-foreground">
                                             {formatCurrency(reportData.grandTotalNetContributions)}
                                         </div>
@@ -165,7 +165,7 @@ function ContributionSummaryContent() {
                                             </h2>
                                             <div className="flex items-center gap-4 text-xs text-foreground-secondary">
                                                 <span>
-                                                    Contributions: <span className="text-green-400">{formatCurrency(period.totalContributions + period.totalIncomeContributions)}</span>
+                                                    Contributions: <span className="text-success">{formatCurrency(period.totalContributions + period.totalIncomeContributions)}</span>
                                                 </span>
                                                 {period.totalEmployerMatch !== 0 && (
                                                     <span>

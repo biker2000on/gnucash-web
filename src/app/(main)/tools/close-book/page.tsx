@@ -84,7 +84,7 @@ export default function CloseBookPage() {
             <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
                 <div className="grid sm:grid-cols-2 gap-4">
                     <label className="block">
-                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Closing date</span>
+                        <span className="text-xs uppercase tracking-wider text-foreground-muted">Closing date</span>
                         <input
                             type="date"
                             value={date}
@@ -93,7 +93,7 @@ export default function CloseBookPage() {
                         />
                     </label>
                     <div>
-                        <span className="text-xs uppercase tracking-wider text-foreground-tertiary">Close into (equity account)</span>
+                        <span className="text-xs uppercase tracking-wider text-foreground-muted">Close into (equity account)</span>
                         <div className="mt-1">
                             <AccountSelector
                                 value={equityGuid}
@@ -112,24 +112,24 @@ export default function CloseBookPage() {
             </div>
 
             {loading ? (
-                <div className="text-sm text-foreground-tertiary py-8 text-center">Computing balances…</div>
+                <div className="text-sm text-foreground-muted py-8 text-center">Computing balances…</div>
             ) : preview && preview.accounts.length === 0 ? (
-                <div className="text-sm text-foreground-tertiary py-8 text-center border border-border rounded-lg">
+                <div className="text-sm text-foreground-muted py-8 text-center border border-border rounded-lg">
                     Nothing to close — all income and expense balances are zero through {date}.
                 </div>
             ) : preview ? (
                 <>
                     <div className="grid sm:grid-cols-3 gap-4">
                         <div className="bg-surface border border-border rounded-lg p-4">
-                            <div className="text-xs uppercase tracking-wider text-foreground-tertiary mb-1">Income to close</div>
+                            <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">Income to close</div>
                             <div className="text-xl font-mono text-positive" style={TNUM}>{formatCurrency(Math.abs(preview.incomeTotal))}</div>
                         </div>
                         <div className="bg-surface border border-border rounded-lg p-4">
-                            <div className="text-xs uppercase tracking-wider text-foreground-tertiary mb-1">Expenses to close</div>
+                            <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">Expenses to close</div>
                             <div className="text-xl font-mono text-negative" style={TNUM}>{formatCurrency(preview.expenseTotal)}</div>
                         </div>
                         <div className="bg-surface border border-border rounded-lg p-4">
-                            <div className="text-xs uppercase tracking-wider text-foreground-tertiary mb-1">Net income → equity</div>
+                            <div className="text-xs uppercase tracking-wider text-foreground-muted mb-1">Net income → equity</div>
                             <div className={`text-xl font-mono ${preview.netIncome >= 0 ? 'text-positive' : 'text-negative'}`} style={TNUM}>
                                 {formatCurrency(preview.netIncome)}
                             </div>
@@ -139,7 +139,7 @@ export default function CloseBookPage() {
                     {[{ label: 'Income accounts', rows: income }, { label: 'Expense accounts', rows: expense }].map(group => (
                         group.rows.length > 0 && (
                             <div key={group.label} className="border border-border rounded-lg overflow-hidden">
-                                <div className="px-4 py-2 bg-background-secondary text-xs uppercase tracking-wider text-foreground-tertiary font-semibold">
+                                <div className="px-4 py-2 bg-background-secondary text-xs uppercase tracking-wider text-foreground-muted font-semibold">
                                     {group.label} ({group.rows.length})
                                 </div>
                                 <table className="w-full text-sm">

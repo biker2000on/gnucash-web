@@ -359,7 +359,7 @@ export default function ConnectionsPage() {
               >
                 {sfConnecting ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                     Connecting...
                   </>
                 ) : (
@@ -371,8 +371,8 @@ export default function ConnectionsPage() {
         ) : (
           <div className="space-y-4">
             {(sfRevoked || sfSyncStatus === 'failed' || sfLastSyncError || sfLiveError) && (
-              <div className="border border-red-500/30 bg-red-500/10 rounded-lg p-3">
-                <p className="text-sm font-medium text-red-400">
+              <div className="border border-error/30 bg-error/10 rounded-lg p-3">
+                <p className="text-sm font-medium text-error">
                   {sfRevoked ? 'SimpleFin access needs to be reconnected.' : 'SimpleFin sync needs attention.'}
                 </p>
                 <p className="text-xs text-foreground-secondary mt-1 whitespace-pre-line">
@@ -390,7 +390,7 @@ export default function ConnectionsPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
-                  <div className={`w-2.5 h-2.5 rounded-full ${sfRevoked || sfSyncStatus === 'failed' ? 'bg-red-400' : sfSyncStatus === 'queued' || sfSyncStatus === 'running' ? 'bg-amber-400' : 'bg-primary'}`} />
+                  <div className={`w-2.5 h-2.5 rounded-full ${sfRevoked || sfSyncStatus === 'failed' ? 'bg-error' : sfSyncStatus === 'queued' || sfSyncStatus === 'running' ? 'bg-warning' : 'bg-primary'}`} />
                   <span className="text-sm font-medium text-foreground">
                     {sfRevoked ? 'Reconnect required' : sfSyncStatus === 'failed' ? 'Connected with errors' : sfSyncStatus === 'queued' ? 'Sync queued' : sfSyncStatus === 'running' ? 'Sync running' : 'Connected'}
                   </span>
@@ -422,7 +422,7 @@ export default function ConnectionsPage() {
                 >
                   {sfSyncing ? (
                     <>
-                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <div className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                       Syncing...
                     </>
                   ) : (
@@ -431,7 +431,7 @@ export default function ConnectionsPage() {
                 </button>
                 <button
                   onClick={() => setSfDisconnectOpen(true)}
-                  className="px-3 py-1.5 text-xs border border-red-500/30 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
+                  className="px-3 py-1.5 text-xs border border-error/30 rounded-lg text-error hover:bg-error/10 transition-colors"
                 >
                   Disconnect
                 </button>
@@ -466,7 +466,7 @@ export default function ConnectionsPage() {
                 )}
                 {sfSyncResult.errors.length > 0 && (
                   <details className="mt-2">
-                    <summary className="text-xs text-amber-400 cursor-pointer">
+                    <summary className="text-xs text-warning cursor-pointer">
                       {sfSyncResult.errors.length} error(s)
                     </summary>
                     <ul className="mt-1 text-xs text-foreground-muted space-y-1">
@@ -478,7 +478,7 @@ export default function ConnectionsPage() {
                 )}
                 {sfSyncResult.warnings && sfSyncResult.warnings.length > 0 && (
                   <details className="mt-2">
-                    <summary className="text-xs text-amber-400 cursor-pointer">
+                    <summary className="text-xs text-warning cursor-pointer">
                       {sfSyncResult.warnings.length} warning(s)
                     </summary>
                     <ul className="mt-1 text-xs text-foreground-muted space-y-1">
@@ -514,7 +514,7 @@ export default function ConnectionsPage() {
                                     Mapped
                                   </span>
                                 ) : (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                  <span className="text-xs px-2 py-0.5 rounded bg-warning/10 text-warning border border-warning/20">
                                     Unmapped
                                   </span>
                                 )}
@@ -561,7 +561,7 @@ export default function ConnectionsPage() {
                   </thead>
                   <tbody className="divide-y divide-border/30">
                     {sfAccounts.map(account => (
-                      <tr key={account.id} className="hover:bg-white/[0.02]">
+                      <tr key={account.id} className="hover:bg-surface-hover">
                         <td className="px-4 py-2">
                           <div className="text-sm text-foreground">{account.name}</div>
                           <div className="text-xs text-foreground-muted">
@@ -607,7 +607,7 @@ export default function ConnectionsPage() {
                               Mapped
                             </span>
                           ) : (
-                            <span className="text-xs px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            <span className="text-xs px-2 py-0.5 rounded bg-warning/10 text-warning border border-warning/20">
                               Unmapped
                             </span>
                           )}

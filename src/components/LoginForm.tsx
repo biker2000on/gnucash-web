@@ -130,8 +130,8 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
         if (/[0-9]/.test(pass)) score++;
         if (/[^A-Za-z0-9]/.test(pass)) score++;
 
-        if (score <= 2) return { score, label: 'Weak', color: 'bg-rose-500' };
-        if (score <= 4) return { score, label: 'Fair', color: 'bg-yellow-500' };
+        if (score <= 2) return { score, label: 'Weak', color: 'bg-negative' };
+        if (score <= 4) return { score, label: 'Fair', color: 'bg-warning' };
         return { score, label: 'Strong', color: 'bg-primary' };
     };
 
@@ -151,7 +151,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                     </div>
 
                     {error && (
-                        <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
+                        <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
                             {error}
                         </div>
                     )}
@@ -194,7 +194,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                         >
                             {loading ? (
                                 <span className="flex items-center justify-center gap-2">
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                                     Verifying...
                                 </span>
                             ) : (
@@ -245,7 +245,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                 )}
 
                 {(error || flowError) && (
-                    <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-lg text-rose-400 text-sm">
+                    <div className="mb-6 p-4 bg-negative/10 border border-negative/30 rounded-lg text-negative text-sm">
                         {error || flowError}
                     </div>
                 )}
@@ -308,7 +308,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                                 placeholder="Confirm password"
                             />
                             {confirmPassword && password !== confirmPassword && (
-                                <p className="mt-1 text-xs text-rose-400">Passwords do not match</p>
+                                <p className="mt-1 text-xs text-negative">Passwords do not match</p>
                             )}
                         </div>
                     )}
@@ -320,7 +320,7 @@ export function LoginForm({ mode, onToggleMode, redirectTo = '/dashboard', oidcP
                     >
                         {loading ? (
                             <span className="flex items-center justify-center gap-2">
-                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                                 {mode === 'login' ? 'Signing in...' : 'Creating account...'}
                             </span>
                         ) : (

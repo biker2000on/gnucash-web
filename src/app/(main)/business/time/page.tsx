@@ -312,7 +312,7 @@ export default function TimeTrackingPage() {
                             type="button"
                             onClick={handleStopTimer}
                             disabled={timerBusy || !canWrite}
-                            className="px-4 py-2 text-sm bg-negative/90 hover:bg-negative text-white rounded-lg transition-colors duration-150 disabled:opacity-50"
+                            className="px-4 py-2 text-sm bg-negative/90 hover:bg-negative text-primary-foreground rounded-lg transition-colors duration-150 disabled:opacity-50"
                         >
                             Stop
                         </button>

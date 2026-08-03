@@ -6,7 +6,7 @@ import { getStorageBackend } from '@/lib/storage/storage-backend';
 import { getResilienceProfile } from '@/lib/resilience/service';
 import { getEntityDocumentFile } from '@/lib/services/entity-documents.service';
 import {
-  getDocumentBySource,
+  getDocumentsBySources,
   listLinkedDocuments,
   type CanonicalDocument,
   type LinkedDocument,
@@ -177,21 +177,23 @@ export async function GET() {
     // Linked policy documents from the entity document vault (book-scoped by
     // the service). Failures are non-fatal — noted in the README instead.
     const linkedDocumentIds = [...new Set(profile.policies.flatMap(policy => policy.documentIds ?? []))];
+    // One book-scoped batch instead of a lookup per policy document.
+    let canonicalBySource = new Map<string, CanonicalDocument>();
+    try {
+      canonicalBySource = await getDocumentsBySources(
+        auth.bookGuid,
+        'entity_document',
+        linkedDocumentIds.map(String),
+      );
+    } catch {
+      // Canonical metadata may be unavailable during an upgrade; the legacy
+      // book-scoped vault remains a valid fallback for policy documentIds.
+    }
     for (const documentId of linkedDocumentIds) {
       for (const linked of entityLinksByTarget.get(String(documentId)) ?? []) {
         await addCanonicalDocument(linked.document, `policy-documents/linked-to-${documentId}`);
       }
-      let canonical: CanonicalDocument | null = null;
-      try {
-        canonical = await getDocumentBySource(
-          auth.bookGuid,
-          'entity_document',
-          String(documentId),
-        );
-      } catch {
-        // Canonical metadata may be unavailable during an upgrade; the legacy
-        // book-scoped vault remains a valid fallback for policy documentIds.
-      }
+      const canonical = canonicalBySource.get(String(documentId)) ?? null;
       if (canonical?.storageKey) {
         await addCanonicalDocument(canonical, 'policy-documents');
         continue;

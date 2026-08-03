@@ -11,10 +11,20 @@ interface Book {
     role?: string;
 }
 
+/**
+ * Outcome of an active-book switch. The server re-verifies the caller's role on
+ * the target book, so a refusal must reach the UI — a click that silently does
+ * nothing reads as a broken page.
+ */
+export interface SwitchBookResult {
+    ok: boolean;
+    error?: string;
+}
+
 interface BookContextType {
     activeBookGuid: string | null;
     books: Book[];
-    switchBook: (guid: string, destination?: string) => Promise<void>;
+    switchBook: (guid: string, destination?: string) => Promise<SwitchBookResult>;
     refreshBooks: () => Promise<void>;
     loading: boolean;
     hasNoBooks: boolean;
@@ -52,30 +62,38 @@ export function BookProvider({ children }: { children: ReactNode }) {
         refreshBooks();
     }, [refreshBooks]);
 
-    const switchBook = useCallback(async (guid: string, destination?: string) => {
+    const switchBook = useCallback(async (guid: string, destination?: string): Promise<SwitchBookResult> => {
         try {
             const res = await fetch('/api/books/active', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ bookGuid: guid }),
             });
-            if (res.ok) {
-                if (destination) {
-                    window.location.href = destination;
-                    return;
-                }
-                // If on an account-specific ledger, redirect to account hierarchy
-                // since the account GUID belongs to the old book
-                const path = window.location.pathname;
-                if (/^\/accounts\/[^/]+/.test(path)) {
-                    window.location.href = '/accounts';
-                } else {
-                    // Full reload ensures all pages re-fetch data for the new book
-                    window.location.reload();
-                }
+            if (!res.ok) {
+                // The server re-checks the role, so a refusal here is
+                // authoritative even when the client's book list says otherwise
+                // (stale after a revoked grant). Report it rather than leaving
+                // the caller with a click that silently did nothing.
+                const body = await res.json().catch(() => null);
+                return { ok: false, error: body?.error ?? 'You do not have access to that book.' };
             }
+            if (destination) {
+                window.location.href = destination;
+                return { ok: true };
+            }
+            // If on an account-specific ledger, redirect to account hierarchy
+            // since the account GUID belongs to the old book
+            const path = window.location.pathname;
+            if (/^\/accounts\/[^/]+/.test(path)) {
+                window.location.href = '/accounts';
+            } else {
+                // Full reload ensures all pages re-fetch data for the new book
+                window.location.reload();
+            }
+            return { ok: true };
         } catch (err) {
             console.error('Error switching book:', err);
+            return { ok: false, error: 'Could not reach the server to switch books.' };
         }
     }, []);
 

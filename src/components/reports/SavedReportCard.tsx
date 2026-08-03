@@ -45,11 +45,11 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
             {/* Star button */}
             <button
                 onClick={() => onToggleStar(report.id)}
-                className="absolute top-4 right-4 text-foreground-tertiary hover:text-yellow-400 transition-colors"
+                className="absolute top-4 right-4 text-foreground-muted hover:text-warning transition-colors"
                 title={report.isStarred ? 'Unstar' : 'Star'}
             >
                 {report.isStarred ? (
-                    <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 text-warning" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                     </svg>
                 ) : (
@@ -78,7 +78,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                 <span className="px-2 py-0.5 text-xs rounded-full bg-primary/10 text-primary">
                     {displayName}
                 </span>
-                <span className="text-xs text-foreground-tertiary">
+                <span className="text-xs text-foreground-muted">
                     {getRelativeTime(report.updatedAt)}
                 </span>
             </div>
@@ -92,7 +92,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                             onDelete(report.id);
                             setConfirmingDelete(false);
                         }}
-                        className="px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                        className="px-2 py-0.5 text-xs rounded bg-error/20 text-error hover:bg-error/30 transition-colors"
                     >
                         Confirm
                     </button>
@@ -107,7 +107,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                 <div className="flex items-center gap-2">
                     <button
                         onClick={() => onEdit(report)}
-                        className="text-foreground-tertiary hover:text-foreground transition-colors"
+                        className="text-foreground-muted hover:text-foreground transition-colors"
                         title="Edit"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -116,7 +116,7 @@ export default function SavedReportCard({ report, onToggleStar, onEdit, onDelete
                     </button>
                     <button
                         onClick={() => setConfirmingDelete(true)}
-                        className="text-foreground-tertiary hover:text-red-400 transition-colors"
+                        className="text-foreground-muted hover:text-error transition-colors"
                         title="Delete"
                     >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

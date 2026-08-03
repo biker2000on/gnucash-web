@@ -16,13 +16,13 @@ interface TransactionTypeIconProps {
 }
 
 const TYPE_CONFIG: Record<InvestmentTransactionType, { icon: string; label: string; color: string }> = {
-    buy:                   { icon: '↓', label: 'Buy',          color: 'text-emerald-400' },
-    sell:                  { icon: '↑', label: 'Sell',         color: 'text-rose-400' },
-    dividend:              { icon: '$', label: 'Dividend',     color: 'text-amber-400' },
-    stock_split:           { icon: '⇅', label: 'Split',       color: 'text-blue-400' },
-    return_of_capital:     { icon: '↩', label: 'ROC',         color: 'text-purple-400' },
-    reinvested_dividend:   { icon: '⟳', label: 'DRIP',        color: 'text-amber-400' },
-    realized_gain:         { icon: '±', label: 'Realized G/L', color: 'text-teal-400' },
+    buy:                   { icon: '↓', label: 'Buy',          color: 'text-positive' },
+    sell:                  { icon: '↑', label: 'Sell',         color: 'text-negative' },
+    dividend:              { icon: '$', label: 'Dividend',     color: 'text-warning' },
+    stock_split:           { icon: '⇅', label: 'Split',       color: 'text-secondary' },
+    return_of_capital:     { icon: '↩', label: 'ROC',         color: 'text-secondary' },
+    reinvested_dividend:   { icon: '⟳', label: 'DRIP',        color: 'text-warning' },
+    realized_gain:         { icon: '±', label: 'Realized G/L', color: 'text-primary' },
     other:                 { icon: '·', label: 'Other',        color: 'text-foreground-muted' },
 };
 

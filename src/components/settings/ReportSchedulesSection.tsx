@@ -335,7 +335,7 @@ export function ReportSchedulesSection() {
                                     value={form.recipients}
                                     onChange={e => setForm(f => ({ ...f, recipients: e.target.value }))}
                                     placeholder="Defaults to your account email"
-                                    className="mt-1 w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder:text-foreground-tertiary"
+                                    className="mt-1 w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder:text-foreground-muted"
                                 />
                             </label>
                         </div>
@@ -359,23 +359,23 @@ export function ReportSchedulesSection() {
                 )}
 
                 {!loaded ? (
-                    <p className="text-sm text-foreground-tertiary">Loading…</p>
+                    <p className="text-sm text-foreground-muted">Loading…</p>
                 ) : schedules.length === 0 ? (
-                    <p className="text-sm text-foreground-tertiary">No report schedules yet.</p>
+                    <p className="text-sm text-foreground-muted">No report schedules yet.</p>
                 ) : (
                     <div className="border border-border rounded-lg divide-y divide-border overflow-hidden">
                         {schedules.map(item => (
                             <div key={item.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-3 py-2 text-sm">
                                 <div className="min-w-0">
                                     <div className="flex items-center gap-2">
-                                        <span className={`font-medium truncate ${item.enabled ? 'text-foreground' : 'text-foreground-tertiary line-through'}`}>
+                                        <span className={`font-medium truncate ${item.enabled ? 'text-foreground' : 'text-foreground-muted line-through'}`}>
                                             {reportLabel(item)}
                                         </span>
                                         {item.savedReportId != null && (
                                             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary/10 text-primary shrink-0">saved</span>
                                         )}
                                     </div>
-                                    <div className="text-xs text-foreground-tertiary mt-0.5">
+                                    <div className="text-xs text-foreground-muted mt-0.5">
                                         {cadenceSummary(item)}
                                         {' · '}
                                         {item.recipients || 'your email'}
@@ -394,7 +394,7 @@ export function ReportSchedulesSection() {
                                         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${item.enabled ? 'bg-primary' : 'bg-border'}`}
                                     >
                                         <span
-                                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${item.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'}`}
+                                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-primary-foreground transition-transform ${item.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'}`}
                                         />
                                     </button>
                                     <button
@@ -412,7 +412,7 @@ export function ReportSchedulesSection() {
                                     </button>
                                     <button
                                         onClick={() => remove(item)}
-                                        className="px-2.5 py-1 rounded-md border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 transition-colors text-xs"
+                                        className="px-2.5 py-1 rounded-md border border-negative/30 text-negative hover:bg-negative/10 transition-colors text-xs"
                                     >
                                         Delete
                                     </button>

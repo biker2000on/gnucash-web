@@ -179,7 +179,7 @@ function AccountPageContent() {
                     />
                     <div className="text-right pb-1">
                         <p className="text-xs text-foreground-muted uppercase tracking-widest font-bold">Current Balance</p>
-                        <p className={`text-2xl font-mono font-bold ${currentBalance && applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        <p className={`text-2xl font-mono font-bold ${currentBalance && applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal) < 0 ? 'text-negative' : 'text-positive'}`}>
                             {currentBalance
                                 ? formatCurrency(applyBalanceReversal(parseFloat(currentBalance), account?.account_type || 'ASSET', balanceReversal), commodityMnemonic)
                                 : '$0.00'}
@@ -202,8 +202,8 @@ function AccountPageContent() {
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
-                    <div className="text-rose-400">{error}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                    <div className="text-negative">{error}</div>
                 </div>
             ) : (
                 <AccountLedger

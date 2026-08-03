@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   storageGet: vi.fn(),
   pdfText: vi.fn(),
+  ocrPdf: vi.fn(),
+  ocrImage: vi.fn(),
   getAiConfig: vi.fn(),
   chat: vi.fn(),
   insurance: vi.fn(),
@@ -24,7 +26,11 @@ vi.mock('../service', () => ({
 vi.mock('@/lib/storage/storage-backend', () => ({
   getStorageBackend: vi.fn(async () => ({ get: mocks.storageGet })),
 }));
-vi.mock('@/lib/pdf-text-extract', () => ({ extractTextFromPdf: mocks.pdfText }));
+vi.mock('@/lib/pdf-text-extract', () => ({ extractPdfText: mocks.pdfText }));
+vi.mock('@/lib/queue/jobs/ocr-receipt', () => ({
+  extractTextFromPdfViaOcr: mocks.ocrPdf,
+  extractTextFromImage: mocks.ocrImage,
+}));
 vi.mock('@/lib/ai-config', () => ({ getAiConfig: mocks.getAiConfig }));
 vi.mock('@/lib/ai-query/client', () => ({ chatComplete: mocks.chat }));
 vi.mock('@/lib/resilience/insurance-parse', () => ({
@@ -61,7 +67,12 @@ beforeEach(() => {
   });
   mocks.getBySource.mockResolvedValue(canonical);
   mocks.storageGet.mockResolvedValue(Buffer.from('%PDF'));
-  mocks.pdfText.mockResolvedValue('License issued to Acme LLC on 2026-01-10 ref LIC-22');
+  mocks.pdfText.mockResolvedValue({
+    text: 'License issued to Acme LLC on 2026-01-10 ref LIC-22',
+    source: 'text-layer',
+    ocrError: null,
+  });
+  mocks.ocrPdf.mockResolvedValue('Scanned license for Acme LLC');
   mocks.getAiConfig.mockResolvedValue({
     enabled: true, base_url: 'https://ai.invalid', model: 'test', api_key: null,
   });
@@ -128,6 +139,55 @@ describe('runEntityDocumentExtraction', () => {
     }));
     expect(mocks.update).toHaveBeenLastCalledWith(BOOK, 80, expect.objectContaining({
       metadata: expect.objectContaining({ suggestionKind: 'insurance_policy' }),
+    }));
+  });
+
+  it('indexes a scanned PDF through the injected OCR fallback', async () => {
+    mocks.pdfText.mockImplementation(async (buffer, options) => ({
+      text: await options.ocr(buffer),
+      source: 'ocr',
+      ocrError: null,
+    }));
+
+    await runEntityDocumentExtraction(7, BOOK);
+
+    expect(mocks.ocrPdf).toHaveBeenCalledWith(expect.any(Buffer));
+    expect(mocks.update).toHaveBeenLastCalledWith(BOOK, 80, expect.objectContaining({
+      status: 'completed',
+      text: 'Scanned license for Acme LLC',
+      metadata: expect.objectContaining({ textSource: 'ocr', characterCount: 28 }),
+    }));
+  });
+
+  it('fails the document when neither the text layer nor OCR yields text', async () => {
+    mocks.pdfText.mockResolvedValue({
+      text: '',
+      source: 'none',
+      ocrError: 'PDF has no text layer and OCR failed: tesseract unavailable',
+    });
+
+    await runEntityDocumentExtraction(7, BOOK);
+
+    expect(mocks.update).toHaveBeenLastCalledWith(BOOK, 80, expect.objectContaining({
+      status: 'failed',
+      text: null,
+      error: 'PDF has no text layer and OCR failed: tesseract unavailable',
+      metadata: expect.objectContaining({ textSource: 'none', characterCount: 0 }),
+    }));
+  });
+
+  it('marks file types without an extractor not_applicable', async () => {
+    mocks.findFirst.mockResolvedValue({
+      ...(await mocks.findFirst()),
+      mime_type: 'application/zip',
+    });
+
+    await runEntityDocumentExtraction(7, BOOK);
+
+    expect(mocks.pdfText).not.toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenLastCalledWith(BOOK, 80, expect.objectContaining({
+      status: 'not_applicable',
+      error: 'No text extractor for application/zip',
     }));
   });
 });

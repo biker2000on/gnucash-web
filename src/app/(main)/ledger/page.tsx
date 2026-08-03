@@ -64,8 +64,8 @@ function LedgerContent() {
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
-                    <div className="text-rose-400">{error}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                    <div className="text-negative">{error}</div>
                 </div>
             ) : (
                 <TransactionJournal

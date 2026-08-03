@@ -86,6 +86,19 @@ export async function isEntityOwnedByBook(
     return row?.book_guid === bookGuid;
 }
 
+/** The book that owns an entity, or null when it is unattributed. */
+export async function getEntityOwnerBook(
+    entityType: BusinessEntityType,
+    entityGuid: string,
+    db?: EntityOwnershipClient,
+): Promise<string | null> {
+    const row = await client(db).gnucash_web_business_entity_ownership.findUnique({
+        where: { entity_type_entity_guid: { entity_type: entityType, entity_guid: entityGuid } },
+        select: { book_guid: true },
+    });
+    return row?.book_guid ?? null;
+}
+
 /** Throw unless the entity belongs to the book. Use before any single-entity read or write. */
 export async function assertEntityOwnedByBook(
     entityType: BusinessEntityType,

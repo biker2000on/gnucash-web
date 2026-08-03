@@ -40,11 +40,11 @@ interface PayslipData {
 // ---------------------------------------------------------------------------
 
 const STATUS_STYLES: Record<string, string> = {
-  posted: 'bg-teal-500/20 text-teal-400 border border-teal-500/30',
-  ready: 'bg-green-500/20 text-green-400 border border-green-500/30',
-  needs_mapping: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
-  processing: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-  error: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  posted: 'bg-primary/20 text-primary border border-primary/30',
+  ready: 'bg-success/20 text-success border border-success/30',
+  needs_mapping: 'bg-warning/20 text-warning border border-warning/30',
+  processing: 'bg-secondary/20 text-secondary border border-secondary/30',
+  error: 'bg-error/20 text-error border border-error/30',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -388,7 +388,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
             {payslip && payslip.status !== 'posted' && (
               <button
                 onClick={() => setShowDeleteConfirm(true)}
-                className="p-1.5 rounded-lg text-foreground-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                className="p-1.5 rounded-lg text-foreground-muted hover:text-error hover:bg-error/10 transition-colors"
                 aria-label="Delete payslip"
                 title="Delete payslip"
               >
@@ -413,7 +413,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
         <div className="flex-1 px-6 py-6 space-y-6">
           {/* Error state */}
           {fetchError && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">
+            <div className="bg-error/10 border border-error/30 text-error rounded-lg px-4 py-3 text-sm">
               {fetchError}
             </div>
           )}
@@ -525,7 +525,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
 
               {/* Post error */}
               {postError && (
-                <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">
+                <div className="bg-error/10 border border-error/30 text-error rounded-lg px-4 py-3 text-sm">
                   {postError}
                 </div>
               )}
@@ -556,7 +556,7 @@ export function PayslipDetailPanel({ payslipId, onClose, onUpdated }: PayslipDet
 
               {/* Already posted indicator */}
               {payslip.status === 'posted' && (
-                <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-teal-500/10 border border-teal-500/30 text-teal-400 text-sm">
+                <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-primary/10 border border-primary/30 text-primary text-sm">
                   <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>

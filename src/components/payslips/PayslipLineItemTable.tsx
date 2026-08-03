@@ -89,7 +89,7 @@ export function PayslipLineItemTable({
   return (
     <div className="flex flex-col gap-3">
       {unmappedCount > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
+        <div className="flex items-center gap-2 px-3 py-2 rounded bg-warning/10 border border-warning/30 text-warning text-sm">
           <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
@@ -110,7 +110,7 @@ export function PayslipLineItemTable({
               return (
                 <MobileCard
                   key={`${item.normalized_label}-${index}`}
-                  className={unmapped ? 'bg-yellow-500/5' : ''}
+                  className={unmapped ? 'bg-warning/5' : ''}
                   fields={[]}
                 >
                   <div className="flex flex-col gap-2">
@@ -172,7 +172,7 @@ export function PayslipLineItemTable({
                         {editable && onRemoveLineItem && (
                           <button
                             onClick={() => onRemoveLineItem(index)}
-                            className="text-foreground-muted hover:text-red-400 transition-colors py-1"
+                            className="text-foreground-muted hover:text-error transition-colors py-1"
                             title="Remove line item"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -234,7 +234,7 @@ export function PayslipLineItemTable({
               return (
                 <tr
                   key={`${item.normalized_label}-${index}`}
-                  className={`border-b border-border/50 last:border-0 ${unmapped ? 'bg-yellow-500/5' : ''}`}
+                  className={`border-b border-border/50 last:border-0 ${unmapped ? 'bg-warning/5' : ''}`}
                 >
                   {/* Type */}
                   <td className="py-2 pr-4">
@@ -316,7 +316,7 @@ export function PayslipLineItemTable({
                     <td className="py-2 pl-2">
                       <button
                         onClick={() => onRemoveLineItem(index)}
-                        className="text-foreground-muted hover:text-red-400 transition-colors"
+                        className="text-foreground-muted hover:text-error transition-colors"
                         title="Remove line item"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

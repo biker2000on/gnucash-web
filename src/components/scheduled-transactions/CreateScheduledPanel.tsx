@@ -491,7 +491,7 @@ export function CreateScheduledPanel({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium rounded-lg bg-gray-600/50 hover:bg-gray-500/50 text-foreground-muted transition-colors"
+              className="px-4 py-2 text-sm font-medium rounded-lg bg-background-tertiary hover:bg-border-hover text-foreground-muted transition-colors"
             >
               Cancel
             </button>

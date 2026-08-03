@@ -471,15 +471,15 @@ export default function AssetsPage() {
                           className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                             asset.depreciationSchedule.enabled
                               ? asset.depreciationSchedule.isAppreciation
-                                ? 'bg-emerald-500/20 text-emerald-400'
-                                : 'bg-amber-500/20 text-amber-400'
-                              : 'bg-gray-500/20 text-gray-400'
+                                ? 'bg-positive/20 text-positive'
+                                : 'bg-warning/20 text-warning'
+                              : 'bg-foreground-muted/20 text-foreground-muted'
                           }`}
                         >
                           {asset.depreciationSchedule.isAppreciation ? 'Appreciating' : 'Depreciating'}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-foreground-muted/20 text-foreground-muted">
                           No schedule
                         </span>
                       )}

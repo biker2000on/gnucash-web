@@ -37,6 +37,7 @@ import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
 import {
   isEntityOwnedByBook,
+  getEntityOwnerBook,
   recordEntityOwnership,
   deleteEntityOwnership,
   type EntityOwnershipClient,
@@ -237,10 +238,18 @@ async function currencyMnemonicMap(guids: string[]): Promise<Map<string, string>
  * simpler and self-healing for these small tables.
  */
 export async function recomputeBilltermRefcount(guid: string): Promise<void> {
+  // Count only references from the term's OWN book. Validation now forbids
+  // referencing another book's term, so a cross-book reference can only be
+  // legacy pre-ownership data — and counting it would let another book's rows
+  // block this one from hard-deleting a term it no longer uses. An
+  // unattributed term keeps the old unscoped count (it is invisible anyway,
+  // so over-counting is the safe direction).
+  const bookGuid = await getEntityOwnerBook('billterm', guid);
+  const scope = bookGuid ? { ownership: { book_guid: bookGuid } } : {};
   const [customers, vendors, invoices] = await Promise.all([
-    prisma.customers.count({ where: { terms: guid } }),
-    prisma.vendors.count({ where: { terms: guid } }),
-    prisma.invoices.count({ where: { terms: guid } }),
+    prisma.customers.count({ where: { terms: guid, ...scope } }),
+    prisma.vendors.count({ where: { terms: guid, ...scope } }),
+    prisma.invoices.count({ where: { terms: guid, ...scope } }),
   ]);
   await prisma.billterms.updateMany({
     where: { guid },
@@ -250,11 +259,28 @@ export async function recomputeBilltermRefcount(guid: string): Promise<void> {
 
 /** Recompute the refcount of a tax table from customers, vendors and entries. */
 export async function recomputeTaxtableRefcount(guid: string): Promise<void> {
+  // Same reasoning as recomputeBilltermRefcount: scope to the owning book so
+  // legacy cross-book references cannot pin a table this book wants to delete.
+  const bookGuid = await getEntityOwnerBook('taxtable', guid);
+  const scope = bookGuid ? { ownership: { book_guid: bookGuid } } : {};
+  // `entries` has no ownership of its own — it inherits its invoice's — and no
+  // Prisma relation to invoices, so the scoped count needs an explicit join.
+  const entryCounts = bookGuid
+    ? await prisma.$queryRaw<Array<{ i_count: number; b_count: number }>>`
+        SELECT
+          COUNT(*) FILTER (WHERE e.i_taxtable = ${guid})::int AS i_count,
+          COUNT(*) FILTER (WHERE e.b_taxtable = ${guid})::int AS b_count
+        FROM entries e
+        JOIN gnucash_web_invoice_ownership io
+          ON io.entity_guid = e.invoice AND io.book_guid = ${bookGuid}
+        WHERE e.i_taxtable = ${guid} OR e.b_taxtable = ${guid}
+      `
+    : null;
   const [customers, vendors, iEntries, bEntries] = await Promise.all([
-    prisma.customers.count({ where: { taxtable: guid } }),
-    prisma.vendors.count({ where: { tax_table: guid } }),
-    prisma.entries.count({ where: { i_taxtable: guid } }),
-    prisma.entries.count({ where: { b_taxtable: guid } }),
+    prisma.customers.count({ where: { taxtable: guid, ...scope } }),
+    prisma.vendors.count({ where: { tax_table: guid, ...scope } }),
+    entryCounts ? entryCounts[0]?.i_count ?? 0 : prisma.entries.count({ where: { i_taxtable: guid } }),
+    entryCounts ? entryCounts[0]?.b_count ?? 0 : prisma.entries.count({ where: { b_taxtable: guid } }),
   ]);
   await prisma.taxtables.updateMany({
     where: { guid },

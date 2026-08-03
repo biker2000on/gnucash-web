@@ -321,7 +321,7 @@ export function TwoFactorSection() {
 
                         <form onSubmit={confirmEnroll} className="space-y-2">
                             <div className="text-sm font-medium text-foreground">2. Enter the 6-digit code it shows</div>
-                            {formError && <p className="text-xs text-rose-400">{formError}</p>}
+                            {formError && <p className="text-xs text-negative">{formError}</p>}
                             <div className="flex items-center gap-2">
                                 {codeInput(confirmCode, setConfirmCode, false)}
                                 <button
@@ -362,7 +362,7 @@ export function TwoFactorSection() {
                             <button
                                 type="button"
                                 onClick={() => { setView('disable'); setActionCode(''); setFormError(null); }}
-                                className="px-3 py-1.5 text-xs bg-surface-elevated hover:bg-surface-hover border border-rose-500/40 rounded-lg text-rose-400 transition-colors"
+                                className="px-3 py-1.5 text-xs bg-surface-elevated hover:bg-surface-hover border border-negative/40 rounded-lg text-negative transition-colors"
                             >
                                 Disable
                             </button>
@@ -383,7 +383,7 @@ export function TwoFactorSection() {
                                 ? 'Enter a current authenticator code (or an unused recovery code) to confirm. Password-only sign-in will be restored.'
                                 : 'Enter a current authenticator code (or an unused recovery code). All previous recovery codes stop working.'}
                         </p>
-                        {formError && <p className="text-xs text-rose-400">{formError}</p>}
+                        {formError && <p className="text-xs text-negative">{formError}</p>}
                         <div className="flex items-center gap-2">
                             {codeInput(actionCode, setActionCode, true)}
                             <button
@@ -391,7 +391,7 @@ export function TwoFactorSection() {
                                 disabled={busy || actionCode.trim().length === 0}
                                 className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-60 ${
                                     view === 'disable'
-                                        ? 'bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-400'
+                                        ? 'bg-negative/15 hover:bg-negative/25 border border-negative/40 text-negative'
                                         : 'bg-primary hover:bg-primary-hover text-primary-foreground'
                                 }`}
                             >

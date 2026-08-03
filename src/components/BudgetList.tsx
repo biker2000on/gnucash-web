@@ -443,7 +443,7 @@ export function BudgetList({ budgets, onEdit, onDelete, onScenario }: BudgetList
                             const summary = summaries[budget.guid];
                             const state: SummaryState = (budget._count?.amounts ?? 0) > 0 ? summary : null;
                             return (
-                                <tr key={budget.guid} className="hover:bg-white/[0.02] transition-colors">
+                                <tr key={budget.guid} className="hover:bg-surface-hover transition-colors">
                                     <td className="px-4 py-2.5">
                                         <Link
                                             href={`/budgets/${budget.guid}`}

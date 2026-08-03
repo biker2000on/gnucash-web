@@ -54,7 +54,7 @@ export function TransactionPreview({
 
       {/* Warning banner if imbalanced */}
       {Math.abs(imbalance) >= 0.01 && (
-        <div className="mb-4 bg-yellow-500/10 text-yellow-400 text-xs rounded-lg p-3 border border-yellow-500/20">
+        <div className="mb-4 bg-warning/10 text-warning text-xs rounded-lg p-3 border border-warning/20">
           Imbalance: ${Math.abs(imbalance).toFixed(2)}
         </div>
       )}
@@ -74,8 +74,8 @@ export function TransactionPreview({
                 fields={[
                   { label: 'Account', value: <span className="font-medium">{accountName}</span> },
                   ...(isDebit
-                    ? [{ label: 'Debit', value: <span className="font-mono tabular-nums text-emerald-400">{formatCurrency(split.amount, 'USD')}</span> }]
-                    : [{ label: 'Credit', value: <span className="font-mono tabular-nums text-rose-400">{formatCurrency(Math.abs(split.amount), 'USD')}</span> }]),
+                    ? [{ label: 'Debit', value: <span className="font-mono tabular-nums text-positive">{formatCurrency(split.amount, 'USD')}</span> }]
+                    : [{ label: 'Credit', value: <span className="font-mono tabular-nums text-negative">{formatCurrency(Math.abs(split.amount), 'USD')}</span> }]),
                 ]}
               />
             );

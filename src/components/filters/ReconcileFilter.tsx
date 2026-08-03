@@ -26,7 +26,7 @@ export function ReconcileFilter({ selectedStates, onChange }: ReconcileFilterPro
             unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
         amber: {
-            selected: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
+            selected: 'bg-warning/20 border-warning/50 text-warning',
             unselected: 'bg-background-tertiary/50 border-border-hover text-foreground-muted hover:border-border-hover',
         },
         primary: {

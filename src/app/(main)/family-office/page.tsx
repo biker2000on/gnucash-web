@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useBooks } from '@/contexts/BookContext';
 import type {
   FamilyDocumentResult,
   FamilyOfficeSummary,
@@ -34,11 +35,14 @@ function localDate(date: Date): string {
 }
 
 export default function FamilyOfficePage() {
+  const { activeBookGuid, books, switchBook } = useBooks();
   const [data, setData] = useState<FamilyOfficePayload | null>(null);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [switchingDocumentId, setSwitchingDocumentId] = useState<string | null>(null);
+  const [documentError, setDocumentError] = useState<string | null>(null);
 
   const load = useCallback(async (q = '') => {
     setLoading(true);
@@ -83,6 +87,38 @@ export default function FamilyOfficePage() {
       setError(err instanceof Error ? err.message : 'The elimination could not be approved.');
     } finally {
       setWorkingId(null);
+    }
+  };
+
+  /**
+   * A document result may belong to another authorized book. Every other page
+   * renders the session's active book, so the active book has to move first;
+   * `switchBook` is the shared mechanism for that (PUT /api/books/active,
+   * which re-verifies the caller's role on the target book server-side).
+   * Books absent from the caller's own book list are refused here rather than
+   * navigated into — the server check remains the actual boundary.
+   */
+  const openCrossBookDocument = async (document: FamilyDocumentResult) => {
+    if (!books.some(book => book.guid === document.bookGuid)) {
+      setDocumentError(
+        `You no longer have access to ${document.bookName}, so “${document.title}” was not opened.`,
+      );
+      return;
+    }
+    setSwitchingDocumentId(document.id);
+    setDocumentError(null);
+    try {
+      // The local book-list check above only catches what the client can see;
+      // the server re-verifies the role and its refusal is the authoritative
+      // one, so surface it instead of leaving the click looking inert.
+      const result = await switchBook(document.bookGuid, document.href);
+      if (!result.ok) {
+        setDocumentError(`“${document.title}” was not opened: ${result.error}`);
+        setSwitchingDocumentId(null);
+      }
+    } catch {
+      setDocumentError(`${document.bookName} could not be opened.`);
+      setSwitchingDocumentId(null);
     }
   };
 
@@ -283,7 +319,10 @@ export default function FamilyOfficePage() {
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="text-base font-semibold text-foreground">Global document search</h2>
-                <p className="mt-1 text-xs text-foreground-muted">All documents you can access across authorized books, including receipts, statements, payslips, and vault files.</p>
+                <p className="mt-1 text-xs text-foreground-muted">
+                  All documents you can access across authorized books, including receipts, statements, payslips, and vault files.
+                  Opening a result from another book switches your active book to that book first.
+                </p>
               </div>
               <input
                 type="search"
@@ -293,17 +332,48 @@ export default function FamilyOfficePage() {
                 className="w-full max-w-sm rounded-lg border border-border bg-background-tertiary px-3 py-2 text-sm text-foreground focus:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/60"
               />
             </div>
+            {documentError && (
+              <p className="mt-3 rounded-lg border border-negative/40 bg-negative/10 p-3 text-xs text-negative">{documentError}</p>
+            )}
             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {data.documents.map(document => (
-                <Link key={document.id} href={document.href} className="rounded-lg border border-border bg-surface p-3 hover:border-primary/50">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-medium text-foreground">{document.title}</p>
-                    <span className="rounded border border-border px-1.5 py-0.5 text-[9px] uppercase text-foreground-muted">{document.kind.replace('_', ' ')}</span>
-                  </div>
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-primary">{document.bookName}</p>
-                  {document.detail && <p className="mt-2 line-clamp-2 text-xs leading-5 text-foreground-muted">{document.detail}</p>}
-                </Link>
-              ))}
+              {data.documents.map(document => {
+                const crossBook = Boolean(activeBookGuid) && document.bookGuid !== activeBookGuid;
+                const switching = switchingDocumentId === document.id;
+                const body = (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium text-foreground">{document.title}</p>
+                      <span className="rounded border border-border px-1.5 py-0.5 text-[9px] uppercase text-foreground-muted">{document.kind.replace('_', ' ')}</span>
+                    </div>
+                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-primary">{document.bookName}</p>
+                    {document.detail && <p className="mt-2 line-clamp-2 text-xs leading-5 text-foreground-muted">{document.detail}</p>}
+                  </>
+                );
+                if (!crossBook) {
+                  return (
+                    <Link key={document.id} href={document.href} className="rounded-lg border border-border bg-surface p-3 hover:border-primary/50">
+                      {body}
+                    </Link>
+                  );
+                }
+                return (
+                  <button
+                    key={document.id}
+                    type="button"
+                    disabled={switching}
+                    onClick={() => void openCrossBookDocument(document)}
+                    aria-label={`Open ${document.title} in ${document.bookName} — switches your active book`}
+                    className="rounded-lg border border-border bg-surface p-3 text-left hover:border-primary/50 disabled:opacity-60"
+                  >
+                    {body}
+                    <p className="mt-2 text-[10px] font-medium text-warning">
+                      {switching
+                        ? `Switching to ${document.bookName}…`
+                        : `Opens in ${document.bookName} — switches your active book`}
+                    </p>
+                  </button>
+                );
+              })}
               {data.documents.length === 0 && <p className="text-sm text-foreground-muted">No authorized documents match this search.</p>}
             </div>
           </section>

@@ -153,7 +153,7 @@ export function EstimateModal({
                                 name="estimate-method"
                                 checked={method === m.id}
                                 onChange={() => setMethod(m.id)}
-                                className="mt-0.5 accent-teal-500"
+                                className="mt-0.5 accent-primary"
                             />
                             <span>
                                 <span className="block text-sm font-medium text-foreground">{m.label}</span>
@@ -180,7 +180,7 @@ export function EstimateModal({
                 )}
 
                 {error && (
-                    <div className="p-3 bg-rose-900/30 text-rose-400 border border-rose-800/50 rounded-md text-sm">
+                    <div className="p-3 bg-error-light text-error border border-error/50 rounded-md text-sm">
                         {error}
                     </div>
                 )}

@@ -107,7 +107,7 @@ describe('LinkedDocumentsPanel', () => {
                 });
             }
             if (url.startsWith('/api/documents')) {
-                return jsonResponse({ documents: attached ? [canonicalDocument] : [] });
+                return jsonResponse({ documents: attached ? [canonicalDocument] : [], hasMore: false, nextOffset: null });
             }
             throw new Error(`Unexpected request: ${url}`);
         });
@@ -129,6 +129,66 @@ describe('LinkedDocumentsPanel', () => {
             targetId: 'unit-1',
             role: 'lease',
         });
-        await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/documents?limit=100', { cache: 'no-store' }));
+        await waitFor(() => expect(
+            fetchMock.mock.calls.some(([input]) => String(input).startsWith('/api/documents?limit=25')),
+        ).toBe(true));
+    });
+
+    it('searches the vault server-side, debounces, and abandons superseded requests', async () => {
+        const vaultCalls: string[] = [];
+        const aborted: boolean[] = [];
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.startsWith('/api/documents/links?')) return jsonResponse({ links: [] });
+            if (url.startsWith('/api/documents?')) {
+                vaultCalls.push(url);
+                aborted.push(init?.signal?.aborted ?? false);
+                return jsonResponse({ documents: [], hasMore: false, nextOffset: null });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<LinkedDocumentsPanel targetType="rental_unit" targetId="unit-1" roles={ROLES} />);
+        await screen.findByText('No supporting documents linked.');
+        await waitFor(() => expect(vaultCalls).toHaveLength(1));
+
+        const searchBox = screen.getByRole('searchbox', { name: 'Search the document vault' });
+        fireEvent.change(searchBox, { target: { value: 'de' } });
+        fireEvent.change(searchBox, { target: { value: 'dee' } });
+        fireEvent.change(searchBox, { target: { value: 'deed' } });
+
+        await waitFor(() => expect(vaultCalls).toHaveLength(2));
+        expect(vaultCalls[1]).toBe('/api/documents?limit=25&q=deed');
+        // Every intermediate keystroke was debounced away, so no stale page can land.
+        expect(vaultCalls.filter(url => url.includes('q=de&') || url.endsWith('q=de'))).toHaveLength(0);
+        expect(aborted).toEqual([false, false]);
+    });
+
+    it('pages past the first result set instead of stopping at one page', async () => {
+        const vaultCalls: string[] = [];
+        const page = (offset: number) => ({
+            documents: [{ ...canonicalDocument, id: 100 + offset, title: `Doc ${offset}` }],
+            hasMore: offset === 0,
+            nextOffset: offset === 0 ? 25 : null,
+        });
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.startsWith('/api/documents/links?')) return jsonResponse({ links: [] });
+            if (url.startsWith('/api/documents?')) {
+                vaultCalls.push(url);
+                return jsonResponse(page(url.includes('offset=25') ? 25 : 0));
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        }));
+
+        render(<LinkedDocumentsPanel targetType="rental_unit" targetId="unit-1" roles={ROLES} />);
+        const loadMore = await screen.findByRole('button', { name: 'Load more results' });
+        fireEvent.click(loadMore);
+
+        await waitFor(() => expect(vaultCalls).toContain('/api/documents?limit=25&offset=25'));
+        expect(await screen.findByRole('option', { name: /Doc 25/ })).toBeTruthy();
+        expect(screen.getByRole('option', { name: /Doc 0/ })).toBeTruthy();
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Load more results' })).toBeNull());
     });
 });

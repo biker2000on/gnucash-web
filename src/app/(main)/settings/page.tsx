@@ -877,7 +877,7 @@ export default function SettingsPage() {
               className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {savingEntity && (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               )}
               <span>{savingEntity ? 'Saving...' : `Save ${entityNoun(entity.entityType)} profile`}</span>
             </button>
@@ -1314,7 +1314,7 @@ export default function SettingsPage() {
             className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {refreshing && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
             )}
             <span>{refreshing ? 'Refreshing...' : 'Refresh Now'}</span>
           </button>
@@ -1364,7 +1364,7 @@ export default function SettingsPage() {
               className="flex-1 bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {backfilling && (
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
               )}
               <span>{backfilling ? 'Backfilling...' : 'Backfill Historical Index Data'}</span>
             </button>
@@ -1422,10 +1422,10 @@ export default function SettingsPage() {
           <button
             onClick={handleClearCache}
             disabled={clearing}
-            className="w-full bg-rose-600 hover:bg-rose-700 disabled:bg-rose-600/50 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-error hover:bg-error/85 disabled:bg-error/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {clearing && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
             )}
             <span>{clearing ? 'Clearing...' : 'Clear All Caches'}</span>
           </button>

@@ -167,7 +167,7 @@ export function ReconciliationPanel({
     return (
         <div
             ref={panelRef}
-            className="fixed z-50 w-[380px] max-w-[calc(100vw-2rem)] bg-surface border border-amber-500/30 rounded-xl p-4 space-y-3 shadow-2xl"
+            className="fixed z-50 w-[380px] max-w-[calc(100vw-2rem)] bg-surface border border-warning/30 rounded-xl p-4 space-y-3 shadow-2xl"
             style={position ? { left: position.x, top: position.y, bottom: 'auto', right: 'auto' } : { bottom: 16, right: 16 }}
         >
             <div
@@ -176,7 +176,7 @@ export function ReconciliationPanel({
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
             >
-                <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-warning flex items-center gap-2">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -193,7 +193,7 @@ export function ReconciliationPanel({
             </div>
 
             {error && (
-                <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-1.5 text-xs text-rose-400">
+                <div className="bg-negative/10 border border-negative/30 rounded-lg px-3 py-1.5 text-xs text-negative">
                     {error}
                 </div>
             )}
@@ -218,7 +218,7 @@ export function ReconciliationPanel({
                             }
                         }}
                         placeholder="MM/DD/YYYY"
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-amber-500/50"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground focus:outline-none focus:border-warning/50"
                     />
                 </div>
                 <div>
@@ -234,7 +234,7 @@ export function ReconciliationPanel({
                             setStatementBalance(e.target.value);
                         }}
                         placeholder={isInvestment ? (0).toFixed(sharePrecision) : '0.00'}
-                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-amber-500/50 font-mono text-right"
+                        className="w-full bg-input-bg border border-border rounded-lg px-3 py-2.5 text-sm text-foreground placeholder-foreground-muted focus:outline-none focus:border-warning/50 font-mono text-right"
                     />
                     {simpleFinBalance && (
                         <p className="text-xs text-foreground-muted mt-0.5">
@@ -265,7 +265,7 @@ export function ReconciliationPanel({
                     <div className="text-foreground-muted text-[10px] uppercase tracking-wider mb-0.5">
                         Difference
                     </div>
-                    <div className={`font-mono text-xs ${Math.abs(difference) < balanceTolerance ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <div className={`font-mono text-xs ${Math.abs(difference) < balanceTolerance ? 'text-positive' : 'text-warning'}`}>
                         {displayAmount(difference)}
                     </div>
                 </div>
@@ -295,7 +295,7 @@ export function ReconciliationPanel({
                 >
                     {saving ? (
                         <>
-                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                             Saving...
                         </>
                     ) : (

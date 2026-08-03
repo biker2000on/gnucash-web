@@ -19,6 +19,13 @@ describe('document search page', () => {
     expect(screen.getByText(/Search vault documents/)).toBeInTheDocument();
   });
 
+  it('states that hits are active-book only and points cross-book search at the Family Office', () => {
+    render(<SearchPage />);
+    expect(screen.getByText(/Results are limited to the active book/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Search every authorized book/ }))
+      .toHaveAttribute('href', '/family-office');
+  });
+
   it('renders canonical result count/group and the zero-hit empty state', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({

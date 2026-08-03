@@ -194,7 +194,7 @@ export function TransactionDrilldownModal({ target, onClose, endpoint = '/api/re
                             </span>
                             <span
                                 className={`font-mono font-medium text-xs ${
-                                    data.total >= 0 ? 'text-foreground-secondary' : 'text-rose-400'
+                                    data.total >= 0 ? 'text-foreground-secondary' : 'text-negative'
                                 }`}
                             >
                                 {formatCurrency(data.total, 'USD')}
@@ -214,7 +214,7 @@ export function TransactionDrilldownModal({ target, onClose, endpoint = '/api/re
                 <div className="flex-1 overflow-y-auto">
                     {isLoading && <DrilldownSkeleton />}
                     {error && (
-                        <div className="px-4 py-6 text-sm text-rose-400">
+                        <div className="px-4 py-6 text-sm text-negative">
                             {error}
                         </div>
                     )}
@@ -348,7 +348,7 @@ function DrilldownRows({
                             </td>
                             <td className="px-3 py-2 text-foreground">{r.description || <span className="text-foreground-muted">—</span>}</td>
                             <td className="px-3 py-2 text-foreground-secondary">{r.accountName}</td>
-                            <td className={`px-4 py-2 text-right font-mono ${r.amount >= 0 ? 'text-foreground' : 'text-rose-400'}`}>
+                            <td className={`px-4 py-2 text-right font-mono ${r.amount >= 0 ? 'text-foreground' : 'text-negative'}`}>
                                 {formatCurrency(r.amount, 'USD')}
                             </td>
                         </tr>
@@ -366,7 +366,7 @@ function DrilldownRows({
                         >
                             <div className="flex items-baseline justify-between gap-3">
                                 <span className="text-xs text-foreground-secondary">{r.date}</span>
-                                <span className={`font-mono text-sm ${r.amount >= 0 ? 'text-foreground' : 'text-rose-400'}`}>
+                                <span className={`font-mono text-sm ${r.amount >= 0 ? 'text-foreground' : 'text-negative'}`}>
                                     {formatCurrency(r.amount, 'USD')}
                                 </span>
                             </div>

@@ -796,7 +796,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             />
                         )}
                         {account.aggregatedUnreviewed > 0 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold flex-shrink-0">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/20 font-bold flex-shrink-0">
                                 {account.aggregatedUnreviewed}
                             </span>
                         )}
@@ -845,7 +845,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     event.stopPropagation();
                                     handleDeleteConfirm(account);
                                 }}
-                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-rose-500/20 text-foreground-muted hover:text-rose-400 transition-colors"
+                                className="p-1 min-h-[24px] min-w-[24px] flex items-center justify-center rounded hover:bg-negative/20 text-foreground-muted hover:text-negative transition-colors"
                                 title="Delete Account"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -862,7 +862,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             header: 'Period Balance',
             cell: ({ row }) => (
                 <div className="text-right py-1 px-3 font-mono leading-tight">
-                    <span className={`text-sm ${row.original.periodBalanceUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    <span className={`text-sm ${row.original.periodBalanceUsd < 0 ? 'text-negative' : 'text-positive'}`}>
                         {formatCurrency(row.original.periodBalanceUsd, 'USD')}
                     </span>
                 </div>
@@ -873,7 +873,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             header: isMobile ? 'Balance' : 'Total Balance $',
             cell: ({ row }) => (
                 <div className="text-right py-1 px-2 md:px-3 font-mono leading-tight whitespace-nowrap">
-                    <span className={`text-xs md:text-sm font-bold ${row.original.totalBalanceUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                    <span className={`text-xs md:text-sm font-bold ${row.original.totalBalanceUsd < 0 ? 'text-negative' : 'text-positive'}`}>
                         {isMobile
                             ? new Intl.NumberFormat('en-US', {
                                 style: 'currency',
@@ -1174,9 +1174,9 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <span className="text-sm text-foreground-secondary">To Review</span>
                         <button
                             onClick={() => setShowToReview(!showToReview)}
-                            className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showToReview ? 'bg-amber-500' : 'bg-border-hover'}`}
+                            className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showToReview ? 'bg-warning' : 'bg-border-hover'}`}
                         >
-                            <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showToReview ? 'translate-x-6' : 'translate-x-0'}`} />
+                            <div className={`w-6 h-6 rounded-full bg-primary-foreground transition-transform duration-200 ease-in-out ${showToReview ? 'translate-x-6' : 'translate-x-0'}`} />
                         </button>
                     </div>
                     <div className="flex items-center justify-between md:justify-start gap-3">
@@ -1185,7 +1185,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                             onClick={() => setShowHidden(!showHidden)}
                             className={`w-14 h-8 min-h-[44px] rounded-full p-1 transition-colors duration-200 ease-in-out ${showHidden ? 'bg-primary' : 'bg-border-hover'}`}
                         >
-                            <div className={`w-6 h-6 rounded-full bg-white transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'}`} />
+                            <div className={`w-6 h-6 rounded-full bg-primary-foreground transition-transform duration-200 ease-in-out ${showHidden ? 'translate-x-6' : 'translate-x-0'}`} />
                         </button>
                     </div>
 
@@ -1356,7 +1356,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                                     if (el) rowRefs.current.set(rowIndex, el);
                                     else rowRefs.current.delete(rowIndex);
                                 }}
-                                className={`group hover:bg-surface-hover/20 transition-colors ${row.getCanExpand() ? 'cursor-pointer' : ''} ${rowIndex === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-white/[0.03]' : ''}`}
+                                className={`group hover:bg-surface-hover/20 transition-colors ${row.getCanExpand() ? 'cursor-pointer' : ''} ${rowIndex === focusedRowIndex ? 'ring-2 ring-primary/50 ring-inset bg-primary/5' : ''}`}
                                 onClick={() => {
                                     setFocusedRowIndex(rowIndex);
                                     if (row.getCanExpand()) {
@@ -1434,7 +1434,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
             >
                 <div className="p-6 space-y-4">
                     {deleteError && (
-                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-rose-400 text-sm">
+                        <div className="bg-error/10 border border-error/30 rounded-lg p-4 text-error text-sm">
                             {deleteError}
                         </div>
                     )}
@@ -1454,7 +1454,7 @@ export default function AccountHierarchy({ accounts, onRefresh }: AccountHierarc
                         <button
                             onClick={handleDelete}
                             disabled={deleting}
-                            className="px-4 py-2 text-sm bg-rose-600 hover:bg-rose-500 disabled:bg-rose-600/50 text-white rounded-lg transition-colors"
+                            className="px-4 py-2 text-sm bg-error hover:bg-error/85 disabled:bg-error/50 text-primary-foreground rounded-lg transition-colors"
                         >
                             {deleting ? 'Deleting...' : 'Delete Account'}
                         </button>

@@ -38,7 +38,7 @@ function generateSalesByCustomerCSV(data: SalesByCustomerData): string {
 
 function AmountCell({ value, currency }: { value: number; currency: string }) {
     return (
-        <td className={`py-2 px-4 text-sm text-right font-mono ${value < 0 ? 'text-rose-400' : 'text-foreground'}`}>
+        <td className={`py-2 px-4 text-sm text-right font-mono ${value < 0 ? 'text-negative' : 'text-foreground'}`}>
             {formatCurrency(value, currency)}
         </td>
     );

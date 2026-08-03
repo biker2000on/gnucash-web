@@ -309,7 +309,7 @@ export default function ProfilePage() {
                         className={`mb-4 px-4 py-2 rounded-lg text-sm ${
                             oidcMessage.type === 'success'
                                 ? 'bg-primary/10 border border-primary/30 text-primary'
-                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                                : 'bg-negative/10 border border-negative/30 text-negative'
                         }`}
                     >
                         {oidcMessage.text}
@@ -327,7 +327,7 @@ export default function ProfilePage() {
                         </div>
                         <span
                             className={`text-xs px-2 py-0.5 rounded-full ${
-                                user.hasPassword ? 'bg-primary/20 text-primary' : 'bg-gray-500/20 text-gray-400'
+                                user.hasPassword ? 'bg-primary/20 text-primary' : 'bg-foreground-muted/20 text-foreground-muted'
                             }`}
                         >
                             {user.hasPassword ? 'Enabled' : 'Not set'}
@@ -350,7 +350,7 @@ export default function ProfilePage() {
                                     onClick={handleUnlink}
                                     disabled={unlinking || !user.hasPassword}
                                     title={!user.hasPassword ? 'Set a password first so you are not locked out' : undefined}
-                                    className="px-3 py-1.5 text-xs bg-rose-600/10 border border-rose-600/30 rounded-lg hover:bg-rose-600/20 transition-colors text-rose-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="px-3 py-1.5 text-xs bg-negative/10 border border-error/30 rounded-lg hover:bg-negative/20 transition-colors text-negative disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {unlinking ? 'Unlinking...' : 'Unlink'}
                                 </button>
@@ -412,7 +412,7 @@ export default function ProfilePage() {
                         className={`mb-4 px-4 py-2 rounded-lg text-sm ${
                             birthdayMessage.type === 'success'
                                 ? 'bg-primary/10 border border-primary/30 text-primary'
-                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                                : 'bg-negative/10 border border-negative/30 text-negative'
                         }`}
                     >
                         {birthdayMessage.text}
@@ -511,7 +511,7 @@ export default function ProfilePage() {
                                 className="w-full sm:w-auto bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {installingApp && (
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                                 )}
                                 <span>{installingApp ? 'Opening Install Prompt...' : 'Install on This Device'}</span>
                             </button>
@@ -560,7 +560,7 @@ export default function ProfilePage() {
                         className={`mb-4 px-4 py-2 rounded-lg text-sm ${
                             passwordMessage.type === 'success'
                                 ? 'bg-primary/10 border border-primary/30 text-primary'
-                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400'
+                                : 'bg-negative/10 border border-negative/30 text-negative'
                         }`}
                     >
                         {passwordMessage.text}
@@ -608,7 +608,7 @@ export default function ProfilePage() {
                         className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {changingPassword && (
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                         )}
                         <span>{changingPassword ? 'Changing Password...' : 'Change Password'}</span>
                     </button>

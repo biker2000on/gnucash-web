@@ -54,7 +54,7 @@ function generateBudgetReportCSV(data: BudgetReportData): string {
 
 function AmountCell({ value, currency, muted }: { value: number; currency: string; muted?: boolean }) {
     return (
-        <td className={`py-2 px-4 text-sm text-right font-mono ${muted ? 'text-foreground-secondary' : value < 0 ? 'text-rose-400' : 'text-foreground'}`}>
+        <td className={`py-2 px-4 text-sm text-right font-mono ${muted ? 'text-foreground-secondary' : value < 0 ? 'text-negative' : 'text-foreground'}`}>
             {formatCurrency(value, currency)}
         </td>
     );
@@ -199,7 +199,7 @@ function BudgetReportContent() {
                     </button>
                 </div>
                 <div className="p-4">
-                    <p className="text-xs text-foreground-tertiary mb-3">
+                    <p className="text-xs text-foreground-muted mb-3">
                         Pick a budget to report on. Use the date range below to limit the report to the
                         budget periods that overlap it — leave the dates empty to include every period.
                     </p>
@@ -327,7 +327,7 @@ function BudgetReportContent() {
                                             {formatCurrency(reportData.net.budgeted, currency)}
                                         </span>
                                         {' '}· Actual{' '}
-                                        <span className={`font-mono font-semibold ${reportData.net.actual >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        <span className={`font-mono font-semibold ${reportData.net.actual >= 0 ? 'text-positive' : 'text-negative'}`}>
                                             {formatCurrency(reportData.net.actual, currency)}
                                         </span>
                                     </span>

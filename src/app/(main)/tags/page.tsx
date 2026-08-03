@@ -200,7 +200,7 @@ export default function TagsPage() {
                                     <button
                                         type="button"
                                         onClick={() => setDeletingTag(tag)}
-                                        className="px-3 py-1.5 text-xs rounded-md border border-rose-500/30 text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
+                                        className="px-3 py-1.5 text-xs rounded-md border border-negative/30 text-negative hover:text-negative hover:bg-negative/10 transition-colors"
                                     >
                                         Delete
                                     </button>
@@ -222,7 +222,7 @@ export default function TagsPage() {
                             </thead>
                             <tbody className="divide-y divide-border">
                                 {tags.map(tag => (
-                                    <tr key={tag.id} className="hover:bg-white/[0.02] transition-colors">
+                                    <tr key={tag.id} className="hover:bg-surface-hover transition-colors">
                                         <td className="px-4 py-3">
                                             <Link
                                                 href={`/ledger?search=${encodeURIComponent(`#${tag.name}`)}`}
@@ -251,7 +251,7 @@ export default function TagsPage() {
                                             <button
                                                 type="button"
                                                 onClick={() => setDeletingTag(tag)}
-                                                className="ml-1 px-2 py-1 text-xs rounded-md text-rose-300 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
+                                                className="ml-1 px-2 py-1 text-xs rounded-md text-negative hover:text-negative hover:bg-negative/10 transition-colors"
                                             >
                                                 Delete
                                             </button>

@@ -42,8 +42,8 @@ function AccountsContent() {
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-surface/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
-                    <div className="text-rose-400">{error instanceof Error ? error.message : 'An error occurred'}</div>
+                <div className="bg-surface/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 shadow-2xl flex items-center justify-center">
+                    <div className="text-negative">{error instanceof Error ? error.message : 'An error occurred'}</div>
                 </div>
             ) : (
                 <AccountHierarchy accounts={accounts} />

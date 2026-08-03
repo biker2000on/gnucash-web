@@ -193,7 +193,7 @@ export function OwnerSelector({
             <div
                 className={`flex items-center bg-input-bg border rounded-lg ${compact ? 'px-2 py-1' : 'px-3 py-2'} cursor-pointer ${
                     disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-border-hover'
-                } ${isOpen ? 'border-primary/50 ring-1 ring-primary/20' : hasError ? 'border-rose-500 ring-1 ring-rose-500/30' : 'border-border'}`}
+                } ${isOpen ? 'border-primary/50 ring-1 ring-primary/20' : hasError ? 'border-negative ring-1 ring-negative/30' : 'border-border'}`}
                 onClick={() => !disabled && inputRef.current?.focus()}
             >
                 <input

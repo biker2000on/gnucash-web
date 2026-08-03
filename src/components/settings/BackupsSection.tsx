@@ -157,9 +157,9 @@ export function BackupsSection() {
                 </FieldGrid>
 
                 {!loaded ? (
-                    <p className="text-sm text-foreground-tertiary">Loading…</p>
+                    <p className="text-sm text-foreground-muted">Loading…</p>
                 ) : backups.length === 0 ? (
-                    <p className="text-sm text-foreground-tertiary">No backups yet for this book.</p>
+                    <p className="text-sm text-foreground-muted">No backups yet for this book.</p>
                 ) : (
                     <div className="border border-border rounded-lg divide-y divide-border overflow-hidden">
                         {backups.map(b => (
@@ -168,7 +168,7 @@ export function BackupsSection() {
                                     <span className="text-foreground font-medium">
                                         {new Date(b.createdAt).toLocaleString()}
                                     </span>
-                                    <span className="ml-2 text-foreground-tertiary font-mono text-xs">{formatSize(b.sizeBytes)}</span>
+                                    <span className="ml-2 text-foreground-muted font-mono text-xs">{formatSize(b.sizeBytes)}</span>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                     <a
@@ -179,7 +179,7 @@ export function BackupsSection() {
                                     </a>
                                     <button
                                         onClick={() => remove(b.id)}
-                                        className="px-2.5 py-1 rounded-md border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 transition-colors text-xs"
+                                        className="px-2.5 py-1 rounded-md border border-negative/30 text-negative hover:bg-negative/10 transition-colors text-xs"
                                     >
                                         Delete
                                     </button>

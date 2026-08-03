@@ -72,7 +72,7 @@ function InvestmentPortfolioContent() {
                     <span className="text-sm text-foreground">
                         Show zero-share accounts
                     </span>
-                    <span className="text-xs text-foreground-tertiary">
+                    <span className="text-xs text-foreground-muted">
                         (accounts where all shares have been sold)
                     </span>
                 </label>

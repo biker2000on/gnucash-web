@@ -257,7 +257,7 @@ export function BookLinksSection() {
                   <button
                     onClick={() => removeLink(link.householdBookGuid)}
                     disabled={saving}
-                    className="text-foreground-muted hover:text-rose-500 transition-colors p-1 disabled:opacity-50"
+                    className="text-foreground-muted hover:text-negative transition-colors p-1 disabled:opacity-50"
                     aria-label={`Remove link to ${link.name || 'household book'}`}
                     title="Remove link"
                   >
@@ -312,7 +312,7 @@ export function BookLinksSection() {
             className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-primary-foreground font-medium px-4 py-2 rounded-lg transition-colors disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {saving && (
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
             )}
             <span>{saving ? 'Saving...' : 'Save linked books'}</span>
           </button>

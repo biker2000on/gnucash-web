@@ -322,7 +322,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                         >
                             {previewing ? (
                                 <>
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                                     Analyzing...
                                 </>
                             ) : (
@@ -340,7 +340,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                     </div>
 
                     {error && !preview && (
-                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-sm text-rose-400">
+                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
                             {error}
                         </div>
                     )}
@@ -427,7 +427,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                     </div>
 
                     {preview.duplicateWarning && (
-                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 text-sm text-amber-400">
+                        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 text-sm text-warning">
                             {preview.duplicateWarning}
                         </div>
                     )}
@@ -533,11 +533,11 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
 
                     {/* Errors */}
                     {preview.errors.length > 0 && (
-                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4">
-                            <h4 className="text-rose-400 font-medium text-sm mb-2">
+                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4">
+                            <h4 className="text-negative font-medium text-sm mb-2">
                                 Excluded transactions ({preview.errorCount})
                             </h4>
-                            <ul className="text-xs text-rose-300/80 font-mono space-y-1 max-h-40 overflow-y-auto">
+                            <ul className="text-xs text-negative/80 font-mono space-y-1 max-h-40 overflow-y-auto">
                                 {preview.errors.map((e, i) => (
                                     <li key={i}>
                                         Row {e.row}: {e.message}
@@ -549,11 +549,11 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
 
                     {/* Warnings */}
                     {preview.warnings.length > 0 && (
-                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
-                            <h4 className="text-amber-400 font-medium text-sm mb-2">
+                        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
+                            <h4 className="text-warning font-medium text-sm mb-2">
                                 Warnings ({preview.warnings.length})
                             </h4>
-                            <ul className="text-xs text-amber-300/80 space-y-1 max-h-40 overflow-y-auto">
+                            <ul className="text-xs text-warning/80 space-y-1 max-h-40 overflow-y-auto">
                                 {preview.warnings.map((w, i) => (
                                     <li key={i}>{w}</li>
                                 ))}
@@ -562,7 +562,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                     )}
 
                     {error && (
-                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg p-4 text-sm text-rose-400">
+                        <div className="bg-negative/10 border border-negative/30 rounded-lg p-4 text-sm text-negative">
                             {error}
                         </div>
                     )}
@@ -575,7 +575,7 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                         >
                             {importing ? (
                                 <>
-                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
                                     Creating book and importing {preview.transactionCount} transactions...
                                 </>
                             ) : (
@@ -626,11 +626,11 @@ export default function BusinessImportWizard({ config }: { config: BusinessImpor
                     </div>
 
                     {result.warnings.length > 0 && (
-                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
-                            <h4 className="text-amber-400 font-medium text-sm mb-2">
+                        <div className="bg-warning/10 border border-warning/30 rounded-lg p-4">
+                            <h4 className="text-warning font-medium text-sm mb-2">
                                 Warnings ({result.warnings.length})
                             </h4>
-                            <ul className="text-xs text-amber-300/80 space-y-1 max-h-40 overflow-y-auto">
+                            <ul className="text-xs text-warning/80 space-y-1 max-h-40 overflow-y-auto">
                                 {result.warnings.map((w, i) => (
                                     <li key={i}>{w}</li>
                                 ))}

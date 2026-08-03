@@ -16,9 +16,9 @@ interface ConfirmationDialogProps {
 }
 
 const variantClasses = {
-    danger: 'bg-red-600 hover:bg-red-700 focus:ring-red-500',
-    warning: 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500',
-    default: 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+    danger: 'bg-error hover:bg-error/85 focus:ring-error',
+    warning: 'bg-warning hover:bg-warning/85 focus:ring-warning',
+    default: 'bg-secondary hover:bg-secondary-hover focus:ring-secondary',
 };
 
 export function ConfirmationDialog({
@@ -88,7 +88,7 @@ export function ConfirmationDialog({
                     onClick={onConfirm}
                     disabled={isLoading}
                     className={`
-                        px-4 py-2 text-sm font-medium text-white rounded-lg
+                        px-4 py-2 text-sm font-medium text-primary-foreground rounded-lg
                         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background-secondary
                         disabled:opacity-50 disabled:cursor-not-allowed
                         transition-colors

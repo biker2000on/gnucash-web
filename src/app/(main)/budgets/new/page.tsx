@@ -213,7 +213,7 @@ export default function NewBudgetPage() {
             </div>
 
             {error && (
-                <div className="p-3 bg-rose-900/30 text-rose-400 border border-rose-800/50 rounded-md text-sm">
+                <div className="p-3 bg-error-light text-error border border-error/50 rounded-md text-sm">
                     {error}
                 </div>
             )}
@@ -236,7 +236,7 @@ export default function NewBudgetPage() {
                                     name="source"
                                     checked={source === s.id}
                                     onChange={() => setSource(s.id)}
-                                    className="mt-0.5 accent-teal-500"
+                                    className="mt-0.5 accent-primary"
                                 />
                                 <span>
                                     <span className="block text-sm font-medium text-foreground">{s.label}</span>
@@ -287,7 +287,7 @@ export default function NewBudgetPage() {
                                 type="checkbox"
                                 checked={includeIncome}
                                 onChange={e => setIncludeIncome(e.target.checked)}
-                                className="accent-teal-500"
+                                className="accent-primary"
                             />
                             <span className="text-sm text-foreground-secondary">Include income accounts</span>
                         </label>
@@ -361,7 +361,7 @@ export default function NewBudgetPage() {
                                                 type="checkbox"
                                                 checked={!row.excluded}
                                                 onChange={() => toggleRow(row.accountGuid)}
-                                                className="accent-teal-500"
+                                                className="accent-primary"
                                                 aria-label={`Include ${row.fullname}`}
                                             />
                                         </td>

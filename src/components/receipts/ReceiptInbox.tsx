@@ -37,7 +37,7 @@ function ScoreBadge({ score }: { score: number }) {
     pct >= 80
       ? 'text-primary bg-primary/10'
       : pct >= 50
-      ? 'text-yellow-400 bg-yellow-500/10'
+      ? 'text-warning bg-warning/10'
       : 'text-foreground-secondary bg-surface-hover';
   return (
     <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${colorClass}`}>
@@ -223,7 +223,7 @@ function InboxCard({ receipt, onLinked, onDismissed }: InboxCardProps) {
                   className="text-xs px-2 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-primary-foreground transition-colors min-h-[36px] disabled:opacity-50 font-medium"
                 >
                   {linking ? (
-                    <span className="animate-spin inline-block w-3 h-3 border border-white border-t-transparent rounded-full" />
+                    <span className="animate-spin inline-block w-3 h-3 border border-primary-foreground border-t-transparent rounded-full" />
                   ) : (
                     'Link'
                   )}

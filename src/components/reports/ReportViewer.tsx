@@ -211,8 +211,8 @@ export function ReportViewer({
                     </div>
                 </div>
             ) : error ? (
-                <div className="bg-background-secondary/30 backdrop-blur-xl border border-rose-800/50 rounded-2xl p-12 text-center">
-                    <div className="text-rose-400">{error}</div>
+                <div className="bg-background-secondary/30 backdrop-blur-xl border border-error/50 rounded-2xl p-12 text-center">
+                    <div className="text-negative">{error}</div>
                 </div>
             ) : (
                 <div ref={reportContentRef} className="bg-background-secondary/30 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">

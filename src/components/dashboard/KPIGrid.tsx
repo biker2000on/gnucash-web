@@ -43,7 +43,7 @@ function ChangeIndicator({ value, suffix = '' }: { value: number; suffix?: strin
     if (value === 0) return null;
     const isPositive = value > 0;
     return (
-        <span className={`flex items-center gap-1 text-xs font-medium ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+        <span className={`flex items-center gap-1 text-xs font-medium ${isPositive ? 'text-positive' : 'text-negative'}`}>
             <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                 {isPositive ? (
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
@@ -257,7 +257,7 @@ export default function KPIGrid({ data, loading }: KPIGridProps) {
             label: 'Savings Rate',
             value: `${data.savingsRate.toFixed(1)}%`,
             change: (
-                <span className={`text-xs font-medium ${data.savingsRate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <span className={`text-xs font-medium ${data.savingsRate >= 0 ? 'text-positive' : 'text-negative'}`}>
                     {data.savingsRate >= 20 ? 'Healthy' : data.savingsRate >= 0 ? 'Low' : 'Negative'}
                 </span>
             ),

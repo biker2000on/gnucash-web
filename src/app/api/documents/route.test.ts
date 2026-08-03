@@ -15,7 +15,7 @@ vi.mock('@/lib/auth', () => ({ requireRole: auth }));
 vi.mock('@/lib/documents', () => ({
     DocumentValidationError: MockDocumentValidationError,
     ensureCanonicalDocumentPlatform: ensure,
-    listDocuments: list,
+    listDocumentsPage: list,
 }));
 
 import { GET } from './route';
@@ -28,7 +28,7 @@ beforeEach(() => {
 
 describe('GET /api/documents', () => {
     it('returns picker-safe metadata without storage, hashes, ownership, or extracted text', async () => {
-        list.mockResolvedValue([{
+        list.mockResolvedValue({ hasMore: false, nextOffset: null, documents: [{
             id: 8,
             bookGuid: 'book-1',
             ownerUserId: 3,
@@ -48,7 +48,7 @@ describe('GET /api/documents', () => {
             sourceId: '44',
             createdAt: new Date('2026-06-01T00:00:00.000Z'),
             updatedAt: new Date('2026-07-02T00:00:00.000Z'),
-        }]);
+        }] });
 
         const response = await GET(new NextRequest('http://localhost/api/documents?limit=25&q=lease'));
 
@@ -56,6 +56,8 @@ describe('GET /api/documents', () => {
         expect(auth).toHaveBeenCalledWith('readonly');
         expect(list).toHaveBeenCalledWith({ bookGuid: 'book-1', query: 'lease', limit: 25, offset: 0 });
         await expect(response.json()).resolves.toEqual({
+            hasMore: false,
+            nextOffset: null,
             documents: [{
                 id: 8,
                 title: 'Lease',
@@ -70,5 +72,14 @@ describe('GET /api/documents', () => {
                 updatedAt: '2026-07-02T00:00:00.000Z',
             }],
         });
+    });
+
+    it('pages past the first result set with the caller offset and reports more pages', async () => {
+        list.mockResolvedValue({ hasMore: true, nextOffset: 150, documents: [] });
+
+        const response = await GET(new NextRequest('http://localhost/api/documents?limit=25&offset=125&q=deed'));
+
+        expect(list).toHaveBeenCalledWith({ bookGuid: 'book-1', query: 'deed', limit: 25, offset: 125 });
+        await expect(response.json()).resolves.toEqual({ hasMore: true, nextOffset: 150, documents: [] });
     });
 });

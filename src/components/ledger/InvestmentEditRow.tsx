@@ -191,7 +191,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
         const reconcileState = transaction.account_split_reconcile_state;
         const reconcileIcon = reconcileState === 'y' ? 'Y' : reconcileState === 'c' ? 'C' : 'N';
 
-        const rowClass = `transition-colors ${isActive ? 'ring-2 ring-primary/30 ring-inset bg-primary/5' : 'hover:bg-white/[0.02]'} ${saveError ? 'ring-2 ring-rose-500/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-amber-500' : ''}`;
+        const rowClass = `transition-colors ${isActive ? 'ring-2 ring-primary/30 ring-inset bg-primary/5' : 'hover:bg-surface-hover'} ${saveError ? 'ring-2 ring-negative/50 ring-inset' : ''} ${transaction.reviewed === false ? 'border-l-2 border-l-warning' : ''}`;
 
         const renderCells = (cellMap: Record<string, React.ReactNode>) => {
             if (!columnIds) {
@@ -291,12 +291,12 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                             </td>
                         ),
                         buy: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-positive">
                                 {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : ''}
                             </td>
                         ),
                         sell: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-negative">
                                 {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : ''}
                             </td>
                         ),
@@ -326,7 +326,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                     )}
                                     <button
                                         onClick={() => onEditModal(transaction.guid)}
-                                        className="text-amber-400 hover:text-amber-300 transition-colors text-xs italic"
+                                        className="text-warning hover:text-warning transition-colors text-xs italic"
                                         title="Multi-split: edit in modal"
                                     >
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -364,7 +364,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                         shares: (
                             <td className="px-4 py-2 text-sm font-mono text-right">
                                 {invRow.shares != null ? (
-                                    <span className={invRow.shares > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                    <span className={invRow.shares > 0 ? 'text-positive' : 'text-negative'}>
                                         {invRow.shares.toFixed(sp)}
                                     </span>
                                 ) : <span className="opacity-30">&mdash;</span>}
@@ -376,12 +376,12 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                             </td>
                         ),
                         buy: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-emerald-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-positive">
                                 {invRow.buyAmount != null ? formatCurrency(invRow.buyAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                             </td>
                         ),
                         sell: (
-                            <td className="px-4 py-2 text-sm font-mono text-right text-rose-400">
+                            <td className="px-4 py-2 text-sm font-mono text-right text-negative">
                                 {invRow.sellAmount != null ? formatCurrency(invRow.sellAmount, invRow.currencyMnemonic) : <span className="opacity-30">&mdash;</span>}
                             </td>
                         ),
@@ -531,7 +531,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                             else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
                                         }}
                                         placeholder="0.00"
-                                        className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-emerald-400'}`}
+                                        className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-positive'}`}
                                     />
                                 </div>
                             ) : (
@@ -573,7 +573,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                             else if (e.key === 'ArrowDown') { e.preventDefault(); onArrowDown?.(); }
                                         }}
                                         placeholder="0.00"
-                                        className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-rose-400'}`}
+                                        className={`w-full bg-input-bg border border-border rounded px-2 py-0.5 text-xs text-right focus:outline-none focus:border-primary/50 font-mono leading-tight ${autoCalcField === 'total' ? 'italic text-foreground-muted' : 'text-negative'}`}
                                     />
                                 </div>
                             ) : (
@@ -582,7 +582,7 @@ export const InvestmentEditRow = forwardRef<InvestmentEditRowHandle, InvestmentE
                                         setIsBuy(false);
                                         setAutoCalcField('price');
                                     }}
-                                    className="w-full text-center text-foreground-muted hover:text-rose-400 transition-colors text-xs py-0.5"
+                                    className="w-full text-center text-foreground-muted hover:text-negative transition-colors text-xs py-0.5"
                                     tabIndex={-1}
                                 >
                                     &mdash;

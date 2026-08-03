@@ -125,7 +125,7 @@ function ReconciliationReportContent() {
                     </button>
                 </div>
                 <div className="p-4">
-                    <p className="text-xs text-foreground-tertiary mb-3">
+                    <p className="text-xs text-foreground-muted mb-3">
                         Select specific accounts to reconcile. Leave empty to include all accounts within the selected date range.
                     </p>
                     <AccountPicker

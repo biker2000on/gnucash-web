@@ -97,14 +97,14 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
             <div className="p-6 space-y-4">
                 <div>
                     <label htmlFor="book-name" className="block text-sm font-medium text-foreground mb-1.5">
-                        Name <span className="text-red-400">*</span>
+                        Name <span className="text-error">*</span>
                     </label>
                     <input
                         id="book-name"
                         type="text"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary"
                         placeholder="Book name"
                         disabled={loading}
                     />
@@ -119,14 +119,14 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         rows={4}
-                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-tertiary focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                        className="w-full px-3 py-2 bg-input-bg border border-border rounded-lg text-foreground placeholder-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary resize-none"
                         placeholder="Optional description"
                         disabled={loading}
                     />
                 </div>
 
                 {error && (
-                    <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+                    <div className="px-3 py-2 bg-error/10 border border-error/30 rounded-lg text-sm text-error">
                         {error}
                     </div>
                 )}
@@ -137,13 +137,13 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
                         <button
                             onClick={() => setConfirmingDelete(true)}
                             disabled={loading || deleting}
-                            className="px-4 py-2 text-sm font-medium text-red-400 bg-red-500/10 rounded-lg hover:bg-red-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-4 py-2 text-sm font-medium text-error bg-error/10 rounded-lg hover:bg-error/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Delete Book
                         </button>
                     ) : (
-                        <div className="px-3 py-3 bg-red-500/10 border border-red-500/30 rounded-lg space-y-3">
-                            <p className="text-sm text-red-400">
+                        <div className="px-3 py-3 bg-error/10 border border-error/30 rounded-lg space-y-3">
+                            <p className="text-sm text-error">
                                 This will permanently delete <strong>{book.name}</strong> and all its accounts and transactions. This cannot be undone.
                             </p>
                             <div className="flex gap-3">
@@ -157,7 +157,7 @@ export default function BookEditorModal({ book, isOpen, onClose, onSaved, onDele
                                 <button
                                     onClick={handleDelete}
                                     disabled={deleting}
-                                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="flex-1 px-4 py-2 text-sm font-medium text-primary-foreground bg-error rounded-lg hover:bg-error/85 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {deleting ? 'Deleting...' : 'Yes, Delete'}
                                 </button>

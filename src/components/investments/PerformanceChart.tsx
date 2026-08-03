@@ -353,7 +353,9 @@ export function PerformanceChart({
             </button>
           </div>
 
-          {/* Index toggle buttons */}
+          {/* Index toggle buttons. The active chip's background comes from the
+              fixed INDEX_COLORS hue below, so its label stays literally white
+              in both themes rather than following a theme token. */}
           {hasIndices && (
             <div className="flex gap-1 border-l border-border pl-1 relative">
               <button

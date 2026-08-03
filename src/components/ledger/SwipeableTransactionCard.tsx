@@ -93,7 +93,7 @@ export function SwipeableTransactionCard({ disabled, onCommit, children, classNa
     return (
         <div ref={containerRef} className={`relative overflow-hidden ${className}`}>
             <div
-                className="absolute inset-y-0 left-0 flex items-center px-6 bg-emerald-600 text-white pointer-events-none"
+                className="absolute inset-y-0 left-0 flex items-center px-6 bg-success text-primary-foreground pointer-events-none"
                 style={{ width: '100%', opacity: panelOpacity }}
                 aria-hidden="true"
             >

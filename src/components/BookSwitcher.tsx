@@ -236,7 +236,7 @@ export default function BookSwitcher({ collapsed = false }: BookSwitcherProps) {
                                             {isDemoBook(book) && <DemoBadge />}
                                         </div>
                                         {book.description && (
-                                            <div className="text-xs text-foreground-tertiary whitespace-nowrap mt-0.5">
+                                            <div className="text-xs text-foreground-muted whitespace-nowrap mt-0.5">
                                                 {book.description.length > 50
                                                     ? `${book.description.substring(0, 50)}...`
                                                     : book.description}

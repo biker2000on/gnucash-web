@@ -233,7 +233,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
         </div>
         <button
           onClick={() => setShowAdjustForm((prev) => !prev)}
-          className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors font-medium"
+          className="px-4 py-2 bg-secondary hover:bg-secondary-hover text-primary-foreground rounded-lg transition-colors font-medium"
         >
           Record Valuation Change
         </button>
@@ -396,7 +396,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                   {
                     label: 'Amount',
                     value: (
-                      <span className={`font-mono ${tx.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <span className={`font-mono ${tx.amount >= 0 ? 'text-positive' : 'text-negative'}`}>
                         {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
                       </span>
                     ),
@@ -426,7 +426,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
                     <td className="py-2 text-foreground-secondary">{tx.date}</td>
                     <td className="py-2 text-foreground">{tx.description}</td>
                     <td className={`py-2 text-right ${
-                      tx.amount >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                      tx.amount >= 0 ? 'text-positive' : 'text-negative'
                     }`}>
                       {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
                     </td>
@@ -477,7 +477,7 @@ export function AssetDetailView({ accountGuid }: AssetDetailViewProps) {
               </div>
               <div>
                 <p className="text-foreground-muted">Status</p>
-                <p className={`font-medium ${schedule.enabled ? 'text-primary' : 'text-gray-400'}`}>
+                <p className={`font-medium ${schedule.enabled ? 'text-primary' : 'text-foreground-muted'}`}>
                   {schedule.enabled ? 'Active' : 'Disabled'}
                 </p>
               </div>

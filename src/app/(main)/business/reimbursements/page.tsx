@@ -354,7 +354,7 @@ export default function ReimbursementsPage() {
               {rejectingId === item.id && (
                 <div className="mt-3 flex gap-2 border-t border-border pt-3">
                   <input value={rejectReason} onChange={event => setRejectReason(event.target.value)} placeholder="Reason returned to employee" className="min-w-0 flex-1 rounded-lg border border-border bg-input-bg px-3 py-2 text-sm text-foreground" />
-                  <button type="button" onClick={() => void previewDecision(item.id, 'reject')} disabled={!rejectReason.trim()} className="rounded-lg bg-negative px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">Preview rejection</button>
+                  <button type="button" onClick={() => void previewDecision(item.id, 'reject')} disabled={!rejectReason.trim()} className="rounded-lg bg-negative px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">Preview rejection</button>
                 </div>
               )}
             </article>
