@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
     customers, vendors, jobs, billterms, taxtables, taxtable_entries,
-    invoices, entries, commodities, accounts,
+    invoices, entries, commodities, accounts, ownership, db,
 } = vi.hoisted(() => {
     const model = (...methods: string[]) =>
         Object.fromEntries(methods.map(m => [m, vi.fn()]));
-    return {
+    const models = {
         customers: model('findUnique', 'findFirst', 'findMany', 'create', 'update', 'updateMany', 'delete', 'count'),
         vendors: model('findUnique', 'findMany', 'update', 'delete', 'count'),
         jobs: model('findUnique', 'findMany', 'update', 'delete', 'count', 'groupBy'),
@@ -17,24 +17,21 @@ const {
         entries: model('count'),
         commodities: model('findFirst', 'findMany'),
         accounts: model('findMany'),
+        gnucash_web_business_entity_ownership: model('findUnique', 'findMany', 'create', 'deleteMany'),
     };
+    const db = {
+        ...models,
+        // Both call shapes: an array of promises, or an interactive callback
+        // that receives a transaction client (the same mocked models here).
+        $transaction: vi.fn(async (arg: unknown) =>
+            typeof arg === 'function'
+                ? (arg as (tx: unknown) => Promise<unknown>)(db)
+                : Promise.all(arg as Promise<unknown>[])),
+    };
+    return { ...models, ownership: models.gnucash_web_business_entity_ownership, db };
 });
 
-vi.mock('@/lib/prisma', () => ({
-    default: {
-        customers,
-        vendors,
-        jobs,
-        billterms,
-        taxtables,
-        taxtable_entries,
-        invoices,
-        entries,
-        commodities,
-        accounts,
-        $transaction: vi.fn(async (ops: unknown[]) => Promise.all(ops as Promise<unknown>[])),
-    },
-}));
+vi.mock('@/lib/prisma', () => ({ default: db }));
 
 import {
     nextEntityId,
@@ -54,13 +51,16 @@ import {
     CURRENCY_DENOM,
 } from '../business.service';
 
+const GUID = 'a'.repeat(32);
+const BOOK_A = 'b'.repeat(32);
+
 function resetAll() {
-    for (const model of [customers, vendors, jobs, billterms, taxtables, taxtable_entries, invoices, entries, commodities, accounts]) {
+    for (const model of [customers, vendors, jobs, billterms, taxtables, taxtable_entries, invoices, entries, commodities, accounts, ownership]) {
         for (const fn of Object.values(model)) (fn as ReturnType<typeof vi.fn>).mockReset();
     }
+    // Default: every entity under test belongs to BOOK_A.
+    ownership.findUnique.mockResolvedValue({ book_guid: BOOK_A });
 }
-
-const GUID = 'a'.repeat(32);
 
 describe('nextEntityId', () => {
     it('starts at 000001 for an empty table', () => {
@@ -173,7 +173,7 @@ describe('deactivate-not-delete', () => {
         jobs.count.mockResolvedValue(2);
         invoices.count.mockResolvedValue(0);
 
-        const result = await deleteCustomer(GUID);
+        const result = await deleteCustomer(BOOK_A, GUID);
 
         expect(result).toEqual({ deleted: false, deactivated: true });
         expect(customers.update).toHaveBeenCalledWith({
@@ -188,7 +188,7 @@ describe('deactivate-not-delete', () => {
         jobs.count.mockResolvedValue(0);
         invoices.count.mockResolvedValue(0);
 
-        const result = await deleteCustomer(GUID);
+        const result = await deleteCustomer(BOOK_A, GUID);
 
         expect(result).toEqual({ deleted: true, deactivated: false });
         expect(customers.delete).toHaveBeenCalledWith({ where: { guid: GUID } });
@@ -197,7 +197,7 @@ describe('deactivate-not-delete', () => {
 
     it('returns null for a missing customer', async () => {
         customers.findUnique.mockResolvedValue(null);
-        expect(await deleteCustomer(GUID)).toBeNull();
+        expect(await deleteCustomer(BOOK_A, GUID)).toBeNull();
     });
 
     it('hides referenced bill terms (invisible=1) instead of deleting', async () => {
@@ -208,7 +208,7 @@ describe('deactivate-not-delete', () => {
         vendors.count.mockResolvedValue(1);
         invoices.count.mockResolvedValue(0);
 
-        const result = await deleteBillterm(GUID);
+        const result = await deleteBillterm(BOOK_A, GUID);
 
         expect(result).toEqual({ deleted: false, deactivated: true });
         expect(billterms.update).toHaveBeenCalledWith({
@@ -226,7 +226,7 @@ describe('deactivate-not-delete', () => {
         vendors.count.mockResolvedValue(0);
         invoices.count.mockResolvedValue(0);
 
-        const result = await deleteBillterm(GUID);
+        const result = await deleteBillterm(BOOK_A, GUID);
 
         expect(result).toEqual({ deleted: true, deactivated: false });
         expect(billterms.delete).toHaveBeenCalledWith({ where: { guid: GUID } });
@@ -236,7 +236,7 @@ describe('deactivate-not-delete', () => {
         jobs.findUnique.mockResolvedValue({ guid: GUID });
         invoices.count.mockResolvedValue(1);
 
-        const result = await deleteJob(GUID);
+        const result = await deleteJob(BOOK_A, GUID);
 
         expect(result).toEqual({ deleted: false, deactivated: true });
         expect(jobs.update).toHaveBeenCalledWith({

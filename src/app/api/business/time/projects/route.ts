@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireTimesheetRole } from '@/lib/auth';
+import { listOwnedEntityGuids } from '@/lib/business/entity-ownership';
 import type { TimeProject } from '@/lib/timesheet';
 
 // GnuCash owner type 2 = customer (matches the invoice engine).
@@ -20,14 +21,31 @@ export async function GET() {
     const roleResult = await requireTimesheetRole('read');
     if (roleResult instanceof NextResponse) return roleResult;
 
+    // The native customer/job tables carry no book column, so scope through
+    // the ownership table. This endpoint is reachable by restricted
+    // timekeepers, which makes an unscoped read the widest-audience leak of
+    // the set — book B's customer names would show in book A's picker.
+    const [ownedCustomers, ownedJobs] = await Promise.all([
+      listOwnedEntityGuids('customer', roleResult.bookGuid),
+      listOwnedEntityGuids('job', roleResult.bookGuid),
+    ]);
+    if (ownedCustomers.length === 0 && ownedJobs.length === 0) {
+      return NextResponse.json({ projects: [] });
+    }
+
     const [customers, jobs] = await Promise.all([
-      prisma.customers.findMany({
-        where: { active: 1 },
+      ownedCustomers.length === 0 ? [] : prisma.customers.findMany({
+        where: { active: 1, guid: { in: ownedCustomers } },
         select: { guid: true, name: true },
         orderBy: { name: 'asc' },
       }),
-      prisma.jobs.findMany({
-        where: { active: 1, owner_type: OWNER_TYPE_CUSTOMER, owner_guid: { not: null } },
+      ownedJobs.length === 0 ? [] : prisma.jobs.findMany({
+        where: {
+          active: 1,
+          owner_type: OWNER_TYPE_CUSTOMER,
+          owner_guid: { not: null },
+          guid: { in: ownedJobs },
+        },
         select: { guid: true, name: true, owner_guid: true },
         orderBy: { name: 'asc' },
       }),
@@ -62,6 +80,8 @@ export async function GET() {
     // reference them) as long as the customer row exists.
     for (const j of jobs) {
       if (!j.owner_guid || customerNames.has(j.owner_guid)) continue;
+      // An inactive owner is still only visible if this book owns it.
+      if (!ownedCustomers.includes(j.owner_guid)) continue;
       const owner = await prisma.customers.findUnique({
         where: { guid: j.owner_guid },
         select: { guid: true, name: true },

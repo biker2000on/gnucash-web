@@ -24,7 +24,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const job = await getJobEx(guid);
+    const job = await getJobEx(roleResult.bookGuid, guid);
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
@@ -51,7 +51,7 @@ export async function PATCH(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const patch = parseInput(jobPatchSchema, body);
-    const job = await updateJobPartial(guid, patch);
+    const job = await updateJobPartial(roleResult.bookGuid, guid, patch);
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
@@ -77,7 +77,7 @@ export async function PUT(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const input = parseInput(jobInputSchema, body);
-    const job = await updateJob(guid, input);
+    const job = await updateJob(roleResult.bookGuid, guid, input);
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
@@ -105,7 +105,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const result = await deleteJob(guid);
+    const result = await deleteJob(roleResult.bookGuid, guid);
     if (!result) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }

@@ -2,8 +2,9 @@
  * Time tracking service (S4)
  *
  * Timesheet entries live in gnucash_web_time_entries (book-scoped via
- * book_guid; the referenced customers/jobs are the native GnuCash tables,
- * which are unscoped — validation checks existence + customer/job linkage).
+ * book_guid). The referenced customers/jobs are native GnuCash tables with no
+ * book_guid, so validation resolves their book through the ownership side
+ * table: a customer or job the book does not own reads as not found.
  *
  * Features:
  *   - CRUD with customer/job validation (a job must belong to the entry's
@@ -22,6 +23,7 @@
 
 import prisma from '@/lib/prisma';
 import { getJobEx } from './jobs.service';
+import { isEntityOwnedByBook } from './entity-ownership';
 import {
   createInvoice,
   InvoiceValidationError,
@@ -271,16 +273,20 @@ function parseIsoDate(value: string, field: string): Date {
  * effective customer guid (a job-only entry inherits the job's customer).
  */
 async function validateCustomerJob(
+  bookGuid: string,
   customerGuid: string | null | undefined,
   jobGuid: string | null | undefined,
 ): Promise<{ customerGuid: string | null; jobGuid: string | null }> {
   let effectiveCustomer = customerGuid ?? null;
 
   if (jobGuid) {
-    const job = await prisma.jobs.findUnique({
-      where: { guid: jobGuid },
-      select: { guid: true, owner_type: true, owner_guid: true },
-    });
+    const owned = await isEntityOwnedByBook('job', jobGuid, bookGuid);
+    const job = owned
+      ? await prisma.jobs.findUnique({
+          where: { guid: jobGuid },
+          select: { guid: true, owner_type: true, owner_guid: true },
+        })
+      : null;
     if (!job) throw new TimeTrackingNotFoundError(`Job not found: ${jobGuid}`);
     // Owner type 2 = customer (invoice-engine OWNER_TYPE_CUSTOMER)
     if (job.owner_type !== 2 || !job.owner_guid) {
@@ -293,10 +299,13 @@ async function validateCustomerJob(
   }
 
   if (effectiveCustomer) {
-    const customer = await prisma.customers.findUnique({
-      where: { guid: effectiveCustomer },
-      select: { guid: true },
-    });
+    const owned = await isEntityOwnedByBook('customer', effectiveCustomer, bookGuid);
+    const customer = owned
+      ? await prisma.customers.findUnique({
+          where: { guid: effectiveCustomer },
+          select: { guid: true },
+        })
+      : null;
     if (!customer) throw new TimeTrackingNotFoundError(`Customer not found: ${effectiveCustomer}`);
   }
 
@@ -376,7 +385,7 @@ export async function resolveDefaultRate(
   jobGuid: string | null,
 ): Promise<number | null> {
   if (jobGuid) {
-    const job = await getJobEx(jobGuid);
+    const job = await getJobEx(bookGuid, jobGuid);
     if (job?.rate != null && job.rate > 0) return job.rate;
   }
   if (customerGuid) {
@@ -442,7 +451,11 @@ export async function createTimeEntry(
   if (input.rate != null && (!isFinite(input.rate) || input.rate < 0)) {
     throw new TimeTrackingValidationError('rate must be a non-negative number');
   }
-  const { customerGuid, jobGuid } = await validateCustomerJob(input.customerGuid, input.jobGuid);
+  const { customerGuid, jobGuid } = await validateCustomerJob(
+    bookGuid,
+    input.customerGuid,
+    input.jobGuid,
+  );
 
   const rate =
     input.rate !== undefined ? input.rate : await resolveDefaultRate(bookGuid, customerGuid, jobGuid);
@@ -490,7 +503,7 @@ export async function updateTimeEntry(
 
   const nextCustomer = patch.customerGuid !== undefined ? patch.customerGuid : existing.customer_guid;
   const nextJob = patch.jobGuid !== undefined ? patch.jobGuid : existing.job_guid;
-  const { customerGuid, jobGuid } = await validateCustomerJob(nextCustomer, nextJob);
+  const { customerGuid, jobGuid } = await validateCustomerJob(bookGuid, nextCustomer, nextJob);
 
   const row = await prisma.gnucash_web_time_entries.update({
     where: { id },
@@ -549,7 +562,11 @@ export async function startTimer(
   userId: number,
   input: StartTimerInput,
 ): Promise<TimeEntryDTO> {
-  const { customerGuid, jobGuid } = await validateCustomerJob(input.customerGuid, input.jobGuid);
+  const { customerGuid, jobGuid } = await validateCustomerJob(
+    bookGuid,
+    input.customerGuid,
+    input.jobGuid,
+  );
   const rate = await resolveDefaultRate(bookGuid, customerGuid, jobGuid);
   const now = new Date();
   const today = new Date(now.toISOString().slice(0, 10) + 'T00:00:00Z');
@@ -645,6 +662,9 @@ export async function generateInvoiceLines(
   if (!incomeAccountGuid) {
     throw new TimeTrackingValidationError('An income account is required for the invoice lines');
   }
+  if (!(await isEntityOwnedByBook('customer', customerGuid, bookGuid))) {
+    throw new TimeTrackingNotFoundError(`Customer not found: ${customerGuid}`);
+  }
   const uniqueIds = Array.from(new Set(entryIds));
 
   const rows = await prisma.gnucash_web_time_entries.findMany({
@@ -680,11 +700,10 @@ export async function generateInvoiceLines(
 
   let invoice: InvoiceDetailView;
   try {
-    invoice = await createInvoice({
+    invoice = await createInvoice(bookGuid, {
       ownerType: 'customer',
       ownerGuid: customerGuid,
       entries,
-      bookGuid,
       notes: 'Generated from tracked time',
     });
   } catch (error) {

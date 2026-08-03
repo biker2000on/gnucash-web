@@ -20,11 +20,12 @@
  *   this app is the only writer expected to create business entities here.
  *
  * BOOK SCOPING: the native business tables have no book_guid column
- * (GnuCash assumes one book per database). There is no account or
- * transaction linkage on these rows until invoices are posted, so there is
- * no practical way to scope customers/vendors per book without altering the
- * native schema. These entities are therefore UNSCOPED — a single-business-
- * database assumption, documented here and in the API routes.
+ * (GnuCash assumes one book per database), so ownership lives in the
+ * app-owned side table behind '@/lib/business/entity-ownership'. Every
+ * exported read/write takes `bookGuid` as its first positional parameter —
+ * required and positional so a missed call site is a compile error rather
+ * than a silent cross-book leak. Missing ownership means FOREIGN: an
+ * unattributed row is invisible, never visible to everyone.
  *
  * Deletion: rows referenced by jobs/invoices/contacts are never hard
  * deleted; they fall back to deactivation (active=0) or invisibility
@@ -34,6 +35,13 @@
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
+import {
+  listOwnedEntityGuids,
+  isEntityOwnedByBook,
+  recordEntityOwnership,
+  deleteEntityOwnership,
+  type EntityOwnershipClient,
+} from '@/lib/business/entity-ownership';
 import {
   OWNER_TYPE_CUSTOMER,
   OWNER_TYPE_JOB,
@@ -182,6 +190,17 @@ export function parseInput<S extends z.ZodType>(schema: S, body: unknown): z.inf
     throw new BusinessValidationError(`${path}${first.message}`);
   }
   return result.data;
+}
+
+// ============================================
+// Book scope helpers
+// ============================================
+
+/** Prisma's transaction client satisfies the ownership helper structurally. */
+type TxClient = Omit<typeof prisma, '$transaction' | '$connect' | '$disconnect' | '$on' | '$use' | '$extends'>;
+
+function ownershipTx(tx: TxClient): EntityOwnershipClient {
+  return tx as unknown as EntityOwnershipClient;
 }
 
 // ============================================
@@ -380,79 +399,99 @@ function contactWhere(options: ContactListOptions) {
   };
 }
 
-export async function listCustomers(options: ContactListOptions = {}): Promise<CustomerDTO[]> {
+export async function listCustomers(
+  bookGuid: string,
+  options: ContactListOptions = {}
+): Promise<CustomerDTO[]> {
+  const owned = await listOwnedEntityGuids('customer', bookGuid);
+  if (owned.length === 0) return [];
   const rows = await prisma.customers.findMany({
-    where: contactWhere(options),
+    where: { guid: { in: owned }, ...contactWhere(options) },
     orderBy: [{ name: 'asc' }],
   });
   const lookups = await contactLookups(rows, OWNER_TYPE_CUSTOMER);
   return rows.map(row => mapCustomer(row, lookups));
 }
 
-export async function getCustomer(guid: string): Promise<CustomerDTO | null> {
+export async function getCustomer(bookGuid: string, guid: string): Promise<CustomerDTO | null> {
+  if (!(await isEntityOwnedByBook('customer', guid, bookGuid))) return null;
   const row = await prisma.customers.findUnique({ where: { guid } });
   if (!row) return null;
   const lookups = await contactLookups([row], OWNER_TYPE_CUSTOMER);
   return mapCustomer(row, lookups);
 }
 
-async function assertBilltermExists(guid: string | null | undefined): Promise<void> {
+/** A referenced bill term must exist AND belong to the same book. */
+async function assertBilltermExists(bookGuid: string, guid: string | null | undefined): Promise<void> {
   if (!guid) return;
   const found = await prisma.billterms.findUnique({ where: { guid }, select: { guid: true } });
-  if (!found) throw new BusinessValidationError(`Unknown bill terms: ${guid}`);
+  if (!found || !(await isEntityOwnedByBook('billterm', guid, bookGuid))) {
+    throw new BusinessValidationError(`Unknown bill terms: ${guid}`);
+  }
 }
 
-async function assertTaxtableExists(guid: string | null | undefined): Promise<void> {
+/** A referenced tax table must exist AND belong to the same book. */
+async function assertTaxtableExists(bookGuid: string, guid: string | null | undefined): Promise<void> {
   if (!guid) return;
   const found = await prisma.taxtables.findUnique({ where: { guid }, select: { guid: true } });
-  if (!found) throw new BusinessValidationError(`Unknown tax table: ${guid}`);
+  if (!found || !(await isEntityOwnedByBook('taxtable', guid, bookGuid))) {
+    throw new BusinessValidationError(`Unknown tax table: ${guid}`);
+  }
 }
 
-export async function createCustomer(input: CustomerInput): Promise<CustomerDTO> {
+export async function createCustomer(bookGuid: string, input: CustomerInput): Promise<CustomerDTO> {
   const [currencyGuid] = await Promise.all([
     resolveCurrencyGuid(input.currency),
-    assertBilltermExists(input.terms),
-    assertTaxtableExists(input.taxtable),
+    assertBilltermExists(bookGuid, input.terms),
+    assertTaxtableExists(bookGuid, input.taxtable),
   ]);
   const existing = await prisma.customers.findMany({ select: { id: true } });
   const discount = percentToFraction(input.discount);
   const credit = currencyToFraction(input.credit);
   const guid = generateGuid();
 
-  await prisma.customers.create({
-    data: {
-      guid,
-      id: nextEntityId(existing.map(r => r.id)),
-      name: input.name,
-      notes: input.notes,
-      active: input.active ? 1 : 0,
-      discount_num: discount.num,
-      discount_denom: discount.denom,
-      credit_num: credit.num,
-      credit_denom: credit.denom,
-      currency: currencyGuid,
-      tax_override: input.taxOverride ? 1 : 0,
-      tax_included: input.taxIncluded ? 1 : 0,
-      terms: input.terms ?? null,
-      taxtable: input.taxtable ?? null,
-      ...addressToColumns(input.address, 'addr'),
-      ...addressToColumns(input.shipAddress, 'shipaddr'),
-    },
+  await prisma.$transaction(async tx => {
+    await tx.customers.create({
+      data: {
+        guid,
+        id: nextEntityId(existing.map(r => r.id)),
+        name: input.name,
+        notes: input.notes,
+        active: input.active ? 1 : 0,
+        discount_num: discount.num,
+        discount_denom: discount.denom,
+        credit_num: credit.num,
+        credit_denom: credit.denom,
+        currency: currencyGuid,
+        tax_override: input.taxOverride ? 1 : 0,
+        tax_included: input.taxIncluded ? 1 : 0,
+        terms: input.terms ?? null,
+        taxtable: input.taxtable ?? null,
+        ...addressToColumns(input.address, 'addr'),
+        ...addressToColumns(input.shipAddress, 'shipaddr'),
+      },
+    });
+    await recordEntityOwnership('customer', guid, bookGuid, ownershipTx(tx));
   });
 
   await recomputeChangedRefs('billterm', input.terms);
   await recomputeChangedRefs('taxtable', input.taxtable);
-  return (await getCustomer(guid))!;
+  return (await getCustomer(bookGuid, guid))!;
 }
 
-export async function updateCustomer(guid: string, input: CustomerInput): Promise<CustomerDTO | null> {
+export async function updateCustomer(
+  bookGuid: string,
+  guid: string,
+  input: CustomerInput
+): Promise<CustomerDTO | null> {
+  if (!(await isEntityOwnedByBook('customer', guid, bookGuid))) return null;
   const existing = await prisma.customers.findUnique({ where: { guid } });
   if (!existing) return null;
 
   const [currencyGuid] = await Promise.all([
     resolveCurrencyGuid(input.currency),
-    assertBilltermExists(input.terms),
-    assertTaxtableExists(input.taxtable),
+    assertBilltermExists(bookGuid, input.terms),
+    assertTaxtableExists(bookGuid, input.taxtable),
   ]);
   const discount = percentToFraction(input.discount);
   const credit = currencyToFraction(input.credit);
@@ -479,7 +518,7 @@ export async function updateCustomer(guid: string, input: CustomerInput): Promis
 
   await recomputeChangedRefs('billterm', existing.terms, input.terms);
   await recomputeChangedRefs('taxtable', existing.taxtable, input.taxtable);
-  return getCustomer(guid);
+  return getCustomer(bookGuid, guid);
 }
 
 /** True when any jobs or invoices reference this customer. */
@@ -504,16 +543,21 @@ export interface DeleteResult {
   deactivated: boolean;
 }
 
-export async function deleteCustomer(guid: string): Promise<DeleteResult | null> {
+export async function deleteCustomer(bookGuid: string, guid: string): Promise<DeleteResult | null> {
+  if (!(await isEntityOwnedByBook('customer', guid, bookGuid))) return null;
   const existing = await prisma.customers.findUnique({ where: { guid } });
   if (!existing) return null;
 
   if (await customerIsReferenced(guid)) {
+    // Deactivated, not removed — the row still belongs to this book.
     await prisma.customers.update({ where: { guid }, data: { active: 0 } });
     return { deleted: false, deactivated: true };
   }
 
-  await prisma.customers.delete({ where: { guid } });
+  await prisma.$transaction(async tx => {
+    await tx.customers.delete({ where: { guid } });
+    await deleteEntityOwnership('customer', guid, ownershipTx(tx));
+  });
   await recomputeChangedRefs('billterm', existing.terms);
   await recomputeChangedRefs('taxtable', existing.taxtable);
   return { deleted: true, deactivated: false };
@@ -545,60 +589,74 @@ function mapVendor(row: VendorRow, lookups: ContactLookups): VendorDTO {
   };
 }
 
-export async function listVendors(options: ContactListOptions = {}): Promise<VendorDTO[]> {
+export async function listVendors(
+  bookGuid: string,
+  options: ContactListOptions = {}
+): Promise<VendorDTO[]> {
+  const owned = await listOwnedEntityGuids('vendor', bookGuid);
+  if (owned.length === 0) return [];
   const rows = await prisma.vendors.findMany({
-    where: contactWhere(options),
+    where: { guid: { in: owned }, ...contactWhere(options) },
     orderBy: [{ name: 'asc' }],
   });
   const lookups = await contactLookups(rows, OWNER_TYPE_VENDOR);
   return rows.map(row => mapVendor(row, lookups));
 }
 
-export async function getVendor(guid: string): Promise<VendorDTO | null> {
+export async function getVendor(bookGuid: string, guid: string): Promise<VendorDTO | null> {
+  if (!(await isEntityOwnedByBook('vendor', guid, bookGuid))) return null;
   const row = await prisma.vendors.findUnique({ where: { guid } });
   if (!row) return null;
   const lookups = await contactLookups([row], OWNER_TYPE_VENDOR);
   return mapVendor(row, lookups);
 }
 
-export async function createVendor(input: VendorInput): Promise<VendorDTO> {
+export async function createVendor(bookGuid: string, input: VendorInput): Promise<VendorDTO> {
   const [currencyGuid] = await Promise.all([
     resolveCurrencyGuid(input.currency),
-    assertBilltermExists(input.terms),
-    assertTaxtableExists(input.taxtable),
+    assertBilltermExists(bookGuid, input.terms),
+    assertTaxtableExists(bookGuid, input.taxtable),
   ]);
   const existing = await prisma.vendors.findMany({ select: { id: true } });
   const guid = generateGuid();
 
-  await prisma.vendors.create({
-    data: {
-      guid,
-      id: nextEntityId(existing.map(r => r.id)),
-      name: input.name,
-      notes: input.notes,
-      active: input.active ? 1 : 0,
-      currency: currencyGuid,
-      tax_override: input.taxOverride ? 1 : 0,
-      tax_inc: input.taxIncluded ? 'yes' : 'no',
-      terms: input.terms ?? null,
-      tax_table: input.taxtable ?? null,
-      ...addressToColumns(input.address, 'addr'),
-    },
+  await prisma.$transaction(async tx => {
+    await tx.vendors.create({
+      data: {
+        guid,
+        id: nextEntityId(existing.map(r => r.id)),
+        name: input.name,
+        notes: input.notes,
+        active: input.active ? 1 : 0,
+        currency: currencyGuid,
+        tax_override: input.taxOverride ? 1 : 0,
+        tax_inc: input.taxIncluded ? 'yes' : 'no',
+        terms: input.terms ?? null,
+        tax_table: input.taxtable ?? null,
+        ...addressToColumns(input.address, 'addr'),
+      },
+    });
+    await recordEntityOwnership('vendor', guid, bookGuid, ownershipTx(tx));
   });
 
   await recomputeChangedRefs('billterm', input.terms);
   await recomputeChangedRefs('taxtable', input.taxtable);
-  return (await getVendor(guid))!;
+  return (await getVendor(bookGuid, guid))!;
 }
 
-export async function updateVendor(guid: string, input: VendorInput): Promise<VendorDTO | null> {
+export async function updateVendor(
+  bookGuid: string,
+  guid: string,
+  input: VendorInput
+): Promise<VendorDTO | null> {
+  if (!(await isEntityOwnedByBook('vendor', guid, bookGuid))) return null;
   const existing = await prisma.vendors.findUnique({ where: { guid } });
   if (!existing) return null;
 
   const [currencyGuid] = await Promise.all([
     resolveCurrencyGuid(input.currency),
-    assertBilltermExists(input.terms),
-    assertTaxtableExists(input.taxtable),
+    assertBilltermExists(bookGuid, input.terms),
+    assertTaxtableExists(bookGuid, input.taxtable),
   ]);
 
   await prisma.vendors.update({
@@ -618,7 +676,7 @@ export async function updateVendor(guid: string, input: VendorInput): Promise<Ve
 
   await recomputeChangedRefs('billterm', existing.terms, input.terms);
   await recomputeChangedRefs('taxtable', existing.tax_table, input.taxtable);
-  return getVendor(guid);
+  return getVendor(bookGuid, guid);
 }
 
 /** True when any jobs or invoices reference this vendor. */
@@ -637,16 +695,21 @@ async function vendorIsReferenced(guid: string): Promise<boolean> {
   return jobs + invoices > 0;
 }
 
-export async function deleteVendor(guid: string): Promise<DeleteResult | null> {
+export async function deleteVendor(bookGuid: string, guid: string): Promise<DeleteResult | null> {
+  if (!(await isEntityOwnedByBook('vendor', guid, bookGuid))) return null;
   const existing = await prisma.vendors.findUnique({ where: { guid } });
   if (!existing) return null;
 
   if (await vendorIsReferenced(guid)) {
+    // Deactivated, not removed — the row still belongs to this book.
     await prisma.vendors.update({ where: { guid }, data: { active: 0 } });
     return { deleted: false, deactivated: true };
   }
 
-  await prisma.vendors.delete({ where: { guid } });
+  await prisma.$transaction(async tx => {
+    await tx.vendors.delete({ where: { guid } });
+    await deleteEntityOwnership('vendor', guid, ownershipTx(tx));
+  });
   await recomputeChangedRefs('billterm', existing.terms);
   await recomputeChangedRefs('taxtable', existing.tax_table);
   return { deleted: true, deactivated: false };
@@ -701,10 +764,16 @@ export interface JobListOptions extends ContactListOptions {
   ownerGuid?: string;
 }
 
-export async function listJobs(options: JobListOptions = {}): Promise<JobDTO[]> {
+export async function listJobs(
+  bookGuid: string,
+  options: JobListOptions = {}
+): Promise<JobDTO[]> {
   const { ownerGuid, search, active = 'all' } = options;
+  const owned = await listOwnedEntityGuids('job', bookGuid);
+  if (owned.length === 0) return [];
   const rows = await prisma.jobs.findMany({
     where: {
+      guid: { in: owned },
       ...(ownerGuid ? { owner_guid: ownerGuid } : {}),
       ...(active === 'active' ? { active: 1 } : active === 'inactive' ? { active: 0 } : {}),
       ...(search
@@ -723,46 +792,60 @@ export async function listJobs(options: JobListOptions = {}): Promise<JobDTO[]> 
   return rows.map(row => mapJob(row, ownerNames));
 }
 
-export async function getJob(guid: string): Promise<JobDTO | null> {
+export async function getJob(bookGuid: string, guid: string): Promise<JobDTO | null> {
+  if (!(await isEntityOwnedByBook('job', guid, bookGuid))) return null;
   const row = await prisma.jobs.findUnique({ where: { guid } });
   if (!row) return null;
   const ownerNames = await jobOwnerNames([row]);
   return mapJob(row, ownerNames);
 }
 
-async function assertJobOwnerExists(ownerType: ContactKind, ownerGuid: string): Promise<void> {
+/** A job's owner must exist AND belong to the same book. */
+async function assertJobOwnerExists(
+  bookGuid: string,
+  ownerType: ContactKind,
+  ownerGuid: string
+): Promise<void> {
   const owner = ownerType === 'customer'
     ? await prisma.customers.findUnique({ where: { guid: ownerGuid }, select: { guid: true } })
     : await prisma.vendors.findUnique({ where: { guid: ownerGuid }, select: { guid: true } });
-  if (!owner) {
+  if (!owner || !(await isEntityOwnedByBook(ownerType, ownerGuid, bookGuid))) {
     throw new BusinessValidationError(`Unknown ${ownerType}: ${ownerGuid}`);
   }
 }
 
-export async function createJob(input: JobInput): Promise<JobDTO> {
-  await assertJobOwnerExists(input.ownerType, input.ownerGuid);
+export async function createJob(bookGuid: string, input: JobInput): Promise<JobDTO> {
+  await assertJobOwnerExists(bookGuid, input.ownerType, input.ownerGuid);
   const existing = await prisma.jobs.findMany({ select: { id: true } });
   const guid = generateGuid();
 
-  await prisma.jobs.create({
-    data: {
-      guid,
-      id: nextEntityId(existing.map(r => r.id)),
-      name: input.name,
-      reference: input.reference,
-      active: input.active ? 1 : 0,
-      owner_type: input.ownerType === 'customer' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR,
-      owner_guid: input.ownerGuid,
-    },
+  await prisma.$transaction(async tx => {
+    await tx.jobs.create({
+      data: {
+        guid,
+        id: nextEntityId(existing.map(r => r.id)),
+        name: input.name,
+        reference: input.reference,
+        active: input.active ? 1 : 0,
+        owner_type: input.ownerType === 'customer' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR,
+        owner_guid: input.ownerGuid,
+      },
+    });
+    await recordEntityOwnership('job', guid, bookGuid, ownershipTx(tx));
   });
 
-  return (await getJob(guid))!;
+  return (await getJob(bookGuid, guid))!;
 }
 
-export async function updateJob(guid: string, input: JobInput): Promise<JobDTO | null> {
+export async function updateJob(
+  bookGuid: string,
+  guid: string,
+  input: JobInput
+): Promise<JobDTO | null> {
+  if (!(await isEntityOwnedByBook('job', guid, bookGuid))) return null;
   const existing = await prisma.jobs.findUnique({ where: { guid } });
   if (!existing) return null;
-  await assertJobOwnerExists(input.ownerType, input.ownerGuid);
+  await assertJobOwnerExists(bookGuid, input.ownerType, input.ownerGuid);
 
   await prisma.jobs.update({
     where: { guid },
@@ -775,10 +858,11 @@ export async function updateJob(guid: string, input: JobInput): Promise<JobDTO |
     },
   });
 
-  return getJob(guid);
+  return getJob(bookGuid, guid);
 }
 
-export async function deleteJob(guid: string): Promise<DeleteResult | null> {
+export async function deleteJob(bookGuid: string, guid: string): Promise<DeleteResult | null> {
+  if (!(await isEntityOwnedByBook('job', guid, bookGuid))) return null;
   const existing = await prisma.jobs.findUnique({ where: { guid } });
   if (!existing) return null;
 
@@ -786,11 +870,15 @@ export async function deleteJob(guid: string): Promise<DeleteResult | null> {
     where: { owner_type: OWNER_TYPE_JOB, owner_guid: guid },
   });
   if (invoices > 0) {
+    // Deactivated, not removed — the row still belongs to this book.
     await prisma.jobs.update({ where: { guid }, data: { active: 0 } });
     return { deleted: false, deactivated: true };
   }
 
-  await prisma.jobs.delete({ where: { guid } });
+  await prisma.$transaction(async tx => {
+    await tx.jobs.delete({ where: { guid } });
+    await deleteEntityOwnership('job', guid, ownershipTx(tx));
+  });
   return { deleted: true, deactivated: false };
 }
 
@@ -813,19 +901,31 @@ function mapBillterm(row: BilltermRow): BilltermDTO {
   };
 }
 
-export async function listBillterms(includeInvisible = false): Promise<BilltermDTO[]> {
+export async function listBillterms(
+  bookGuid: string,
+  includeInvisible = false
+): Promise<BilltermDTO[]> {
+  const owned = await listOwnedEntityGuids('billterm', bookGuid);
+  if (owned.length === 0) return [];
   const rows = await prisma.billterms.findMany({
-    where: includeInvisible ? {} : { invisible: 0 },
+    where: { guid: { in: owned }, ...(includeInvisible ? {} : { invisible: 0 }) },
     orderBy: [{ name: 'asc' }],
   });
   return rows.map(mapBillterm);
 }
 
-export async function createBillterm(input: BilltermInput): Promise<BilltermDTO> {
-  const duplicate = await prisma.billterms.findFirst({
-    where: { name: input.name, invisible: 0 },
-    select: { guid: true },
-  });
+export async function createBillterm(
+  bookGuid: string,
+  input: BilltermInput
+): Promise<BilltermDTO> {
+  // Names only have to be unique within the book that owns them.
+  const owned = await listOwnedEntityGuids('billterm', bookGuid);
+  const duplicate = owned.length > 0
+    ? await prisma.billterms.findFirst({
+        where: { guid: { in: owned }, name: input.name, invisible: 0 },
+        select: { guid: true },
+      })
+    : null;
   if (duplicate) {
     throw new BusinessValidationError(`Bill terms "${input.name}" already exist`);
   }
@@ -833,31 +933,41 @@ export async function createBillterm(input: BilltermInput): Promise<BilltermDTO>
   const discount = percentToFraction(input.discountPercent);
   const guid = generateGuid();
 
-  const row = await prisma.billterms.create({
-    data: {
-      guid,
-      name: input.name,
-      description: input.description,
-      refcount: 0,
-      invisible: 0,
-      parent: null,
-      type: TERM_TYPE_DAYS,
-      duedays: input.dueDays,
-      discountdays: input.discountDays,
-      discount_num: discount.num,
-      discount_denom: discount.denom,
-      cutoff: null,
-    },
+  const row = await prisma.$transaction(async tx => {
+    const created = await tx.billterms.create({
+      data: {
+        guid,
+        name: input.name,
+        description: input.description,
+        refcount: 0,
+        invisible: 0,
+        parent: null,
+        type: TERM_TYPE_DAYS,
+        duedays: input.dueDays,
+        discountdays: input.discountDays,
+        discount_num: discount.num,
+        discount_denom: discount.denom,
+        cutoff: null,
+      },
+    });
+    await recordEntityOwnership('billterm', guid, bookGuid, ownershipTx(tx));
+    return created;
   });
   return mapBillterm(row);
 }
 
-export async function updateBillterm(guid: string, input: BilltermInput): Promise<BilltermDTO | null> {
+export async function updateBillterm(
+  bookGuid: string,
+  guid: string,
+  input: BilltermInput
+): Promise<BilltermDTO | null> {
+  if (!(await isEntityOwnedByBook('billterm', guid, bookGuid))) return null;
   const existing = await prisma.billterms.findUnique({ where: { guid } });
   if (!existing) return null;
 
+  const owned = await listOwnedEntityGuids('billterm', bookGuid);
   const duplicate = await prisma.billterms.findFirst({
-    where: { name: input.name, invisible: 0, guid: { not: guid } },
+    where: { guid: { in: owned, not: guid }, name: input.name, invisible: 0 },
     select: { guid: true },
   });
   if (duplicate) {
@@ -879,7 +989,8 @@ export async function updateBillterm(guid: string, input: BilltermInput): Promis
   return mapBillterm(row);
 }
 
-export async function deleteBillterm(guid: string): Promise<DeleteResult | null> {
+export async function deleteBillterm(bookGuid: string, guid: string): Promise<DeleteResult | null> {
+  if (!(await isEntityOwnedByBook('billterm', guid, bookGuid))) return null;
   const existing = await prisma.billterms.findUnique({ where: { guid } });
   if (!existing) return null;
 
@@ -887,12 +998,15 @@ export async function deleteBillterm(guid: string): Promise<DeleteResult | null>
   const fresh = await prisma.billterms.findUnique({ where: { guid }, select: { refcount: true } });
   if ((fresh?.refcount ?? 0) > 0) {
     // Referenced by customers/vendors/invoices: hide instead of delete
-    // (GnuCash desktop behavior for in-use terms).
+    // (GnuCash desktop behavior for in-use terms). Ownership is retained.
     await prisma.billterms.update({ where: { guid }, data: { invisible: 1 } });
     return { deleted: false, deactivated: true };
   }
 
-  await prisma.billterms.delete({ where: { guid } });
+  await prisma.$transaction(async tx => {
+    await tx.billterms.delete({ where: { guid } });
+    await deleteEntityOwnership('billterm', guid, ownershipTx(tx));
+  });
   return { deleted: true, deactivated: false };
 }
 
@@ -900,9 +1014,14 @@ export async function deleteBillterm(guid: string): Promise<DeleteResult | null>
 // Tax tables
 // ============================================
 
-export async function listTaxtables(includeInvisible = false): Promise<TaxtableDTO[]> {
+export async function listTaxtables(
+  bookGuid: string,
+  includeInvisible = false
+): Promise<TaxtableDTO[]> {
+  const owned = await listOwnedEntityGuids('taxtable', bookGuid);
+  if (owned.length === 0) return [];
   const rows = await prisma.taxtables.findMany({
-    where: includeInvisible ? {} : { invisible: 0 },
+    where: { guid: { in: owned }, ...(includeInvisible ? {} : { invisible: 0 }) },
     orderBy: [{ name: 'asc' }],
   });
   if (rows.length === 0) return [];
@@ -964,36 +1083,50 @@ function entryToRow(taxtableGuid: string, entry: z.infer<typeof taxtableEntryInp
   };
 }
 
-export async function createTaxtable(input: TaxtableInput): Promise<TaxtableDTO> {
-  const duplicate = await prisma.taxtables.findFirst({
-    where: { name: input.name, invisible: 0 },
-    select: { guid: true },
-  });
+export async function createTaxtable(
+  bookGuid: string,
+  input: TaxtableInput
+): Promise<TaxtableDTO> {
+  // Names only have to be unique within the book that owns them.
+  const owned = await listOwnedEntityGuids('taxtable', bookGuid);
+  const duplicate = owned.length > 0
+    ? await prisma.taxtables.findFirst({
+        where: { guid: { in: owned }, name: input.name, invisible: 0 },
+        select: { guid: true },
+      })
+    : null;
   if (duplicate) {
     throw new BusinessValidationError(`Tax table "${input.name}" already exists`);
   }
   await assertEntryAccountsExist(input.entries.map(e => e.account));
 
   const guid = generateGuid();
-  await prisma.$transaction([
-    prisma.taxtables.create({
+  await prisma.$transaction(async tx => {
+    await tx.taxtables.create({
       data: { guid, name: input.name, refcount: BigInt(0), invisible: 0, parent: null },
-    }),
-    prisma.taxtable_entries.createMany({
+    });
+    await tx.taxtable_entries.createMany({
       data: input.entries.map(e => entryToRow(guid, e)),
-    }),
-  ]);
+    });
+    await recordEntityOwnership('taxtable', guid, bookGuid, ownershipTx(tx));
+  });
 
-  const tables = await listTaxtables(true);
+  const tables = await listTaxtables(bookGuid, true);
   return tables.find(t => t.guid === guid)!;
 }
 
-export async function updateTaxtable(guid: string, input: TaxtableInput): Promise<TaxtableDTO | null> {
+export async function updateTaxtable(
+  bookGuid: string,
+  guid: string,
+  input: TaxtableInput
+): Promise<TaxtableDTO | null> {
+  if (!(await isEntityOwnedByBook('taxtable', guid, bookGuid))) return null;
   const existing = await prisma.taxtables.findUnique({ where: { guid } });
   if (!existing) return null;
 
+  const owned = await listOwnedEntityGuids('taxtable', bookGuid);
   const duplicate = await prisma.taxtables.findFirst({
-    where: { name: input.name, invisible: 0, guid: { not: guid } },
+    where: { guid: { in: owned, not: guid }, name: input.name, invisible: 0 },
     select: { guid: true },
   });
   if (duplicate) {
@@ -1009,11 +1142,12 @@ export async function updateTaxtable(guid: string, input: TaxtableInput): Promis
     }),
   ]);
 
-  const tables = await listTaxtables(true);
+  const tables = await listTaxtables(bookGuid, true);
   return tables.find(t => t.guid === guid) ?? null;
 }
 
-export async function deleteTaxtable(guid: string): Promise<DeleteResult | null> {
+export async function deleteTaxtable(bookGuid: string, guid: string): Promise<DeleteResult | null> {
+  if (!(await isEntityOwnedByBook('taxtable', guid, bookGuid))) return null;
   const existing = await prisma.taxtables.findUnique({ where: { guid } });
   if (!existing) return null;
 
@@ -1021,13 +1155,15 @@ export async function deleteTaxtable(guid: string): Promise<DeleteResult | null>
   const fresh = await prisma.taxtables.findUnique({ where: { guid }, select: { refcount: true } });
   if (Number(fresh?.refcount ?? 0) > 0) {
     // Referenced: hide instead of delete (GnuCash desktop behavior).
+    // Ownership is retained.
     await prisma.taxtables.update({ where: { guid }, data: { invisible: 1 } });
     return { deleted: false, deactivated: true };
   }
 
-  await prisma.$transaction([
-    prisma.taxtable_entries.deleteMany({ where: { taxtable: guid } }),
-    prisma.taxtables.delete({ where: { guid } }),
-  ]);
+  await prisma.$transaction(async tx => {
+    await tx.taxtable_entries.deleteMany({ where: { taxtable: guid } });
+    await tx.taxtables.delete({ where: { guid } });
+    await deleteEntityOwnership('taxtable', guid, ownershipTx(tx));
+  });
   return { deleted: true, deactivated: false };
 }

@@ -25,7 +25,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const payments = await listPayments(ownerType as 'customer' | 'vendor' | 'employee', ownerGuid);
+    const payments = await listPayments(
+      roleResult.bookGuid,
+      ownerType as 'customer' | 'vendor' | 'employee',
+      ownerGuid,
+    );
     return NextResponse.json({ payments });
   } catch (error) {
     return mapInvoiceError(error);
@@ -58,7 +62,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await applyPayment({
+    const result = await applyPayment(roleResult.bookGuid, {
       ownerType: body.ownerType,
       ownerGuid: body.ownerGuid,
       transferAccountGuid: body.transferAccountGuid,

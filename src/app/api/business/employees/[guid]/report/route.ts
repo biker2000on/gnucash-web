@@ -20,7 +20,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const employee = await getEmployee(guid);
+    const employee = await getEmployee(roleResult.bookGuid, guid);
     if (!employee) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }

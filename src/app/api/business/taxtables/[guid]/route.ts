@@ -26,7 +26,7 @@ export async function PUT(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const input = parseInput(taxtableInputSchema, body);
-    const taxtable = await updateTaxtable(guid, input);
+    const taxtable = await updateTaxtable(roleResult.bookGuid, guid, input);
     if (!taxtable) {
       return NextResponse.json({ error: 'Tax table not found' }, { status: 404 });
     }
@@ -54,7 +54,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const result = await deleteTaxtable(guid);
+    const result = await deleteTaxtable(roleResult.bookGuid, guid);
     if (!result) {
       return NextResponse.json({ error: 'Tax table not found' }, { status: 404 });
     }

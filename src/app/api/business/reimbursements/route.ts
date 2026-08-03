@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const auth = await requireTimesheetRole('read');
     if (auth instanceof NextResponse) return auth;
     const requestedEmployee = request.nextUrl.searchParams.get('employeeGuid') || undefined;
-    const ownEmployee = auth.isTimekeeper ? await employeeForUsername(auth.user.username) : null;
+    const ownEmployee = auth.isTimekeeper ? await employeeForUsername(auth.bookGuid, auth.user.username) : null;
     if (auth.isTimekeeper && !ownEmployee) {
       return NextResponse.json({ error: 'No active employee record matches your username' }, { status: 403 });
     }
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: 'Request body is required' }, { status: 400 });
 
-    const ownEmployee = auth.isTimekeeper ? await employeeForUsername(auth.user.username) : null;
+    const ownEmployee = auth.isTimekeeper ? await employeeForUsername(auth.bookGuid, auth.user.username) : null;
     if (auth.isTimekeeper && !ownEmployee) {
       return NextResponse.json({ error: 'No active employee record matches your username' }, { status: 403 });
     }

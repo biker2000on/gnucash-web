@@ -26,7 +26,7 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const includeInvisible = searchParams.get('includeInvisible') === 'true';
-    return NextResponse.json(await listTaxtables(includeInvisible));
+    return NextResponse.json(await listTaxtables(roleResult.bookGuid, includeInvisible));
   } catch (error) {
     console.error('Error listing tax tables:', error);
     return NextResponse.json({ error: 'Failed to list tax tables' }, { status: 500 });
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null);
     const input = parseInput(taxtableInputSchema, body);
-    const taxtable = await createTaxtable(input);
+    const taxtable = await createTaxtable(roleResult.bookGuid, input);
     return NextResponse.json(taxtable, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessValidationError) {

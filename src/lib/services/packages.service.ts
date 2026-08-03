@@ -18,6 +18,10 @@
 
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
+import {
+    isEntityOwnedByBook,
+    type EntityOwnershipClient,
+} from '@/lib/business/entity-ownership';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { assertNotLocked } from '@/lib/services/period-lock.service';
 
@@ -402,7 +406,18 @@ export async function sellPackage(bookGuid: string, input: SellPackageInput): Pr
                 where: { guid: input.customerGuid },
                 select: { guid: true },
             });
-            if (!customer) throw new PackageValidationError(`Customer not found: ${input.customerGuid}`);
+            // Existing is not enough: customers are a native GnuCash table with
+            // no book column, so a guid from another book would otherwise
+            // attach a foreign customer to this book's package.
+            const ownsCustomer = await isEntityOwnedByBook(
+                'customer',
+                input.customerGuid,
+                bookGuid,
+                tx as unknown as EntityOwnershipClient,
+            );
+            if (!customer || !ownsCustomer) {
+                throw new PackageValidationError(`Customer not found: ${input.customerGuid}`);
+            }
         }
 
         // Liability account: explicit (validated) or auto-created with the
@@ -621,7 +636,18 @@ export async function updatePackage(
                 where: { guid: input.customerGuid },
                 select: { guid: true },
             });
-            if (!customer) throw new PackageValidationError(`Customer not found: ${input.customerGuid}`);
+            // Existing is not enough: customers are a native GnuCash table with
+            // no book column, so a guid from another book would otherwise
+            // attach a foreign customer to this book's package.
+            const ownsCustomer = await isEntityOwnedByBook(
+                'customer',
+                input.customerGuid,
+                bookGuid,
+                tx as unknown as EntityOwnershipClient,
+            );
+            if (!customer || !ownsCustomer) {
+                throw new PackageValidationError(`Customer not found: ${input.customerGuid}`);
+            }
         }
         await tx.gnucash_web_packages.update({
             where: { id: packageId },

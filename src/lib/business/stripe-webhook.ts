@@ -273,10 +273,16 @@ export async function processStripeWebhook(
   }
 
   try {
+    // No session on a webhook, so the book is NOT invented: it is the book of
+    // the signature-verified connection, and the engine hands back an invoice
+    // only when that invoice's own ownership row names the same book.
     const [invoice, accountGuids] = await Promise.all([
-      getInvoiceWithStatus(invoiceGuid),
+      getInvoiceWithStatus(connection.bookGuid, invoiceGuid),
       getAccountGuidsForBook(connection.bookGuid),
     ]);
+    if (!invoice) {
+      throw new Error('Invoice is outside the signing connection book');
+    }
     const scopedAccounts = new Set(accountGuids);
     if (
       !invoice.postAccountGuid
@@ -293,7 +299,7 @@ export async function processStripeWebhook(
     const date = new Date((object?.created ?? Math.floor(Date.now() / 1000)) * 1000);
     const dateIso = date.toISOString().slice(0, 10);
     const paymentTransactionGuid = stableTransactionGuid('payment', event.id);
-    const payment = await applyPayment({
+    const payment = await applyPayment(connection.bookGuid, {
       ownerType: 'customer',
       ownerGuid: customerGuid,
       transferAccountGuid: connection.transferAccountGuid,

@@ -446,7 +446,7 @@ export async function convertEstimateToInvoice(
   );
 
   const estimateNo = row.estimate_no ?? `EST-${row.id}`;
-  const invoice = await createInvoice({
+  const invoice = await createInvoice(bookGuid, {
     ownerType: 'customer',
     ownerGuid: row.customer_guid,
     notes: [`Converted from estimate ${estimateNo}`, row.notes?.trim() || null]
@@ -454,7 +454,6 @@ export async function convertEstimateToInvoice(
       .join('\n'),
     billingId: estimateNo,
     entries,
-    bookGuid,
   });
 
   try {
@@ -469,7 +468,7 @@ export async function convertEstimateToInvoice(
   } catch (err) {
     // Keep the books consistent: if we cannot record the conversion, remove
     // the just-created draft invoice rather than leaving an orphan.
-    await deleteInvoice(invoice.guid).catch(() => {});
+    await deleteInvoice(bookGuid, invoice.guid).catch(() => {});
     throw err;
   }
 

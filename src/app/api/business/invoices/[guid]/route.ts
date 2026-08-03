@@ -8,6 +8,14 @@ import {
 import { mapInvoiceError } from '@/lib/business/api-errors';
 
 /**
+ * Invoices in another book are reported as missing: the engine returns null
+ * for both cases so a caller cannot probe for documents it may not see.
+ */
+function notFound(guid: string): NextResponse {
+  return NextResponse.json({ error: `Invoice not found: ${guid}` }, { status: 404 });
+}
+
+/**
  * GET /api/business/invoices/[guid] — invoice with entries, totals, status.
  */
 export async function GET(
@@ -19,7 +27,8 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const invoice = await getInvoiceWithStatus(guid);
+    const invoice = await getInvoiceWithStatus(roleResult.bookGuid, guid);
+    if (!invoice) return notFound(guid);
     return NextResponse.json({ invoice });
   } catch (error) {
     return mapInvoiceError(error);
@@ -41,7 +50,7 @@ export async function PUT(
 
     const { guid } = await params;
     const body = await request.json();
-    const invoice = await updateInvoice(guid, {
+    const invoice = await updateInvoice(roleResult.bookGuid, guid, {
       id: body.id,
       dateOpened: body.dateOpened,
       notes: body.notes,
@@ -51,6 +60,7 @@ export async function PUT(
       active: body.active,
       entries: body.entries,
     });
+    if (!invoice) return notFound(guid);
     return NextResponse.json({ invoice });
   } catch (error) {
     return mapInvoiceError(error);
@@ -69,7 +79,8 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    await deleteInvoice(guid);
+    const deleted = await deleteInvoice(roleResult.bookGuid, guid);
+    if (!deleted) return notFound(guid);
     return NextResponse.json({ success: true });
   } catch (error) {
     return mapInvoiceError(error);

@@ -66,6 +66,38 @@ function matches(row: Row, where: any): boolean {
 
 let slotAutoId = 1;
 
+/**
+ * gnucash_web_business_entity_ownership uses a compound primary key, which the
+ * generic `matches` helper above cannot express — hence a bespoke fake.
+ */
+function ownershipModel(rows: Row[]) {
+  return {
+    rows,
+    create: async ({ data }: any) => {
+      rows.push({ ...data });
+      return data;
+    },
+    findUnique: async ({ where }: any) => {
+      const key = where.entity_type_entity_guid;
+      const hit = rows.find(
+        (r) => r.entity_type === key.entity_type && r.entity_guid === key.entity_guid,
+      );
+      return hit ? { book_guid: hit.book_guid } : null;
+    },
+    findMany: async ({ where }: any) =>
+      rows
+        .filter((r) => r.entity_type === where.entity_type && r.book_guid === where.book_guid)
+        .map((r) => ({ entity_guid: r.entity_guid })),
+    deleteMany: async ({ where }: any) => {
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (rows[i].entity_type === where.entity_type && rows[i].entity_guid === where.entity_guid) {
+          rows.splice(i, 1);
+        }
+      }
+    },
+  };
+}
+
 function model(rows: Row[], opts: { autoId?: boolean } = {}) {
   return {
     rows,
@@ -95,6 +127,9 @@ function model(rows: Row[], opts: { autoId?: boolean } = {}) {
     },
   };
 }
+
+const BOOK_A = 'book1';
+const BOOK_B = 'book2';
 
 interface FakeDb {
   // Tables (model(...)) plus the raw-SQL surface ($queryRaw / $rawSql log)
@@ -129,7 +164,10 @@ vi.mock('@/lib/prisma', () => ({
 function seedDb(): FakeDb {
   slotAutoId = 1;
   const db: FakeDb = {
-    books: model([{ guid: 'book1', root_account_guid: 'root' }]),
+    books: model([
+      { guid: 'book1', root_account_guid: 'root' },
+      { guid: 'book2', root_account_guid: 'root2' },
+    ]),
     commodities: model([
       { guid: 'usd', namespace: 'CURRENCY', mnemonic: 'USD', fraction: 100, quote_flag: 0 },
     ]),
@@ -141,9 +179,15 @@ function seedDb(): FakeDb {
       { guid: 'ar1', name: 'Accounts Receivable', account_type: 'RECEIVABLE', commodity_guid: 'usd', commodity_scu: 100, parent_guid: 'root', placeholder: 0 },
       { guid: 'ap1', name: 'Accounts Payable', account_type: 'PAYABLE', commodity_guid: 'usd', commodity_scu: 100, parent_guid: 'root', placeholder: 0 },
       { guid: 'tax1', name: 'Sales Tax Payable', account_type: 'LIABILITY', commodity_guid: 'usd', commodity_scu: 100, parent_guid: 'root', placeholder: 0 },
+      // Book B's hierarchy — nothing here may be reached from book A.
+      { guid: 'root2', name: 'Root B', account_type: 'ROOT', commodity_guid: 'usd', commodity_scu: 100, parent_guid: null, placeholder: 0 },
+      { guid: 'inc2', name: 'Sales B', account_type: 'INCOME', commodity_guid: 'usd', commodity_scu: 100, parent_guid: 'root2', placeholder: 0 },
+      { guid: 'ar2', name: 'Accounts Receivable B', account_type: 'RECEIVABLE', commodity_guid: 'usd', commodity_scu: 100, parent_guid: 'root2', placeholder: 0 },
+      { guid: 'bank2', name: 'Checking B', account_type: 'BANK', commodity_guid: 'usd', commodity_scu: 100, parent_guid: 'root2', placeholder: 0 },
     ]),
     customers: model([
       { guid: 'cust1', name: 'Acme Corp', id: '000001', notes: '', active: 1, currency: 'usd', tax_override: 0, terms: null, discount_num: 0n, discount_denom: 1n, credit_num: 0n, credit_denom: 1n },
+      { guid: 'cust2', name: 'Beta Ltd (book B)', id: '000001', notes: '', active: 1, currency: 'usd', tax_override: 0, terms: null, discount_num: 0n, discount_denom: 1n, credit_num: 0n, credit_denom: 1n },
     ]),
     vendors: model([
       { guid: 'vend1', name: 'Widget Supply Co', id: '000001', notes: '', active: 1, currency: 'usd', tax_override: 0, terms: null },
@@ -163,6 +207,13 @@ function seedDb(): FakeDb {
     splits: model([]),
     lots: model([]),
     slots: model([], { autoId: true }),
+    // Audit S5: the native business tables carry no book_guid, so scope lives
+    // here. Missing ownership means FOREIGN.
+    gnucash_web_business_entity_ownership: ownershipModel([
+      { entity_type: 'customer', entity_guid: 'cust1', book_guid: BOOK_A },
+      { entity_type: 'vendor', entity_guid: 'vend1', book_guid: BOOK_A },
+      { entity_type: 'customer', entity_guid: 'cust2', book_guid: BOOK_B },
+    ]),
   };
 
   // Raw-SQL surface used by the engine on the transaction client:
@@ -197,8 +248,10 @@ import {
   listPayments,
   deleteInvoice,
   updateInvoice,
+  buildInvoiceView,
   InvoiceValidationError,
   InvoiceStateError,
+  InvoiceNotFoundError,
 } from '../invoice-engine';
 
 // ===========================================================================
@@ -517,6 +570,9 @@ describe('invoice engine (fake prisma)', () => {
     holder.db = seedDb();
   });
 
+  /** getInvoiceWithStatus is book-scoped and nullable; these cases expect a hit. */
+  const getView = async (guid: string) => req(await getInvoiceWithStatus(BOOK_A, guid));
+
   const customerInvoiceInput = () => ({
     ownerType: 'customer' as const,
     ownerGuid: 'cust1',
@@ -536,7 +592,7 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('createInvoice writes i_* entry columns for a customer invoice', async () => {
-    const view = await createInvoice(customerInvoiceInput());
+    const view = await createInvoice(BOOK_A, customerInvoiceInput());
     expect(view.type).toBe('invoice');
     expect(view.id).toBe('000001'); // fallback numbering (no counter slot)
     expect(view.status).toBe('draft');
@@ -567,11 +623,10 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('createInvoice writes b_* entry columns for a vendor bill', async () => {
-    const view = await createInvoice({
+    const view = await createInvoice(BOOK_A, {
       ownerType: 'vendor',
       ownerGuid: 'vend1',
       dateOpened: '2026-01-05',
-      bookGuid: 'book1',
       entries: [{ description: 'Widgets', quantity: 10, price: 4, accountGuid: 'exp1', taxable: false }],
     });
     expect(view.type).toBe('bill');
@@ -584,11 +639,10 @@ describe('invoice engine (fake prisma)', () => {
 
   it('rejects discounts on bills (GnuCash bills have no discount columns)', async () => {
     await expect(
-      createInvoice({
+      createInvoice(BOOK_A, {
         ownerType: 'vendor',
         ownerGuid: 'vend1',
-        bookGuid: 'book1',
-        entries: [{ quantity: 1, price: 10, accountGuid: 'exp1', discount: 2 }],
+          entries: [{ quantity: 1, price: 10, accountGuid: 'exp1', discount: 2 }],
       })
     ).rejects.toBeInstanceOf(InvoiceValidationError);
   });
@@ -599,15 +653,15 @@ describe('invoice engine (fake prisma)', () => {
       { id: 900, obj_guid: 'book1', name: 'counters', slot_type: 9, guid_val: 'frameC' },
       { id: 901, obj_guid: 'frameC', name: 'counters/gncInvoice', slot_type: 1, int64_val: 42n }
     );
-    const view = await createInvoice(customerInvoiceInput());
+    const view = await createInvoice(BOOK_A, customerInvoiceInput());
     expect(view.id).toBe('000043');
     const counter = req(holder.db!.slots.rows.find((s: Row) => s.name === 'counters/gncInvoice'));
     expect(counter.int64_val).toBe(43n);
   });
 
   it('postInvoice creates the GnuCash-native transaction, splits, lot and slots', async () => {
-    const view = await createInvoice(customerInvoiceInput());
-    const result = await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const view = await createInvoice(BOOK_A, customerInvoiceInput());
+    const result = await postInvoice(BOOK_A, view.guid, { postDate: '2026-01-05' });
 
     expect(result.total).toBe(105);
     expect(result.dueDate).toBe('2026-02-04'); // Net 30
@@ -666,7 +720,7 @@ describe('invoice engine (fake prisma)', () => {
     expect(invRow.post_lot).toBe(result.lotGuid);
     expect(invRow.date_posted).toBeInstanceOf(Date);
 
-    const after = await getInvoiceWithStatus(view.guid);
+    const after = await getView(view.guid);
     // Unpaid and past the 2026-02-04 due date relative to the real clock
     expect(after.status).toBe('overdue');
     expect(after.amountDue).toBe(105);
@@ -674,13 +728,12 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('bill posting flips signs (credit A/P, debit expense)', async () => {
-    const bill = await createInvoice({
+    const bill = await createInvoice(BOOK_A, {
       ownerType: 'vendor',
       ownerGuid: 'vend1',
-      bookGuid: 'book1',
       entries: [{ quantity: 10, price: 4, accountGuid: 'exp1', taxable: false }],
     });
-    const result = await postInvoice(bill.guid, { postDate: '2026-01-10', bookRootGuid: 'root' });
+    const result = await postInvoice(BOOK_A, bill.guid, { postDate: '2026-01-10' });
     const splits = holder.db!.splits.rows.filter((s: Row) => s.tx_guid === result.transactionGuid);
     expect(req(splits.find((s: Row) => s.account_guid === 'ap1')).value_num).toBe(-4000n);
     expect(req(splits.find((s: Row) => s.account_guid === 'exp1')).value_num).toBe(4000n);
@@ -688,15 +741,15 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('updateInvoice/deleteInvoice refuse posted invoices', async () => {
-    const view = await createInvoice(customerInvoiceInput());
-    await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
-    await expect(updateInvoice(view.guid, { notes: 'x' })).rejects.toBeInstanceOf(InvoiceStateError);
-    await expect(deleteInvoice(view.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+    const view = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, view.guid, { postDate: '2026-01-05' });
+    await expect(updateInvoice(BOOK_A, view.guid, { notes: 'x' })).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(deleteInvoice(BOOK_A, view.guid)).rejects.toBeInstanceOf(InvoiceStateError);
   });
 
   it('postInvoice locks the invoice row and rejects a second post (double-post guard)', async () => {
-    const view = await createInvoice(customerInvoiceInput());
-    await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const view = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, view.guid, { postDate: '2026-01-05' });
 
     // The FOR UPDATE row lock is taken inside the transaction, before the
     // already-posted check, so concurrent posts serialize on it.
@@ -707,10 +760,10 @@ describe('invoice engine (fake prisma)', () => {
     ).toBe(true);
 
     await expect(
-      postInvoice(view.guid, { postDate: '2026-01-06', bookRootGuid: 'root' })
+      postInvoice(BOOK_A, view.guid, { postDate: '2026-01-06' })
     ).rejects.toBeInstanceOf(InvoiceStateError);
     await expect(
-      postInvoice(view.guid, { postDate: '2026-01-06', bookRootGuid: 'root' })
+      postInvoice(BOOK_A, view.guid, { postDate: '2026-01-06' })
     ).rejects.toThrow('Invoice is already posted');
 
     // The losing posts booked nothing: still one transaction, one lot,
@@ -721,19 +774,19 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('unpostInvoice rejects a second unpost (mirror guard)', async () => {
-    const view = await createInvoice(customerInvoiceInput());
-    await postInvoice(view.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
-    await unpostInvoice(view.guid);
-    await expect(unpostInvoice(view.guid)).rejects.toBeInstanceOf(InvoiceStateError);
-    await expect(unpostInvoice(view.guid)).rejects.toThrow('Invoice is not posted');
+    const view = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, view.guid, { postDate: '2026-01-05' });
+    await unpostInvoice(BOOK_A, view.guid);
+    await expect(unpostInvoice(BOOK_A, view.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(unpostInvoice(BOOK_A, view.guid)).rejects.toThrow('Invoice is not posted');
   });
 
   it('applyPayment locks the posted invoice rows before computing amountDue', async () => {
-    const inv = await createInvoice(customerInvoiceInput());
-    await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
     holder.db!.$rawSql.length = 0;
 
-    await applyPayment({
+    await applyPayment(BOOK_A, {
       ownerType: 'customer',
       ownerGuid: 'cust1',
       transferAccountGuid: 'bank1',
@@ -749,15 +802,15 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('applyPayment allocates oldest-first, assigns lots and closes paid lots', async () => {
-    const inv1 = await createInvoice(customerInvoiceInput()); // 105 total
-    await postInvoice(inv1.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
-    const inv2 = await createInvoice({
+    const inv1 = await createInvoice(BOOK_A, customerInvoiceInput()); // 105 total
+    await postInvoice(BOOK_A, inv1.guid, { postDate: '2026-01-05' });
+    const inv2 = await createInvoice(BOOK_A, {
       ...customerInvoiceInput(),
       entries: [{ quantity: 4, price: 50, accountGuid: 'inc1', taxable: false }], // 200
     });
-    await postInvoice(inv2.guid, { postDate: '2026-02-05', bookRootGuid: 'root' });
+    await postInvoice(BOOK_A, inv2.guid, { postDate: '2026-02-05' });
 
-    const result = await applyPayment({
+    const result = await applyPayment(BOOK_A, {
       ownerType: 'customer',
       ownerGuid: 'cust1',
       transferAccountGuid: 'bank1',
@@ -791,25 +844,25 @@ describe('invoice engine (fake prisma)', () => {
     expect(typeSlot.string_val).toBe('P');
 
     // First invoice fully paid; second partially
-    const inv1After = await getInvoiceWithStatus(inv1.guid);
+    const inv1After = await getView(inv1.guid);
     expect(inv1After.amountDue).toBe(0);
     expect(inv1After.status).toBe('paid');
     const lot1 = req(holder.db!.lots.rows.find((l: Row) => l.guid === inv1After.postLotGuid));
     expect(lot1.is_closed).toBe(1);
 
-    const inv2After = await getInvoiceWithStatus(inv2.guid);
+    const inv2After = await getView(inv2.guid);
     expect(inv2After.amountDue).toBe(155);
 
     // Payment listing
-    const payments = await listPayments('customer', 'cust1');
+    const payments = await listPayments(BOOK_A, 'customer', 'cust1');
     expect(payments).toHaveLength(1);
     expect(payments[0].amount).toBe(150);
     expect(payments[0].allocations).toHaveLength(2);
   });
 
   it('reuses a caller-supplied payment transaction GUID idempotently', async () => {
-    const invoice = await createInvoice(customerInvoiceInput());
-    await postInvoice(invoice.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const invoice = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, invoice.guid, { postDate: '2026-01-05' });
     const transactionGuid = 'a'.repeat(32);
     const input = {
       ownerType: 'customer' as const,
@@ -821,8 +874,8 @@ describe('invoice engine (fake prisma)', () => {
       transactionGuid,
     };
 
-    const first = await applyPayment(input);
-    const second = await applyPayment(input);
+    const first = await applyPayment(BOOK_A, input);
+    const second = await applyPayment(BOOK_A, input);
 
     expect(first.transactionGuid).toBe(transactionGuid);
     expect(second.transactionGuid).toBe(transactionGuid);
@@ -830,10 +883,10 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('rejects overpayments cleanly', async () => {
-    const inv = await createInvoice(customerInvoiceInput());
-    await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
     await expect(
-      applyPayment({
+      applyPayment(BOOK_A, {
         ownerType: 'customer',
         ownerGuid: 'cust1',
         transferAccountGuid: 'bank1',
@@ -844,10 +897,10 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('rejects explicit allocations that exceed the amount due', async () => {
-    const inv = await createInvoice(customerInvoiceInput());
-    await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
     await expect(
-      applyPayment({
+      applyPayment(BOOK_A, {
         ownerType: 'customer',
         ownerGuid: 'cust1',
         transferAccountGuid: 'bank1',
@@ -859,23 +912,23 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('unpost removes the transaction, lot and slots; refuses when paid', async () => {
-    const inv = await createInvoice(customerInvoiceInput());
-    const posted = await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted = await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
 
     // With a payment attached: refuse
-    await applyPayment({
+    await applyPayment(BOOK_A, {
       ownerType: 'customer',
       ownerGuid: 'cust1',
       transferAccountGuid: 'bank1',
       amount: 50,
       date: '2026-02-01',
     });
-    await expect(unpostInvoice(inv.guid)).rejects.toBeInstanceOf(InvoiceStateError);
+    await expect(unpostInvoice(BOOK_A, inv.guid)).rejects.toBeInstanceOf(InvoiceStateError);
 
     // Fresh invoice with no payments: unpost cleans everything up
-    const inv2 = await createInvoice(customerInvoiceInput());
-    const posted2 = await postInvoice(inv2.guid, { postDate: '2026-01-06', bookRootGuid: 'root' });
-    await unpostInvoice(inv2.guid);
+    const inv2 = await createInvoice(BOOK_A, customerInvoiceInput());
+    const posted2 = await postInvoice(BOOK_A, inv2.guid, { postDate: '2026-01-06' });
+    await unpostInvoice(BOOK_A, inv2.guid);
 
     expect(holder.db!.transactions.rows.find((t: Row) => t.guid === posted2.transactionGuid)).toBeUndefined();
     expect(holder.db!.lots.rows.find((l: Row) => l.guid === posted2.lotGuid)).toBeUndefined();
@@ -886,7 +939,7 @@ describe('invoice engine (fake prisma)', () => {
       )
     ).toHaveLength(0);
 
-    const after = await getInvoiceWithStatus(inv2.guid);
+    const after = await getView(inv2.guid);
     expect(after.posted).toBe(false);
     expect(after.status).toBe('draft');
     expect(after.postTxnGuid).toBeNull();
@@ -896,28 +949,225 @@ describe('invoice engine (fake prisma)', () => {
   });
 
   it('listInvoices filters by type and status', async () => {
-    const inv = await createInvoice(customerInvoiceInput());
-    await createInvoice({
+    const inv = await createInvoice(BOOK_A, customerInvoiceInput());
+    await createInvoice(BOOK_A, {
       ownerType: 'vendor',
       ownerGuid: 'vend1',
-      bookGuid: 'book1',
       entries: [{ quantity: 1, price: 40, accountGuid: 'exp1', taxable: false }],
     });
-    await postInvoice(inv.guid, { postDate: '2026-01-05', bookRootGuid: 'root' });
+    await postInvoice(BOOK_A, inv.guid, { postDate: '2026-01-05' });
 
-    const invoicesOnly = await listInvoices({ type: 'invoice' });
+    const invoicesOnly = await listInvoices(BOOK_A, { type: 'invoice' });
     expect(invoicesOnly).toHaveLength(1);
     expect(invoicesOnly[0].guid).toBe(inv.guid);
 
-    const bills = await listInvoices({ type: 'bill' });
+    const bills = await listInvoices(BOOK_A, { type: 'bill' });
     expect(bills).toHaveLength(1);
     expect(bills[0].status).toBe('draft');
 
     // Posted Net-30 invoice from 2026-01-05 is overdue by "today" (real clock)
-    const overdue = await listInvoices({ status: 'overdue' });
+    const overdue = await listInvoices(BOOK_A, { status: 'overdue' });
     expect(overdue.map((v) => v.guid)).toContain(inv.guid);
 
-    const drafts = await listInvoices({ status: 'draft' });
+    const drafts = await listInvoices(BOOK_A, { status: 'draft' });
     expect(drafts).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// Part 3 — cross-book isolation (audit S5)
+//
+// The native GnuCash business tables have no book_guid, so before ownership
+// existed every book's API returned every book's invoices, and PUT/DELETE on
+// a foreign invoice succeeded. Each case below asserts the closed behaviour:
+// a foreign document is indistinguishable from a missing one.
+// ===========================================================================
+
+describe('invoice engine — book scope', () => {
+  beforeEach(() => {
+    holder.db = seedDb();
+  });
+
+  /** An invoice living in book B, created through the engine as book B. */
+  const bookBInvoice = () =>
+    createInvoice(BOOK_B, {
+      ownerType: 'customer' as const,
+      ownerGuid: 'cust2',
+      dateOpened: '2026-01-05',
+      entries: [{ description: 'Book B work', quantity: 1, price: 90, accountGuid: 'inc2', taxable: false }],
+    });
+
+  const bookAInvoice = () =>
+    createInvoice(BOOK_A, {
+      ownerType: 'customer' as const,
+      ownerGuid: 'cust1',
+      dateOpened: '2026-01-05',
+      entries: [{ description: 'Book A work', quantity: 1, price: 10, accountGuid: 'inc1', taxable: false }],
+    });
+
+  it('createInvoice records ownership for the creating book', async () => {
+    const view = await bookAInvoice();
+    const rows = holder.db!.gnucash_web_business_entity_ownership.rows;
+    expect(rows).toContainEqual(
+      expect.objectContaining({ entity_type: 'invoice', entity_guid: view.guid, book_guid: BOOK_A }),
+    );
+  });
+
+  it('rejects an invoice billed to another book\'s customer', async () => {
+    await expect(
+      createInvoice(BOOK_A, {
+        ownerType: 'customer',
+        ownerGuid: 'cust2', // owned by book B
+        entries: [{ quantity: 1, price: 10, accountGuid: 'inc1' }],
+      }),
+    ).rejects.toBeInstanceOf(InvoiceNotFoundError);
+    expect(holder.db!.invoices.rows).toHaveLength(0);
+  });
+
+  it('rejects an invoice whose entry account lives in another book', async () => {
+    await expect(
+      createInvoice(BOOK_A, {
+        ownerType: 'customer',
+        ownerGuid: 'cust1',
+        entries: [{ quantity: 1, price: 10, accountGuid: 'inc2' }],
+      }),
+    ).rejects.toBeInstanceOf(InvoiceNotFoundError);
+  });
+
+  it('treats an invoice with NO ownership row as foreign, not as public', async () => {
+    const view = await bookAInvoice();
+    holder.db!.gnucash_web_business_entity_ownership.rows.length = 0;
+    expect(await getInvoiceWithStatus(BOOK_A, view.guid)).toBeNull();
+    expect(await listInvoices(BOOK_A)).toEqual([]);
+  });
+
+  it('listInvoices never returns another book\'s invoice', async () => {
+    const mine = await bookAInvoice();
+    const theirs = await bookBInvoice();
+
+    const listA = await listInvoices(BOOK_A);
+    expect(listA.map((v) => v.guid)).toEqual([mine.guid]);
+
+    const listB = await listInvoices(BOOK_B);
+    expect(listB.map((v) => v.guid)).toEqual([theirs.guid]);
+  });
+
+  it('getInvoiceWithStatus returns null for a foreign guid', async () => {
+    const theirs = await bookBInvoice();
+    expect(await getInvoiceWithStatus(BOOK_A, theirs.guid)).toBeNull();
+    expect(await buildInvoiceView(BOOK_A, theirs.guid)).toBeNull();
+    // ...and the owning book still sees it.
+    expect((await getInvoiceWithStatus(BOOK_B, theirs.guid))?.guid).toBe(theirs.guid);
+  });
+
+  it('updateInvoice on a foreign guid is a no-op reported as not found', async () => {
+    const theirs = await bookBInvoice();
+    expect(await updateInvoice(BOOK_A, theirs.guid, { notes: 'hijacked' })).toBeNull();
+
+    const row = req(holder.db!.invoices.rows.find((i: Row) => i.guid === theirs.guid));
+    expect(row.notes).not.toBe('hijacked');
+  });
+
+  it('deleteInvoice on a foreign guid leaves the invoice standing', async () => {
+    const theirs = await bookBInvoice();
+    expect(await deleteInvoice(BOOK_A, theirs.guid)).toBeNull();
+
+    expect(holder.db!.invoices.rows.find((i: Row) => i.guid === theirs.guid)).toBeTruthy();
+    expect(holder.db!.entries.rows.filter((e: Row) => e.invoice === theirs.guid)).toHaveLength(1);
+  });
+
+  it('deleteInvoice removes the ownership row with the invoice', async () => {
+    const mine = await bookAInvoice();
+    expect(await deleteInvoice(BOOK_A, mine.guid)).toEqual({ guid: mine.guid });
+    expect(
+      holder.db!.gnucash_web_business_entity_ownership.rows.find(
+        (r: Row) => r.entity_type === 'invoice' && r.entity_guid === mine.guid,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('postInvoice on a foreign guid is rejected and posts nothing', async () => {
+    const theirs = await bookBInvoice();
+    await expect(
+      postInvoice(BOOK_A, theirs.guid, { postDate: '2026-01-05' }),
+    ).rejects.toBeInstanceOf(InvoiceNotFoundError);
+
+    const row = req(holder.db!.invoices.rows.find((i: Row) => i.guid === theirs.guid));
+    expect(row.post_txn).toBeNull();
+    expect(holder.db!.transactions.rows).toHaveLength(0);
+  });
+
+  it('posts into the OWNING book\'s A/R account, never the caller\'s', async () => {
+    const theirs = await bookBInvoice();
+    const result = await postInvoice(BOOK_B, theirs.guid, { postDate: '2026-01-05' });
+    expect(result.postAccountGuid).toBe('ar2');
+  });
+
+  it('unpostInvoice on a foreign guid is rejected', async () => {
+    const theirs = await bookBInvoice();
+    await postInvoice(BOOK_B, theirs.guid, { postDate: '2026-01-05' });
+    await expect(unpostInvoice(BOOK_A, theirs.guid)).rejects.toBeInstanceOf(InvoiceNotFoundError);
+
+    const row = req(holder.db!.invoices.rows.find((i: Row) => i.guid === theirs.guid));
+    expect(row.post_txn).toBeTruthy();
+  });
+
+  it('applyPayment cannot reach another book\'s owner or invoice', async () => {
+    const theirs = await bookBInvoice();
+    await postInvoice(BOOK_B, theirs.guid, { postDate: '2026-01-05' });
+
+    // Owner belongs to book B
+    await expect(
+      applyPayment(BOOK_A, {
+        ownerType: 'customer',
+        ownerGuid: 'cust2',
+        transferAccountGuid: 'bank1',
+        amount: 90,
+        date: '2026-01-10',
+      }),
+    ).rejects.toBeInstanceOf(InvoiceNotFoundError);
+
+    // Book A's own customer cannot be used to allocate against book B's invoice
+    await expect(
+      applyPayment(BOOK_A, {
+        ownerType: 'customer',
+        ownerGuid: 'cust1',
+        transferAccountGuid: 'bank1',
+        amount: 90,
+        date: '2026-01-10',
+        allocations: [{ invoiceGuid: theirs.guid, amount: 90 }],
+      }),
+    ).rejects.toBeInstanceOf(InvoiceValidationError);
+
+    expect(holder.db!.transactions.rows.filter((t: Row) => t.num === '')).toHaveLength(0);
+  });
+
+  it('applyPayment rejects a transfer account from another book', async () => {
+    const mine = await bookAInvoice();
+    await postInvoice(BOOK_A, mine.guid, { postDate: '2026-01-05' });
+    await expect(
+      applyPayment(BOOK_A, {
+        ownerType: 'customer',
+        ownerGuid: 'cust1',
+        transferAccountGuid: 'bank2', // book B's bank
+        amount: 10,
+        date: '2026-01-10',
+      }),
+    ).rejects.toBeInstanceOf(InvoiceNotFoundError);
+  });
+
+  it('listPayments returns nothing for another book\'s owner', async () => {
+    const theirs = await bookBInvoice();
+    await postInvoice(BOOK_B, theirs.guid, { postDate: '2026-01-05' });
+    await applyPayment(BOOK_B, {
+      ownerType: 'customer',
+      ownerGuid: 'cust2',
+      transferAccountGuid: 'bank2',
+      amount: 90,
+      date: '2026-01-10',
+    });
+
+    expect(await listPayments(BOOK_A, 'customer', 'cust2')).toEqual([]);
+    expect(await listPayments(BOOK_B, 'customer', 'cust2')).toHaveLength(1);
   });
 });

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getActiveBookRootGuid } from '@/lib/book-scope';
 import { postVoucher, unpostVoucher } from '@/lib/business/vouchers';
 import { mapInvoiceError } from '@/lib/business/api-errors';
 import { markReimbursementVoucherPosted } from '@/lib/business/reimbursements';
@@ -26,13 +25,11 @@ export async function POST(
       return NextResponse.json({ error: 'postDate is required' }, { status: 400 });
     }
 
-    const bookRootGuid = await getActiveBookRootGuid();
-    const result = await postVoucher(guid, {
+    const result = await postVoucher(roleResult.bookGuid, guid, {
       postDate: body.postDate,
       dueDate: body.dueDate,
       memo: body.memo,
       description: body.description,
-      bookRootGuid,
     });
     await markReimbursementVoucherPosted(guid, roleResult.bookGuid);
     void cacheInvalidateAllForBook(roleResult.bookGuid);
@@ -56,7 +53,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    await unpostVoucher(guid);
+    await unpostVoucher(roleResult.bookGuid, guid);
     void cacheInvalidateAllForBook(roleResult.bookGuid);
     void publishDataChange(roleResult.bookGuid, 'business', { guid, action: 'update' });
     return NextResponse.json({ success: true });

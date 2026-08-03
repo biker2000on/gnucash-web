@@ -1,7 +1,8 @@
 // src/app/api/business/billterms/route.ts
 //
 // Bill terms list + create. Only net-N day terms (type GNC_TERM_TYPE_DAYS)
-// are supported. Unscoped like the other native business tables.
+// are supported. Scoped to the authenticated book via the ownership side
+// table (see src/lib/business/entity-ownership.ts).
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const includeInvisible = searchParams.get('includeInvisible') === 'true';
-    return NextResponse.json(await listBillterms(includeInvisible));
+    return NextResponse.json(await listBillterms(roleResult.bookGuid, includeInvisible));
   } catch (error) {
     console.error('Error listing bill terms:', error);
     return NextResponse.json({ error: 'Failed to list bill terms' }, { status: 500 });
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null);
     const input = parseInput(billtermInputSchema, body);
-    const billterm = await createBillterm(input);
+    const billterm = await createBillterm(roleResult.bookGuid, input);
     return NextResponse.json(billterm, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessValidationError) {

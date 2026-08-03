@@ -30,6 +30,7 @@ import {
   OWNER_TYPE_JOB,
 } from './invoice-engine';
 import { roundCurrency } from './invoice-totals';
+import { isEntityOwnedByBook, listOwnedEntityGuids } from './entity-ownership';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -220,10 +221,15 @@ export class StatementNotFoundError extends Error {}
  * payments). Only POSTED documents participate.
  */
 export async function getCustomerStatement(
+  bookGuid: string,
   customerGuid: string,
   startDate: string | null,
   endDate: string,
 ): Promise<CustomerStatement> {
+  // A customer this book does not own reads exactly as missing.
+  if (!(await isEntityOwnedByBook('customer', customerGuid, bookGuid))) {
+    throw new StatementNotFoundError(`Customer not found: ${customerGuid}`);
+  }
   const customer = await prisma.customers.findUnique({ where: { guid: customerGuid } });
   if (!customer) throw new StatementNotFoundError(`Customer not found: ${customerGuid}`);
 
@@ -233,10 +239,17 @@ export async function getCustomerStatement(
   });
 
   // Direct + job-owned posted invoices for this customer
-  const jobs = await prisma.jobs.findMany({
-    where: { owner_type: OWNER_TYPE_CUSTOMER, owner_guid: customerGuid },
-    select: { guid: true },
-  });
+  const ownedJobGuids = await listOwnedEntityGuids('job', bookGuid);
+  const jobs = ownedJobGuids.length > 0
+    ? await prisma.jobs.findMany({
+        where: {
+          guid: { in: ownedJobGuids },
+          owner_type: OWNER_TYPE_CUSTOMER,
+          owner_guid: customerGuid,
+        },
+        select: { guid: true },
+      })
+    : [];
   const jobGuids = jobs.map((j) => j.guid);
   const invoiceRows = await prisma.invoices.findMany({
     where: {
@@ -254,8 +267,9 @@ export async function getCustomerStatement(
   const statementInvoices: StatementInvoiceInput[] = [];
   for (const row of invoiceRows) {
     try {
-      const view = await getInvoiceWithStatus(row.guid);
-      if (!view.datePosted) continue;
+      // Null covers both foreign documents and ones this book cannot resolve.
+      const view = await getInvoiceWithStatus(bookGuid, row.guid);
+      if (!view?.datePosted) continue;
       statementInvoices.push({
         guid: view.guid,
         id: view.id,
@@ -269,7 +283,7 @@ export async function getCustomerStatement(
     }
   }
 
-  const paymentViews = await listPayments('customer', customerGuid);
+  const paymentViews = await listPayments(bookGuid, 'customer', customerGuid);
   const statementPayments: StatementPaymentInput[] = paymentViews
     .filter((p) => p.date !== null)
     .map((p) => ({

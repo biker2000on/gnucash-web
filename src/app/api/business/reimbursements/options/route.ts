@@ -8,8 +8,10 @@ export async function GET() {
   try {
     const auth = await requireTimesheetRole('write');
     if (auth instanceof NextResponse) return auth;
-    const employees = await listEmployees({ active: 'active' });
-    const ownEmployeeGuid = auth.isTimekeeper ? await employeeForUsername(auth.user.username) : null;
+    const employees = await listEmployees(auth.bookGuid, { active: 'active' });
+    const ownEmployeeGuid = auth.isTimekeeper
+      ? await employeeForUsername(auth.bookGuid, auth.user.username)
+      : null;
     const visibleEmployees = auth.isTimekeeper
       ? employees.filter(employee => employee.guid === ownEmployeeGuid)
       : employees;

@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
     }
 
-    const invoices = await listInvoices({
+    const invoices = await listInvoices(roleResult.bookGuid, {
       type: (type as InvoiceKind) ?? undefined,
       status: (status as InvoiceStatus) ?? undefined,
       ownerGuid: searchParams.get('ownerGuid') ?? undefined,
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'entries array is required' }, { status: 400 });
     }
 
-    const invoice = await createInvoice({
+    const invoice = await createInvoice(roleResult.bookGuid, {
       ownerType: body.ownerType,
       ownerGuid: body.ownerGuid,
       id: body.id,
@@ -66,7 +66,6 @@ export async function POST(request: NextRequest) {
       termsGuid: body.termsGuid,
       currencyGuid: body.currencyGuid,
       entries: body.entries,
-      bookGuid: roleResult.bookGuid,
     });
 
     return NextResponse.json({ invoice }, { status: 201 });

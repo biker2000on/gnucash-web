@@ -23,7 +23,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const employee = await getEmployee(guid);
+    const employee = await getEmployee(roleResult.bookGuid, guid);
     if (!employee) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
@@ -46,7 +46,7 @@ export async function PUT(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const input = parseInput(employeeInputSchema, body);
-    const employee = await updateEmployee(guid, input);
+    const employee = await updateEmployee(roleResult.bookGuid, guid, input);
     if (!employee) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
@@ -74,7 +74,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const result = await deleteEmployee(guid);
+    const result = await deleteEmployee(roleResult.bookGuid, guid);
     if (!result) {
       return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }

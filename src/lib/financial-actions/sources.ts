@@ -26,6 +26,7 @@ import { getBaseCurrency } from '@/lib/currency';
 import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
+import { listOwnedEntityGuids } from '@/lib/business/entity-ownership';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
 import { getResilienceProfile, loadResilienceActions } from '@/lib/resilience/service';
@@ -708,7 +709,11 @@ async function failedPaymentActions(bookGuid: string): Promise<FinancialActionCa
   }));
 }
 
-async function reimbursementActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+export async function reimbursementActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
+  // `employees` has no book_guid, so the join is constrained by the ownership
+  // side table — a request pointing at another book's employee surfaces nothing.
+  const employeeGuids = await listOwnedEntityGuids('employee', bookGuid);
+  if (employeeGuids.length === 0) return [];
   const rows = await prisma.$queryRaw<Array<{
     id: number;
     employee_guid: string;
@@ -723,6 +728,7 @@ async function reimbursementActions(bookGuid: string): Promise<FinancialActionCa
     FROM gnucash_web_reimbursement_requests r
     JOIN employees e ON e.guid = r.employee_guid
     WHERE r.book_guid = ${bookGuid} AND r.status = 'submitted'
+      AND r.employee_guid = ANY(${employeeGuids}::text[])
     ORDER BY COALESCE(r.due_date, r.expense_date), r.submitted_at
     LIMIT 100
   `;
@@ -757,7 +763,7 @@ async function jobProfitabilityActions(
   bookGuid: string,
   bookAccountGuids: string[],
 ): Promise<FinancialActionCandidate[]> {
-  const jobs = (await listJobsEx({ active: 'active' })).slice(0, 50);
+  const jobs = (await listJobsEx(bookGuid, { active: 'active' })).slice(0, 50);
   const reports: Array<{
     job: Awaited<ReturnType<typeof listJobsEx>>[number];
     report: Awaited<ReturnType<typeof generateJobReport>>;
@@ -769,7 +775,7 @@ async function jobProfitabilityActions(
       try {
         return {
           job,
-          report: await generateJobReport(job.guid, bookAccountGuids, { bookGuid }),
+          report: await generateJobReport(bookGuid, job.guid, bookAccountGuids),
         };
       } catch (error) {
         console.error(`Failed to load profitability for job ${job.guid}:`, error);

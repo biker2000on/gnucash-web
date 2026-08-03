@@ -14,6 +14,7 @@ import { getPreference } from '@/lib/user-preferences';
 import { listRenewals } from '@/lib/services/renewals.service';
 import { listTasks } from '@/lib/services/home.service';
 import { listInvoices } from '@/lib/business/invoice-engine';
+import { listOwnedEntityGuids } from '@/lib/business/entity-ownership';
 import { listGoals } from '@/lib/services/goal.service';
 import {
   currentOccurrence,
@@ -524,7 +525,7 @@ export async function collectFinancialEventsForBook(
   }
 
   try {
-    const invoices = await listInvoices({ limit: 1_000 });
+    const invoices = await listInvoices(bookGuid, { limit: 1_000 });
     for (const invoice of invoices) {
       if (!invoice.dueDate || !invoice.postAccountGuid || !accountSet.has(invoice.postAccountGuid)) continue;
       if (invoice.status === 'paid' || invoice.amountDue <= 0) continue;
@@ -619,7 +620,10 @@ export async function collectFinancialEventsForBook(
   }
 
   try {
-    const reimbursements = await prisma.$queryRaw<Array<{
+    // `employees` has no book_guid, so the join is constrained by the
+    // ownership side table rather than trusting the request row's pointer.
+    const employeeGuids = await listOwnedEntityGuids('employee', bookGuid);
+    const reimbursements = employeeGuids.length === 0 ? [] : await prisma.$queryRaw<Array<{
       id: number;
       employee_name: string;
       status: string;
@@ -635,6 +639,7 @@ export async function collectFinancialEventsForBook(
       JOIN employees e ON e.guid = r.employee_guid
       WHERE r.book_guid = ${bookGuid}
         AND r.status IN ('submitted', 'approved', 'posted')
+        AND r.employee_guid = ANY(${employeeGuids}::text[])
       ORDER BY COALESCE(r.due_date, r.expense_date)
       LIMIT 500
     `;

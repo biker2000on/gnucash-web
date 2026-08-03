@@ -31,6 +31,7 @@ import {
   postInvoice,
   type InvoiceEntryInput,
 } from './invoice-engine';
+import { isEntityOwnedByBook } from './entity-ownership';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -375,7 +376,12 @@ export async function createRecurringInvoice(
 ): Promise<RecurringInvoiceDef> {
   validateRecurringInput(input);
 
-  // Owner must exist (name check also gives friendlier errors than a run failure)
+  // Owner must exist AND belong to this book — a definition pointed at another
+  // book's customer would fail (or worse, bill across books) on every run.
+  if (!(await isEntityOwnedByBook(input.ownerType, input.ownerGuid, bookGuid))) {
+    const label = input.ownerType === 'customer' ? 'Customer' : 'Vendor';
+    throw new RecurringInvoiceValidationError(`${label} not found: ${input.ownerGuid}`);
+  }
   if (input.ownerType === 'customer') {
     const owner = await prisma.customers.findUnique({ where: { guid: input.ownerGuid }, select: { guid: true } });
     if (!owner) throw new RecurringInvoiceValidationError(`Customer not found: ${input.ownerGuid}`);
@@ -520,18 +526,6 @@ export async function runDueRecurringInvoices(
   );
   if (dueRows.length === 0) return { generated: 0, results: [] };
 
-  // Book root for auto-posting (A/R–A/P discovery scope). Resolved from the
-  // book guid — deliberately NOT session-based, so background syncs work.
-  let bookRootGuid: string | null = null;
-  const needsRoot = dueRows.some((r) => r.auto_post);
-  if (needsRoot) {
-    const book = await prisma.books.findUnique({
-      where: { guid: bookGuid },
-      select: { root_account_guid: true },
-    });
-    bookRootGuid = book?.root_account_guid ?? null;
-  }
-
   const results: RecurringRunDefResult[] = [];
   let generated = 0;
 
@@ -556,7 +550,9 @@ export async function runDueRecurringInvoices(
         `;
         if (claimed.length === 0) break;
 
-        const invoice = await createInvoice({
+        // The definition's stored book is the only book in play here — this
+        // runs from a background job with no session to fall back on.
+        const invoice = await createInvoice(def.bookGuid, {
           ownerType: def.ownerType,
           ownerGuid: def.ownerGuid,
           dateOpened: occurrence,
@@ -565,12 +561,11 @@ export async function runDueRecurringInvoices(
           termsGuid: def.template.termsGuid ?? undefined,
           currencyGuid: def.template.currencyGuid,
           entries: def.template.entries,
-          bookGuid,
         });
 
         let posted = false;
-        if (def.autoPost && bookRootGuid) {
-          await postInvoice(invoice.guid, { postDate: occurrence, bookRootGuid });
+        if (def.autoPost) {
+          await postInvoice(def.bookGuid, invoice.guid, { postDate: occurrence });
           posted = true;
         }
 

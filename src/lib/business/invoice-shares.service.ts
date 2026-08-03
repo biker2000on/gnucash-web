@@ -21,7 +21,7 @@
 
 import { randomBytes } from 'node:crypto';
 import prisma from '@/lib/prisma';
-import { getAccountGuidsForBook } from '@/lib/book-scope';
+import { isEntityOwnedByBook } from './entity-ownership';
 import {
   getInvoiceWithStatus,
   InvoiceNotFoundError,
@@ -149,27 +149,13 @@ export type PublicShareView = PublicInvoiceView | PublicEstimateView;
 // ---------------------------------------------------------------------------
 
 /**
- * An invoice belongs to a book when its posting account, or any of its entry
- * accounts, sits under the book's root. Draft invoices (no post_acc) are
- * checked via their entry accounts.
+ * Ownership is authoritative (gnucash_web_business_entity_ownership): an
+ * invoice with no ownership row belongs to NO book. The former account-based
+ * inference is gone — an invoice whose entry accounts span books used to look
+ * like it belonged to both.
  */
 export async function isInvoiceInBook(invoiceGuid: string, bookGuid: string): Promise<boolean> {
-  const invoice = await prisma.invoices.findUnique({
-    where: { guid: invoiceGuid },
-    select: { guid: true, post_acc: true },
-  });
-  if (!invoice) return false;
-
-  const bookAccounts = new Set(await getAccountGuidsForBook(bookGuid));
-  if (invoice.post_acc && bookAccounts.has(invoice.post_acc)) return true;
-
-  const entries = await prisma.entries.findMany({
-    where: { OR: [{ invoice: invoiceGuid }, { bill: invoiceGuid }] },
-    select: { i_acct: true, b_acct: true },
-  });
-  return entries.some(
-    (e) => (e.i_acct && bookAccounts.has(e.i_acct)) || (e.b_acct && bookAccounts.has(e.b_acct)),
-  );
+  return isEntityOwnedByBook('invoice', invoiceGuid, bookGuid);
 }
 
 // ---------------------------------------------------------------------------
@@ -384,13 +370,14 @@ async function buildPublicInvoiceView(
   bookGuid: string,
   invoiceGuid: string,
 ): Promise<PublicInvoiceView | null> {
-  let view: InvoiceDetailView;
+  // The share row's book is the only book this token may read from.
+  let view: InvoiceDetailView | null;
   try {
-    view = await getInvoiceWithStatus(invoiceGuid);
+    view = await getInvoiceWithStatus(bookGuid, invoiceGuid);
   } catch {
     return null;
   }
-  if (view.type !== 'invoice') return null;
+  if (!view || view.type !== 'invoice') return null;
 
   const customerGuid = await endCustomerGuid(view);
   const customer = customerGuid

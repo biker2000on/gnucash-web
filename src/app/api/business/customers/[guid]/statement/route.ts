@@ -37,7 +37,7 @@ export async function GET(
       return NextResponse.json({ error: 'startDate must be on or before endDate' }, { status: 400 });
     }
 
-    const statement = await getCustomerStatement(guid, startDate, endDate);
+    const statement = await getCustomerStatement(roleResult.bookGuid, guid, startDate, endDate);
     return NextResponse.json(statement);
   } catch (error) {
     if (error instanceof StatementNotFoundError) {

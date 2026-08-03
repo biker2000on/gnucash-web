@@ -196,7 +196,29 @@ model books {
   name               String? @db.VarChar(255)
   description        String? @db.Text
 
-  budget_ownership gnucash_web_budget_ownership[]
+  budget_ownership          gnucash_web_budget_ownership[]
+  business_entity_ownership gnucash_web_business_entity_ownership[]
+}
+
+// App-owned scope for the native GnuCash business tables (customers, vendors,
+// employees, jobs, invoices, orders, billterms, taxtables). None of them carry
+// a book foreign key — GnuCash assumes one book per database — so ownership
+// lives here. Entity guid is polymorphic, hence no FK to the entity itself;
+// application code deletes the row alongside the entity.
+//
+// Missing ownership means "not mine", exactly as for budgets: an unattributed
+// row is invisible rather than visible to everyone.
+model gnucash_web_business_entity_ownership {
+  entity_type String   @db.VarChar(16)
+  entity_guid String   @db.VarChar(32)
+  book_guid   String   @db.VarChar(32)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  book books @relation(fields: [book_guid], references: [guid], onDelete: Cascade)
+
+  @@id([entity_type, entity_guid])
+  @@index([book_guid, entity_type], map: "idx_business_entity_ownership_book")
+  @@map("gnucash_web_business_entity_ownership")
 }
 
 // App-owned scope for native GnuCash budgets. The native budgets table has no

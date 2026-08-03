@@ -163,6 +163,49 @@ async function reportOrphanedBookGuids() {
 }
 
 /**
+ * Business entities the ownership backfill could not attribute to a book.
+ *
+ * Ownership is fail-closed — an unattributed entity is invisible to every book
+ * rather than visible to all of them — so a gap is a data-loss-shaped problem,
+ * not a leak. It still has to be loud, because the entity silently disappears
+ * from the UI until someone assigns it.
+ */
+async function reportUnattributedBusinessEntities() {
+    const entities: Array<[string, string]> = [
+        ['customer', 'customers'],
+        ['vendor', 'vendors'],
+        ['employee', 'employees'],
+        ['job', 'jobs'],
+        ['invoice', 'invoices'],
+        ['order', 'orders'],
+        ['billterm', 'billterms'],
+        ['taxtable', 'taxtables'],
+    ];
+    for (const [entityType, table] of entities) {
+        try {
+            const result = await query(
+                `SELECT COUNT(*)::int AS unattributed
+                   FROM ${table} e
+                  WHERE NOT EXISTS (
+                        SELECT 1 FROM gnucash_web_business_entity_ownership o
+                         WHERE o.entity_type = $1 AND o.entity_guid = e.guid)`,
+                [entityType],
+            );
+            const unattributed = Number(result.rows?.[0]?.unattributed ?? 0);
+            if (unattributed > 0) {
+                console.error(
+                    `  -> ${table}: ${unattributed} row(s) could not be attributed to a book and are ` +
+                    `hidden from every book until assigned. List them with: ` +
+                    `SELECT guid FROM ${table} e WHERE NOT EXISTS (SELECT 1 FROM gnucash_web_business_entity_ownership o WHERE o.entity_type = '${entityType}' AND o.entity_guid = e.guid);`,
+                );
+            }
+        } catch {
+            // Native business tables are absent on a non-business book — nothing to report.
+        }
+    }
+}
+
+/**
  * Creates the gnucash_web extension tables if they don't exist.
  * These tables are used for authentication and audit logging.
  */
@@ -1598,6 +1641,208 @@ async function createExtensionTables() {
         END $$;
     `;
 
+    // The native GnuCash business tables (customers, vendors, employees, jobs,
+    // invoices, orders, billterms, taxtables) carry no book foreign key —
+    // GnuCash assumes one book per database. Ownership therefore lives in an
+    // app-owned table, exactly as for budgets.
+    //
+    // The backfill is fail-closed and derives ownership only from links that
+    // cannot be ambiguous:
+    //   1. a posted invoice resolves through post_acc -> account -> book;
+    //   2. an employee resolves through ccard_guid;
+    //   3. an owner (customer/vendor/job) resolves when every invoice/job that
+    //      references it agrees on one book;
+    //   4. an unposted invoice, and an order, resolve from their owner;
+    //   5. billterms/taxtables resolve from the entities that reference them,
+    //      again only when unanimous;
+    //   6. anything still unattributed is assigned only when the database holds
+    //      exactly one book — otherwise it stays unowned and invisible, and is
+    //      reported by reportUnattributedBusinessEntities().
+    const businessEntityOwnershipTableDDL = `
+        DO $$
+        BEGIN
+        PERFORM pg_advisory_xact_lock(hashtext('gnucash_web_business_entity_ownership_schema'));
+
+        CREATE TABLE IF NOT EXISTS gnucash_web_business_entity_ownership (
+            entity_type VARCHAR(16) NOT NULL,
+            entity_guid VARCHAR(32) NOT NULL,
+            book_guid VARCHAR(32) NOT NULL
+                REFERENCES books(guid) ON DELETE CASCADE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (entity_type, entity_guid)
+        );
+        CREATE INDEX IF NOT EXISTS idx_business_entity_ownership_book
+            ON gnucash_web_business_entity_ownership(book_guid, entity_type);
+
+        CREATE OR REPLACE FUNCTION gnucash_web_prevent_business_owner_change()
+        RETURNS trigger AS $bizowner$
+        BEGIN
+            IF NEW.book_guid IS DISTINCT FROM OLD.book_guid THEN
+                RAISE EXCEPTION 'Business entity ownership is immutable';
+            END IF;
+            RETURN NEW;
+        END;
+        $bizowner$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS trg_business_entity_ownership_immutable
+            ON gnucash_web_business_entity_ownership;
+        CREATE TRIGGER trg_business_entity_ownership_immutable
+            BEFORE UPDATE OF book_guid ON gnucash_web_business_entity_ownership
+            FOR EACH ROW
+            EXECUTE FUNCTION gnucash_web_prevent_business_owner_change();
+
+        CREATE TEMP TABLE IF NOT EXISTS tmp_book_account (
+            book_guid VARCHAR(32),
+            account_guid VARCHAR(32)
+        ) ON COMMIT DROP;
+        DELETE FROM tmp_book_account;
+
+        WITH RECURSIVE book_accounts AS (
+            SELECT b.guid AS book_guid, a.guid AS account_guid
+            FROM books b
+            JOIN accounts a ON a.guid = b.root_account_guid
+            UNION ALL
+            SELECT ba.book_guid, child.guid
+            FROM book_accounts ba
+            JOIN accounts child ON child.parent_guid = ba.account_guid
+        )
+        INSERT INTO tmp_book_account
+        SELECT book_guid, account_guid FROM book_accounts;
+
+        -- account -> book, only where unambiguous
+        CREATE TEMP TABLE IF NOT EXISTS tmp_account_book (
+            account_guid VARCHAR(32) PRIMARY KEY,
+            book_guid VARCHAR(32)
+        ) ON COMMIT DROP;
+        DELETE FROM tmp_account_book;
+        INSERT INTO tmp_account_book
+        SELECT account_guid, MIN(book_guid)
+        FROM tmp_book_account
+        GROUP BY account_guid
+        HAVING COUNT(DISTINCT book_guid) = 1;
+
+        -- 1. posted invoices
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'invoice', i.guid, ab.book_guid
+        FROM invoices i
+        JOIN tmp_account_book ab ON ab.account_guid = i.post_acc
+        ON CONFLICT DO NOTHING;
+
+        -- 2. employees via their credit-card account
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'employee', e.guid, ab.book_guid
+        FROM employees e
+        JOIN tmp_account_book ab ON ab.account_guid = e.ccard_guid
+        ON CONFLICT DO NOTHING;
+
+        -- 3. owners referenced by already-attributed invoices (unanimous only)
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT owner_kind, owner_guid, MIN(book_guid)
+        FROM (
+            SELECT CASE i.owner_type WHEN 2 THEN 'customer' WHEN 3 THEN 'job'
+                                     WHEN 4 THEN 'vendor'   WHEN 5 THEN 'employee' END AS owner_kind,
+                   i.owner_guid, o.book_guid
+            FROM invoices i
+            JOIN gnucash_web_business_entity_ownership o
+              ON o.entity_type = 'invoice' AND o.entity_guid = i.guid
+            WHERE i.owner_guid IS NOT NULL AND i.owner_type IN (2,3,4,5)
+        ) s
+        WHERE owner_kind IS NOT NULL
+        GROUP BY owner_kind, owner_guid
+        HAVING COUNT(DISTINCT book_guid) = 1
+        ON CONFLICT DO NOTHING;
+
+        -- 4. jobs from their owner, then invoices/orders from theirs
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'job', j.guid, o.book_guid
+        FROM jobs j
+        JOIN gnucash_web_business_entity_ownership o
+          ON o.entity_guid = j.owner_guid
+         AND o.entity_type = CASE j.owner_type WHEN 2 THEN 'customer' WHEN 4 THEN 'vendor' END
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'invoice', i.guid, o.book_guid
+        FROM invoices i
+        JOIN gnucash_web_business_entity_ownership o
+          ON o.entity_guid = i.owner_guid
+         AND o.entity_type = CASE i.owner_type WHEN 2 THEN 'customer' WHEN 3 THEN 'job'
+                                               WHEN 4 THEN 'vendor'   WHEN 5 THEN 'employee' END
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'order', ord.guid, o.book_guid
+        FROM orders ord
+        JOIN gnucash_web_business_entity_ownership o
+          ON o.entity_guid = ord.owner_guid
+         AND o.entity_type = CASE ord.owner_type WHEN 2 THEN 'customer' WHEN 3 THEN 'job'
+                                                 WHEN 4 THEN 'vendor'   WHEN 5 THEN 'employee' END
+        ON CONFLICT DO NOTHING;
+
+        -- 5. billterms / taxtables from the entities that reference them
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'billterm', term_guid, MIN(book_guid)
+        FROM (
+            SELECT c.terms AS term_guid, o.book_guid FROM customers c
+              JOIN gnucash_web_business_entity_ownership o
+                ON o.entity_type='customer' AND o.entity_guid=c.guid
+              WHERE c.terms IS NOT NULL
+            UNION ALL
+            SELECT v.terms, o.book_guid FROM vendors v
+              JOIN gnucash_web_business_entity_ownership o
+                ON o.entity_type='vendor' AND o.entity_guid=v.guid
+              WHERE v.terms IS NOT NULL
+            UNION ALL
+            SELECT i.terms, o.book_guid FROM invoices i
+              JOIN gnucash_web_business_entity_ownership o
+                ON o.entity_type='invoice' AND o.entity_guid=i.guid
+              WHERE i.terms IS NOT NULL
+        ) t
+        GROUP BY term_guid
+        HAVING COUNT(DISTINCT book_guid) = 1
+        ON CONFLICT DO NOTHING;
+
+        INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+        SELECT 'taxtable', tt_guid, MIN(book_guid)
+        FROM (
+            SELECT c.taxtable AS tt_guid, o.book_guid FROM customers c
+              JOIN gnucash_web_business_entity_ownership o
+                ON o.entity_type='customer' AND o.entity_guid=c.guid
+              WHERE c.taxtable IS NOT NULL
+            UNION ALL
+            SELECT e.i_taxtable, o.book_guid FROM entries e
+              JOIN gnucash_web_business_entity_ownership o
+                ON o.entity_type='invoice' AND o.entity_guid=e.invoice
+              WHERE e.i_taxtable IS NOT NULL
+            UNION ALL
+            SELECT e.b_taxtable, o.book_guid FROM entries e
+              JOIN gnucash_web_business_entity_ownership o
+                ON o.entity_type='invoice' AND o.entity_guid=e.invoice
+              WHERE e.b_taxtable IS NOT NULL
+        ) t
+        GROUP BY tt_guid
+        HAVING COUNT(DISTINCT book_guid) = 1
+        ON CONFLICT DO NOTHING;
+
+        -- 6. single-book database: nothing can be ambiguous, so adopt the rest
+        IF (SELECT COUNT(*) FROM books) = 1 THEN
+            INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)
+            SELECT k, g, (SELECT guid FROM books)
+            FROM (
+                SELECT 'customer' k, guid g FROM customers
+                UNION ALL SELECT 'vendor', guid FROM vendors
+                UNION ALL SELECT 'employee', guid FROM employees
+                UNION ALL SELECT 'job', guid FROM jobs
+                UNION ALL SELECT 'invoice', guid FROM invoices
+                UNION ALL SELECT 'order', guid FROM orders
+                UNION ALL SELECT 'billterm', guid FROM billterms
+                UNION ALL SELECT 'taxtable', guid FROM taxtables
+            ) all_entities
+            ON CONFLICT DO NOTHING;
+        END IF;
+        END $$;
+    `;
+
     // Envelope configuration is also lazily guarded by budget-envelope.ts,
     // but startup must install its lifecycle FK before import/book deletion
     // can recycle a native budget GUID. Valid legacy rows are preserved;
@@ -2068,6 +2313,7 @@ async function createExtensionTables() {
         await query(bookSettingsTableDDL);
         await query(receiptsHsaColumnsDDL);
         await query(budgetOwnershipTableDDL);
+        await query(businessEntityOwnershipTableDDL);
         await query(budgetEnvelopesTableDDL);
         await query(budgetFundingRulesTableDDL);
         await query(renewalsTableDDL);
@@ -2095,6 +2341,7 @@ async function createExtensionTables() {
             );
             await reportOrphanedBookGuids();
         }
+        await reportUnattributedBusinessEntities();
 
         // Backfill: grant admin on all books to existing users with no permissions
         await query(`

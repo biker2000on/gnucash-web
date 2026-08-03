@@ -16,6 +16,10 @@
  *   - list/get are restricted to owner_type=5 rows and re-typed as
  *     'voucher' so vouchers never mix into the invoice/bill lists
  *     (the engine's listInvoices intentionally excludes employee documents).
+ *
+ * A voucher IS an invoice row, so book scope resolves through the shared
+ * 'invoice' ownership side table: every entry point takes the owning book as
+ * its first argument and a foreign guid reads as not found.
  */
 
 import prisma from '@/lib/prisma';
@@ -33,7 +37,6 @@ import {
   OWNER_TYPE_EMPLOYEE,
   nextCounterId,
   type CounterDb,
-  type PrismaTx,
   type InvoiceView,
   type InvoiceDetailView,
   type InvoiceEntryInput,
@@ -43,6 +46,7 @@ import {
   type PaymentView,
 } from './invoice-engine';
 import { type InvoiceStatus } from './invoice-totals';
+import { isEntityOwnedByBook, listOwnedEntityGuids } from './entity-ownership';
 
 /** Book counter name GnuCash desktop uses for expense vouchers. */
 export const VOUCHER_COUNTER = 'gncExpVoucher';
@@ -81,7 +85,10 @@ export async function nextVoucherId(db: VoucherCounterDb, bookGuid: string): Pro
 /* Guards                                                               */
 /* ------------------------------------------------------------------ */
 
-async function assertVoucher(guid: string): Promise<void> {
+async function assertVoucher(bookGuid: string, guid: string): Promise<void> {
+  if (!(await isEntityOwnedByBook('invoice', guid, bookGuid))) {
+    throw new InvoiceNotFoundError(`Voucher not found: ${guid}`);
+  }
   const row = await prisma.invoices.findUnique({
     where: { guid },
     select: { owner_type: true },
@@ -117,7 +124,7 @@ export async function createVoucher(input: CreateVoucherInput): Promise<VoucherD
     : await prisma.$transaction((tx) =>
         nextVoucherId(tx as unknown as VoucherCounterDb, input.bookGuid),
       );
-  const view = await createInvoice({
+  const view = await createInvoice(input.bookGuid, {
     ownerType: 'employee',
     ownerGuid: input.employeeGuid,
     id,
@@ -125,7 +132,6 @@ export async function createVoucher(input: CreateVoucherInput): Promise<VoucherD
     notes: input.notes,
     billingId: input.billingId,
     entries: input.entries,
-    bookGuid: input.bookGuid,
   });
   return asVoucher(view);
 }
@@ -139,30 +145,43 @@ export interface UpdateVoucherInput {
   entries?: InvoiceEntryInput[];
 }
 
-export async function updateVoucher(guid: string, input: UpdateVoucherInput): Promise<VoucherDetailView> {
-  await assertVoucher(guid);
-  return asVoucher(await updateInvoice(guid, input));
+export async function updateVoucher(
+  bookGuid: string,
+  guid: string,
+  input: UpdateVoucherInput,
+): Promise<VoucherDetailView> {
+  await assertVoucher(bookGuid, guid);
+  const view = await updateInvoice(bookGuid, guid, input);
+  if (!view) throw new InvoiceNotFoundError(`Voucher not found: ${guid}`);
+  return asVoucher(view);
 }
 
-export async function deleteVoucher(guid: string): Promise<void> {
-  await assertVoucher(guid);
-  await deleteInvoice(guid);
+export async function deleteVoucher(bookGuid: string, guid: string): Promise<void> {
+  await assertVoucher(bookGuid, guid);
+  const deleted = await deleteInvoice(bookGuid, guid);
+  if (!deleted) throw new InvoiceNotFoundError(`Voucher not found: ${guid}`);
 }
 
-export async function getVoucher(guid: string): Promise<VoucherDetailView> {
-  await assertVoucher(guid);
-  return asVoucher(await getInvoiceWithStatus(guid));
+export async function getVoucher(bookGuid: string, guid: string): Promise<VoucherDetailView> {
+  await assertVoucher(bookGuid, guid);
+  const view = await getInvoiceWithStatus(bookGuid, guid);
+  if (!view) throw new InvoiceNotFoundError(`Voucher not found: ${guid}`);
+  return asVoucher(view);
 }
 
 /** Post to A/P: credit Accounts Payable, debit the expense accounts. */
-export async function postVoucher(guid: string, input: PostInvoiceInput): Promise<PostResult> {
-  await assertVoucher(guid);
-  return postInvoice(guid, input);
+export async function postVoucher(
+  bookGuid: string,
+  guid: string,
+  input: PostInvoiceInput,
+): Promise<PostResult> {
+  await assertVoucher(bookGuid, guid);
+  return postInvoice(bookGuid, guid, input);
 }
 
-export async function unpostVoucher(guid: string): Promise<void> {
-  await assertVoucher(guid);
-  return unpostInvoice(guid);
+export async function unpostVoucher(bookGuid: string, guid: string): Promise<void> {
+  await assertVoucher(bookGuid, guid);
+  return unpostInvoice(bookGuid, guid);
 }
 
 export interface PayVoucherInput {
@@ -179,8 +198,14 @@ export interface PayVoucherInput {
 }
 
 /** Reimburse the employee through the engine's lot-linked payment path. */
-export async function payVouchers(input: PayVoucherInput): Promise<PaymentResult> {
-  return applyPayment({
+export async function payVouchers(
+  bookGuid: string,
+  input: PayVoucherInput,
+): Promise<PaymentResult> {
+  for (const allocation of input.allocations ?? []) {
+    await assertVoucher(bookGuid, allocation.invoiceGuid);
+  }
+  return applyPayment(bookGuid, {
     ownerType: 'employee',
     ownerGuid: input.employeeGuid,
     transferAccountGuid: input.transferAccountGuid,
@@ -192,8 +217,11 @@ export async function payVouchers(input: PayVoucherInput): Promise<PaymentResult
   });
 }
 
-export async function listVoucherPayments(employeeGuid: string): Promise<PaymentView[]> {
-  return listPayments('employee', employeeGuid);
+export async function listVoucherPayments(
+  bookGuid: string,
+  employeeGuid: string,
+): Promise<PaymentView[]> {
+  return listPayments(bookGuid, 'employee', employeeGuid);
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,9 +235,17 @@ export interface ListVouchersFilters {
   offset?: number;
 }
 
-export async function listVouchers(filters: ListVouchersFilters = {}): Promise<VoucherView[]> {
+export async function listVouchers(
+  bookGuid: string,
+  filters: ListVouchersFilters = {},
+): Promise<VoucherView[]> {
+  const ownedGuids = await listOwnedEntityGuids('invoice', bookGuid);
+  // No ownership rows means the book owns no documents — never an unfiltered read.
+  if (ownedGuids.length === 0) return [];
+
   const invoices = await prisma.invoices.findMany({
     where: {
+      guid: { in: ownedGuids },
       owner_type: OWNER_TYPE_EMPLOYEE,
       ...(filters.employeeGuid ? { owner_guid: filters.employeeGuid } : {}),
     },
@@ -219,8 +255,8 @@ export async function listVouchers(filters: ListVouchersFilters = {}): Promise<V
   const views: VoucherView[] = [];
   for (const inv of invoices) {
     try {
-      const view = await buildInvoiceView(prisma as unknown as PrismaTx, inv, { includeEntries: false });
-      views.push(asVoucher(view));
+      const view = await buildInvoiceView(bookGuid, inv.guid);
+      if (view) views.push(asVoucher(view));
     } catch {
       // Skip vouchers whose employee row is missing (orphaned data)
       continue;

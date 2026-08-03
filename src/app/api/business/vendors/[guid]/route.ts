@@ -24,7 +24,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const vendor = await getVendor(guid);
+    const vendor = await getVendor(roleResult.bookGuid, guid);
     if (!vendor) {
       return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
     }
@@ -47,7 +47,7 @@ export async function PUT(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const input = parseInput(vendorInputSchema, body);
-    const vendor = await updateVendor(guid, input);
+    const vendor = await updateVendor(roleResult.bookGuid, guid, input);
     if (!vendor) {
       return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
     }
@@ -75,7 +75,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const result = await deleteVendor(guid);
+    const result = await deleteVendor(roleResult.bookGuid, guid);
     if (!result) {
       return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
     }

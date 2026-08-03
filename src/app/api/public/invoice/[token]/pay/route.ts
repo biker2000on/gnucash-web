@@ -16,10 +16,15 @@ export async function POST(
     if (!target || target.estimateId !== null) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
+    // No session here: the book comes from the share row the token resolved
+    // to, and the engine returns null unless that book owns the invoice.
     const [connection, invoice] = await Promise.all([
       getStripeConnection(target.bookGuid),
-      getInvoiceWithStatus(target.invoiceRef),
+      getInvoiceWithStatus(target.bookGuid, target.invoiceRef),
     ]);
+    if (!invoice) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
     if (!connection || invoice.type !== 'invoice' || !invoice.posted || invoice.amountDue <= 0) {
       return NextResponse.json({ error: 'Online payment is not available' }, { status: 409 });
     }

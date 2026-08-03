@@ -14,6 +14,7 @@ import {
 import { cacheInvalidateAllForBook } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { deleteOwnedBudgetsForBook } from '@/lib/budget-ownership';
+import { deleteOwnedBusinessEntitiesForBook } from '@/lib/business/entity-ownership';
 import { hasTargetBookRole } from '@/lib/target-book-auth';
 
 /**
@@ -269,6 +270,11 @@ export async function DELETE(
             // Remove native budgets explicitly owned by this book. Native
             // recurrences use a restrictive FK, so they must go first.
             await deleteOwnedBudgetsForBook(tx, guid);
+
+            // Native business entities (customers, vendors, invoices, ...) also
+            // carry no book column. They must go before the transactions and
+            // accounts below, because a posted invoice references both.
+            await deleteOwnedBusinessEntitiesForBook(tx, guid);
 
             // Remove legacy/unowned budget amounts that still reference these
             // accounts. Ambiguous budgets remain unowned and fail closed.

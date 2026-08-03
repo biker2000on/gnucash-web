@@ -15,9 +15,9 @@
  *     same scheme as customers/vendors (nextEntityId)
  *   - employees referenced by vouchers (invoices owner_type=5) are never
  *     hard-deleted — they are deactivated instead
- *   - like the other business entity tables, employees have no book_guid
- *     column and are UNSCOPED (single-business-database assumption); the
- *     voucher summary IS book-scoped via post_acc
+ *   - the native table has no book_guid column, so every entry point takes the
+ *     owning book as its first argument and resolves ownership through
+ *     gnucash_web_business_entity_ownership (missing ownership = FOREIGN)
  */
 
 import { z } from 'zod';
@@ -30,6 +30,13 @@ import {
 } from '@/lib/services/business.service';
 import type { AddressDTO } from '@/lib/business-types';
 import { OWNER_TYPE_EMPLOYEE } from './invoice-engine';
+import {
+  deleteEntityOwnership,
+  isEntityOwnedByBook,
+  listOwnedEntityGuids,
+  recordEntityOwnership,
+  type EntityOwnershipClient,
+} from './entity-ownership';
 
 const WORKDAY_RATE_DENOM = 100;
 
@@ -167,10 +174,17 @@ export interface EmployeeListOptions {
   active?: 'active' | 'inactive' | 'all';
 }
 
-export async function listEmployees(options: EmployeeListOptions = {}): Promise<EmployeeDTO[]> {
+export async function listEmployees(
+  bookGuid: string,
+  options: EmployeeListOptions = {},
+): Promise<EmployeeDTO[]> {
   const { search, active = 'all' } = options;
+  const ownedGuids = await listOwnedEntityGuids('employee', bookGuid);
+  // No ownership rows means the book owns no employees — never an unfiltered read.
+  if (ownedGuids.length === 0) return [];
   const rows = await prisma.employees.findMany({
     where: {
+      guid: { in: ownedGuids },
       ...(active === 'active' ? { active: 1 } : active === 'inactive' ? { active: 0 } : {}),
       ...(search
         ? {
@@ -189,42 +203,60 @@ export async function listEmployees(options: EmployeeListOptions = {}): Promise<
   return rows.map((r) => mapEmployee(r, lookups));
 }
 
-export async function getEmployee(guid: string): Promise<EmployeeDTO | null> {
+export async function getEmployee(bookGuid: string, guid: string): Promise<EmployeeDTO | null> {
+  if (!(await isEntityOwnedByBook('employee', guid, bookGuid))) return null;
   const row = await prisma.employees.findUnique({ where: { guid } });
   if (!row) return null;
   const lookups = await employeeLookups([row]);
   return mapEmployee(row, lookups);
 }
 
-export async function createEmployee(input: EmployeeInput): Promise<EmployeeDTO> {
+export async function createEmployee(bookGuid: string, input: EmployeeInput): Promise<EmployeeDTO> {
   const currencyGuid = await resolveCurrencyGuid(input.currency);
-  const existing = await prisma.employees.findMany({ select: { id: true } });
   const workday = fromDecimal(input.workday, WORKDAY_RATE_DENOM);
   const rate = fromDecimal(input.rate, WORKDAY_RATE_DENOM);
   const guid = generateGuid();
 
-  await prisma.employees.create({
-    data: {
+  // The insert and its ownership row share one transaction: an employee that
+  // no book owns would be invisible everywhere.
+  await prisma.$transaction(async (tx) => {
+    // The `id` counter spans the whole database, not the book — the native
+    // table is shared, so numbers must not collide across books.
+    const existing = await tx.employees.findMany({ select: { id: true } });
+    await tx.employees.create({
+      data: {
+        guid,
+        id: nextEntityId(existing.map((r) => r.id)),
+        username: input.username,
+        language: input.language,
+        acl: '',
+        active: input.active ? 1 : 0,
+        currency: currencyGuid,
+        ccard_guid: null,
+        workday_num: workday.num,
+        workday_denom: workday.denom,
+        rate_num: rate.num,
+        rate_denom: rate.denom,
+        ...addressColumns(input),
+      },
+    });
+    await recordEntityOwnership(
+      'employee',
       guid,
-      id: nextEntityId(existing.map((r) => r.id)),
-      username: input.username,
-      language: input.language,
-      acl: '',
-      active: input.active ? 1 : 0,
-      currency: currencyGuid,
-      ccard_guid: null,
-      workday_num: workday.num,
-      workday_denom: workday.denom,
-      rate_num: rate.num,
-      rate_denom: rate.denom,
-      ...addressColumns(input),
-    },
+      bookGuid,
+      tx as unknown as EntityOwnershipClient,
+    );
   });
 
-  return (await getEmployee(guid))!;
+  return (await getEmployee(bookGuid, guid))!;
 }
 
-export async function updateEmployee(guid: string, input: EmployeeInput): Promise<EmployeeDTO | null> {
+export async function updateEmployee(
+  bookGuid: string,
+  guid: string,
+  input: EmployeeInput,
+): Promise<EmployeeDTO | null> {
+  if (!(await isEntityOwnedByBook('employee', guid, bookGuid))) return null;
   const existing = await prisma.employees.findUnique({ where: { guid } });
   if (!existing) return null;
 
@@ -247,10 +279,11 @@ export async function updateEmployee(guid: string, input: EmployeeInput): Promis
     },
   });
 
-  return getEmployee(guid);
+  return getEmployee(bookGuid, guid);
 }
 
-export async function deleteEmployee(guid: string): Promise<DeleteResult | null> {
+export async function deleteEmployee(bookGuid: string, guid: string): Promise<DeleteResult | null> {
+  if (!(await isEntityOwnedByBook('employee', guid, bookGuid))) return null;
   const existing = await prisma.employees.findUnique({ where: { guid } });
   if (!existing) return null;
 
@@ -262,7 +295,10 @@ export async function deleteEmployee(guid: string): Promise<DeleteResult | null>
     return { deleted: false, deactivated: true };
   }
 
-  await prisma.employees.delete({ where: { guid } });
+  await prisma.$transaction(async (tx) => {
+    await tx.employees.delete({ where: { guid } });
+    await deleteEntityOwnership('employee', guid, tx as unknown as EntityOwnershipClient);
+  });
   return { deleted: true, deactivated: false };
 }
 

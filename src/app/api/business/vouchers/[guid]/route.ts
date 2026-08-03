@@ -13,7 +13,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const voucher = await getVoucher(guid);
+    const voucher = await getVoucher(roleResult.bookGuid, guid);
     return NextResponse.json({ voucher });
   } catch (error) {
     return mapInvoiceError(error);
@@ -35,7 +35,7 @@ export async function PUT(
 
     const { guid } = await params;
     const body = await request.json();
-    const voucher = await updateVoucher(guid, {
+    const voucher = await updateVoucher(roleResult.bookGuid, guid, {
       id: body.id,
       dateOpened: body.dateOpened,
       notes: body.notes,
@@ -59,7 +59,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    await deleteVoucher(guid);
+    await deleteVoucher(roleResult.bookGuid, guid);
     return NextResponse.json({ success: true });
   } catch (error) {
     return mapInvoiceError(error);

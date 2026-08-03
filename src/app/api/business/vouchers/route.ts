@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
     }
 
-    const vouchers = await listVouchers({
+    const vouchers = await listVouchers(roleResult.bookGuid, {
       status: (status as InvoiceStatus) ?? undefined,
       employeeGuid: searchParams.get('employeeGuid') ?? undefined,
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!, 10) : undefined,

@@ -3,6 +3,10 @@ import prisma from '@/lib/prisma';
 import { getAccountGuidsForBook } from '@/lib/book-scope';
 import { createVoucher, deleteVoucher, getVoucher } from '@/lib/business/vouchers';
 import { OWNER_TYPE_EMPLOYEE } from '@/lib/business/invoice-engine';
+import {
+  isEntityOwnedByBook,
+  listOwnedEntityGuids,
+} from '@/lib/business/entity-ownership';
 import { logAudit } from '@/lib/services/audit.service';
 
 export type ReimbursementStatus = 'submitted' | 'approved' | 'posted' | 'rejected';
@@ -113,9 +117,18 @@ const SELECT_REIMBURSEMENTS = `
 export class ReimbursementValidationError extends Error {}
 export class ReimbursementStateError extends Error {}
 
-export async function employeeForUsername(username: string): Promise<string | null> {
+/**
+ * Self-service identity for a timekeeper. Scoped to the book so a username
+ * that also exists as an employee in someone else's book never resolves.
+ */
+export async function employeeForUsername(
+  bookGuid: string,
+  username: string,
+): Promise<string | null> {
+  const ownedGuids = await listOwnedEntityGuids('employee', bookGuid);
+  if (ownedGuids.length === 0) return null;
   const row = await prisma.employees.findFirst({
-    where: { username: { equals: username, mode: 'insensitive' } },
+    where: { guid: { in: ownedGuids }, username: { equals: username, mode: 'insensitive' } },
     select: { guid: true },
   });
   return row?.guid ?? null;
@@ -180,10 +193,16 @@ export async function submitReimbursement(input: {
   if (input.dueDate && !validDateOnly(input.dueDate)) {
     throw new ReimbursementValidationError('Due date must be YYYY-MM-DD');
   }
-  const [employee, accountGuids] = await Promise.all([
-    prisma.employees.findUnique({ where: { guid: input.employeeGuid }, select: { guid: true, active: true } }),
+  const [employeeOwned, accountGuids] = await Promise.all([
+    isEntityOwnedByBook('employee', input.employeeGuid, input.bookGuid),
     getAccountGuidsForBook(input.bookGuid),
   ]);
+  const employee = employeeOwned
+    ? await prisma.employees.findUnique({
+        where: { guid: input.employeeGuid },
+        select: { guid: true, active: true },
+      })
+    : null;
   if (!employee || employee.active !== 1) {
     throw new ReimbursementValidationError('Select an active employee');
   }
@@ -257,17 +276,24 @@ export async function approveReimbursement(input: {
       }
 
       const billingId = `REIMB-${request.id}`;
-      const orphan = await prisma.invoices.findFirst({
-        where: {
-          owner_type: OWNER_TYPE_EMPLOYEE,
-          owner_guid: request.employeeGuid,
-          billing_id: billingId,
-          post_txn: null,
-        },
-        select: { guid: true },
-      });
+      // Restricted to this book's own documents: another book can hold a
+      // voucher with the same REIMB- billing id, and adopting it would attach
+      // a foreign document to this request.
+      const ownedInvoiceGuids = await listOwnedEntityGuids('invoice', input.bookGuid);
+      const orphan = ownedInvoiceGuids.length === 0
+        ? null
+        : await prisma.invoices.findFirst({
+            where: {
+              guid: { in: ownedInvoiceGuids },
+              owner_type: OWNER_TYPE_EMPLOYEE,
+              owner_guid: request.employeeGuid,
+              billing_id: billingId,
+              post_txn: null,
+            },
+            select: { guid: true },
+          });
       const voucher = orphan
-        ? await getVoucher(orphan.guid)
+        ? await getVoucher(input.bookGuid, orphan.guid)
         : await createVoucher({
             employeeGuid: request.employeeGuid,
             id: billingId,
@@ -341,7 +367,7 @@ export async function undoReimbursementDecision(
       const request = await getReimbursement(id, bookGuid);
       if (!request) throw new ReimbursementValidationError('Reimbursement request not found');
       if (request.status === 'approved' && request.voucherGuid) {
-        await deleteVoucher(request.voucherGuid);
+        await deleteVoucher(bookGuid, request.voucherGuid);
       } else if (request.status !== 'rejected') {
         throw new ReimbursementStateError('Only an unposted approval or rejection can be undone');
       }

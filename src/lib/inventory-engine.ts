@@ -65,6 +65,7 @@
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber, findOrCreateAccount } from '@/lib/gnucash';
 import { assertAccountNotLocked } from '@/lib/services/period-lock.service';
+import { isEntityOwnedByBook } from '@/lib/business/entity-ownership';
 import {
   ensureInventoryTables,
   mapItemRow,
@@ -1348,8 +1349,14 @@ interface InvoiceForFulfillment {
 /** Load + validate a POSTED customer invoice (job-owned resolving to a customer allowed). */
 async function loadPostedCustomerInvoice(
   tx: PrismaTx,
+  bookGuid: string,
   invoiceGuid: string,
 ): Promise<InvoiceForFulfillment> {
+  // `invoices` has no book_guid; a document this book does not own must read
+  // as missing, never as a fulfillable invoice.
+  if (!(await isEntityOwnedByBook('invoice', invoiceGuid, bookGuid))) {
+    throw new InventoryNotFoundError(`Invoice not found: ${invoiceGuid}`);
+  }
   const invoice = await tx.invoices.findUnique({ where: { guid: invoiceGuid } });
   if (!invoice) throw new InventoryNotFoundError(`Invoice not found: ${invoiceGuid}`);
 
@@ -1425,7 +1432,7 @@ export async function fulfillInvoiceLines(input: FulfillInput): Promise<FulfillR
 
   let result: FulfillResult | null = null;
   await prisma.$transaction(async (tx) => {
-    const invoice = await loadPostedCustomerInvoice(tx, input.invoiceGuid);
+    const invoice = await loadPostedCustomerInvoice(tx, input.bookGuid, input.invoiceGuid);
     const alreadyFulfilled = await getFulfilledByEntry(tx, input.invoiceGuid);
     validateFulfillmentAllocations(input.allocations, invoice.entryQuantities, alreadyFulfilled);
 
@@ -1488,7 +1495,7 @@ export async function returnToStock(input: FulfillInput): Promise<FulfillResult>
 
   let result: FulfillResult | null = null;
   await prisma.$transaction(async (tx) => {
-    const invoice = await loadPostedCustomerInvoice(tx, input.invoiceGuid);
+    const invoice = await loadPostedCustomerInvoice(tx, input.bookGuid, input.invoiceGuid);
     const fulfilledByEntry = await getFulfilledByEntry(tx, input.invoiceGuid);
     validateReturnAllocations(input.allocations, fulfilledByEntry);
 
@@ -1544,6 +1551,9 @@ export async function getInvoiceFulfillment(
 ): Promise<InvoiceFulfillmentView> {
   await ensureInventoryTables();
 
+  if (!(await isEntityOwnedByBook('invoice', invoiceGuid, bookGuid))) {
+    throw new InventoryNotFoundError(`Invoice not found: ${invoiceGuid}`);
+  }
   const invoice = await prisma.invoices.findUnique({ where: { guid: invoiceGuid } });
   if (!invoice) throw new InventoryNotFoundError(`Invoice not found: ${invoiceGuid}`);
 
@@ -1616,8 +1626,12 @@ interface BillForReceiving {
 /** Load + validate a POSTED vendor bill (job-owned resolving to a vendor allowed). */
 async function loadPostedVendorBill(
   tx: PrismaTx,
+  bookGuid: string,
   billGuid: string,
 ): Promise<BillForReceiving> {
+  if (!(await isEntityOwnedByBook('invoice', billGuid, bookGuid))) {
+    throw new InventoryNotFoundError(`Bill not found: ${billGuid}`);
+  }
   const bill = await tx.invoices.findUnique({ where: { guid: billGuid } });
   if (!bill) throw new InventoryNotFoundError(`Bill not found: ${billGuid}`);
 
@@ -1711,7 +1725,7 @@ export async function receiveFromBill(input: ReceiveFromBillInput): Promise<Rece
 
   let result: ReceiveFromBillResult | null = null;
   await prisma.$transaction(async (tx) => {
-    const bill = await loadPostedVendorBill(tx, input.billGuid);
+    const bill = await loadPostedVendorBill(tx, input.bookGuid, input.billGuid);
     const alreadyReceived = await getReceivedByEntry(tx, input.billGuid);
     validateReceiveAllocations(input.allocations, bill.entryQuantities, alreadyReceived);
 
@@ -1788,6 +1802,9 @@ export async function getBillReceiving(
 ): Promise<BillReceivingView> {
   await ensureInventoryTables();
 
+  if (!(await isEntityOwnedByBook('invoice', billGuid, bookGuid))) {
+    throw new InventoryNotFoundError(`Bill not found: ${billGuid}`);
+  }
   const bill = await prisma.invoices.findUnique({ where: { guid: billGuid } });
   if (!bill) throw new InventoryNotFoundError(`Bill not found: ${billGuid}`);
 

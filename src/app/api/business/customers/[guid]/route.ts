@@ -24,7 +24,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const customer = await getCustomer(guid);
+    const customer = await getCustomer(roleResult.bookGuid, guid);
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
@@ -47,7 +47,7 @@ export async function PUT(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const input = parseInput(customerInputSchema, body);
-    const customer = await updateCustomer(guid, input);
+    const customer = await updateCustomer(roleResult.bookGuid, guid, input);
     if (!customer) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }
@@ -75,7 +75,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const result = await deleteCustomer(guid);
+    const result = await deleteCustomer(roleResult.bookGuid, guid);
     if (!result) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }

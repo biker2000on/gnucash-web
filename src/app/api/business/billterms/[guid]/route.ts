@@ -25,7 +25,7 @@ export async function PUT(
     const { guid } = await params;
     const body = await request.json().catch(() => null);
     const input = parseInput(billtermInputSchema, body);
-    const billterm = await updateBillterm(guid, input);
+    const billterm = await updateBillterm(roleResult.bookGuid, guid, input);
     if (!billterm) {
       return NextResponse.json({ error: 'Bill terms not found' }, { status: 404 });
     }
@@ -53,7 +53,7 @@ export async function DELETE(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const result = await deleteBillterm(guid);
+    const result = await deleteBillterm(roleResult.bookGuid, guid);
     if (!result) {
       return NextResponse.json({ error: 'Bill terms not found' }, { status: 404 });
     }

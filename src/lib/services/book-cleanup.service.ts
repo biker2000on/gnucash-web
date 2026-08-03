@@ -84,6 +84,15 @@ export const EXCLUDED_BOOK_GUID_MODELS: Record<string, string> = {
     // Deleting it here first would orphan the native budgets permanently.
     gnucash_web_budget_ownership:
         'deleteOwnedBudgetsForBook deletes native budgets recurrence-first; ownership then cascades',
+
+    // Same lifecycle problem as budgets: these rows are the only record of
+    // which book owns a native customer/vendor/invoice. Deleting them with the
+    // generic sweep would strand those native rows permanently — unowned means
+    // foreign, so they would be invisible to every book. The book DELETE route
+    // calls deleteOwnedBusinessEntitiesForBook(), which removes the native
+    // entities child-first and drops these rows itself.
+    gnucash_web_business_entity_ownership:
+        'deleteOwnedBusinessEntitiesForBook deletes native business entities child-first, then these rows',
 };
 
 /**

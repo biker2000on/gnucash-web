@@ -1,7 +1,8 @@
 // src/app/api/business/jobs/route.ts
 //
 // Job list + create. A job belongs to a customer (owner_type=2) or a vendor
-// (owner_type=4). Unscoped like the other native business tables.
+// (owner_type=4), both of which must belong to the same book. Scope comes from
+// the ownership side table (see src/lib/business/entity-ownership.ts).
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
       active: activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all',
     };
 
-    return NextResponse.json(await listJobsEx(options));
+    return NextResponse.json(await listJobsEx(roleResult.bookGuid, options));
   } catch (error) {
     console.error('Error listing jobs:', error);
     return NextResponse.json({ error: 'Failed to list jobs' }, { status: 500 });
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null);
     const input = parseInput(jobExInputSchema, body);
-    const job = await createJobEx(input);
+    const job = await createJobEx(roleResult.bookGuid, input);
     return NextResponse.json(job, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessValidationError) {

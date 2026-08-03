@@ -1,8 +1,8 @@
 // src/app/api/business/employees/route.ts
 //
-// Employee list + create. NOTE: like the other native GnuCash business
-// tables, employees have no book_guid column and are unscoped
-// (single-business-database assumption) — see
+// Employee list + create. The native `employees` table has no book_guid, so
+// the book always comes from the session (never the request) and scoping is
+// resolved through the ownership side table — see
 // src/lib/business/employees.service.ts.
 
 import { NextResponse } from 'next/server';
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       active: activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all',
     };
 
-    return NextResponse.json(await listEmployees(options));
+    return NextResponse.json(await listEmployees(roleResult.bookGuid, options));
   } catch (error) {
     console.error('Error listing employees:', error);
     return NextResponse.json({ error: 'Failed to list employees' }, { status: 500 });
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null);
     const input = parseInput(employeeInputSchema, body);
-    const employee = await createEmployee(input);
+    const employee = await createEmployee(roleResult.bookGuid, input);
     return NextResponse.json(employee, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessValidationError) {

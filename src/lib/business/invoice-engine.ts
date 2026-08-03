@@ -51,6 +51,14 @@ import {
   getBookGuidForRoot,
 } from '@/lib/services/period-lock.service';
 import {
+  recordEntityOwnership,
+  isEntityOwnedByBook,
+  listOwnedEntityGuids,
+  deleteEntityOwnership,
+  type BusinessEntityType,
+  type EntityOwnershipClient,
+} from './entity-ownership';
+import {
   computeInvoiceTotals,
   buildPostingSplits,
   buildPaymentSplits,
@@ -140,8 +148,6 @@ export interface CreateInvoiceInput {
   /** Defaults to the owner's currency. */
   currencyGuid?: string;
   entries: InvoiceEntryInput[];
-  /** Active book guid (for the numbering counter). */
-  bookGuid: string;
 }
 
 export interface UpdateInvoiceInput {
@@ -164,8 +170,6 @@ export interface PostInvoiceInput {
   memo?: string;
   /** Transaction description override; defaults to the owner name. */
   description?: string;
-  /** Book root (A/R–A/P account discovery/bootstrap scope). */
-  bookRootGuid: string;
 }
 
 export interface ApplyPaymentInput {
@@ -344,6 +348,89 @@ async function resolveOwner(db: PrismaTx, ownerType: number, ownerGuid: string):
   throw new InvoiceValidationError(`Unsupported owner type: ${ownerType}`);
 }
 
+// ---------------------------------------------------------------------------
+// Book scope (audit S5)
+//
+// `invoices`, `entries`, `customers`, `vendors` and `jobs` are native GnuCash
+// tables with no book_guid — the desktop app assumes one book per database.
+// Ownership therefore lives in gnucash_web_business_entity_ownership and
+// MISSING OWNERSHIP MEANS FOREIGN: every entry point below takes the caller's
+// book as its first argument and treats an unowned document as not found.
+// ---------------------------------------------------------------------------
+
+function ownershipClient(db: PrismaTx): EntityOwnershipClient {
+  return db as unknown as EntityOwnershipClient;
+}
+
+function ownerEntityType(ownerType: number): BusinessEntityType {
+  if (ownerType === OWNER_TYPE_CUSTOMER) return 'customer';
+  if (ownerType === OWNER_TYPE_VENDOR) return 'vendor';
+  if (ownerType === OWNER_TYPE_JOB) return 'job';
+  if (ownerType === OWNER_TYPE_EMPLOYEE) return 'employee';
+  throw new InvoiceValidationError(`Unsupported owner type: ${ownerType}`);
+}
+
+/** Foreign owners are reported as missing — a book must not learn they exist. */
+async function assertOwnerInBook(
+  db: PrismaTx,
+  bookGuid: string,
+  ownerType: number,
+  ownerGuid: string,
+): Promise<void> {
+  const entityType = ownerEntityType(ownerType);
+  if (!(await isEntityOwnedByBook(entityType, ownerGuid, bookGuid, ownershipClient(db)))) {
+    throw new InvoiceNotFoundError(`${entityType} not found: ${ownerGuid}`);
+  }
+}
+
+async function assertInvoiceInBook(db: PrismaTx, bookGuid: string, guid: string): Promise<void> {
+  if (!(await isEntityOwnedByBook('invoice', guid, bookGuid, ownershipClient(db)))) {
+    throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
+  }
+}
+
+async function bookRootGuidFor(db: PrismaTx, bookGuid: string): Promise<string> {
+  const book = await db.books.findUnique({
+    where: { guid: bookGuid },
+    select: { root_account_guid: true },
+  });
+  if (!book) throw new InvoiceValidationError(`Book not found: ${bookGuid}`);
+  return book.root_account_guid;
+}
+
+/**
+ * Every referenced account must sit under the book's root. Posting or paying
+ * into another book's account would write splits into both books at once, so a
+ * foreign account is rejected as missing rather than used.
+ */
+async function assertAccountsInBook(
+  db: PrismaTx,
+  bookRootGuid: string,
+  accountGuids: Array<string | null | undefined>,
+  label: string,
+): Promise<void> {
+  const unique = Array.from(new Set(accountGuids.filter((g): g is string => Boolean(g))));
+  if (unique.length === 0) return;
+
+  const all: Array<{ guid: string; parent_guid: string | null }> = await db.accounts.findMany({
+    select: { guid: true, parent_guid: true },
+  });
+  const byGuid = new Map(all.map((a) => [a.guid, a]));
+  const underRoot = (guid: string): boolean => {
+    let cur = byGuid.get(guid) ?? null;
+    for (let i = 0; i < 200 && cur; i++) {
+      if (cur.guid === bookRootGuid) return true;
+      cur = cur.parent_guid ? (byGuid.get(cur.parent_guid) ?? null) : null;
+    }
+    return false;
+  };
+
+  const foreign = unique.filter((g) => !underRoot(g));
+  if (foreign.length > 0) {
+    throw new InvoiceNotFoundError(`${label} not found: ${foreign.join(', ')}`);
+  }
+}
+
 function ownerTypeNameToInt(name: OwnerTypeName): number {
   if (name === 'customer') return OWNER_TYPE_CUSTOMER;
   if (name === 'vendor') return OWNER_TYPE_VENDOR;
@@ -434,12 +521,17 @@ export interface CounterDb {
  * the loser re-checks after the lock and increments the winner's slot instead
  * of creating a duplicate; the max-numeric-id fallback also runs under that
  * lock. MUST be called inside a $transaction (xact-scoped advisory lock).
+ *
+ * `ownedGuids` scopes the max-numeric-id fallback to the book's own documents;
+ * without it the bootstrap path reads other books' invoice numbers. It is a
+ * lazy thunk because it is only needed on the (rare) bootstrap path.
  */
 export async function nextCounterId(
   db: CounterDb,
   bookGuid: string,
   counterName: string,
   fallbackOwnerType: number,
+  ownedGuids?: () => Promise<string[]>,
 ): Promise<string> {
   // GnuCash frame layout: book -> 'counters' frame -> child on the frame
   // guid; tolerate flat layouts (obj_guid = book guid, full-path name).
@@ -488,10 +580,18 @@ export async function nextCounterId(
   // Fallback: max numeric id among same-kind documents (job-owned ignored),
   // then persist a GnuCash-style counter so future numbering is stable and
   // desktop sees the counter.
-  const rows = await db.invoices.findMany({
-    where: { owner_type: fallbackOwnerType },
-    select: { id: true },
-  });
+  const scope = ownedGuids ? await ownedGuids() : null;
+  const rows = scope
+    ? scope.length > 0
+      ? await db.invoices.findMany({
+          where: { owner_type: fallbackOwnerType, guid: { in: scope } },
+          select: { id: true },
+        })
+      : []
+    : await db.invoices.findMany({
+        where: { owner_type: fallbackOwnerType },
+        select: { id: true },
+      });
   const next = nextIdFromExisting(rows.map((r) => r.id));
 
   let frameGuid = frame?.guid_val ?? null;
@@ -525,7 +625,9 @@ async function nextInvoiceId(
 ): Promise<string> {
   const counterName = kind === 'invoice' ? 'gncInvoice' : 'gncBill';
   const ownerType = kind === 'invoice' ? OWNER_TYPE_CUSTOMER : OWNER_TYPE_VENDOR;
-  return nextCounterId(db as unknown as CounterDb, bookGuid, counterName, ownerType);
+  return nextCounterId(db as unknown as CounterDb, bookGuid, counterName, ownerType, () =>
+    listOwnedEntityGuids('invoice', bookGuid, ownershipClient(db)),
+  );
 }
 
 /**
@@ -789,14 +891,29 @@ async function createEntryRows(
 // createInvoice / updateInvoice / deleteInvoice
 // ---------------------------------------------------------------------------
 
-export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceDetailView> {
+export async function createInvoice(
+  bookGuid: string,
+  input: CreateInvoiceInput,
+): Promise<InvoiceDetailView> {
   const guid = generateGuid();
   await prisma.$transaction(async (tx) => {
     const ownerTypeInt = ownerTypeNameToInt(input.ownerType);
+    // A document inherits its owner's book: billing another book's customer
+    // must fail rather than pull that customer into this book.
+    await assertOwnerInBook(tx, bookGuid, ownerTypeInt, input.ownerGuid);
     const owner = await resolveOwner(tx, ownerTypeInt, input.ownerGuid);
+    if (ownerTypeInt === OWNER_TYPE_JOB) {
+      await assertOwnerInBook(tx, bookGuid, owner.endType, owner.endGuid);
+    }
     const kind = owner.kind;
 
     await validateEntries(tx, kind, input.entries);
+    await assertAccountsInBook(
+      tx,
+      await bookRootGuidFor(tx, bookGuid),
+      input.entries.map((e) => e.accountGuid),
+      'Entry account(s)',
+    );
 
     const currencyGuid = input.currencyGuid ?? owner.currencyGuid;
     await getCurrencyFraction(tx, currencyGuid); // validates existence
@@ -811,7 +928,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceD
       : new Date();
     const id = input.id?.trim()
       ? input.id.trim()
-      : await nextInvoiceId(tx, input.bookGuid, kind);
+      : await nextInvoiceId(tx, bookGuid, kind);
 
     await tx.invoices.create({
       data: {
@@ -836,16 +953,34 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceD
       },
     });
 
+    // Same transaction as the insert: an invoice can never commit unowned.
+    await recordEntityOwnership('invoice', guid, bookGuid, ownershipClient(tx));
+
     await createEntryRows(tx, guid, kind, input.entries, dateOpened);
   });
 
-  return getInvoiceWithStatus(guid);
+  const view = await getInvoiceWithStatus(bookGuid, guid);
+  if (!view) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
+  return view;
 }
 
-export async function updateInvoice(guid: string, input: UpdateInvoiceInput): Promise<InvoiceDetailView> {
+/** Null when the invoice is missing or belongs to another book. */
+export async function updateInvoice(
+  bookGuid: string,
+  guid: string,
+  input: UpdateInvoiceInput,
+): Promise<InvoiceDetailView | null> {
+  let found = true;
   await prisma.$transaction(async (tx) => {
+    if (!(await isEntityOwnedByBook('invoice', guid, bookGuid, ownershipClient(tx)))) {
+      found = false;
+      return;
+    }
     const invoice = await tx.invoices.findUnique({ where: { guid } });
-    if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
+    if (!invoice) {
+      found = false;
+      return;
+    }
     if (invoice.post_txn) {
       throw new InvoiceStateError('Cannot edit a posted invoice — unpost it first');
     }
@@ -878,6 +1013,12 @@ export async function updateInvoice(guid: string, input: UpdateInvoiceInput): Pr
 
     if (input.entries) {
       await validateEntries(tx, kind, input.entries);
+      await assertAccountsInBook(
+        tx,
+        await bookRootGuidFor(tx, bookGuid),
+        input.entries.map((e) => e.accountGuid),
+        'Entry account(s)',
+      );
       await tx.entries.deleteMany({
         where: kind === 'invoice' ? { invoice: guid } : { bill: guid },
       });
@@ -885,34 +1026,60 @@ export async function updateInvoice(guid: string, input: UpdateInvoiceInput): Pr
     }
   });
 
-  return getInvoiceWithStatus(guid);
+  if (!found) return null;
+  return getInvoiceWithStatus(bookGuid, guid);
 }
 
-export async function deleteInvoice(guid: string): Promise<void> {
+/** Null when the invoice is missing or belongs to another book. */
+export async function deleteInvoice(
+  bookGuid: string,
+  guid: string,
+): Promise<{ guid: string } | null> {
+  let found = true;
   await prisma.$transaction(async (tx) => {
+    if (!(await isEntityOwnedByBook('invoice', guid, bookGuid, ownershipClient(tx)))) {
+      found = false;
+      return;
+    }
     const invoice = await tx.invoices.findUnique({ where: { guid } });
-    if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
+    if (!invoice) {
+      found = false;
+      return;
+    }
     if (invoice.post_txn) {
       throw new InvoiceStateError('Cannot delete a posted invoice — unpost it first');
     }
     await tx.entries.deleteMany({ where: { OR: [{ invoice: guid }, { bill: guid }] } });
     await deleteSlotsRecursive(tx, guid);
     await tx.invoices.delete({ where: { guid } });
+    // The ownership row dies with the invoice, in the same transaction.
+    await deleteEntityOwnership('invoice', guid, ownershipClient(tx));
   });
+  return found ? { guid } : null;
 }
 
 // ---------------------------------------------------------------------------
 // postInvoice / unpostInvoice
 // ---------------------------------------------------------------------------
 
-export async function postInvoice(guid: string, input: PostInvoiceInput): Promise<PostResult> {
+export async function postInvoice(
+  bookGuid: string,
+  guid: string,
+  input: PostInvoiceInput,
+): Promise<PostResult> {
   let result: PostResult | null = null;
 
+  // A/R–A/P discovery scope is DERIVED from the caller's book, never supplied:
+  // posting into another book's receivable account would corrupt both books.
+  const bookRootGuid = await bookRootGuidFor(prisma as unknown as PrismaTx, bookGuid);
+
   // Period lock: posting creates the A/R–A/P transaction at postDate
-  const lockBookGuid = await getBookGuidForRoot(input.bookRootGuid);
+  const lockBookGuid = await getBookGuidForRoot(bookRootGuid);
   if (lockBookGuid) await assertNotLocked(lockBookGuid, [input.postDate]);
 
   await prisma.$transaction(async (tx) => {
+    await assertInvoiceInBook(tx, bookGuid, guid);
+
     // Serialize concurrent posts of the same invoice: without this row lock,
     // two posts can both pass the already-posted check below and double-book
     // A/R. The loser blocks here until the winner commits, then re-reads the
@@ -961,8 +1128,8 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
       dueDate = computeDueDate(postDate, term);
     }
 
-    // A/R–A/P account
-    const postAccountGuid = await findOrCreatePostAccount(tx, kind, input.bookRootGuid, invoice.currency);
+    // A/R–A/P account (constrained to the book root resolved above)
+    const postAccountGuid = await findOrCreatePostAccount(tx, kind, bookRootGuid, invoice.currency);
 
     // Lot on the A/R–A/P account, tagged with the invoice guid
     const lotGuid = generateGuid();
@@ -1003,6 +1170,14 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
 
     // Splits
     const splitSpecs = buildPostingSplits(kind, totals, lines, postAccountGuid, input.memo ?? '');
+    // Covers the A/R–A/P account plus every income/expense and tax account the
+    // lines reach: no split of this posting may land outside the book.
+    await assertAccountsInBook(
+      tx,
+      bookRootGuid,
+      splitSpecs.map((s) => s.accountGuid),
+      'Posting account(s)',
+    );
     for (const spec of splitSpecs) {
       const frac = fromDecimal(spec.value, fraction);
       await tx.splits.create({
@@ -1046,8 +1221,10 @@ export async function postInvoice(guid: string, input: PostInvoiceInput): Promis
   return result!;
 }
 
-export async function unpostInvoice(guid: string): Promise<void> {
+export async function unpostInvoice(bookGuid: string, guid: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    await assertInvoiceInBook(tx, bookGuid, guid);
+
     // Mirror of the postInvoice lock: serialize unpost against a concurrent
     // post/unpost/payment of the same invoice so the state checks below run
     // against committed state (a double unpost gets 'Invoice is not posted'
@@ -1124,11 +1301,16 @@ interface OpenDocument {
   amountDue: number;
 }
 
-/** Where clause matching all POSTED documents of an owner (jobs included). */
+/**
+ * Where clause matching all POSTED documents of an owner (jobs included),
+ * restricted to the documents this book owns. `ownedGuids` is the ownership
+ * filter: an empty list means the book owns none, never "no filter".
+ */
 async function postedOwnerDocsWhere(
   db: PrismaTx,
   endOwnerType: number,
   ownerGuid: string,
+  ownedGuids: string[],
 ): Promise<Prisma.invoicesWhereInput> {
   const jobs: Array<{ guid: string }> = await db.jobs.findMany({
     where: { owner_type: endOwnerType, owner_guid: ownerGuid },
@@ -1136,6 +1318,7 @@ async function postedOwnerDocsWhere(
   });
   const jobGuids = jobs.map((j) => j.guid);
   return {
+    guid: { in: ownedGuids },
     post_txn: { not: null },
     OR: [
       { owner_type: endOwnerType, owner_guid: ownerGuid },
@@ -1185,7 +1368,10 @@ async function loadOpenDocuments(
   return docs;
 }
 
-export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentResult> {
+export async function applyPayment(
+  bookGuid: string,
+  input: ApplyPaymentInput,
+): Promise<PaymentResult> {
   if (!(input.amount > 0)) {
     throw new InvoiceValidationError('Payment amount must be positive');
   }
@@ -1216,15 +1402,26 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
 
   await prisma.$transaction(async (tx) => {
     const endOwnerType = ownerTypeNameToInt(input.ownerType);
+    await assertOwnerInBook(tx, bookGuid, endOwnerType, input.ownerGuid);
     const owner = await resolveOwner(tx, endOwnerType, input.ownerGuid);
     const kind: InvoiceKind = owner.kind;
+
+    // The money side must stay inside the book too.
+    await assertAccountsInBook(
+      tx,
+      await bookRootGuidFor(tx, bookGuid),
+      [input.transferAccountGuid],
+      'Transfer account',
+    );
+
+    const ownedInvoiceGuids = await listOwnedEntityGuids('invoice', bookGuid, ownershipClient(tx));
 
     // Serialize concurrent payments for this owner: lock every posted
     // document row (deterministic guid order avoids deadlocks) BEFORE
     // amountDue is computed from lot splits, so the second payment blocks
     // here and then re-validates against post-first-payment balances
     // (over-application then hits the normal validation errors below).
-    const docsWhere = await postedOwnerDocsWhere(tx, endOwnerType, input.ownerGuid);
+    const docsWhere = await postedOwnerDocsWhere(tx, endOwnerType, input.ownerGuid, ownedInvoiceGuids);
     const lockCandidates: Array<{ guid: string }> = await tx.invoices.findMany({
       where: docsWhere,
       select: { guid: true },
@@ -1407,10 +1604,17 @@ export async function applyPayment(input: ApplyPaymentInput): Promise<PaymentRes
 }
 
 export async function listPayments(
+  bookGuid: string,
   ownerType: 'customer' | 'vendor' | 'employee',
   ownerGuid: string,
 ): Promise<PaymentView[]> {
   const endOwnerType = ownerTypeNameToInt(ownerType);
+  if (!(await isEntityOwnedByBook(ownerEntityType(endOwnerType), ownerGuid, bookGuid))) {
+    return [];
+  }
+  const ownedInvoiceGuids = await listOwnedEntityGuids('invoice', bookGuid);
+  if (ownedInvoiceGuids.length === 0) return [];
+
   const owner = await resolveOwner(prisma as unknown as PrismaTx, endOwnerType, ownerGuid);
   const kind = owner.kind;
 
@@ -1421,6 +1625,7 @@ export async function listPayments(
   const jobGuids = jobs.map((j) => j.guid);
   const invoices = await prisma.invoices.findMany({
     where: {
+      guid: { in: ownedInvoiceGuids },
       post_lot: { not: null },
       OR: [
         { owner_type: endOwnerType, owner_guid: ownerGuid },
@@ -1506,7 +1711,12 @@ interface InvoiceViewPreload {
   billTerm: BillTermSpec | null;
 }
 
-export async function buildInvoiceView(
+/**
+ * Compose a view from an already-fetched invoice row. Book scope is the
+ * CALLER's responsibility here — every exported entry point checks ownership
+ * before handing a row to this function.
+ */
+export async function composeInvoiceView(
   db: PrismaTx,
   invoice: InvoiceRow,
   opts: { includeEntries: boolean },
@@ -1631,15 +1841,42 @@ export async function buildInvoiceView(
   };
 }
 
-export async function getInvoiceWithStatus(guid: string): Promise<InvoiceDetailView> {
+/**
+ * Full detail view of ONE invoice, or null when it is missing or owned by
+ * another book (callers map null to 404 — a foreign guid is indistinguishable
+ * from an unknown one).
+ */
+export async function buildInvoiceView(
+  bookGuid: string,
+  guid: string,
+): Promise<InvoiceDetailView | null> {
+  if (!(await isEntityOwnedByBook('invoice', guid, bookGuid))) return null;
   const invoice = await prisma.invoices.findUnique({ where: { guid } });
-  if (!invoice) throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
-  return buildInvoiceView(prisma as unknown as PrismaTx, invoice, { includeEntries: true });
+  if (!invoice) return null;
+  return composeInvoiceView(prisma as unknown as PrismaTx, invoice, { includeEntries: true });
 }
 
-export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<InvoiceView[]> {
+/** Null when the invoice is missing or belongs to another book. */
+export async function getInvoiceWithStatus(
+  bookGuid: string,
+  guid: string,
+): Promise<InvoiceDetailView | null> {
+  return buildInvoiceView(bookGuid, guid);
+}
+
+export async function listInvoices(
+  bookGuid: string,
+  filters: ListInvoicesFilters = {},
+): Promise<InvoiceView[]> {
+  // An empty ownership list means "this book owns none" — never "no filter".
+  const ownedGuids = await listOwnedEntityGuids('invoice', bookGuid);
+  if (ownedGuids.length === 0) return [];
+
   const invoices = await prisma.invoices.findMany({
-    where: filters.ownerGuid ? { owner_guid: filters.ownerGuid } : undefined,
+    where: {
+      guid: { in: ownedGuids },
+      ...(filters.ownerGuid ? { owner_guid: filters.ownerGuid } : {}),
+    },
     orderBy: [{ date_opened: 'desc' }],
   });
   if (invoices.length === 0) return [];
@@ -1831,7 +2068,7 @@ export async function listInvoices(filters: ListInvoicesFilters = {}): Promise<I
   const views: InvoiceView[] = [];
   for (const { inv, owner } of page) {
     try {
-      const view = await buildInvoiceView(prisma as unknown as PrismaTx, inv, { includeEntries: false }, {
+      const view = await composeInvoiceView(prisma as unknown as PrismaTx, inv, { includeEntries: false }, {
         owner,
         entryRows: entriesByDoc.get(`${owner.kind === 'invoice' ? 'i' : 'b'}:${inv.guid}`) ?? [],
         taxTables,

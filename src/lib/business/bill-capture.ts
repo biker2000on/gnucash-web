@@ -25,6 +25,7 @@
 import prisma from '@/lib/prisma';
 import { intakeReceipt } from '@/lib/services/document-intake';
 import { createInvoice } from './invoice-engine';
+import { isEntityOwnedByBook, listOwnedEntityGuids } from './entity-ownership';
 import { findOrCreateAccount } from '@/lib/gnucash';
 
 export const EMAIL_BILL_EXPENSE_PATH = 'Expenses:Uncategorized';
@@ -308,7 +309,7 @@ async function createDraftBill(params: {
     params.vendorCurrencyGuid,
   );
 
-  const invoice = await createInvoice({
+  const invoice = await createInvoice(params.bookGuid, {
     ownerType: 'vendor',
     ownerGuid: params.vendorGuid,
     dateOpened: params.date ?? undefined,
@@ -321,7 +322,6 @@ async function createDraftBill(params: {
         accountGuid: expenseAccountGuid,
       },
     ],
-    bookGuid: params.bookGuid,
   });
   return invoice.guid;
 }
@@ -361,10 +361,15 @@ export async function processPendingEmailBill(receiptId: number): Promise<void> 
       SELECT extracted_data FROM gnucash_web_receipts WHERE id = ${receiptId} LIMIT 1`;
     const extracted = readExtracted(receiptRows[0]?.extracted_data);
 
-    const vendors = await prisma.vendors.findMany({
-      where: { active: 1 },
-      select: { guid: true, name: true, currency: true },
-    });
+    // Match only against vendors the capturing book owns — the native
+    // `vendors` table is shared across books.
+    const ownedVendorGuids = await listOwnedEntityGuids('vendor', bill.bookGuid);
+    const vendors = ownedVendorGuids.length === 0
+      ? []
+      : await prisma.vendors.findMany({
+          where: { guid: { in: ownedVendorGuids }, active: 1 },
+          select: { guid: true, name: true, currency: true },
+        });
     const matched =
       matchVendorByName(extracted.vendor, vendors) ??
       matchVendorByName(extracted.vendorNormalized, vendors);
@@ -502,10 +507,13 @@ export async function resolveEmailBill(params: {
   const priorStatus = claimed[0].prior_status;
 
   try {
-    const vendor = await prisma.vendors.findUnique({
-      where: { guid: params.vendorGuid },
-      select: { guid: true, name: true, currency: true },
-    });
+    const owned = await isEntityOwnedByBook('vendor', params.vendorGuid, bill.bookGuid);
+    const vendor = owned
+      ? await prisma.vendors.findUnique({
+          where: { guid: params.vendorGuid },
+          select: { guid: true, name: true, currency: true },
+        })
+      : null;
     if (!vendor) throw new EmailBillNotFoundError(`Vendor not found: ${params.vendorGuid}`);
 
     const amount = params.amount ?? bill.amount;

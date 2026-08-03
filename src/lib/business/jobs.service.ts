@@ -83,14 +83,17 @@ export async function setJobRate(jobGuid: string, rate: number | null): Promise<
 /* Reads / CRUD                                                         */
 /* ------------------------------------------------------------------ */
 
-export async function listJobsEx(options: JobListOptions = {}): Promise<JobExDTO[]> {
-  const jobs = await listJobs(options);
+export async function listJobsEx(
+  bookGuid: string,
+  options: JobListOptions = {},
+): Promise<JobExDTO[]> {
+  const jobs = await listJobs(bookGuid, options);
   const rates = await getJobRates(jobs.map((j) => j.guid));
   return jobs.map((j) => ({ ...j, rate: rates.get(j.guid) ?? null }));
 }
 
-export async function getJobEx(guid: string): Promise<JobExDTO | null> {
-  const job = await getJob(guid);
+export async function getJobEx(bookGuid: string, guid: string): Promise<JobExDTO | null> {
+  const job = await getJob(bookGuid, guid);
   if (!job) return null;
   const rates = await getJobRates([guid]);
   return { ...job, rate: rates.get(guid) ?? null };
@@ -106,10 +109,10 @@ export const jobExInputSchema = z.object({
 });
 export type JobExInput = z.infer<typeof jobExInputSchema>;
 
-export async function createJobEx(input: JobExInput): Promise<JobExDTO> {
-  const job = await createJob(input as JobInput);
+export async function createJobEx(bookGuid: string, input: JobExInput): Promise<JobExDTO> {
+  const job = await createJob(bookGuid, input as JobInput);
   if (input.rate !== undefined) await setJobRate(job.guid, input.rate ?? null);
-  return (await getJobEx(job.guid))!;
+  return (await getJobEx(bookGuid, job.guid))!;
 }
 
 /** PATCH schema: every field optional; `rate: null` clears the slot. */
@@ -127,8 +130,12 @@ export type JobPatch = z.infer<typeof jobPatchSchema>;
  * Partial update: merge the patch onto the existing job, then apply via the
  * base full-update (owner re-validated there). Rate handled separately.
  */
-export async function updateJobPartial(guid: string, patch: JobPatch): Promise<JobExDTO | null> {
-  const existing = await getJob(guid);
+export async function updateJobPartial(
+  bookGuid: string,
+  guid: string,
+  patch: JobPatch,
+): Promise<JobExDTO | null> {
+  const existing = await getJob(bookGuid, guid);
   if (!existing) return null;
 
   if ((patch.ownerType && !patch.ownerGuid) || (!patch.ownerType && patch.ownerGuid)) {
@@ -145,11 +152,11 @@ export async function updateJobPartial(guid: string, patch: JobPatch): Promise<J
     ownerType: patch.ownerType ?? existing.ownerType ?? 'customer',
     ownerGuid: patch.ownerGuid ?? existing.ownerGuid ?? '',
   };
-  const updated = await updateJob(guid, merged);
+  const updated = await updateJob(bookGuid, guid, merged);
   if (!updated) return null;
 
   if (patch.rate !== undefined) await setJobRate(guid, patch.rate ?? null);
-  return getJobEx(guid);
+  return getJobEx(bookGuid, guid);
 }
 
 /* ------------------------------------------------------------------ */
@@ -314,9 +321,8 @@ interface JobDocDbRow {
 
 /**
  * Documents referencing a job (invoices.owner_type=3 → job). Posted documents
- * are book-scoped via post_acc; drafts have no account linkage and are
- * included under the same single-business-database assumption as the entity
- * tables themselves.
+ * are book-scoped via post_acc; drafts have no account linkage, so they are
+ * reached only through a job the caller already proved it owns.
  */
 export async function loadJobDocuments(
   jobGuid: string,
@@ -372,20 +378,18 @@ export async function loadJobDocuments(
   }));
 }
 
-/** Full per-job rollup for the active book. */
+/** Full per-job rollup for one book. */
 export async function generateJobReport(
+  bookGuid: string,
   jobGuid: string,
   bookAccountGuids: string[],
-  options: { bookGuid?: string } = {},
 ): Promise<JobProfitabilityReport> {
   const [rows, job] = await Promise.all([
     loadJobDocuments(jobGuid, bookAccountGuids),
-    getJobEx(jobGuid),
+    getJobEx(bookGuid, jobGuid),
   ]);
   if (!job) throw new BusinessValidationError('Job not found');
   const report = buildJobReport(rows);
-  const bookGuid = options.bookGuid ?? await bookGuidForAccounts(bookAccountGuids);
-  if (!bookGuid) throw new BusinessValidationError('Active book could not be resolved');
 
   const [timeRows, costRows, taggedRows] = await Promise.all([
     prisma.$queryRaw<Array<{
@@ -517,24 +521,6 @@ function isDateOnly(value: string): boolean {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-async function bookGuidForAccounts(accountGuids: string[]): Promise<string | null> {
-  if (accountGuids.length === 0) return null;
-  const rows = await prisma.$queryRaw<Array<{ guid: string }>>`
-    WITH RECURSIVE ancestors AS (
-      SELECT guid, parent_guid FROM accounts WHERE guid = ${accountGuids[0]}
-      UNION ALL
-      SELECT parent.guid, parent.parent_guid
-      FROM accounts parent
-      JOIN ancestors child ON child.parent_guid = parent.guid
-    )
-    SELECT b.guid
-    FROM books b
-    JOIN ancestors a ON a.guid = b.root_account_guid
-    LIMIT 1
-  `;
-  return rows[0]?.guid ?? null;
-}
-
 export async function addJobCostLink(input: {
   bookGuid: string;
   jobGuid: string;
@@ -552,7 +538,7 @@ export async function addJobCostLink(input: {
   if (!isDateOnly(input.costDate)) {
     throw new BusinessValidationError('Cost date must be YYYY-MM-DD');
   }
-  if (!await getJob(input.jobGuid)) throw new BusinessValidationError('Job not found');
+  if (!await getJob(input.bookGuid, input.jobGuid)) throw new BusinessValidationError('Job not found');
   if (input.sourceType === 'transaction' && input.sourceId) {
     const transaction = await prisma.transactions.findFirst({
       where: {

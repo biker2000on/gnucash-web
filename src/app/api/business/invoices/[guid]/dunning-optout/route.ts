@@ -4,7 +4,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { getActiveBookGuid } from '@/lib/book-scope';
 import { mapInvoiceError } from '@/lib/business/api-errors';
 import { isDunningOptedOut, setDunningOptOut } from '@/lib/business/dunning';
 import { isInvoiceInBook } from '@/lib/business/invoice-shares.service';
@@ -20,8 +19,7 @@ export async function GET(
     if (roleResult instanceof NextResponse) return roleResult;
 
     const { guid } = await params;
-    const bookGuid = await getActiveBookGuid();
-    if (!(await isInvoiceInBook(guid, bookGuid))) {
+    if (!(await isInvoiceInBook(guid, roleResult.bookGuid))) {
       throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     }
     return NextResponse.json({ optedOut: await isDunningOptedOut(guid) });
@@ -48,11 +46,10 @@ export async function PUT(
       return NextResponse.json({ error: 'optedOut boolean is required' }, { status: 400 });
     }
 
-    const bookGuid = await getActiveBookGuid();
-    if (!(await isInvoiceInBook(guid, bookGuid))) {
+    if (!(await isInvoiceInBook(guid, roleResult.bookGuid))) {
       throw new InvoiceNotFoundError(`Invoice not found: ${guid}`);
     }
-    await setDunningOptOut(bookGuid, guid, body.optedOut);
+    await setDunningOptOut(roleResult.bookGuid, guid, body.optedOut);
     return NextResponse.json({ optedOut: body.optedOut });
   } catch (error) {
     return mapInvoiceError(error);

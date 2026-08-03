@@ -1130,8 +1130,8 @@ targets.
 
 ## P1 - Book-Scope the Native Business Entities
 
-**Status:** Open. Raised by the 2026-08-03 audit (finding S5); the only audit
-finding deliberately not fixed in that pass.
+**Status:** Implemented 2026-08-03. Raised by the audit the same day (finding
+S5) and deferred out of the first remediation pass; completed immediately after.
 
 Customers, vendors, employees, invoices, jobs, billterms, and taxtables are
 native GnuCash tables with no `book_guid` column, and the app never added one.
@@ -1168,6 +1168,37 @@ test asserts that a user with a role on only one book sees no entity from
 another.
 
 **Effort:** M-L.
+
+**Delivered:** `gnucash_web_business_entity_ownership` (entity_type,
+entity_guid, book_guid) with an immutability trigger, created and backfilled in
+`db-init.ts`, plus `src/lib/business/entity-ownership.ts`. Semantics match
+`budget-ownership.ts`: missing ownership means foreign, so an unattributed row
+is invisible to every book rather than visible to all of them.
+
+`bookGuid` is a required positional first parameter on every customer, vendor,
+job, employee, invoice, voucher, billterm, and tax-table service function — the
+compiler therefore enumerates missed call sites instead of letting one leak.
+Lists filter by the owned-guid set and short-circuit to `[]` rather than falling
+through unfiltered; single-entity reads return null when foreign; creates record
+ownership inside the same transaction as the insert; cross-entity references
+(an invoice's customer, a job's owner, a bill term) must resolve inside the same
+book. Non-request callers derive the book from the record itself — the Stripe
+webhook from the invoice's own ownership row, recurring invoices from the stored
+definition, the public payment token from the invoice it resolves to.
+
+The backfill derives ownership only from unambiguous links (posted invoice ->
+post_acc -> account -> book, employee -> ccard_guid, owners from unanimous
+invoices, unposted invoices and orders from their owner, bill terms and tax
+tables from referencing entities) and adopts leftovers only in a single-book
+database; `reportUnattributedBusinessEntities()` names anything it could not
+place. Book deletion removes the native entities child-first via
+`deleteOwnedBusinessEntitiesForBook()` before transactions and accounts.
+
+Closed several leaks beyond the CRUD surface: bill capture matched vendor names
+across all books, time tracking validated customers and jobs by mere existence,
+inventory fulfilment shipped against foreign posted invoices, reimbursement
+approval adopted any voucher with a matching billing id, and the Action Center
+and Money Timeline joined `employees` unconstrained.
 
 ---
 

@@ -1,8 +1,8 @@
 // src/app/api/business/customers/route.ts
 //
-// Customer list + create. NOTE: the native GnuCash business tables have no
-// book_guid column, so customers are unscoped (single-business-database
-// assumption) — see src/lib/services/business.service.ts.
+// Customer list + create. The native GnuCash business tables have no book_guid
+// column, so scope comes from the ownership side table — every call passes the
+// authenticated book (see src/lib/business/entity-ownership.ts).
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       active: activeParam === 'active' || activeParam === 'inactive' ? activeParam : 'all',
     };
 
-    return NextResponse.json(await listCustomers(options));
+    return NextResponse.json(await listCustomers(roleResult.bookGuid, options));
   } catch (error) {
     console.error('Error listing customers:', error);
     return NextResponse.json({ error: 'Failed to list customers' }, { status: 500 });
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => null);
     const input = parseInput(customerInputSchema, body);
-    const customer = await createCustomer(input);
+    const customer = await createCustomer(roleResult.bookGuid, input);
     return NextResponse.json(customer, { status: 201 });
   } catch (error) {
     if (error instanceof BusinessValidationError) {
