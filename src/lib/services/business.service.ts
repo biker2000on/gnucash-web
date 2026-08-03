@@ -36,7 +36,6 @@ import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { generateGuid, fromDecimal, toDecimalNumber } from '@/lib/gnucash';
 import {
-  listOwnedEntityGuids,
   isEntityOwnedByBook,
   recordEntityOwnership,
   deleteEntityOwnership,
@@ -403,10 +402,8 @@ export async function listCustomers(
   bookGuid: string,
   options: ContactListOptions = {}
 ): Promise<CustomerDTO[]> {
-  const owned = await listOwnedEntityGuids('customer', bookGuid);
-  if (owned.length === 0) return [];
   const rows = await prisma.customers.findMany({
-    where: { guid: { in: owned }, ...contactWhere(options) },
+    where: { ownership: { book_guid: bookGuid }, ...contactWhere(options) },
     orderBy: [{ name: 'asc' }],
   });
   const lookups = await contactLookups(rows, OWNER_TYPE_CUSTOMER);
@@ -593,10 +590,8 @@ export async function listVendors(
   bookGuid: string,
   options: ContactListOptions = {}
 ): Promise<VendorDTO[]> {
-  const owned = await listOwnedEntityGuids('vendor', bookGuid);
-  if (owned.length === 0) return [];
   const rows = await prisma.vendors.findMany({
-    where: { guid: { in: owned }, ...contactWhere(options) },
+    where: { ownership: { book_guid: bookGuid }, ...contactWhere(options) },
     orderBy: [{ name: 'asc' }],
   });
   const lookups = await contactLookups(rows, OWNER_TYPE_VENDOR);
@@ -769,11 +764,9 @@ export async function listJobs(
   options: JobListOptions = {}
 ): Promise<JobDTO[]> {
   const { ownerGuid, search, active = 'all' } = options;
-  const owned = await listOwnedEntityGuids('job', bookGuid);
-  if (owned.length === 0) return [];
   const rows = await prisma.jobs.findMany({
     where: {
-      guid: { in: owned },
+      ownership: { book_guid: bookGuid },
       ...(ownerGuid ? { owner_guid: ownerGuid } : {}),
       ...(active === 'active' ? { active: 1 } : active === 'inactive' ? { active: 0 } : {}),
       ...(search
@@ -905,10 +898,8 @@ export async function listBillterms(
   bookGuid: string,
   includeInvisible = false
 ): Promise<BilltermDTO[]> {
-  const owned = await listOwnedEntityGuids('billterm', bookGuid);
-  if (owned.length === 0) return [];
   const rows = await prisma.billterms.findMany({
-    where: { guid: { in: owned }, ...(includeInvisible ? {} : { invisible: 0 }) },
+    where: { ownership: { book_guid: bookGuid }, ...(includeInvisible ? {} : { invisible: 0 }) },
     orderBy: [{ name: 'asc' }],
   });
   return rows.map(mapBillterm);
@@ -919,13 +910,10 @@ export async function createBillterm(
   input: BilltermInput
 ): Promise<BilltermDTO> {
   // Names only have to be unique within the book that owns them.
-  const owned = await listOwnedEntityGuids('billterm', bookGuid);
-  const duplicate = owned.length > 0
-    ? await prisma.billterms.findFirst({
-        where: { guid: { in: owned }, name: input.name, invisible: 0 },
-        select: { guid: true },
-      })
-    : null;
+  const duplicate = await prisma.billterms.findFirst({
+    where: { ownership: { book_guid: bookGuid }, name: input.name, invisible: 0 },
+    select: { guid: true },
+  });
   if (duplicate) {
     throw new BusinessValidationError(`Bill terms "${input.name}" already exist`);
   }
@@ -965,9 +953,13 @@ export async function updateBillterm(
   const existing = await prisma.billterms.findUnique({ where: { guid } });
   if (!existing) return null;
 
-  const owned = await listOwnedEntityGuids('billterm', bookGuid);
   const duplicate = await prisma.billterms.findFirst({
-    where: { guid: { in: owned, not: guid }, name: input.name, invisible: 0 },
+    where: {
+      ownership: { book_guid: bookGuid },
+      guid: { not: guid },
+      name: input.name,
+      invisible: 0,
+    },
     select: { guid: true },
   });
   if (duplicate) {
@@ -1018,10 +1010,8 @@ export async function listTaxtables(
   bookGuid: string,
   includeInvisible = false
 ): Promise<TaxtableDTO[]> {
-  const owned = await listOwnedEntityGuids('taxtable', bookGuid);
-  if (owned.length === 0) return [];
   const rows = await prisma.taxtables.findMany({
-    where: { guid: { in: owned }, ...(includeInvisible ? {} : { invisible: 0 }) },
+    where: { ownership: { book_guid: bookGuid }, ...(includeInvisible ? {} : { invisible: 0 }) },
     orderBy: [{ name: 'asc' }],
   });
   if (rows.length === 0) return [];
@@ -1088,13 +1078,10 @@ export async function createTaxtable(
   input: TaxtableInput
 ): Promise<TaxtableDTO> {
   // Names only have to be unique within the book that owns them.
-  const owned = await listOwnedEntityGuids('taxtable', bookGuid);
-  const duplicate = owned.length > 0
-    ? await prisma.taxtables.findFirst({
-        where: { guid: { in: owned }, name: input.name, invisible: 0 },
-        select: { guid: true },
-      })
-    : null;
+  const duplicate = await prisma.taxtables.findFirst({
+    where: { ownership: { book_guid: bookGuid }, name: input.name, invisible: 0 },
+    select: { guid: true },
+  });
   if (duplicate) {
     throw new BusinessValidationError(`Tax table "${input.name}" already exists`);
   }
@@ -1124,9 +1111,13 @@ export async function updateTaxtable(
   const existing = await prisma.taxtables.findUnique({ where: { guid } });
   if (!existing) return null;
 
-  const owned = await listOwnedEntityGuids('taxtable', bookGuid);
   const duplicate = await prisma.taxtables.findFirst({
-    where: { guid: { in: owned, not: guid }, name: input.name, invisible: 0 },
+    where: {
+      ownership: { book_guid: bookGuid },
+      guid: { not: guid },
+      name: input.name,
+      invisible: 0,
+    },
     select: { guid: true },
   });
   if (duplicate) {

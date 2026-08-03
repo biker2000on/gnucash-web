@@ -1824,6 +1824,35 @@ async function createExtensionTables() {
         HAVING COUNT(DISTINCT book_guid) = 1
         ON CONFLICT DO NOTHING;
 
+        -- Per-entity projections of the polymorphic owner table. Prisma cannot
+        -- span (entity_type, entity_guid) with one relation, so each view gives
+        -- its entity table a joinable 1:1 relation and list queries filter with
+        -- a JOIN instead of materializing every owned guid into an IN list.
+        CREATE OR REPLACE VIEW gnucash_web_customer_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'customer';
+        CREATE OR REPLACE VIEW gnucash_web_vendor_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'vendor';
+        CREATE OR REPLACE VIEW gnucash_web_employee_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'employee';
+        CREATE OR REPLACE VIEW gnucash_web_job_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'job';
+        CREATE OR REPLACE VIEW gnucash_web_invoice_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'invoice';
+        CREATE OR REPLACE VIEW gnucash_web_order_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'order';
+        CREATE OR REPLACE VIEW gnucash_web_billterm_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'billterm';
+        CREATE OR REPLACE VIEW gnucash_web_taxtable_ownership AS
+            SELECT entity_guid, book_guid FROM gnucash_web_business_entity_ownership
+             WHERE entity_type = 'taxtable';
+
         -- 6. single-book database: nothing can be ambiguous, so adopt the rest
         IF (SELECT COUNT(*) FROM books) = 1 THEN
             INSERT INTO gnucash_web_business_entity_ownership (entity_type, entity_guid, book_guid)

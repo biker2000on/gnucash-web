@@ -7,16 +7,18 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { prismaMock, queryCalls } = vi.hoisted(() => {
+const { prismaMock, queryCalls, querySql } = vi.hoisted(() => {
     const queryCalls: unknown[][] = [];
+    const querySql: string[] = [];
     const prismaMock = {
         gnucash_web_business_entity_ownership: { findMany: vi.fn() },
-        $queryRaw: vi.fn(async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+        $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
             queryCalls.push(values);
+            querySql.push(strings.join('?'));
             return [];
         }),
     };
-    return { prismaMock, queryCalls };
+    return { prismaMock, queryCalls, querySql };
 });
 
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }));
@@ -30,30 +32,37 @@ const EMP_B = '2'.repeat(32);
 beforeEach(() => {
     vi.clearAllMocks();
     queryCalls.length = 0;
+    querySql.length = 0;
 });
 
 describe('Action Center reimbursement source book scope', () => {
-    it('produces nothing, and runs no query, when the book owns no employees', async () => {
-        prismaMock.gnucash_web_business_entity_ownership.findMany.mockResolvedValue([]);
-
+    it('produces nothing when the book owns no employees', async () => {
+        // The ownership join is inside the SQL now, so the empty result comes
+        // from the database rather than from an early return.
         await expect(reimbursementActions(BOOK_A)).resolves.toEqual([]);
-        // An empty ownership set must never degrade into an unfiltered join.
-        expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
     });
 
-    it('constrains the employee join to the owning book', async () => {
-        prismaMock.gnucash_web_business_entity_ownership.findMany.mockResolvedValue([
-            { entity_guid: EMP_A },
-        ]);
-
+    it('constrains the employee join to the owning book inside the SQL', async () => {
         await reimbursementActions(BOOK_A);
 
-        expect(prismaMock.gnucash_web_business_entity_ownership.findMany).toHaveBeenCalledWith({
-            where: { entity_type: 'employee', book_guid: BOOK_A },
-            select: { entity_guid: true },
-        });
-        expect(queryCalls).toHaveLength(1);
-        expect(queryCalls[0]).toContainEqual([EMP_A]);
+        expect(querySql).toHaveLength(1);
+        const sql = querySql[0];
+        // Scoping rides in the query as a join against the ownership view,
+        // not as a materialized guid list handed back to the database.
+        expect(sql).toContain('gnucash_web_employee_ownership');
+        expect(sql).toMatch(/eo\.entity_guid\s*=\s*r\.employee_guid/);
+        expect(sql).toMatch(/eo\.book_guid\s*=\s*\?/);
+
+        // The book is bound as a parameter; no employee guid array is shipped.
+        expect(queryCalls[0]).toContain(BOOK_A);
+        expect(queryCalls[0].some(v => Array.isArray(v))).toBe(false);
         expect(JSON.stringify(queryCalls[0])).not.toContain(EMP_B);
+    });
+
+    it('never issues the query without the ownership join', async () => {
+        await reimbursementActions(BOOK_A);
+        for (const sql of querySql) {
+            expect(sql).toContain('gnucash_web_employee_ownership');
+        }
     });
 });

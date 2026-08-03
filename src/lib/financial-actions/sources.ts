@@ -26,7 +26,6 @@ import { getBaseCurrency } from '@/lib/currency';
 import { getFarmCertificateObligations } from '@/lib/tax/farm-certificates';
 import { detectOpportunities, type OpportunitySignal, type OpportunitySnapshot } from './opportunity-engine';
 import { listJobsEx, generateJobReport } from '@/lib/business/jobs.service';
-import { listOwnedEntityGuids } from '@/lib/business/entity-ownership';
 import { get1099Compliance } from '@/lib/business/vendor-1099.service';
 import { getReconciliationCoverage } from '@/lib/reconciliation-coverage';
 import { getResilienceProfile, loadResilienceActions } from '@/lib/resilience/service';
@@ -712,8 +711,6 @@ async function failedPaymentActions(bookGuid: string): Promise<FinancialActionCa
 export async function reimbursementActions(bookGuid: string): Promise<FinancialActionCandidate[]> {
   // `employees` has no book_guid, so the join is constrained by the ownership
   // side table — a request pointing at another book's employee surfaces nothing.
-  const employeeGuids = await listOwnedEntityGuids('employee', bookGuid);
-  if (employeeGuids.length === 0) return [];
   const rows = await prisma.$queryRaw<Array<{
     id: number;
     employee_guid: string;
@@ -726,9 +723,10 @@ export async function reimbursementActions(bookGuid: string): Promise<FinancialA
            COALESCE(e.addr_name, e.username) AS employee_name,
            r.amount::float8 AS amount, r.due_date, r.submitted_at
     FROM gnucash_web_reimbursement_requests r
+    JOIN gnucash_web_employee_ownership eo
+      ON eo.entity_guid = r.employee_guid AND eo.book_guid = ${bookGuid}
     JOIN employees e ON e.guid = r.employee_guid
     WHERE r.book_guid = ${bookGuid} AND r.status = 'submitted'
-      AND r.employee_guid = ANY(${employeeGuids}::text[])
     ORDER BY COALESCE(r.due_date, r.expense_date), r.submitted_at
     LIMIT 100
   `;

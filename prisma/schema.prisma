@@ -3,6 +3,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Needed for the per-entity ownership views below, which give the native
+  // business tables a joinable relation despite their polymorphic owner table.
+  previewFeatures = ["views"]
 }
 
 datasource db {
@@ -238,6 +241,7 @@ model gnucash_web_budget_ownership {
 }
 
 model billterms {
+  ownership gnucash_web_billterm_ownership?
   guid           String  @id @db.VarChar(32)
   name           String  @db.VarChar(2048)
   description    String  @db.VarChar(2048)
@@ -253,6 +257,7 @@ model billterms {
 }
 
 model customers {
+  ownership gnucash_web_customer_ownership?
   guid           String  @id @db.VarChar(32)
   name           String  @db.VarChar(2048)
   id             String  @db.VarChar(2048)
@@ -286,6 +291,7 @@ model customers {
 }
 
 model employees {
+  ownership gnucash_web_employee_ownership?
   guid          String  @id @db.VarChar(32)
   username      String  @db.VarChar(2048)
   id            String  @db.VarChar(2048)
@@ -343,6 +349,7 @@ model entries {
 }
 
 model invoices {
+  ownership gnucash_web_invoice_ownership?
   guid             String    @id @db.VarChar(32)
   id               String    @db.VarChar(2048)
   date_opened      DateTime? @db.Timestamp(6)
@@ -364,6 +371,7 @@ model invoices {
 }
 
 model jobs {
+  ownership gnucash_web_job_ownership?
   guid       String  @id @db.VarChar(32)
   id         String  @db.VarChar(2048)
   name       String  @db.VarChar(2048)
@@ -374,6 +382,7 @@ model jobs {
 }
 
 model orders {
+  ownership gnucash_web_order_ownership?
   guid        String   @id @db.VarChar(32)
   id          String   @db.VarChar(2048)
   notes       String   @db.VarChar(2048)
@@ -432,6 +441,7 @@ model taxtable_entries {
 }
 
 model taxtables {
+  ownership gnucash_web_taxtable_ownership?
   guid      String  @id @db.VarChar(32)
   name      String  @db.VarChar(50)
   refcount  BigInt
@@ -440,6 +450,7 @@ model taxtables {
 }
 
 model vendors {
+  ownership gnucash_web_vendor_ownership?
   guid         String  @id @db.VarChar(32)
   name         String  @db.VarChar(2048)
   id           String  @db.VarChar(2048)
@@ -1527,4 +1538,78 @@ model gnucash_web_home_service_log {
 
   @@index([book_guid], map: "idx_home_service_log_book")
   @@map("gnucash_web_home_service_log")
+}
+
+// ============================================
+// Per-entity ownership views
+// ============================================
+// gnucash_web_business_entity_ownership is polymorphic (entity_type +
+// entity_guid), so one Prisma relation cannot span it. These views project a
+// single entity type each, which gives every native business table a real
+// joinable relation: filtering by { ownership: { book_guid } } becomes a JOIN
+// instead of materializing every owned guid into an IN list.
+// Created in db-init.ts alongside the owner table.
+
+view gnucash_web_customer_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      customers @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_customer_ownership")
+}
+
+view gnucash_web_vendor_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      vendors @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_vendor_ownership")
+}
+
+view gnucash_web_employee_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      employees @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_employee_ownership")
+}
+
+view gnucash_web_job_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      jobs @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_job_ownership")
+}
+
+view gnucash_web_invoice_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      invoices @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_invoice_ownership")
+}
+
+view gnucash_web_order_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      orders @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_order_ownership")
+}
+
+view gnucash_web_billterm_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      billterms @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_billterm_ownership")
+}
+
+view gnucash_web_taxtable_ownership {
+  entity_guid String    @unique @db.VarChar(32)
+  book_guid   String    @db.VarChar(32)
+  entity      taxtables @relation(fields: [entity_guid], references: [guid])
+
+  @@map("gnucash_web_taxtable_ownership")
 }

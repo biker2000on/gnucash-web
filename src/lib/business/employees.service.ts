@@ -33,7 +33,6 @@ import { OWNER_TYPE_EMPLOYEE } from './invoice-engine';
 import {
   deleteEntityOwnership,
   isEntityOwnedByBook,
-  listOwnedEntityGuids,
   recordEntityOwnership,
   type EntityOwnershipClient,
 } from './entity-ownership';
@@ -179,12 +178,11 @@ export async function listEmployees(
   options: EmployeeListOptions = {},
 ): Promise<EmployeeDTO[]> {
   const { search, active = 'all' } = options;
-  const ownedGuids = await listOwnedEntityGuids('employee', bookGuid);
-  // No ownership rows means the book owns no employees — never an unfiltered read.
-  if (ownedGuids.length === 0) return [];
   const rows = await prisma.employees.findMany({
     where: {
-      guid: { in: ownedGuids },
+      // Joins the per-type ownership view; an unowned row cannot match, so a
+      // book with no employees returns nothing rather than everything.
+      ownership: { book_guid: bookGuid },
       ...(active === 'active' ? { active: 1 } : active === 'inactive' ? { active: 0 } : {}),
       ...(search
         ? {

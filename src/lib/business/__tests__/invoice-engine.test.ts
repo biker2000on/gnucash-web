@@ -40,11 +40,30 @@ function req<T>(v: T | null | undefined): T {
   return v;
 }
 
+/**
+ * Ownership rows the `ownership` relation filter joins against. Registered by
+ * the fake db below so `matches` can model the join rather than waving it
+ * through as an unsupported operator — waving it through would make every
+ * cross-book assertion below pass vacuously.
+ */
+let ownershipRowsRef: Row[] = [];
+
 function matches(row: Row, where: any): boolean {
   if (!where) return true;
   for (const [k, v] of Object.entries(where)) {
     if (k === 'OR') {
       if (!(v as any[]).some((w) => matches(row, w))) return false;
+      continue;
+    }
+    if (k === 'ownership') {
+      // Relation filter against the per-entity ownership view. Guids are unique
+      // across entity types in these fixtures, so matching on guid + book is
+      // equivalent to joining the type-specific view.
+      const wanted = (v as any)?.book_guid;
+      const owned = ownershipRowsRef.some(
+        (o) => o.entity_guid === row.guid && o.book_guid === wanted,
+      );
+      if (!owned) return false;
       continue;
     }
     if (v !== null && typeof v === 'object' && !(v instanceof Date) && typeof v !== 'bigint') {
@@ -71,6 +90,7 @@ let slotAutoId = 1;
  * generic `matches` helper above cannot express — hence a bespoke fake.
  */
 function ownershipModel(rows: Row[]) {
+  ownershipRowsRef = rows;
   return {
     rows,
     create: async ({ data }: any) => {

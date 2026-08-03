@@ -46,7 +46,7 @@ import {
   type PaymentView,
 } from './invoice-engine';
 import { type InvoiceStatus } from './invoice-totals';
-import { isEntityOwnedByBook, listOwnedEntityGuids } from './entity-ownership';
+import { isEntityOwnedByBook } from './entity-ownership';
 
 /** Book counter name GnuCash desktop uses for expense vouchers. */
 export const VOUCHER_COUNTER = 'gncExpVoucher';
@@ -78,7 +78,9 @@ export type VoucherCounterDb = CounterDb;
  * MUST run inside a $transaction — see createVoucher.
  */
 export async function nextVoucherId(db: VoucherCounterDb, bookGuid: string): Promise<string> {
-  return nextCounterId(db, bookGuid, VOUCHER_COUNTER, OWNER_TYPE_EMPLOYEE);
+  // Last arg scopes the max-id bootstrap to this book's vouchers; without it
+  // the seed would read every book's voucher numbers.
+  return nextCounterId(db, bookGuid, VOUCHER_COUNTER, OWNER_TYPE_EMPLOYEE, bookGuid);
 }
 
 /* ------------------------------------------------------------------ */
@@ -239,13 +241,10 @@ export async function listVouchers(
   bookGuid: string,
   filters: ListVouchersFilters = {},
 ): Promise<VoucherView[]> {
-  const ownedGuids = await listOwnedEntityGuids('invoice', bookGuid);
-  // No ownership rows means the book owns no documents — never an unfiltered read.
-  if (ownedGuids.length === 0) return [];
-
   const invoices = await prisma.invoices.findMany({
     where: {
-      guid: { in: ownedGuids },
+      // Joins the invoice ownership view; unowned documents cannot match.
+      ownership: { book_guid: bookGuid },
       owner_type: OWNER_TYPE_EMPLOYEE,
       ...(filters.employeeGuid ? { owner_guid: filters.employeeGuid } : {}),
     },

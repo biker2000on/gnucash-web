@@ -25,7 +25,7 @@
 import prisma from '@/lib/prisma';
 import { intakeReceipt } from '@/lib/services/document-intake';
 import { createInvoice } from './invoice-engine';
-import { isEntityOwnedByBook, listOwnedEntityGuids } from './entity-ownership';
+import { isEntityOwnedByBook } from './entity-ownership';
 import { findOrCreateAccount } from '@/lib/gnucash';
 
 export const EMAIL_BILL_EXPENSE_PATH = 'Expenses:Uncategorized';
@@ -363,13 +363,10 @@ export async function processPendingEmailBill(receiptId: number): Promise<void> 
 
     // Match only against vendors the capturing book owns — the native
     // `vendors` table is shared across books.
-    const ownedVendorGuids = await listOwnedEntityGuids('vendor', bill.bookGuid);
-    const vendors = ownedVendorGuids.length === 0
-      ? []
-      : await prisma.vendors.findMany({
-          where: { guid: { in: ownedVendorGuids }, active: 1 },
-          select: { guid: true, name: true, currency: true },
-        });
+    const vendors = await prisma.vendors.findMany({
+      where: { ownership: { book_guid: bill.bookGuid }, active: 1 },
+      select: { guid: true, name: true, currency: true },
+    });
     const matched =
       matchVendorByName(extracted.vendor, vendors) ??
       matchVendorByName(extracted.vendorNormalized, vendors);

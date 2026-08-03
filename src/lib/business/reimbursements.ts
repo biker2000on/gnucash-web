@@ -5,7 +5,6 @@ import { createVoucher, deleteVoucher, getVoucher } from '@/lib/business/voucher
 import { OWNER_TYPE_EMPLOYEE } from '@/lib/business/invoice-engine';
 import {
   isEntityOwnedByBook,
-  listOwnedEntityGuids,
 } from '@/lib/business/entity-ownership';
 import { logAudit } from '@/lib/services/audit.service';
 
@@ -125,10 +124,11 @@ export async function employeeForUsername(
   bookGuid: string,
   username: string,
 ): Promise<string | null> {
-  const ownedGuids = await listOwnedEntityGuids('employee', bookGuid);
-  if (ownedGuids.length === 0) return null;
   const row = await prisma.employees.findFirst({
-    where: { guid: { in: ownedGuids }, username: { equals: username, mode: 'insensitive' } },
+    where: {
+      ownership: { book_guid: bookGuid },
+      username: { equals: username, mode: 'insensitive' },
+    },
     select: { guid: true },
   });
   return row?.guid ?? null;
@@ -279,19 +279,16 @@ export async function approveReimbursement(input: {
       // Restricted to this book's own documents: another book can hold a
       // voucher with the same REIMB- billing id, and adopting it would attach
       // a foreign document to this request.
-      const ownedInvoiceGuids = await listOwnedEntityGuids('invoice', input.bookGuid);
-      const orphan = ownedInvoiceGuids.length === 0
-        ? null
-        : await prisma.invoices.findFirst({
-            where: {
-              guid: { in: ownedInvoiceGuids },
-              owner_type: OWNER_TYPE_EMPLOYEE,
-              owner_guid: request.employeeGuid,
-              billing_id: billingId,
-              post_txn: null,
-            },
-            select: { guid: true },
-          });
+      const orphan = await prisma.invoices.findFirst({
+        where: {
+          ownership: { book_guid: input.bookGuid },
+          owner_type: OWNER_TYPE_EMPLOYEE,
+          owner_guid: request.employeeGuid,
+          billing_id: billingId,
+          post_txn: null,
+        },
+        select: { guid: true },
+      });
       const voucher = orphan
         ? await getVoucher(input.bookGuid, orphan.guid)
         : await createVoucher({

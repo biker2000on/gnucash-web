@@ -20,6 +20,18 @@ const { store, prismaMock } = vi.hoisted(() => {
     const matchesEmployeeWhere = (row: Record<string, unknown>, where: Record<string, unknown>) => {
         const guid = where.guid as { in?: string[] } | undefined;
         if (guid?.in && !guid.in.includes(row.guid as string)) return false;
+        // Scoping is a relation filter against the ownership view: an employee
+        // with no ownership row cannot match, which is what makes an
+        // unattributed row foreign rather than public.
+        const ownership = where.ownership as { book_guid?: string } | undefined;
+        if (ownership?.book_guid) {
+            const owned = store.ownership.some(
+                o => o.entity_type === 'employee'
+                    && o.entity_guid === row.guid
+                    && o.book_guid === ownership.book_guid,
+            );
+            if (!owned) return false;
+        }
         if (where.active !== undefined && row.active !== where.active) return false;
         return true;
     };
@@ -157,11 +169,14 @@ describe('employee book scoping', () => {
         expect(other.map(e => e.guid)).toEqual([EMP_B]);
     });
 
-    it('returns an empty list without querying when the book owns none', async () => {
+    it('returns nothing, and never an unfiltered read, when the book owns none', async () => {
         store.ownership.length = 0;
         await expect(listEmployees(BOOK_A)).resolves.toEqual([]);
-        // An empty ownership set must never degrade into an unfiltered read.
-        expect(prismaMock.employees.findMany).not.toHaveBeenCalled();
+        // The join is what yields nothing; the invariant is that no query may
+        // omit the ownership constraint.
+        for (const call of prismaMock.employees.findMany.mock.calls) {
+            expect(call[0]?.where).toMatchObject({ ownership: { book_guid: BOOK_A } });
+        }
     });
 
     it('reads a foreign employee as not found', async () => {

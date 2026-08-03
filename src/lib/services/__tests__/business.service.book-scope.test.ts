@@ -128,17 +128,25 @@ describe('customer book scope', () => {
         const rows = await listCustomers(BOOK_A);
 
         expect(rows.map(r => r.guid)).toEqual([CUSTOMER_A]);
-        // The guid filter is the ownership set, not the whole table.
+        // Scoping is a join against the ownership view, so the constraint rides
+        // in the query itself rather than as a materialized guid list.
         expect(customers.findMany).toHaveBeenCalledWith(
-            expect.objectContaining({ where: expect.objectContaining({ guid: { in: [CUSTOMER_A] } }) }),
+            expect.objectContaining({
+                where: expect.objectContaining({ ownership: { book_guid: BOOK_A } }),
+            }),
         );
     });
 
-    it('returns an empty list — never an unfiltered query — when the book owns none', async () => {
+    it('never issues an unfiltered query, even when the book owns nothing', async () => {
         seedOwnership({ [`customer:${CUSTOMER_B}`]: BOOK_B });
+        customers.findMany.mockResolvedValue([]);
 
         expect(await listCustomers(BOOK_A)).toEqual([]);
-        expect(customers.findMany).not.toHaveBeenCalled();
+        // The join is what returns nothing; what must never happen is a query
+        // that omits the ownership constraint.
+        for (const call of customers.findMany.mock.calls) {
+            expect(call[0].where).toMatchObject({ ownership: { book_guid: BOOK_A } });
+        }
     });
 
     it('returns null for a customer owned by another book', async () => {
@@ -222,11 +230,14 @@ describe('customer book scope', () => {
 describe('vendor book scope', () => {
     beforeEach(resetAll);
 
-    it('short-circuits the vendor list when the book owns none', async () => {
+    it('constrains the vendor list to the book even when it owns none', async () => {
         seedOwnership({ [`vendor:${CUSTOMER_B}`]: BOOK_B });
+        vendors.findMany.mockResolvedValue([]);
 
         expect(await listVendors(BOOK_A)).toEqual([]);
-        expect(vendors.findMany).not.toHaveBeenCalled();
+        for (const call of vendors.findMany.mock.calls) {
+            expect(call[0].where).toMatchObject({ ownership: { book_guid: BOOK_A } });
+        }
     });
 
     it('returns null for another book\'s vendor', async () => {
@@ -259,7 +270,9 @@ describe('job book scope', () => {
 
         expect(rows.map(r => r.guid)).toEqual([JOB_A]);
         expect(jobs.findMany).toHaveBeenCalledWith(
-            expect.objectContaining({ where: expect.objectContaining({ guid: { in: [JOB_A] } }) }),
+            expect.objectContaining({
+                where: expect.objectContaining({ ownership: { book_guid: BOOK_A } }),
+            }),
         );
     });
 

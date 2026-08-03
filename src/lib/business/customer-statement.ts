@@ -30,7 +30,7 @@ import {
   OWNER_TYPE_JOB,
 } from './invoice-engine';
 import { roundCurrency } from './invoice-totals';
-import { isEntityOwnedByBook, listOwnedEntityGuids } from './entity-ownership';
+import { isEntityOwnedByBook } from './entity-ownership';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                                */
@@ -239,17 +239,14 @@ export async function getCustomerStatement(
   });
 
   // Direct + job-owned posted invoices for this customer
-  const ownedJobGuids = await listOwnedEntityGuids('job', bookGuid);
-  const jobs = ownedJobGuids.length > 0
-    ? await prisma.jobs.findMany({
-        where: {
-          guid: { in: ownedJobGuids },
-          owner_type: OWNER_TYPE_CUSTOMER,
-          owner_guid: customerGuid,
-        },
-        select: { guid: true },
-      })
-    : [];
+  const jobs = await prisma.jobs.findMany({
+    where: {
+      ownership: { book_guid: bookGuid },
+      owner_type: OWNER_TYPE_CUSTOMER,
+      owner_guid: customerGuid,
+    },
+    select: { guid: true },
+  });
   const jobGuids = jobs.map((j) => j.guid);
   const invoiceRows = await prisma.invoices.findMany({
     where: {
