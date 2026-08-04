@@ -36,6 +36,7 @@ import AssumptionsPanel from './AssumptionsPanel';
 import { FiAgeHistogram, SensitivityRow } from './FiInsights';
 import { RelatedLinks } from '@/components/RelatedLinks';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
+import { Abbr } from '@/components/ui/Abbr';
 
 /* ------------------------------------------------------------------ */
 /* Debounce hook                                                       */
@@ -646,7 +647,7 @@ export default function FireCalculatorPage() {
   return (
     <div className="space-y-8">
       <header>
-        <h1 className="text-3xl font-bold text-foreground">FIRE Calculator</h1>
+        <h1 className="text-3xl font-bold text-foreground"><Abbr term="FIRE" /> Calculator</h1>
         <p className="text-foreground-muted mt-1">
           Monte Carlo financial independence projections using {assumptions.returnMode === 'historical' ? '97 years of market history (1928–2024)' : 'your fixed return assumption'}.
           All values in today&apos;s dollars.
@@ -719,9 +720,9 @@ export default function FireCalculatorPage() {
       {!isLoading && (
         <section className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 ${recalcDim}`}>
           <ResultCard
-            label="FI Number"
+            label={<><Abbr term="FI" /> Number</>}
             value={Number.isFinite(mcResult.fiNumber) ? fmt.format(mcResult.fiNumber) : '—'}
-            sublabel={`${(100 / safeWithdrawalRate).toFixed(0)}x expenses at ${safeWithdrawalRate}% SWR · ${fmt.format(annualIncomeAtFI)}/yr income`}
+            sublabel={<>{(100 / safeWithdrawalRate).toFixed(0)}x expenses at {safeWithdrawalRate}% <Abbr term="SWR" /> · {fmt.format(annualIncomeAtFI)}/yr income</>}
             color="primary"
             progress={progressPercent}
           />

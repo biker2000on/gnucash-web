@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import type { ShoeboxSummary } from '@/lib/hsa-shoebox';
 
@@ -221,7 +222,7 @@ export default function HsaShoeboxPage() {
   return (
     <div className="space-y-6 max-w-[1100px]">
       <header>
-        <h1 className="text-3xl font-bold text-foreground">HSA Shoebox</h1>
+        <h1 className="text-3xl font-bold text-foreground"><Abbr term="HSA" /> Shoebox</h1>
         <p className="text-foreground-muted mt-1 text-sm">
           Bank eligible medical receipts now, keep the HSA invested, and reimburse yourself
           tax-free whenever you choose.

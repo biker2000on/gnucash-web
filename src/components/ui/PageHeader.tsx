@@ -4,8 +4,8 @@ import { ReactNode } from 'react';
 import { ActionMenu, ActionMenuItem } from './ActionMenu';
 
 interface PageHeaderProps {
-    title: string;
-    subtitle?: string;
+    title: ReactNode;
+    subtitle?: ReactNode;
     /**
      * Primary actions (1-2 buttons max). Rendered inline next to the title on
      * desktop; below the title on mobile.

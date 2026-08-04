@@ -26,6 +26,7 @@ import {
 } from '@/lib/tax/estimator-inputs';
 import { summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { Abbr } from '@/components/ui/Abbr';
 import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
@@ -147,7 +148,7 @@ function buildInputs(
 function SummaryCard({ label, value, sub, tone }: {
   label: string;
   value: string;
-  sub?: string;
+  sub?: React.ReactNode;
   tone?: 'positive' | 'negative' | 'neutral';
 }) {
   const valueClass =
@@ -164,8 +165,8 @@ function SummaryCard({ label, value, sub, tone }: {
 }
 
 function Section({ title, subtitle, children, action }: {
-  title: string;
-  subtitle?: string;
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -743,7 +744,7 @@ export default function TaxEstimatorPage() {
         {showPersonalEstimate && year >= 2025 && (
         <div className="mt-3 pt-3 border-t border-border/60">
           <p className="text-xs font-medium text-foreground-secondary mb-2">
-            OBBBA deductions (2025–2028) — enter qualified amounts; caps and income
+            <Abbr term="OBBBA" /> deductions (2025–2028) — enter qualified amounts; caps and income
             phase-outs are applied automatically
           </p>
           <FieldGrid cols={3}>
@@ -841,7 +842,7 @@ export default function TaxEstimatorPage() {
             <p>
               Use <span className="text-foreground">Edit account mapping</span> below. A mapping covers the
               account <em>and all its sub-accounts</em>; an explicit mapping on a child overrides its
-              parent. Map W-2 wages, federal/state withholding, FICA, taxable dividends/interest,
+              parent. Map <Abbr term="W-2" /> wages, federal/state withholding, <Abbr term="FICA" />, taxable dividends/interest,
               self-employment income, and deductions (charitable, mortgage interest, property tax, medical).
             </p>
           </div>
@@ -862,7 +863,7 @@ export default function TaxEstimatorPage() {
             <ul className="list-disc pl-5 space-y-1">
               <li><span className="text-foreground">Tax-Exempt Interest (muni)</span> — municipal bond interest: excluded from AGI but counted for Social Security taxability.</li>
               <li><span className="text-foreground">Employer Match (income)</span> — the income account funding your employer&rsquo;s match, so match money never counts as your own contribution.</li>
-              <li><span className="text-foreground">Federal / State Estimated Tax Payment</span> — accounts you pay 1040-ES or state vouchers from; the refund estimate uses withholding <em>plus</em> these payments.</li>
+              <li><span className="text-foreground">Federal / State Estimated Tax Payment</span> — accounts you pay <Abbr term="1040-ES" /> or state vouchers from; the refund estimate uses withholding <em>plus</em> these payments.</li>
             </ul>
           </div>
           <div>
@@ -1045,14 +1046,14 @@ export default function TaxEstimatorPage() {
             <SummaryCard
               label="Marginal / effective rate"
               value={`${pct(computed.federal.marginalRate, 0)} / ${pct(computed.federal.effectiveRate)}`}
-              sub="Federal ordinary marginal · effective on AGI"
+              sub={<>Federal ordinary marginal · effective on <Abbr term="AGI" /></>}
             />
           </div>
 
           {/* IRA limits & income phase-outs */}
           <Section
-            title="IRA limits & income phase-outs"
-            subtitle={`MAGI (before IRA deduction): ${formatCurrency(computed.phaseOuts.magi)} · based on your workplace-plan coverage settings`}
+            title={<><Abbr term="IRA" /> limits &amp; income phase-outs</>}
+            subtitle={<><Abbr term="MAGI" /> (before IRA deduction): {formatCurrency(computed.phaseOuts.magi)} · based on your workplace-plan coverage settings</>}
           >
             {computed.phaseOuts.nonDeductibleIra > 0.004 && (
               <div className="mb-3 bg-warning/10 border border-warning/30 rounded-md px-3 py-2 text-xs text-warning">
@@ -1201,7 +1202,7 @@ export default function TaxEstimatorPage() {
                   <thead>
                     <tr className="text-left text-xs text-foreground-muted border-b border-border">
                       <th className="py-2 font-medium">Category</th>
-                      <th className="py-2 font-medium text-right">YTD</th>
+                      <th className="py-2 font-medium text-right"><Abbr term="YTD" /></th>
                       <th className="py-2 font-medium text-right pr-1">Used</th>
                     </tr>
                   </thead>
@@ -1255,11 +1256,14 @@ export default function TaxEstimatorPage() {
               <div className="text-sm">
                 <dl className="space-y-1.5 font-mono text-xs" style={{ fontFeatureSettings: "'tnum'" }}>
                   <BreakdownRow label="Total income" value={computed.federal.totalIncome} />
-                  <BreakdownRow label="Adjustments (401k/IRA/HSA/½ SE tax)" value={-computed.federal.adjustments} />
-                  <BreakdownRow label="AGI" value={computed.federal.agi} strong />
+                  <BreakdownRow
+                    label={<>Adjustments (401k/IRA/<Abbr term="HSA" />/½ <Abbr term="SE" /> tax)</>}
+                    value={-computed.federal.adjustments}
+                  />
+                  <BreakdownRow label={<Abbr term="AGI" />} value={computed.federal.agi} strong />
                   <BreakdownRow
                     label={computed.federal.usedItemized
-                      ? `Itemized deduction (SALT capped at ${formatCurrency(computed.federal.itemizedBreakdown.saltCap)})`
+                      ? <>Itemized deduction (<Abbr term="SALT" /> capped at {formatCurrency(computed.federal.itemizedBreakdown.saltCap)})</>
                       : 'Standard deduction'}
                     value={-computed.federal.deductionTaken}
                   />
@@ -1281,7 +1285,7 @@ export default function TaxEstimatorPage() {
                   <BreakdownRow label="Taxable income" value={computed.federal.taxableIncome} strong />
                   <div className="pt-2" />
                   <BreakdownRow label="Ordinary income tax" value={computed.federal.ordinaryTax} />
-                  <BreakdownRow label="Capital gains / QDI tax" value={computed.federal.capitalGainsTax} />
+                  <BreakdownRow label={<>Capital gains / <Abbr term="QDI" /> tax</>} value={computed.federal.capitalGainsTax} />
                   {computed.federal.selfEmploymentTax > 0 && (
                     <BreakdownRow label="Self-employment tax" value={computed.federal.selfEmploymentTax} />
                   )}
@@ -1330,7 +1334,7 @@ export default function TaxEstimatorPage() {
           {/* (d) Bracket fill chart */}
           <Section
             title="Bracket fill"
-            subtitle="How taxable income fills the federal brackets. LTCG and qualified dividends stack on top of ordinary income."
+            subtitle={<>How taxable income fills the federal brackets. <Abbr term="LTCG" /> and qualified dividends stack on top of ordinary income.</>}
           >
             <BracketFillChart federal={computed.federal} />
           </Section>
@@ -1509,7 +1513,7 @@ export default function TaxEstimatorPage() {
 /* Row components                                                      */
 /* ------------------------------------------------------------------ */
 
-function BreakdownRow({ label, value, strong }: { label: string; value: number; strong?: boolean }) {
+function BreakdownRow({ label, value, strong }: { label: React.ReactNode; value: number; strong?: boolean }) {
   return (
     <div className={`flex justify-between gap-4 ${strong ? 'border-t border-border pt-1.5' : ''}`}>
       <dt className={strong ? 'text-foreground font-medium' : 'text-foreground-muted'}>{label}</dt>

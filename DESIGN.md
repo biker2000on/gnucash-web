@@ -111,6 +111,13 @@ Restrained. One accent color + navy/slate neutrals. Color is rare and meaningful
 - **Table column alignment:** Right-align all numeric columns
 - **Date format in tables:** Use JetBrains Mono for dates too (consistent monospace column)
 
+## Abbreviations
+- **Every user-visible abbreviation must render through `<Abbr term="..." />`** (`src/components/ui/Abbr.tsx`), backed by the central glossary in `src/lib/glossary.ts` (term → expansion + optional one/two-sentence plain-English gloss). Add new terms to the glossary first.
+- **Affordance:** the abbreviation gets a dotted underline and a small (i) icon; the tooltip (shared `src/components/ui/Tooltip.tsx` primitive) opens on hover, keyboard focus, and tap, and dismisses on Escape/blur/outside tap. Native `title=` attributes are banned for this purpose (no mobile support, no styling, no discoverability).
+- **Coverage rule:** the FIRST occurrence of an abbreviation in a view gets the `<Abbr>`; repeated occurrences in a table column get the hint in the column header instead — never per cell. Repeats in running prose after the first occurrence stay plain.
+- **Tooltip styling:** `--surface-elevated` panel, 1px `--border`, radius md (6px), 13px body, expansion in `--foreground` (500), gloss in `--foreground-secondary`. Works in both themes via semantic tokens only.
+- A lint-style test (`src/__tests__/abbr-coverage.test.ts`) sweeps `src/components/` and `src/app/(main)/` for known glossary terms rendered as bare JSX text; new surfaces must use `<Abbr>` or the test fails. Do not grow its allowlist for new code.
+
 ## Decisions Log
 | Date | Decision | Rationale |
 |------|----------|-----------|
@@ -119,3 +126,4 @@ Restrained. One accent color + navy/slate neutrals. Color is rare and meaningful
 | 2026-04-03 | No gradients policy | Emerald-to-cyan gradients across ~20 instances feel cheesy; solid colors are more professional |
 | 2026-04-03 | Dark navy over pure black | Navy (#0c1322) is warmer, easier on eyes for long sessions, and makes teal accent pop |
 | 2026-04-03 | JetBrains Mono for all financial data | Tabular-nums ensures perfect column alignment for account balances and transaction amounts |
+| 2026-08-04 | Abbreviation glossary + `<Abbr>` tooltips | App is dense with tax/finance abbreviations; central glossary with (i) hover/focus/tap tooltips beats scattered `title=` attributes |

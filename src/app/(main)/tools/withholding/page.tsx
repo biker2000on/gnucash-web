@@ -15,6 +15,7 @@ import type { WithholdingCheckupPayload } from '@/lib/withholding';
 import WithholdingHeadline from './WithholdingHeadline';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { Field, FieldGrid, INPUT } from '@/components/ui/form';
+import { Abbr } from '@/components/ui/Abbr';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -166,7 +167,7 @@ export default function WithholdingCheckupPage() {
           <p className="text-sm text-foreground-secondary">
             Withholding checkup applies to books that file a personal 1040. This book is a{' '}
             {entityLabel}
-            {notApplicable.entityName ? <> ({notApplicable.entityName})</> : null}, so W-4
+            {notApplicable.entityName ? <> ({notApplicable.entityName})</> : null}, so <Abbr term="W-4" />
             withholding and per-paycheck adjustments don&apos;t apply here.
           </p>
           <Link
@@ -250,7 +251,7 @@ export default function WithholdingCheckupPage() {
               style={MONO}
             />
           </Field>
-          <Field label="Prior-year AGI">
+          <Field label={<>Prior-year <Abbr term="AGI" /></>}>
             <input
               type="number"
               min={0}
@@ -269,7 +270,7 @@ export default function WithholdingCheckupPage() {
                 onChange={e => setAnnualize(e.target.checked)}
                 className="accent-[var(--primary)]"
               />
-              Annualize YTD
+              Annualize <Abbr term="YTD" />
             </label>
           )}
         </FieldGrid>
@@ -383,7 +384,7 @@ export default function WithholdingCheckupPage() {
                   <div className="rounded-md border border-border bg-surface p-4 flex items-center justify-between gap-4">
                     <div>
                       <p className="text-sm font-semibold text-foreground">
-                        Next 1040-ES voucher (Q{checkup.nextQuarter.quarter})
+                        Next <Abbr term="1040-ES" /> voucher (Q{checkup.nextQuarter.quarter})
                       </p>
                       <p className="text-xs text-foreground-muted mt-0.5">
                         Due {formatDueDate(checkup.nextQuarter.dueDate)}
@@ -413,7 +414,7 @@ export default function WithholdingCheckupPage() {
                   <h2 className="text-base font-semibold text-foreground">Recommended paycheck adjustment</h2>
                   <p className="text-xs text-foreground-muted mt-0.5">
                     Spread across the {checkup.remainingPayPeriods ?? '—'} pay periods left this year
-                    (submit a new Form W-4 to your employer).
+                    (submit a new <Abbr term="W-4">Form W-4</Abbr> to your employer).
                   </p>
                 </div>
                 {bumpNote ? (

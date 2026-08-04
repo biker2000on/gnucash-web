@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { SUPPORTED_TAX_YEARS, isSupportedTaxYear, type TaxYear } from '@/lib/tax/types';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { Abbr } from '@/components/ui/Abbr';
 import { Modal } from '@/components/ui/Modal';
 import NewBookForm from '@/components/books/NewBookForm';
 import { useAccounts } from '@/lib/hooks/useAccounts';
@@ -91,10 +92,10 @@ const SCENARIO_ORDER: FarmScenarioKey[] = [
   'schedule_f_llc',
 ];
 
-const SCENARIO_SUBTITLES: Record<FarmScenarioKey, string> = {
+const SCENARIO_SUBTITLES: Record<FarmScenarioKey, ReactNode> = {
   unreported_cash: 'The informal status quo — shown for comparison only; not legal',
-  hobby: 'Income reported as other income; expenses not deductible, no SE tax',
-  schedule_f: 'Farm sole proprietorship: expenses + §179 deductible, SE tax, QBI',
+  hobby: <>Income reported as other income; expenses not deductible, no <Abbr term="SE" /> tax</>,
+  schedule_f: <>Farm sole proprietorship: expenses + §179 deductible, SE tax, <Abbr term="QBI" /></>,
   schedule_f_llc: 'Same taxes as sole prop (disregarded entity) plus NC LLC fees',
 };
 
@@ -470,9 +471,9 @@ export default function FarmAnalyzerPage() {
       <header>
         <h1 className="text-3xl font-bold text-foreground">Farm &amp; Apiary Analyzer</h1>
         <p className="text-foreground-muted mt-1 text-sm">
-          Weighs formalizing your farm — hobby reporting vs Schedule F vs an NC LLC —
-          using your actual income and expenses. Covers self-employment tax, the
-          NC qualifying-farmer sales-tax exemption, §179 equipment write-offs, and
+          Weighs formalizing your farm — hobby reporting vs <Abbr term="Schedule F" /> vs an NC{' '}
+          <Abbr term="LLC" /> — using your actual income and expenses. Covers self-employment tax, the
+          NC qualifying-farmer sales-tax exemption, <Abbr term="§179" /> equipment write-offs, and
           LLC costs.
         </p>
       </header>
@@ -594,7 +595,7 @@ export default function FarmAnalyzerPage() {
           <p className="text-[11px] text-foreground-muted">
             Gross income and expenses default to annualized actuals from your selected farm
             accounts ({formatCurrency(data.ytdGross)} income / {formatCurrency(data.ytdExpenses)}{' '}
-            expenses YTD ÷ {data.elapsedYearFraction.toFixed(2)} of the year elapsed). Edit any
+            expenses <Abbr term="YTD" /> ÷ {data.elapsedYearFraction.toFixed(2)} of the year elapsed). Edit any
             number to explore what-ifs.
             {data.priorThreeYearAverage !== null && (
               <> NC three-year average: {formatCurrency(data.priorThreeYearAverage)}.</>
@@ -690,7 +691,7 @@ export default function FarmAnalyzerPage() {
               }`}
             >
               <h2 className="text-sm font-semibold text-foreground">
-                Present-use value property tax
+                <Abbr term="PUV">Present-use value</Abbr> property tax
               </h2>
               <p className="text-sm text-foreground-secondary mt-1">{data.puvHint.note}</p>
             </section>

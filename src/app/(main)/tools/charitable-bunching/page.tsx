@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 import { compareBunching, type BunchingComparison } from '@/lib/tax/bunching';
 import {
   FILING_STATUS_LABELS,
@@ -203,7 +204,7 @@ export default function CharitableBunchingPage() {
             <StatCard
               label="Other itemizables / yr"
               value={formatCurrency(data.otherItemizables.total)}
-              sub={`SALT ${formatCurrency(data.otherItemizables.saltAllowed)} + mortgage ${formatCurrency(data.otherItemizables.mortgageInterest)}`}
+              sub={<><Abbr term="SALT" /> {formatCurrency(data.otherItemizables.saltAllowed)} + mortgage {formatCurrency(data.otherItemizables.mortgageInterest)}</>}
             />
           </StatGrid>
 
@@ -331,7 +332,7 @@ export default function CharitableBunchingPage() {
               </li>
               <li>
                 SALT is capped at {formatCurrency(data.otherItemizables.saltCap)} for {data.year} at
-                your projected AGI (OBBBA phase-down applied where relevant).
+                your projected <Abbr term="AGI" /> (<Abbr term="OBBBA" /> phase-down applied where relevant).
               </li>
               <li>
                 AGI-based charitable limits (60% of AGI for cash, 30% for appreciated stock) are

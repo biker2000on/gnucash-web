@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 import ReconciliationPanel from './ReconciliationPanel';
 import { RelatedLinks } from '@/components/RelatedLinks';
+import { Abbr } from '@/components/ui/Abbr';
 
 interface TermTotals {
   proceeds: number;
@@ -112,7 +113,9 @@ export default function CapitalGainsPage() {
     <div className="p-6 space-y-6 max-w-[1400px] mx-auto">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Capital Gains — Form 8949 / Schedule D</h1>
+          <h1 className="text-2xl font-bold text-foreground">
+            Capital Gains — Form <Abbr term="8949" /> / <Abbr term="Schedule D" />
+          </h1>
           <p className="text-sm text-foreground-muted mt-1">
             Realized stock &amp; fund sales for the tax year, ready for IRS Form 8949 and Schedule D.
           </p>
@@ -135,7 +138,7 @@ export default function CapitalGainsPage() {
         Broker-reported basis is not tracked in the ledger, so every lot defaults to
         <span className="text-foreground"> Box C</span> (short-term) or
         <span className="text-foreground"> Box F</span> (long-term) — &ldquo;not reported to the IRS&rdquo;.
-        Use the 1099-B reconciliation below to confirm basis; matched rows are upgraded to Box A / Box D.
+        Use the <Abbr term="1099">1099-B</Abbr> reconciliation below to confirm basis; matched rows are upgraded to Box A / Box D.
       </div>
 
       {loading && (
@@ -157,13 +160,13 @@ export default function CapitalGainsPage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-surface border border-border rounded-lg p-4">
-              <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Net Short-Term</div>
+              <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Net <Abbr term="ST">Short-Term</Abbr></div>
               <div className={`text-xl font-bold font-mono tabular-nums ${gainClass(data.scheduleD.netShortTerm)}`}>
                 {formatCurrency(data.scheduleD.netShortTerm, 'USD')}
               </div>
             </div>
             <div className="bg-surface border border-border rounded-lg p-4">
-              <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Net Long-Term</div>
+              <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Net <Abbr term="LT">Long-Term</Abbr></div>
               <div className={`text-xl font-bold font-mono tabular-nums ${gainClass(data.scheduleD.netLongTerm)}`}>
                 {formatCurrency(data.scheduleD.netLongTerm, 'USD')}
               </div>
@@ -232,7 +235,7 @@ export default function CapitalGainsPage() {
                         <th className="px-4 py-3 text-right">Cost Basis</th>
                         <th className="px-4 py-3 text-center">Code</th>
                         <th className="px-4 py-3 text-right">Adjustment</th>
-                        <th className="px-4 py-3 text-right">Gain/Loss</th>
+                        <th className="px-4 py-3 text-right"><Abbr term="G/L">Gain/Loss</Abbr></th>
                       </tr>
                     </thead>
                     <tbody>

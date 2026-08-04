@@ -12,6 +12,7 @@ import { TransactionModal, originalPayeeLine } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
+import { Abbr } from './ui/Abbr';
 import { InlineEditRow } from './InlineEditRow';
 import { EditableRow, EditableRowHandle } from './ledger/EditableRow';
 import { InvestmentEditRow, InvestmentEditRowHandle, InvestmentSaveData } from './ledger/InvestmentEditRow';
@@ -2520,7 +2521,7 @@ export default function AccountLedger({
                                             <span className="text-secondary">Stock Split</span>
                                         )}
                                         {invRow.transactionType === 'reinvested_dividend' && (
-                                            <span className="text-primary">DRIP</span>
+                                            <span className="text-primary"><Abbr term="DRIP" /></span>
                                         )}
                                         {invRow.transactionType === 'return_of_capital' && (
                                             <span className="text-warning">Return of Capital</span>

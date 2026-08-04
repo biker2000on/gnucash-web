@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 import Link from 'next/link';
+import { Abbr } from '@/components/ui/Abbr';
 
 interface HarvestCandidate {
   accountGuid: string;
@@ -82,7 +83,7 @@ export default function TaxHarvestingPage() {
         <h3 className="text-sm font-medium text-foreground-secondary mb-3">Tax Rates</h3>
         <div className="flex items-center gap-6">
           <label className="flex items-center gap-2">
-            <span className="text-xs text-foreground-muted">Short-Term Rate:</span>
+            <span className="text-xs text-foreground-muted"><Abbr term="ST">Short-Term</Abbr> Rate:</span>
             <input
               type="number"
               value={shortTermRate}
@@ -94,7 +95,7 @@ export default function TaxHarvestingPage() {
             <span className="text-xs text-foreground-muted">%</span>
           </label>
           <label className="flex items-center gap-2">
-            <span className="text-xs text-foreground-muted">Long-Term Rate:</span>
+            <span className="text-xs text-foreground-muted"><Abbr term="LT">Long-Term</Abbr> Rate:</span>
             <input
               type="number"
               value={longTermRate}
@@ -133,7 +134,7 @@ export default function TaxHarvestingPage() {
               </div>
             </div>
             <div className="bg-background-secondary/30 border border-border rounded-xl p-4">
-              <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Projected Savings (ST)</div>
+              <div className="text-[10px] text-foreground-muted uppercase tracking-wider mb-1">Projected Savings (<Abbr term="ST" hideIcon>ST</Abbr>)</div>
               <div className="text-lg font-bold font-mono text-positive">
                 {formatCurrency(Math.abs(data.summary.totalHarvestableLoss) * (shortTermRate / 100), 'USD')}
               </div>
@@ -172,7 +173,7 @@ export default function TaxHarvestingPage() {
                       <th className="px-4 py-3 text-right">Cost Basis</th>
                       <th className="px-4 py-3 text-right">Market Value</th>
                       <th className="px-4 py-3 text-right">Unrealized Loss</th>
-                      <th className="px-4 py-3 text-center">Period</th>
+                      <th className="px-4 py-3 text-center"><Abbr term="ST/LT">Period</Abbr></th>
                       <th className="px-4 py-3 text-right">Tax Savings</th>
                     </tr>
                   </thead>

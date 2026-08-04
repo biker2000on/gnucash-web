@@ -6,6 +6,7 @@ import { ReportFilters } from '@/lib/reports/types';
 import { formatCurrency } from '@/lib/format';
 import { downloadCSV } from '@/lib/reports/csv-export';
 import Link from 'next/link';
+import { Abbr } from '@/components/ui/Abbr';
 
 interface LotReportRow {
     accountName: string;
@@ -214,8 +215,8 @@ function InvestmentLotsContent() {
                                                 <th className="px-3 py-2 text-right">Shares</th>
                                                 <th className="px-3 py-2 text-right">Cost Basis</th>
                                                 <th className="px-3 py-2 text-right">Market Value</th>
-                                                <th className="px-3 py-2 text-right">Gain/Loss</th>
-                                                <th className="px-3 py-2 text-center">Period</th>
+                                                <th className="px-3 py-2 text-right"><Abbr term="G/L">Gain/Loss</Abbr></th>
+                                                <th className="px-3 py-2 text-center"><Abbr term="ST/LT">Period</Abbr></th>
                                                 <th className="px-3 py-2 text-right">Days</th>
                                             </tr>
                                         </thead>

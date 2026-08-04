@@ -7,8 +7,9 @@ import { generateCSV, downloadCSV } from '@/lib/reports/csv-export';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 
 interface ReportViewerProps {
+    /** Plain string — also used to derive the CSV export filename. */
     title: string;
-    description?: string;
+    description?: ReactNode;
     filters: ReportFiltersType;
     onFilterChange: (filters: ReportFiltersType) => void;
     isLoading?: boolean;

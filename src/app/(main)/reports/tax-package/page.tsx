@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { Abbr } from '@/components/ui/Abbr';
 
-const CONTENTS = [
-    { name: 'Form 8949 CSV', detail: 'Realized sales in IRS column order, bucketed into boxes A–F with wash-sale adjustments' },
-    { name: 'Schedule D CSV', detail: 'Short-term and long-term totals ready for Schedule D' },
-    { name: 'Contribution summary CSV', detail: 'Retirement and HSA contributions per account with IRS limit usage' },
-    { name: 'Schedule C CSV', detail: 'Sole-proprietor income and expense lines (included when the book has business activity)' },
-    { name: 'Charitable giving CSV', detail: 'Donation detail for Schedule A, grouped by giving account, with $250+ acknowledgment flags' },
-    { name: 'Withholding snapshot', detail: 'Projected federal liability vs withholding (supported tax years)' },
-    { name: 'README.txt', detail: 'Manifest describing every file plus data caveats' },
+const CONTENTS: Array<{ key: string; name: ReactNode; detail: ReactNode }> = [
+    { key: '8949', name: <>Form <Abbr term="8949" /> CSV</>, detail: 'Realized sales in IRS column order, bucketed into boxes A–F with wash-sale adjustments' },
+    { key: 'schedule-d', name: <><Abbr term="Schedule D" /> CSV</>, detail: 'Short-term and long-term totals ready for Schedule D' },
+    { key: 'contributions', name: 'Contribution summary CSV', detail: <>Retirement and <Abbr term="HSA" /> contributions per account with IRS limit usage</> },
+    { key: 'schedule-c', name: <><Abbr term="Schedule C" /> CSV</>, detail: 'Sole-proprietor income and expense lines (included when the book has business activity)' },
+    { key: 'charitable', name: 'Charitable giving CSV', detail: 'Donation detail for Schedule A, grouped by giving account, with $250+ acknowledgment flags' },
+    { key: 'withholding', name: 'Withholding snapshot', detail: 'Projected federal liability vs withholding (supported tax years)' },
+    { key: 'readme', name: 'README.txt', detail: 'Manifest describing every file plus data caveats' },
 ];
 
 export default function TaxPackagePage() {
@@ -89,7 +90,7 @@ export default function TaxPackagePage() {
                 </h2>
                 <ul className="space-y-3">
                     {CONTENTS.map(item => (
-                        <li key={item.name} className="flex gap-3 text-sm">
+                        <li key={item.key} className="flex gap-3 text-sm">
                             <svg className="w-4 h-4 mt-0.5 shrink-0 text-positive" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                             </svg>

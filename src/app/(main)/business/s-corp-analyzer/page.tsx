@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { SUPPORTED_TAX_YEARS, isSupportedTaxYear, type TaxYear } from '@/lib/tax/types';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -364,9 +365,9 @@ export default function SCorpAnalyzerPage() {
       <header>
         <h1 className="text-3xl font-bold text-foreground">S-Corp Election Analyzer</h1>
         <p className="text-foreground-muted mt-1 text-sm">
-          Compares the total federal cost of your pass-through profit as an LLC (SE tax on
+          Compares the total federal cost of your pass-through profit as an <Abbr term="LLC" /> (<Abbr term="SE" /> tax on
           everything) versus an S-corp (payroll tax on a reasonable salary, distributions
-          tax-free of employment tax) — including QBI and the S-corp&apos;s extra running costs.
+          tax-free of employment tax) — including <Abbr term="QBI" /> and the S-corp&apos;s extra running costs.
         </p>
       </header>
 

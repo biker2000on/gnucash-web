@@ -5,6 +5,7 @@
  * FIRE calculator page.
  */
 
+import type React from 'react';
 import type { FireAssumptions } from '@/lib/fire/assumptions';
 
 /* ------------------------------------------------------------------ */
@@ -316,9 +317,9 @@ export function DataDrivenInputField({
 /* ------------------------------------------------------------------ */
 
 interface ResultCardProps {
-  label: string;
+  label: React.ReactNode;
   value: string;
-  sublabel: string;
+  sublabel: React.ReactNode;
   color: 'primary' | 'emerald' | 'purple' | 'amber';
   progress?: number;
 }

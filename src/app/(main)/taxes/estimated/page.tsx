@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 import { ProvenanceModal } from '@/components/provenance/ProvenanceModal';
 import { SUPPORTED_TAX_YEARS, isSupportedTaxYear, type TaxYear } from '@/lib/tax/types';
 import type { QuarterStatus } from '@/lib/tax/estimated-quarters';
@@ -205,7 +206,7 @@ export default function EstimatedTaxPage() {
         <header>
           <h1 className="text-3xl font-bold text-foreground">Estimated Taxes</h1>
           <p className="text-foreground-muted mt-1 text-sm">
-            Quarterly 1040-ES targets from safe harbor versus what you actually paid.
+            Quarterly <Abbr term="1040-ES" /> targets from safe harbor versus what you actually paid.
           </p>
         </header>
         <div className="rounded-lg border border-border bg-surface/30 p-6 space-y-3">
@@ -283,7 +284,7 @@ export default function EstimatedTaxPage() {
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
-            Prior-year AGI ({year - 1} Form 1040 line 11)
+            Prior-year <Abbr term="AGI" /> ({year - 1} Form 1040 line 11)
             <input
               type="number"
               min={0}

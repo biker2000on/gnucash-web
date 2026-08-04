@@ -5,6 +5,7 @@ import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters } from '@/lib/reports/types';
 import type { FxRevaluationData } from '@/lib/reports/fx-revaluation';
 import { formatCurrency } from '@/lib/format';
+import { Abbr } from '@/components/ui/Abbr';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -73,7 +74,7 @@ export default function FxRevaluationPage() {
         <div className="space-y-6">
             <ReportViewer
                 title="FX Revaluation"
-                description="Foreign-currency cash exposure: average acquisition rate vs current rate"
+                description={<><Abbr term="FX">Foreign-currency</Abbr> cash exposure: average acquisition rate vs current rate</>}
                 filters={filters}
                 onFilterChange={setFilters}
                 isLoading={isLoading}

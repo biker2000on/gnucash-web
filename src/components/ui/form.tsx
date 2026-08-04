@@ -81,7 +81,7 @@ export function RecordCard(props: {
 
 /** Labelled form field. Pass the control as `children`. */
 export function Field(props: {
-  label: string;
+  label: ReactNode;
   children: ReactNode;
   className?: string;
 }) {

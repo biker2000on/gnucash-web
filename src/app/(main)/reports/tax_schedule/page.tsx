@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { txfCodesByForm, TXF_CODES } from '@/lib/tax/txf-codes';
+import { Abbr } from '@/components/ui/Abbr';
 
 /* ------------------------------------------------------------------ */
 /* API payload types (mirror src/lib/tax/tax-schedule.ts)               */
@@ -229,7 +230,7 @@ export default function TaxSchedulePage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Tax Schedule Report</h1>
           <p className="text-sm text-foreground-muted mt-1">
-            Tax-related activity grouped by TXF code and IRS form, exportable as a .txf file
+            Tax-related activity grouped by <Abbr term="TXF" /> code and IRS form, exportable as a .txf file
             for TurboTax / TaxCut import.
           </p>
         </div>

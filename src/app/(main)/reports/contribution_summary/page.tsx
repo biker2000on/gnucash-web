@@ -6,6 +6,7 @@ import { ReportViewer } from '@/components/reports/ReportViewer';
 import { ReportFilters, ContributionSummaryData } from '@/lib/reports/types';
 import { ContributionByTypeTable, ContributionTable } from '@/components/reports/ContributionTable';
 import { formatCurrency } from '@/lib/format';
+import { Abbr } from '@/components/ui/Abbr';
 
 function getDefaultFilters(): ReportFilters {
     const now = new Date();
@@ -121,7 +122,7 @@ function ContributionSummaryContent() {
                                 </div>
                                 <p className="text-foreground-muted text-sm max-w-md mx-auto">
                                     To track contributions, flag your retirement accounts with the appropriate
-                                    account type (e.g., 401k, IRA) in your account settings.
+                                    account type (e.g., 401k, <Abbr term="IRA" />) in your account settings.
                                 </p>
                             </div>
                         ) : (

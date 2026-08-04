@@ -17,6 +17,7 @@ import type {
 import PlanComparisonCards from './PlanComparisonCards';
 import PlanLotTable from './PlanLotTable';
 import { RelatedLinks } from '@/components/RelatedLinks';
+import { Abbr } from '@/components/ui/Abbr';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -340,9 +341,9 @@ export default function SellPlannerPage() {
                                 <p className="font-medium text-foreground-secondary mb-1">Assumptions</p>
                                 <p>
                                     Estimates only — not tax advice. Tax cost is incremental: federal tax at
-                                    baseline income plus plan gains, minus baseline tax, honoring ST/LT netting,
+                                    baseline income plus plan gains, minus baseline tax, honoring <Abbr term="ST/LT" /> netting,
                                     the $3,000 capital-loss cap, long-term capital gains bracket stacking, and
-                                    the 3.8% NIIT; state tax is approximated on federal AGI at your configured
+                                    the 3.8% <Abbr term="NIIT" />; state tax is approximated on federal <Abbr term="AGI" /> at your configured
                                     state ({result.context.stateCode}), so states are assumed to tax ST and LT
                                     gains alike. Baseline income is your year-to-date book data
                                     {result.context.annualized ? ', annualized to a full-year estimate,' : ''} plus

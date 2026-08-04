@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { ScheduleFReport } from '@/lib/business/schedule-f';
 import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Abbr } from '@/components/ui/Abbr';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { useKeyboardShortcut } from '@/lib/hooks/useKeyboardShortcut';
@@ -194,7 +195,7 @@ export default function ScheduleFPage() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Schedule F Estimate"
+                title={<><Abbr term="Schedule F" /> Estimate</>}
                 subtitle="Farm income and expenses for a tax year mapped onto Schedule F lines by account-name keywords. Built for apiaries and small farms."
                 actions={
                     <label className="flex items-center gap-2 text-sm text-foreground-secondary">
@@ -386,7 +387,7 @@ export default function ScheduleFPage() {
                         This is an ESTIMATE built from account-name keywords and your manual line
                         overrides — not tax filing software and not filing advice. Income lines are
                         classified automatically (honey/wax/bee sales → line 2, ag program payments →
-                        4a, pollination → 8). Depreciation and §179 (line 14) only appears when you
+                        4a, pollination → 8). Depreciation and <Abbr term="§179" /> (line 14) only appears when you
                         book it to an expense account. Shortcuts: [ and ] step the tax year, Esc
                         collapses expanded lines. Review every line against IRS Schedule F
                         instructions (Pub 225) before using these numbers.
