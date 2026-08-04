@@ -1603,9 +1603,14 @@ gain differently) — 80 pure transfer-closes plus two lots whose zero-value
 disposals against same-account/TRADING counters are adjustments, not sales
 (classifier extended accordingly). Apply verified: idempotent re-run, exact
 per-year reconciliation (2024 −$5,061.11 / 2025 −$1,518.66 match the audit),
-VOO carried basis $199,265.93 on the Ally lot, zero orphans created (the 897
-orphaned `gnucash_web_generated` slots pre-exist on prod — separate hygiene
-item). **Prod repair executed 2026-08-04**: backup at
+VOO carried basis $199,265.93 on the Ally lot, zero orphans created. (The
+"897 orphaned `gnucash_web_generated` slots" flagged that day were a
+diagnostic error — they attach to LOT guids, which the check omitted; the
+2026-08-04 cleanup script `scripts/cleanup-orphaned-slots.ts` checks every
+attach type and finds zero true orphans on prod. Six genuinely leaking
+delete paths — transaction DELETE/PUT, audit undo, book delete, XML
+re-import collision clear, package delete — were found and fixed with a
+guard test in the same pass.) **Prod repair executed 2026-08-04**: backup at
 `~/gnucash-prod-pre-lot-repair-20260804-160304.dump` on the truenas host,
 dry-run matched the rehearsal exactly, apply reverted 82 gains transactions
 and wrote 95 carried-basis slots, and every verification (idempotent re-run,
