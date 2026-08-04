@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
@@ -25,6 +26,13 @@ const TYPE_LABELS: Record<string, string> = {
 
 function typeLabel(t: string): string {
   return TYPE_LABELS[t] || t;
+}
+
+/** JSX variant of typeLabel: glossary-backed abbreviations get a tooltip. */
+function typeLabelNode(t: string): ReactNode {
+  if (t === 'hsa') return <Abbr term="HSA" />;
+  if (t === 'fsa') return <Abbr term="FSA" />;
+  return typeLabel(t);
 }
 
 interface ApiLimit {
@@ -486,7 +494,7 @@ export default function ContributionLimitsPage() {
                   const catchUpChanged = f.catchUp !== null && f.catchUp !== curCatchUp;
                   return (
                     <tr key={f.account_type} className="border-b border-border last:border-b-0">
-                      <td className="px-4 py-2 text-foreground">{typeLabel(f.account_type)}</td>
+                      <td className="px-4 py-2 text-foreground">{typeLabelNode(f.account_type)}</td>
                       <td className="px-4 py-2 text-right font-mono">
                         <span className="text-foreground-muted">{curBase !== null ? fmtUsd(curBase) : '—'}</span>
                         <span className="text-foreground-muted"> → </span>
@@ -544,7 +552,7 @@ export default function ContributionLimitsPage() {
             <MobileCard
               key={row.account_type}
               fields={[
-                { label: 'Account', value: <span className="font-medium">{typeLabel(row.account_type)}</span> },
+                { label: 'Account', value: <span className="font-medium">{typeLabelNode(row.account_type)}</span> },
                 { label: 'Source', value: sourceBadge(row.source, isDirty(row)) },
                 { label: 'Base', value: numberInput(row, 'base', 'w-28') },
                 { label: 'Catch-Up', value: numberInput(row, 'catchUp', 'w-28') },
@@ -571,7 +579,7 @@ export default function ContributionLimitsPage() {
             <tbody>
               {rows.map(row => (
                 <tr key={row.account_type} className="border-b border-border last:border-b-0 hover:bg-surface-hover/40">
-                  <td className="px-4 py-2 text-foreground font-medium">{typeLabel(row.account_type)}</td>
+                  <td className="px-4 py-2 text-foreground font-medium">{typeLabelNode(row.account_type)}</td>
                   <td className="px-4 py-2 text-right">{numberInput(row, 'base', 'w-28')}</td>
                   <td className="px-4 py-2 text-right">{numberInput(row, 'catchUp', 'w-24')}</td>
                   <td className="px-4 py-2 text-right">{numberInput(row, 'catchUpAge', 'w-20')}</td>

@@ -30,6 +30,7 @@ import { STATE_OPTIONS } from '@/lib/tax/state';
 import { useHouseholdFilingStatus } from '@/lib/hooks/useHouseholdNames';
 import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { INPUT, LABEL } from '@/components/ui/form';
 import DrawdownChart, { BUCKET_COLORS } from './DrawdownChart';
@@ -406,8 +407,8 @@ export default function DrawdownPlannerPage() {
             <header>
                 <h1 className="text-3xl font-bold text-foreground">Drawdown &amp; Roth Conversion Planner</h1>
                 <p className="text-foreground-muted mt-1">
-                    Year-by-year retirement spend-down with withdrawal sequencing, SECURE 2.0 RMDs,
-                    IRMAA warnings, and bracket-filling Roth conversions. Estimates only — not tax advice.
+                    Year-by-year retirement spend-down with withdrawal sequencing, SECURE 2.0 <Abbr term="RMD">RMDs</Abbr>,
+                    <Abbr term="IRMAA" /> warnings, and bracket-filling Roth conversions. Estimates only — not tax advice.
                 </p>
             </header>
 

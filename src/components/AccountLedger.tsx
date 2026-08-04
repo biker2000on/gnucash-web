@@ -2145,9 +2145,10 @@ export default function AccountLedger({
         </div>
     );
 
+    const currentCostBasisMethod = accountCostBasisMethod || costBasisMethod;
     const costBasisSelect = isInvestmentAccount ? (
         <select
-            value={accountCostBasisMethod || costBasisMethod}
+            value={currentCostBasisMethod}
             onChange={async (e) => {
                 const method = e.target.value;
                 setAccountCostBasisMethod(method);
@@ -2231,6 +2232,9 @@ export default function AccountLedger({
                                         Cost Basis Method
                                     </label>
                                     {costBasisSelect}
+                                    <p className="mt-1.5 text-[11px] text-foreground-muted">
+                                        <Abbr term="FIFO" /> sells the oldest shares first; <Abbr term="LIFO" /> the newest.
+                                    </p>
                                 </div>
                             )}
                             {activeFilterCount > 0 && (
@@ -2301,7 +2305,18 @@ export default function AccountLedger({
                             Lots
                         </button>
                     )}
-                    {costBasisSelect}
+                    {costBasisSelect && (
+                        <span className="inline-flex items-center gap-1">
+                            {costBasisSelect}
+                            {(currentCostBasisMethod === 'fifo' || currentCostBasisMethod === 'lifo') && (
+                                <Abbr term={currentCostBasisMethod === 'fifo' ? 'FIFO' : 'LIFO'}>
+                                    <span className="sr-only">
+                                        {currentCostBasisMethod === 'fifo' ? 'FIFO' : 'LIFO'}
+                                    </span>
+                                </Abbr>
+                            )}
+                        </span>
+                    )}
                     <button
                         onClick={handleToggleEditMode}
                         disabled={isReadonly}

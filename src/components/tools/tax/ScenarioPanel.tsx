@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Abbr } from '@/components/ui/Abbr';
 import { formatCurrency } from '@/lib/format';
 import {
   evaluateScenario,
@@ -140,7 +141,7 @@ export default function ScenarioPanel({
 
       {scenarios.length === 0 && (
         <p className="text-sm text-foreground-muted">
-          Add a scenario to model additional retirement or HSA contributions and see the tax impact.
+          Add a scenario to model additional retirement or <Abbr term="HSA" /> contributions and see the tax impact.
         </p>
       )}
 

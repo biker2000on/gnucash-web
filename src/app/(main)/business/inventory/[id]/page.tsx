@@ -8,6 +8,7 @@ import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { Abbr } from '@/components/ui/Abbr';
 import { ItemFormModal } from '@/components/business/ItemFormModal';
 import { ItemSelector } from '@/components/business/ItemSelector';
 import { MovementsTable } from '@/components/business/MovementsTable';
@@ -330,7 +331,7 @@ function StockActionModal({
                                         disabled={!canPostShip}
                                         className="accent-primary"
                                     />
-                                    Post COGS to ledger (avg cost × quantity)
+                                    Post <Abbr term="COGS" /> to ledger (avg cost × quantity)
                                 </label>
                                 {!canPostShip && (
                                     <p className="mt-1 text-xs text-foreground-muted">

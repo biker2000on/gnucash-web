@@ -17,6 +17,7 @@ import type {
 } from '@/lib/resilience/types';
 import { DocumentChip, DocumentLinkField, type VaultDocument } from './DocumentLinkField';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, SaveBar, TNUM } from './ui';
+import { Abbr } from '@/components/ui/Abbr';
 
 const uid = () => crypto.randomUUID();
 const today = () => new Date().toISOString().slice(0, 10);
@@ -467,7 +468,7 @@ export function EstatePage() {
         description="Accounts that pass outside the will. A designation goes stale after the review cycle or any recorded life event."
         action={<button type="button" onClick={addDesignation} className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:bg-primary-hover">Add designation</button>}
       >
-        {state.profile.designations.length === 0 ? <Empty>Add each account with a named beneficiary — retirement, life insurance, TOD, POD, annuity, HSA.</Empty> : (
+        {state.profile.designations.length === 0 ? <Empty>Add each account with a named beneficiary — retirement, life insurance, <Abbr term="TOD" />, <Abbr term="POD" />, annuity, <Abbr term="HSA" />.</Empty> : (
           <div className="space-y-2">
             {state.profile.designations.map(designation => {
               const row = readiness?.designations.find(item => item.id === designation.id);

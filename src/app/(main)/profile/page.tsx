@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
+import { Abbr } from '@/components/ui/Abbr';
 import { usePWAInstall } from '@/contexts/PWAInstallContext';
 import { product } from '@/lib/product';
 
@@ -404,7 +405,7 @@ export default function ProfilePage() {
             <div className="bg-surface/30 backdrop-blur-xl border border-border rounded-2xl p-6 shadow-2xl">
                 <h3 className="text-lg font-semibold text-foreground mb-2">Birthday</h3>
                 <p className="text-sm text-foreground-muted mb-4">
-                    Used to calculate your current age in the FIRE calculator.
+                    Used to calculate your current age in the <Abbr term="FIRE" /> calculator.
                 </p>
 
                 {birthdayMessage && (

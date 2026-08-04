@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { Abbr } from '@/components/ui/Abbr';
 import { formatCurrency } from '@/lib/format';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
@@ -137,7 +138,7 @@ export default function Form990Page() {
     return (
       <div className="space-y-6 max-w-[900px]">
         <header>
-          <h1 className="text-3xl font-bold text-foreground">Form 990-N Helper</h1>
+          <h1 className="text-3xl font-bold text-foreground">Form <Abbr term="990-N" /> Helper</h1>
           <p className="text-foreground-muted mt-1 text-sm">
             Gross-receipts test and e-Postcard checklist for small exempt organizations.
           </p>
@@ -166,7 +167,7 @@ export default function Form990Page() {
     <div className="space-y-6 max-w-[900px]">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Form 990-N Helper</h1>
+          <h1 className="text-3xl font-bold text-foreground">Form <Abbr term="990-N" /> Helper</h1>
           <p className="text-foreground-muted mt-1 text-sm">
             Checks the $50,000 gross-receipts test from this book&apos;s income accounts and
             prefills what it can for the IRS e-Postcard.

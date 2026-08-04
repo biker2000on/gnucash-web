@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { Abbr } from '@/components/ui/Abbr';
 import { formatCurrency } from '@/lib/format';
 
 type ScrubMethod = 'fifo' | 'lifo' | 'average';
@@ -72,9 +73,9 @@ export function ScrubAllButton() {
     }
   }
 
-  const methodLabels: Record<ScrubMethod, string> = {
-    fifo: 'FIFO (First In, First Out)',
-    lifo: 'LIFO (Last In, First Out)',
+  const methodLabels: Record<ScrubMethod, ReactNode> = {
+    fifo: <><Abbr term="FIFO" /> (First In, First Out)</>,
+    lifo: <><Abbr term="LIFO" /> (Last In, First Out)</>,
     average: 'Average Cost',
   };
 

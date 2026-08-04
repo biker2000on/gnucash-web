@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { Field, FieldGrid, INPUT } from '@/components/ui/form';
+import { Abbr } from '@/components/ui/Abbr';
 import { FILING_STATUS_LABELS } from '@/lib/tax/types';
 import {
     DEFAULT_SCENARIO_ASSUMPTIONS,
@@ -494,7 +495,7 @@ export default function ScenarioSandboxPage() {
                     <TaxCard title={`Taxes ${result.tax.nextYear.calendarYear}`} cmp={result.tax.nextYear} />
                     <div className="bg-surface/30 border border-border rounded-xl p-4 sm:p-5 space-y-3">
                         <div className="flex items-baseline justify-between gap-2">
-                            <h3 className="text-sm font-semibold text-foreground">FIRE Impact</h3>
+                            <h3 className="text-sm font-semibold text-foreground"><Abbr term="FIRE" /> Impact</h3>
                             <span className="text-[11px] text-foreground-muted">deterministic</span>
                         </div>
                         {fire && (

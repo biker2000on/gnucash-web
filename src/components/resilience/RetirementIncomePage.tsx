@@ -16,6 +16,7 @@ import type {
   RetirementPerson,
 } from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, TNUM } from './ui';
+import { Abbr } from '@/components/ui/Abbr';
 
 const uid = () => crypto.randomUUID();
 const numberValue = (value: string) => Number(value) || 0;
@@ -448,7 +449,7 @@ export function RetirementIncomePage() {
         )}
       </Panel>
 
-      <Panel title="Sequencing comparison" description="The existing drawdown engine runs the full spend-down (RMDs, federal tax, Social Security) under each withdrawal order.">
+      <Panel title="Sequencing comparison" description={<>The existing drawdown engine runs the full spend-down (<Abbr term="RMD">RMDs</Abbr>, federal tax, Social Security) under each withdrawal order.</>}>
         {!sequencing ? <Empty>Add a person and balances to run the withdrawal-order comparison.</Empty> : (
           <>
             <div className="overflow-x-auto">
@@ -459,7 +460,7 @@ export function RetirementIncomePage() {
                     <th className={`${TH} text-right`}>Ending value at {analysis!.settings.horizonAge}</th>
                     <th className={`${TH} text-right`}>Lifetime tax</th>
                     <th className={`${TH} text-right`}>Depletion age</th>
-                    <th className={`${TH} text-right`}>First-year AGI</th>
+                    <th className={`${TH} text-right`}>First-year <Abbr term="AGI" hideIcon /></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -491,7 +492,7 @@ export function RetirementIncomePage() {
         )}
       </Panel>
 
-      <Panel title="IRMAA headroom" description="First-year MAGI proxy measured against the 2026 Medicare IRMAA tiers (two-year lookback applies from age 63).">
+      <Panel title={<><Abbr term="IRMAA" /> headroom</>} description={<>First-year <Abbr term="MAGI" /> proxy measured against the 2026 Medicare IRMAA tiers (two-year lookback applies from age 63).</>}>
         {!irmaa ? <Empty>Add a person and balances to project first-year MAGI.</Empty> : (
           <>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Abbr } from '@/components/ui/Abbr';
 import type {
   FinancialEvent,
   FinancialEventDomain,
@@ -98,7 +99,10 @@ function EventRow({ event, currency }: { event: FinancialEvent; currency: string
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${DOMAIN_COLORS[event.domain]}`}>
-            {DOMAIN_LABELS[event.domain]}
+            {/* nested: the whole event row can be a <Link>, so the trigger must not be focusable */}
+            {event.domain === 'rmd'
+              ? <Abbr term="RMD" hideIcon nested>RMD</Abbr>
+              : DOMAIN_LABELS[event.domain]}
           </span>
           <span className="font-mono text-[11px] text-foreground-muted">{event.date}</span>
           {event.status === 'overdue' && (

@@ -7,7 +7,7 @@ import type { ReactNode } from 'react';
 export { INPUT, LABEL, TNUM, FieldGrid, RecordCard, Field } from '@/components/ui/form';
 import { TNUM } from '@/components/ui/form';
 
-export function Panel(props: { title: string; description?: string; children: ReactNode; action?: ReactNode }) {
+export function Panel(props: { title: ReactNode; description?: ReactNode; children: ReactNode; action?: ReactNode }) {
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-background-secondary/30">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">

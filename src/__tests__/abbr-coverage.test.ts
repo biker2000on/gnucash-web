@@ -7,9 +7,10 @@
  * `<Abbr term="...">` for that term — the coverage rule is first occurrence per
  * view; repeats after a covered first occurrence are intentionally plain.
  *
- * ALLOWLIST holds the surfaces that predate the glossary and have not been
- * retrofitted yet. Fix a surface by adding `<Abbr>` at the first occurrence,
- * then delete its line here. Do NOT add new entries for new code.
+ * ALLOWLIST is for genuine false positives only (each entry needs a comment
+ * explaining why it is not a user-facing abbreviation). Every pre-glossary
+ * surface has been retrofitted; do NOT add entries for new code — add `<Abbr>`
+ * at the first occurrence instead.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -27,42 +28,11 @@ const SCAN_DIRS = ['src/components', 'src/app/(main)'];
 const SWEEP_TERMS = [
     'QBI', 'MAGI', 'NIIT', 'SALT', 'LTCG', 'STCG', 'OASDI', 'FICA', 'COGS',
     'OBBBA', 'DRIP', 'RMD', '1040-ES', 'TXF', '990-N', 'FIFO', 'LIFO', 'SWR',
-    'PUV', 'QDI', '8949', 'HSA', 'AGI', 'YTD', 'KPI', 'FIRE',
+    'PUV', 'QDI', '8949', 'HSA', 'AGI', 'YTD', 'KPI', 'FIRE', 'IRMAA',
 ];
 
-/** Pre-existing bare occurrences not yet retrofitted (file::term). */
-const ALLOWLIST = new Set([
-    'src/app/(main)/business/inventory/[id]/page.tsx::COGS',
-    'src/app/(main)/business/page.tsx::YTD',
-    'src/app/(main)/business/reports/990/page.tsx::990-N',
-    'src/app/(main)/money/timeline/page.tsx::RMD',
-    'src/app/(main)/planning/household-resilience/page.tsx::HSA',
-    'src/app/(main)/planning/plan/page.tsx::FIRE',
-    'src/app/(main)/profile/page.tsx::FIRE',
-    'src/app/(main)/reports/page.tsx::8949',
-    'src/app/(main)/reports/page.tsx::TXF',
-    'src/app/(main)/settings/limits/page.tsx::HSA',
-    'src/app/(main)/tools/drawdown/DrawdownTable.tsx::AGI',
-    'src/app/(main)/tools/drawdown/DrawdownTable.tsx::HSA',
-    'src/app/(main)/tools/drawdown/DrawdownTable.tsx::RMD',
-    'src/app/(main)/tools/paycheck-modeler/page.tsx::HSA',
-    'src/app/(main)/tools/scenario/ScenarioBuilder.tsx::SALT',
-    'src/app/(main)/tools/scenario/page.tsx::FIRE',
-    'src/app/(main)/tools/tax-estimator/page.tsx::990-N',
-    'src/components/AccountForm.tsx::HSA',
-    'src/components/AccountLedger.tsx::FIFO',
-    'src/components/AccountLedger.tsx::LIFO',
-    'src/components/business/ItemFormModal.tsx::COGS',
-    'src/components/business/ItemFormModal.tsx::FIFO',
-    'src/components/investments/ScrubAllButton.tsx::FIFO',
-    'src/components/investments/ScrubAllButton.tsx::LIFO',
-    'src/components/resilience/EstatePage.tsx::HSA',
-    'src/components/resilience/RetirementIncomePage.tsx::AGI',
-    'src/components/resilience/RetirementIncomePage.tsx::MAGI',
-    'src/components/resilience/RetirementIncomePage.tsx::RMD',
-    'src/components/settings/CalendarFeedSection.tsx::RMD',
-    'src/components/tools/tax/ScenarioPanel.tsx::HSA',
-]);
+/** Genuine false positives only (file::term) — comment each entry. */
+const ALLOWLIST = new Set<string>([]);
 
 function* walkTsx(dir: string): Generator<string> {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import {
@@ -289,7 +290,7 @@ export default function HouseholdResiliencePage() {
                 {healthcare.employerPlan.covered.length > 0 && <>covered — {healthcare.employerPlan.covered.join(', ')}</>}
                 {healthcare.employerPlan.covered.length > 0 && healthcare.employerPlan.notCovered.length > 0 && '; '}
                 {healthcare.employerPlan.notCovered.length > 0 && <>not covered — {healthcare.employerPlan.notCovered.join(', ')}</>}
-                . Employer premiums and HSA contributions below only apply to plans covering the members with employer eligibility.
+                . Employer premiums and <Abbr term="HSA" /> contributions below only apply to plans covering the members with employer eligibility.
               </p>
             )}
             {healthcare.profile.plans.length === 0 ? <Empty>Add the current plan and each open-enrollment candidate.</Empty> : (

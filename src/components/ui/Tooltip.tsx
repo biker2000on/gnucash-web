@@ -30,6 +30,13 @@ export interface TooltipProps {
     maxWidth?: number;
     /** Accessible label for the trigger wrapper (falls back to its text content). */
     ariaLabel?: string;
+    /**
+     * Render a non-focusable trigger (no `role`/`tabIndex`) so the tooltip can
+     * legally sit inside an interactive ancestor (button, link) — HTML forbids
+     * focusable descendants there. Opens on hover and tap; a tap suppresses the
+     * ancestor's own action so the tooltip can be read before acting.
+     */
+    nested?: boolean;
 }
 
 /**
@@ -47,6 +54,7 @@ export function Tooltip({
     className = '',
     maxWidth = 288,
     ariaLabel,
+    nested = false,
 }: TooltipProps) {
     const id = useId();
     const tooltipId = `tooltip-${id}`;
@@ -159,8 +167,8 @@ export function Tooltip({
     return (
         <span
             ref={triggerRef}
-            tabIndex={0}
-            role="button"
+            tabIndex={nested ? undefined : 0}
+            role={nested ? undefined : 'button'}
             aria-label={ariaLabel}
             aria-describedby={open ? tooltipId : undefined}
             className={`inline-flex cursor-help items-baseline outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-primary/60 ${className}`}
@@ -171,6 +179,10 @@ export function Tooltip({
             onKeyDown={onTriggerKeyDown}
             onClick={(e) => {
                 // Tap/click toggles and pins (touch has no hover-out to dismiss).
+                // Always cancel any ancestor default (label activation, link
+                // navigation, button submit) — a tap on the hint reads the hint,
+                // nothing else.
+                e.preventDefault();
                 e.stopPropagation();
                 if (open && pinnedRef.current) {
                     hide();

@@ -1009,7 +1009,7 @@ export default function TaxEstimatorPage() {
           {entityType === 'nonprofit_501c3' && (
             <p className="text-[11px] text-foreground-muted">
               501(c)(3) organizations are generally exempt from federal income tax but must file Form 990
-              (or 990-EZ/990-N). Unrelated business income (UBIT) is not modeled here.
+              (or 990-EZ/<Abbr term="990-N" />). Unrelated business income (UBIT) is not modeled here.
             </p>
           )}
           <p className="text-[11px] text-foreground-muted mt-2">

@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { getReportsByCategory, ReportConfig, SavedReport, SavedReportInput, ReportType } from '@/lib/reports/types';
 import SavedReportCard from '@/components/reports/SavedReportCard';
 import SaveReportDialog from '@/components/reports/SaveReportDialog';
+import { Abbr } from '@/components/ui/Abbr';
 
 const CATEGORY_LABELS: Record<string, string> = {
     financial: 'Financial Statements',
@@ -281,7 +282,8 @@ export default function ReportsPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                                 <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
-                                    Capital Gains — Form 8949 / Schedule D
+                                    {/* nested: inside a <Link> card, so the triggers must not be focusable */}
+                                    Capital Gains — Form <Abbr term="8949" nested /> / <Abbr term="Schedule D" nested />
                                 </h3>
                                 <p className="mt-1 text-sm text-foreground-muted line-clamp-2">
                                     Realized stock and fund sales bucketed into IRS Form 8949 boxes with Schedule D totals, wash-sale adjustments, and 1099-B reconciliation.
@@ -327,7 +329,7 @@ export default function ReportsPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                                 <h3 className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors">
-                                    Tax Schedule Report + TXF Export
+                                    Tax Schedule Report + <Abbr term="TXF" nested /> Export
                                 </h3>
                                 <p className="mt-1 text-sm text-foreground-muted line-clamp-2">
                                     Tax-related accounts grouped by TXF code and IRS form (1040, Schedules A–E), exportable as a .txf file for TurboTax / TaxCut import.
