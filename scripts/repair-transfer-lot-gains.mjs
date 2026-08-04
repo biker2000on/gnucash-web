@@ -113,6 +113,25 @@ function isTransferOut(split, lot) {
   );
 }
 
+// A zero-value negative split whose same-commodity positive counter sits in
+// the SAME account or a TRADING account is an internal share adjustment (lot
+// reshuffle, split-style correction, or trading-account write-off), not a
+// sale — no proceeds, no taxable event. The fixed engine refuses to book
+// gains from zero-proceeds disposals; the repair mirrors that rule.
+// (A different-commodity counter — a crypto-to-crypto trade — is NOT an
+// adjustment: that is a real taxable event that the engine now values from
+// the price DB, so those lots are left alone here.)
+function isAdjustmentPair(split, lot) {
+  if (Math.abs(dec(split.value_num, split.value_denom)) > VAL_EPS) return false;
+  const sibs = siblingsByTx.get(split.tx_guid) ?? [];
+  return sibs.some(o =>
+    o.guid !== split.guid &&
+    o.commodity_guid === lot.commodity_guid &&
+    (o.account_guid === lot.account_guid || o.account_type === 'TRADING') &&
+    dec(o.quantity_num, o.quantity_denom) > QTY_EPS,
+  );
+}
+
 function analyzeLot(lot) {
   const splits = splitsByLot.get(lot.guid) ?? [];
   let shares = 0;
@@ -131,15 +150,30 @@ function analyzeLot(lot) {
     else if (qty < -QTY_EPS) negSplits.push(s);
   }
   const transferOuts = negSplits.filter(s => isTransferOut(s, lot));
-  const sales = negSplits.filter(s => !transferOuts.includes(s));
-  return { splits, shares, boughtShares, buyCost, valueSum, gainsSplits, negSplits, transferOuts, sales };
+  const adjustments = negSplits.filter(s => !transferOuts.includes(s) && isAdjustmentPair(s, lot));
+  const sales = negSplits.filter(s => !transferOuts.includes(s) && !adjustments.includes(s));
+  return { splits, shares, boughtShares, buyCost, valueSum, gainsSplits, negSplits, transferOuts, adjustments, sales };
 }
 
 // ── (a) Transfer-closed lots carrying generated gains splits ────────────────
 const toRevert = []; // { lot, gainsSplit, gainsTxGuid, gainValue }
+const mixedSaleLots = []; // transfer+real-sale lots with generated gains — manual review
 for (const lot of lots) {
   const a = analyzeLot(lot);
-  if (a.negSplits.length === 0 || a.transferOuts.length !== a.negSplits.length) continue; // not purely transfer-closed
+  if (
+    a.sales.length > 0 && a.transferOuts.length > 0 &&
+    Math.abs(a.shares) < QTY_EPS &&
+    a.gainsSplits.some(gs => generatedGuids.has(gs.guid))
+  ) {
+    const gain = a.gainsSplits.filter(gs => generatedGuids.has(gs.guid))
+      .reduce((sum, gs) => sum + dec(gs.value_num, gs.value_denom), 0);
+    mixedSaleLots.push({ lot, gain, sales: a.sales.length, transfers: a.transferOuts.length });
+  }
+  // Revertable: closed entirely by non-taxable events — at least one
+  // transfer-out, remaining negatives (if any) are zero-value adjustment
+  // pairs, and NO real sale. A real sale means the generated gain is partly
+  // legitimate; those lots are skipped for manual review.
+  if (a.negSplits.length === 0 || a.transferOuts.length === 0 || a.sales.length > 0) continue;
   if (Math.abs(a.shares) > QTY_EPS) continue; // not closed
   for (const gs of a.gainsSplits) {
     if (!generatedGuids.has(gs.guid)) continue; // only our generated gains
@@ -179,6 +213,12 @@ for (const r of skipped) {
   console.log(`  SKIP lot ${r.lot.guid.slice(0, 8)}: gains tx ${r.gainsTxGuid.slice(0, 8)} has non-generated splits — manual review`);
 }
 console.log(`  total phantom gain/loss to revert: ${phantomTotal.toFixed(2)}`);
+if (mixedSaleLots.length > 0) {
+  console.log(`\n  MIXED sale+transfer lots with generated gains (NOT touched — the gain is partly legitimate; review manually):`);
+  for (const m of mixedSaleLots) {
+    console.log(`    lot ${m.lot.guid.slice(0, 8)} account ${m.lot.account_guid.slice(0, 8)}: ${m.sales} sale(s) + ${m.transfers} transfer(s), booked ${m.gain.toFixed(2)}`);
+  }
+}
 
 // ── Carried-basis re-link ───────────────────────────────────────────────────
 // Resolve basis recursively along transfer chains. basisPerShare of a lot =
@@ -286,9 +326,10 @@ for (const lot of lots) {
   if (!closed) continue;
   if (a.gainsSplits.length > 0) continue;
   if (Math.abs(a.valueSum) <= VAL_EPS) continue;
-  // Purely transfer-closed lots are EXPECTED to have a nonzero value sum now
-  // (basis stays in the lot, gain travels via carried_basis) — skip them.
-  if (a.negSplits.length > 0 && a.transferOuts.length === a.negSplits.length) continue;
+  // Lots closed purely by transfers/adjustments are EXPECTED to have a
+  // nonzero value sum now (basis stays in the lot, gain travels via
+  // carried_basis) — skip them.
+  if (a.negSplits.length > 0 && a.sales.length === 0 && a.transferOuts.length > 0) continue;
   reportCount++;
   reportTotal += -a.valueSum; // gain = -(sum) per GnuCash sign convention
   console.log(`  lot ${lot.guid.slice(0, 8)} account ${lot.account_guid.slice(0, 8)}: value sum ${a.valueSum.toFixed(2)} (implied unbooked gain ${(-a.valueSum).toFixed(2)})`);

@@ -1509,9 +1509,18 @@ left unassigned; ledger rows sum sub-splits; wash-sale exclusions;
 preference-flag/account-type classification with commodity-aware epsilons).
 **Remaining:** the supervised prod data repair —
 `scripts/repair-transfer-lot-gains.mjs` (dry-run by default, `--apply` to
-write) reverts the 84 transfer-close gains transactions, re-links carried
-basis along transfer chains, and reports the 106 no-offset lots. Rehearse on
-the dev copy, then run on prod after this code deploys. Findings kept below
+write) reverts the transfer-close gains transactions, re-links carried
+basis along transfer chains, and reports the 106 no-offset lots.
+**Rehearsed 2026-08-04** on a fresh prod snapshot (`gnucash_rehearsal` on
+truenas:5432, kept for comparison): the true inventory is **82 lots /
+−$235,065.76** (the audit's 84/−$236,065.76 netted a 2019 +$1,000 phantom
+gain differently) — 80 pure transfer-closes plus two lots whose zero-value
+disposals against same-account/TRADING counters are adjustments, not sales
+(classifier extended accordingly). Apply verified: idempotent re-run, exact
+per-year reconciliation (2024 −$5,061.11 / 2025 −$1,518.66 match the audit),
+VOO carried basis $199,265.93 on the Ally lot, zero orphans created (the 897
+orphaned `gnucash_web_generated` slots pre-exist on prod — separate hygiene
+item). Prod run still pending, supervised, now that this code is deployed. Findings kept below
 for reference. Audited files: `src/lib/lot-scrub.ts`,
 `src/lib/lot-assignment.ts`, `src/lib/lots.ts`, `src/lib/cost-basis.ts`, and
 `src/components/ledger/investment-utils.ts`, each verified with read-only
