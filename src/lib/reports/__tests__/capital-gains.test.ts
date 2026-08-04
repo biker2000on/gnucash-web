@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { WashSaleResult } from '@/lib/lot-assignment';
+import type { LotSummary, LotSplit } from '@/lib/lots';
 import {
   computeTerm,
   isLongTerm,
@@ -16,6 +17,7 @@ import {
   buildForm8949Row,
   buildCapitalGainsReport,
   flagSuspectRows,
+  lotToRealizedSales,
   reconcile1099B,
   parseBrokerCSV,
   type RealizedSaleInput,
@@ -31,6 +33,142 @@ const sale = (over: Partial<RealizedSaleInput> = {}): RealizedSaleInput => ({
   proceeds: 1500,
   costBasis: 1000,
   ...over,
+});
+
+let lotSplitSeq = 0;
+const lotSplit = (shares: number, value: number, postDate: string): LotSplit => {
+  lotSplitSeq += 1;
+  return {
+    guid: `s-${lotSplitSeq}`,
+    txGuid: `tx-${lotSplitSeq}`,
+    postDate,
+    description: '',
+    shares,
+    value,
+    shareBalance: 0,
+  };
+};
+
+const makeLot = (over: Partial<LotSummary> = {}): LotSummary => ({
+  guid: 'lot-1',
+  accountGuid: 'acct-1',
+  isClosed: true,
+  title: 'Lot 1',
+  openDate: '2023-02-10T12:00:00.000Z',
+  closeDate: '2025-06-15T12:00:00.000Z',
+  totalShares: 0,
+  totalCost: 1000,
+  realizedGain: 0,
+  unrealizedGain: null,
+  holdingPeriod: null,
+  currentPrice: null,
+  sourceLotGuid: null,
+  acquisitionDate: null,
+  carriedBasis: 0,
+  splits: [],
+  ...over,
+});
+
+/* ------------------------------------------------------------------ */
+/* lotToRealizedSales — the per-sale extraction shared with the tax    */
+/* estimator (aggregateBookTaxData)                                    */
+/* ------------------------------------------------------------------ */
+
+describe('lotToRealizedSales', () => {
+  it('emits one sale PER SELL SPLIT with its own date, proceeds and pro-rata basis', () => {
+    const lot = makeLot({
+      splits: [
+        lotSplit(100, 1000, '2023-02-10T12:00:00.000Z'),
+        lotSplit(-50, -1500, '2024-08-01T12:00:00.000Z'),
+        lotSplit(-50, -2000, '2025-03-01T12:00:00.000Z'),
+      ],
+    });
+    const sales = lotToRealizedSales(lot, 'VTI');
+    expect(sales).toHaveLength(2);
+    expect(sales[0]).toMatchObject({
+      ticker: 'VTI',
+      shares: 50,
+      dateSold: '2024-08-01T12:00:00.000Z',
+      proceeds: 1500,
+      costBasis: 500,
+    });
+    expect(sales[1]).toMatchObject({
+      dateSold: '2025-03-01T12:00:00.000Z',
+      proceeds: 2000,
+      costBasis: 500,
+    });
+    // dateAcquired falls back to openDate when no acquisition slot exists
+    expect(sales.every(s => s.dateAcquired === '2023-02-10T12:00:00.000Z')).toBe(true);
+  });
+
+  it('returns the realized portion of a still-open (partially-sold) lot', () => {
+    const lot = makeLot({
+      isClosed: false,
+      closeDate: null,
+      splits: [
+        lotSplit(100, 1000, '2025-01-05T12:00:00.000Z'),
+        lotSplit(-40, -900, '2025-06-10T12:00:00.000Z'),
+      ],
+    });
+    const sales = lotToRealizedSales(lot, 'VTI');
+    expect(sales).toHaveLength(1);
+    expect(sales[0].proceeds).toBe(900);
+    expect(sales[0].costBasis).toBe(400); // 40 of 100 shares × $10
+  });
+
+  it('uses carried_basis and the carried acquisition date for transfer-destination lots', () => {
+    // Shares arrived on a $0-value in-kind transfer-in; the original basis
+    // and purchase date are carried in lot slots by the scrub engine.
+    const lot = makeLot({
+      acquisitionDate: '2023-05-10T12:00:00.000Z',
+      carriedBasis: 800,
+      openDate: '2025-03-01T12:00:00.000Z',
+      splits: [
+        lotSplit(10, 0, '2025-03-01T12:00:00.000Z'),
+        lotSplit(-10, -1500, '2025-09-15T12:00:00.000Z'),
+      ],
+    });
+    const sales = lotToRealizedSales(lot, 'AAPL');
+    expect(sales).toHaveLength(1);
+    expect(sales[0].costBasis).toBe(800);
+    expect(sales[0].proceeds).toBe(1500);
+    expect(sales[0].dateAcquired).toBe('2023-05-10T12:00:00.000Z'); // carried, not transfer date
+    expect(computeTerm(sales[0].dateAcquired, sales[0].dateSold)).toBe('long_term');
+  });
+
+  it('skips $0-value disposals (transfer-outs / unvalued trades) — not sales', () => {
+    const lot = makeLot({
+      splits: [
+        lotSplit(100, 1000, '2023-02-10T12:00:00.000Z'),
+        lotSplit(-60, 0, '2025-04-01T12:00:00.000Z'),      // in-kind transfer-out
+        lotSplit(-40, -900, '2025-06-10T12:00:00.000Z'),   // real sale
+      ],
+    });
+    const sales = lotToRealizedSales(lot, 'VTI');
+    expect(sales).toHaveLength(1);
+    expect(sales[0].proceeds).toBe(900);
+    expect(sales[0].costBasis).toBe(400); // only the SOLD shares' basis
+  });
+
+  it('ignores zero-quantity gains-offset splits and lots with no sells', () => {
+    const noSells = makeLot({
+      isClosed: false,
+      splits: [lotSplit(100, 1000, '2023-02-10T12:00:00.000Z')],
+    });
+    expect(lotToRealizedSales(noSells, 'VTI')).toEqual([]);
+
+    const withOffset = makeLot({
+      splits: [
+        lotSplit(10, 1000, '2023-02-10T12:00:00.000Z'),
+        lotSplit(-10, -1500, '2025-06-15T12:00:00.000Z'),
+        lotSplit(0, 500, '2025-06-15T12:00:00.000Z'), // scrub gains offset
+      ],
+    });
+    const sales = lotToRealizedSales(withOffset, 'VTI');
+    expect(sales).toHaveLength(1);
+    expect(sales[0].proceeds).toBe(1500);
+    expect(sales[0].costBasis).toBe(1000);
+  });
 });
 
 describe('term classification', () => {

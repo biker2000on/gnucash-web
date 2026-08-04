@@ -41,6 +41,13 @@ export interface LotSummary {
     currentPrice: number | null;
     sourceLotGuid: string | null;      // from source_lot_guid slot (transfer linking)
     acquisitionDate: string | null;     // from acquisition_date slot (original purchase date)
+    /**
+     * Cost basis carried into a transfer-destination lot via the
+     * `carried_basis` lot slot. The $0-value in-kind transfer-in split carries
+     * no value of its own, so the transferred shares' original basis lives
+     * here (written by the lot-scrub transfer linking). 0 when absent.
+     */
+    carriedBasis: number;
     splits: LotSplit[];
 }
 
@@ -180,6 +187,17 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
     });
     const acqDateMap = new Map(acqDateSlots.map(s => [s.obj_guid, s.string_val || null]));
 
+    // carried_basis: original cost basis carried by a $0-value in-kind
+    // transfer (see lot-scrub's writeCarriedBasisSlot / readCarriedBasis).
+    const carriedSlots = await prisma.slots.findMany({
+        where: { obj_guid: { in: lotGuids }, name: 'carried_basis' },
+        select: { obj_guid: true, string_val: true },
+    });
+    const carriedMap = new Map(carriedSlots.map(s => {
+        const parsed = s.string_val ? parseFloat(s.string_val) : NaN;
+        return [s.obj_guid, Number.isFinite(parsed) ? parsed : 0] as const;
+    }));
+
     // Get account commodity for price lookup
     const account = await prisma.accounts.findUnique({
         where: { guid: accountGuid },
@@ -264,6 +282,7 @@ export async function getAccountLots(accountGuid: string): Promise<LotSummary[]>
             currentPrice: latestPrice,
             sourceLotGuid: sourceMap.get(lot.guid) ?? null,
             acquisitionDate: acqDateMap.get(lot.guid) ?? null,
+            carriedBasis: carriedMap.get(lot.guid) ?? 0,
             splits: lotSplits,
         };
     });

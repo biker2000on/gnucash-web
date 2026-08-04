@@ -2,15 +2,16 @@
  * Book-data aggregation for the tax estimator.
  *
  * Sums splits in tax-mapped accounts for a tax year by category,
- * computes realized short/long-term capital gains from lots in taxable
- * (non-retirement) investment accounts, and pulls retirement contribution
+ * computes realized short/long-term capital gains via the per-sale
+ * extraction shared with the Form 8949 report (loadRealizedSales in
+ * @/lib/reports/capital-gains), and pulls retirement contribution
  * actuals from the contribution summary (respecting tax-year overrides).
  */
 
 import prisma from '@/lib/prisma';
 import { getRetirementAccountGuids } from '@/lib/reports/contribution-classifier';
 import { generateContributionSummary } from '@/lib/reports/contribution-summary';
-import { getAccountLots } from '@/lib/lots';
+import { loadRealizedSales } from '@/lib/reports/capital-gains';
 import { isLongTerm } from '@/lib/holding-period';
 import type { BookTaxData, CategoryAggregate, TaxCategory } from './types';
 import { isTaxCategory } from './types';
@@ -202,52 +203,55 @@ export async function aggregateBookTaxData(
     }
   }
 
-  /* --- Realized capital gains from lots in taxable investment accounts --- */
+  /* --- Realized capital gains: per-sale extraction shared with Form 8949 --- */
+  // The estimator and the 8949 report MUST agree on Schedule D numbers, so
+  // both consume loadRealizedSales — one row per SELL SPLIT — which gives:
+  //  - per-sale YEAR attribution (a lot sold across years splits its gain
+  //    across those years instead of booking it all in the close year),
+  //  - the realized portions of still-open (partially-sold) lots,
+  //  - UTC calendar-year bucketing on each sale's post date,
+  //  - carried acquisition dates + carried_basis for transferred lots, and
+  //  - the SAME retirement/'exclude' filtering (loadRealizedSales applies
+  //    getRetirementAccountGuids + the effective 'exclude' mappings itself).
+  // Each sale's ST/LT term uses the shared IRS calendar-anniversary rule.
+
+  // Excluded-account count for the UI: STOCK/MUTUAL accounts outside
+  // retirement subtrees whose EFFECTIVE mapping (direct or inherited via
+  // expandMappingsToDescendants) is 'exclude'.
   const investmentCandidates = accountRows.filter(
     a =>
       (a.account_type === 'STOCK' || a.account_type === 'MUTUAL') &&
       !retirementGuids.has(a.guid),
   );
-  // Respect the EFFECTIVE tax mapping (direct or inherited from an ancestor
-  // via expandMappingsToDescendants): accounts mapped to 'exclude' are
-  // non-taxable (e.g. a brokerage subtree or single holding the user marked
-  // non-taxable), so their lots must not feed STCG/LTCG.
-  const investmentAccounts = investmentCandidates.filter(
-    a => mappings.get(a.guid) !== 'exclude',
-  );
-  const excludedInvestmentAccountCount =
-    investmentCandidates.length - investmentAccounts.length;
+  const excludedInvestmentAccountCount = investmentCandidates.filter(
+    a => mappings.get(a.guid) === 'exclude',
+  ).length;
 
   let shortTerm = 0;
   let longTerm = 0;
   const gainAccounts: BookTaxData['realizedGains']['accounts'] = [];
 
-  for (const acct of investmentAccounts) {
-    const lots = await getAccountLots(acct.guid);
-    let acctSt = 0;
-    let acctLt = 0;
-    for (const lot of lots) {
-      if (!lot.isClosed || !lot.closeDate) continue;
-      const closed = new Date(lot.closeDate);
-      if (closed.getFullYear() !== taxYear) continue;
-      if (Math.abs(lot.realizedGain) < 0.005) continue;
-      // Holding period: close date vs (acquisition date || open date), using
-      // the shared IRS calendar-anniversary rule (see @/lib/holding-period).
-      const openDate = lot.acquisitionDate || lot.openDate || lot.closeDate;
-      if (isLongTerm(openDate, lot.closeDate)) acctLt += lot.realizedGain;
-      else acctSt += lot.realizedGain;
-    }
-    if (Math.abs(acctSt) >= 0.005 || Math.abs(acctLt) >= 0.005) {
-      gainAccounts.push({
-        accountGuid: acct.guid,
-        accountName: acct.name,
-        accountPath: acct.fullname,
-        shortTerm: Math.round(acctSt * 100) / 100,
-        longTerm: Math.round(acctLt * 100) / 100,
-      });
-      shortTerm += acctSt;
-      longTerm += acctLt;
-    }
+  const sales = await loadRealizedSales(bookAccountGuids, taxYear);
+  const gainsByAccount = new Map<string, { st: number; lt: number }>();
+  for (const sale of sales) {
+    const gain = sale.proceeds - sale.costBasis;
+    const slot = gainsByAccount.get(sale.accountGuid) ?? { st: 0, lt: 0 };
+    if (isLongTerm(sale.dateAcquired, sale.dateSold)) slot.lt += gain;
+    else slot.st += gain;
+    gainsByAccount.set(sale.accountGuid, slot);
+  }
+  for (const [guid, sums] of gainsByAccount) {
+    if (Math.abs(sums.st) < 0.005 && Math.abs(sums.lt) < 0.005) continue;
+    const info = accountInfoMap.get(guid);
+    gainAccounts.push({
+      accountGuid: guid,
+      accountName: info?.name ?? 'Unknown',
+      accountPath: info?.fullname ?? 'Unknown',
+      shortTerm: Math.round(sums.st * 100) / 100,
+      longTerm: Math.round(sums.lt * 100) / 100,
+    });
+    shortTerm += sums.st;
+    longTerm += sums.lt;
   }
 
   /* --- Retirement contributions from contribution summary (tax-year aware) --- */
