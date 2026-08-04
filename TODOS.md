@@ -1885,6 +1885,88 @@ for the farmer rule + date rolling; M for annualized installments.
 
 ---
 
+## P2 - Filing Status as a Global Setting, Inherited by Feature Packs
+
+**Status:** Proposed 2026-08-04.
+
+**Outcome:** Filing status is set once, in household/entity settings, and
+every tax-aware surface inherits it — the same "define the person once"
+principle as the household roster work. Today
+`gnucash_web_entity_profiles.filing_status` exists and is read by the
+resilience packs, scenario data, and the sell planner, but other surfaces
+(tax estimator page state, withholding checkup, estimated taxes, charitable
+bunching, farm/S-corp analyzers, and any pack that asks for filing status in
+its own form) carry their own copy that can silently disagree with the
+profile.
+
+Work:
+
+1. Treat `entity_profiles.filing_status` as the single source of truth.
+   Every consumer seeds from it by default; a surface-local selector becomes
+   an explicit, visually-marked scenario override ("differs from household
+   setting — Settings link"), never a silently divergent stored copy.
+2. Audit all `filingStatus` call sites (~65 files) and re-point stored
+   per-tool copies (tool configs that persist a filing status) to the
+   shared value, with a one-time migration that flags configs whose stored
+   status disagrees with the profile rather than guessing.
+3. Changing the global setting must visibly ripple: surfaces that cached a
+   divergent value should surface the mismatch, not keep stale state.
+4. Keep the pure engines pure — they still take `filingStatus` as an input;
+   this item is about where the value comes from (service/page seams), same
+   pattern as household-roster resolution.
+
+**Depends on:** entity profiles, `estimator-inputs.ts` seams, tool-config
+persistence, household settings UI.
+
+**Effort:** S-M.
+
+---
+
+## P2 - MFJ vs MFS Filing Comparison with Breakeven Analysis
+
+**Status:** Proposed 2026-08-04.
+
+**Outcome:** A couple can see, from their real book data, whether filing
+jointly or separately is better this year, by how much, and where the
+breakeven sits — because separate filing is *sometimes* the win and almost
+no consumer tool shows the crossover. Secondary lens: a marriage-penalty /
+bonus view (two-single baseline vs MFJ) for context.
+
+The federal engine already models most of the MFS-specific rules this needs
+(separate brackets and thresholds, $1,500 capital-loss cap, 0–10k IRA
+phase-out range, NIIT/Additional-Medicare thresholds, senior-deduction and
+OBBBA tips/overtime exclusions for MFS, SALT cap halving), so the core is an
+allocation-and-compare pass, not new tax law:
+
+1. **Income/deduction allocation.** Split the household's aggregated book
+   data into per-spouse columns: W-2s and withholding by payslip owner,
+   investment income by account owner (household roster owner links where
+   present, explicit allocation UI where not), itemized deductions per the
+   MFS allocation rules (both itemize or both take standard; community-
+   property states out of scope, documented).
+2. **Three engine runs** (MFJ, MFS×2, and optionally single×2 for the
+   penalty view) over identical data, with a side-by-side result table and
+   per-line evidence traces of where the outcomes diverge (credits lost
+   under MFS, bracket effects, threshold crossings).
+3. **Breakeven sweep.** Hold one variable (e.g. spouse-2 income, a
+   deduction allocation, or a capital-gain realization) and sweep it to find
+   the crossover point where MFS overtakes MFJ (or show "MFJ wins across
+   the whole range"), rendered as a small chart with the current position
+   marked.
+4. **Honest caveats surfaced in the result**, not fine print: MFS kills
+   EITC/education credits and the student-loan interest deduction, forces
+   itemization symmetry, and interacts with income-driven student-loan
+   plans (a non-tax reason MFS wins that the tool should mention but not
+   model).
+
+**Depends on:** federal engine (already MFS-aware), estimator-inputs
+seams, payslip owner attribution, household roster owner links, the
+filing-status global setting above.
+
+**Effort:** M.
+
+---
+
 ## P2 - Abbreviation Glossary with Hover Tooltips (app-wide)
 
 **Status:** Implemented 2026-08-04.
