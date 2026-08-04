@@ -143,9 +143,13 @@ function sourceAction(input: Omit<FinancialActionCandidate, 'trace'> & {
   return { ...candidate, trace };
 }
 
-async function transactionReviewActions(
+export async function transactionReviewActions(
   bookAccountGuids: string[],
 ): Promise<FinancialActionCandidate[]> {
+  // Review items exist for IMPORTED transactions awaiting a human check.
+  // A manually entered transaction was reviewed by being authored, so
+  // `source = 'manual'` rows must never surface here — and a row already
+  // reviewed after import (`reviewed = TRUE`) must never be re-raised.
   const rows = await prisma.$queryRaw<Array<{
     guid: string;
     description: string | null;
@@ -158,12 +162,15 @@ async function transactionReviewActions(
     JOIN transactions t ON t.guid = m.transaction_guid
     JOIN splits s ON s.tx_guid = t.guid
     WHERE m.reviewed = FALSE
+      AND m.source <> 'manual'
       AND m.deleted_at IS NULL
       AND s.account_guid = ANY(${bookAccountGuids}::text[])
     ORDER BY t.post_date DESC
     LIMIT 100
   `;
-  return rows.map(row => sourceAction({
+  // Defense in depth: the SQL already gates on source, but a manual row must
+  // never become an Action Center item even if the query changes.
+  return rows.filter(row => row.source !== 'manual').map(row => sourceAction({
     stableKey: `transaction-review:${row.guid}`,
     lane: 'fix',
     origin: 'transaction_review',

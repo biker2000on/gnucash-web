@@ -329,7 +329,10 @@ export async function loadSpendingTransactions(
     const rows = await prisma.$queryRaw<SpendingRow[]>`
         SELECT
             t.post_date,
-            t.description,
+            -- Merchant identity: preserved import-time payee first, display
+            -- description as fallback. A renamed import ("pajamas") must not
+            -- break the recurring series keyed on the vendor's raw payee.
+            COALESCE(NULLIF(btrim(m.original_description), ''), t.description) AS description,
             s.value_num, s.value_denom,
             s.account_guid,
             a.name AS account_name,
@@ -337,6 +340,7 @@ export async function loadSpendingTransactions(
         FROM splits s
         JOIN accounts a ON a.guid = s.account_guid AND a.account_type = 'EXPENSE'
         JOIN transactions t ON t.guid = s.tx_guid
+        LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
         LEFT JOIN account_hierarchy ah ON ah.guid = s.account_guid
         WHERE s.account_guid = ANY(${bookAccountGuids})
           AND t.post_date >= ${startDate}

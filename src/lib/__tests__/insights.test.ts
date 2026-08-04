@@ -7,9 +7,26 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock('@/lib/prisma', () => ({ default: {} }));
+vi.mock('@/lib/prisma', () => ({
+    default: {
+        $queryRaw: vi.fn(),
+        books: { findUnique: vi.fn() },
+    },
+}));
 vi.mock('@/lib/db', () => ({ query: vi.fn(), toDecimal: vi.fn() }));
+vi.mock('@/lib/currency', () => ({
+    getBaseCurrency: vi.fn(async () => ({ mnemonic: 'USD' })),
+}));
+vi.mock('@/lib/services/financial-summary.service', () => ({
+    FinancialSummaryService: {
+        computeNetWorthSummary: vi.fn(async () => ({
+            start: { netWorth: 0 },
+            end: { netWorth: 0 },
+        })),
+    },
+}));
 
+import prisma from '@/lib/prisma';
 import {
     detectCategorySpike,
     detectNewMerchants,
@@ -19,10 +36,12 @@ import {
     computeInsights,
     filterInsights,
     polishInsights,
+    loadInsightSource,
     isoWeekKey,
     CATEGORY_SPIKE_MIN_AMOUNT,
     NEW_MERCHANT_MIN_AMOUNT,
     BALANCE_DROP_MIN_PRIOR,
+    PARTIAL_MONTH_MIN_DAY,
     type InsightCandidate,
     type InsightSource,
 } from '../insights';
@@ -90,6 +109,25 @@ describe('detectCategorySpike', () => {
         ]);
         expect(out).toEqual([]);
     });
+
+    it('never fires before the minimum elapsed day of the month', () => {
+        const series = [{ name: 'Dining', current: 400, priorMonths: [300, 290, 310] }];
+        expect(detectCategorySpike(MONTH, series, 'USD', { dayOfMonth: 3 })).toEqual([]);
+        expect(
+            detectCategorySpike(MONTH, series, 'USD', { dayOfMonth: PARTIAL_MONTH_MIN_DAY })
+        ).toHaveLength(1);
+    });
+
+    it('states the truncated month-to-date window in the detail when provided', () => {
+        const out = detectCategorySpike(
+            MONTH,
+            [{ name: 'Dining', current: 400, priorMonths: [300, 290, 310] }],
+            'USD',
+            { dayOfMonth: 15 },
+        );
+        expect(out[0].detail).toContain('first 15 days');
+        expect(out[0].detail).toContain('truncated to day 15');
+    });
 });
 
 /* ------------------------------------------------------------------ */
@@ -139,6 +177,29 @@ describe('detectSavingsRateDrop', () => {
     it('requires at least 3 prior months of data', () => {
         expect(detectSavingsRateDrop(MONTH, 0, [30, 30])).toEqual([]);
         expect(detectSavingsRateDrop(MONTH, 0, [])).toEqual([]);
+    });
+
+    it('never fires before the minimum elapsed day (phantom early-month collapse)', () => {
+        // Roadmap case: day 2 of the month, paycheck not yet landed, income
+        // reads $0 → rate 0% vs a ~29% average. Must NOT fire.
+        expect(
+            detectSavingsRateDrop(MONTH, 0, [29, 30, 28, 29, 30, 29], { dayOfMonth: 2 })
+        ).toEqual([]);
+        expect(
+            detectSavingsRateDrop(MONTH, 0, [29, 30, 28], { dayOfMonth: PARTIAL_MONTH_MIN_DAY - 1 })
+        ).toEqual([]);
+    });
+
+    it('fires at/after the floor and states the like-for-like window in the detail', () => {
+        const out = detectSavingsRateDrop(MONTH, 5, [20, 22, 18, 21], {
+            dayOfMonth: PARTIAL_MONTH_MIN_DAY,
+        });
+        expect(out).toHaveLength(1);
+        expect(out[0].detail).toContain(`first ${PARTIAL_MONTH_MIN_DAY} days`);
+        expect(out[0].detail).toContain('truncated');
+        expect(out[0].detail).toContain('5.0%');
+        // Same dedupe key as the untruncated form: still one insight per month.
+        expect(out[0].dedupeKey).toBe(`savings-rate:${MONTH}`);
     });
 });
 
@@ -225,6 +286,7 @@ describe('dedupe keys', () => {
         const run = () =>
             computeInsights({
                 month: MONTH,
+                dayOfMonth: 15,
                 weekKey: WEEK,
                 currency: 'USD',
                 categories: [{ name: 'Dining Out!', current: 400, priorMonths: [300, 290, 310] }],
@@ -260,6 +322,46 @@ describe('dedupe keys', () => {
         );
         expect(isoWeekKey(new Date(Date.UTC(2026, 6, 12)))).not.toBe(
             isoWeekKey(new Date(Date.UTC(2026, 6, 13)))
+        );
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* loadInsightSource: truncated windows + preserved-payee identity     */
+/* ------------------------------------------------------------------ */
+
+describe('loadInsightSource', () => {
+    it('truncates prior months to the same day and keys merchants on the preserved payee', async () => {
+        const queryRaw = vi.mocked(prisma.$queryRaw);
+        vi.mocked(prisma.books.findUnique).mockResolvedValue(
+            { root_account_guid: 'root' } as never,
+        );
+        const sqlCalls: string[] = [];
+        queryRaw.mockReset();
+        queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+            sqlCalls.push(strings.join('?'));
+            // First call is the book-scope CTE: return one account guid so the
+            // loader proceeds; every data query returns empty.
+            return sqlCalls.length === 1 ? [{ guid: 'acct-1' }] : [];
+        }) as never);
+
+        const now = new Date(Date.UTC(2026, 7, 21)); // 2026-08-21 UTC
+        const source = await loadInsightSource('book-1', now);
+
+        expect(source).not.toBeNull();
+        expect(source!.month).toBe('2026-08');
+        expect(source!.dayOfMonth).toBe(21);
+
+        const [, categorySql, merchantSql, savingsSql] = sqlCalls;
+        // Like-for-like month-to-date windows: prior months truncated to the
+        // current day of month for both partial-period detectors.
+        expect(categorySql).toContain('EXTRACT(DAY FROM t.post_date) <=');
+        expect(savingsSql).toContain('EXTRACT(DAY FROM t.post_date) <=');
+        // Merchant identity: preserved import-time payee first, display
+        // description as fallback (renamed imports are not "new merchants").
+        expect(merchantSql).toContain('gnucash_web_transaction_meta');
+        expect(merchantSql).toContain(
+            "COALESCE(NULLIF(btrim(m.original_description), ''), t.description)",
         );
     });
 });

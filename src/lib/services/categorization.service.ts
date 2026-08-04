@@ -416,18 +416,22 @@ export async function suggestRules(bookGuid: string): Promise<RuleSuggestion[]> 
       JOIN book_accounts b ON a.parent_guid = b.guid
     ),
     pairs AS (
+      -- Rules match against the payee a future import will arrive with, so
+      -- learning uses the preserved import-time payee (original_description)
+      -- and falls back to the display description for manual transactions.
       SELECT DISTINCT
         t.guid AS tx_guid,
-        lower(trim(t.description)) AS raw_desc,
-        trim(regexp_replace(regexp_replace(lower(t.description), '[0-9]+', '', 'g'), '\\s+', ' ', 'g')) AS norm,
+        lower(trim(COALESCE(NULLIF(btrim(m.original_description), ''), t.description))) AS raw_desc,
+        trim(regexp_replace(regexp_replace(lower(COALESCE(NULLIF(btrim(m.original_description), ''), t.description)), '[0-9]+', '', 'g'), '\\s+', ' ', 'g')) AS norm,
         s2.account_guid
       FROM transactions t
+      LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
       JOIN splits s2 ON s2.tx_guid = t.guid
       JOIN accounts a2 ON a2.guid = s2.account_guid
       WHERE a2.account_type IN ('EXPENSE', 'INCOME')
         AND s2.account_guid IN (SELECT guid FROM book_accounts)
-        AND t.description IS NOT NULL
-        AND trim(t.description) <> ''
+        AND COALESCE(NULLIF(btrim(m.original_description), ''), t.description) IS NOT NULL
+        AND trim(COALESCE(NULLIF(btrim(m.original_description), ''), t.description)) <> ''
     ),
     totals AS (
       SELECT norm, COUNT(DISTINCT tx_guid) AS total_cnt
@@ -567,17 +571,42 @@ export async function planHistoricalApplication(
     throw new Error('Rule target account no longer exists');
   }
 
+  // Reuse the exact import-time matcher (force-enabled for this explicit action).
+  const matcherRule: CategorizationRule = { ...rule, enabled: true };
+
+  // Merchant identity for matching is the preserved import-time payee
+  // (original_description) with the display description as fallback: the rule
+  // must hit "HARBOR FREIGHT PAYMENT" even after the user renamed the
+  // transaction to "pajamas". Load the book's preserved payees up front.
+  const originalRows = await prisma.$queryRaw<Array<{ tx_guid: string; original_description: string }>>`
+    SELECT DISTINCT m.transaction_guid AS tx_guid, m.original_description
+    FROM gnucash_web_transaction_meta m
+    JOIN splits s ON s.tx_guid = m.transaction_guid
+    WHERE s.account_guid = ANY(${bookAccountGuids})
+      AND m.original_description IS NOT NULL
+      AND btrim(m.original_description) <> ''
+  `;
+  const originalByTx = new Map(originalRows.map(r => [r.tx_guid, r.original_description]));
+  // Transactions whose PRESERVED payee matches the rule must survive the SQL
+  // prefilter even when their display description does not.
+  const originalMatchGuids = [...originalByTx.entries()]
+    .filter(([, original]) => matchRule([matcherRule], original) !== null)
+    .map(([guid]) => guid);
+
   const where: Prisma.transactionsWhereInput = {
     splits: { some: { account_guid: { in: bookAccountGuids } } },
   };
   // 'contains' can be prefiltered in SQL; exact/regex are filtered in JS below
   // with matchRule so the semantics stay identical to the import path.
   const trimmedPattern = (rule.pattern || '').trim();
-  if (rule.matchType === 'contains' && trimmedPattern) {
-    where.description = { contains: trimmedPattern, mode: 'insensitive' };
-  } else {
-    where.description = { not: null };
-  }
+  const descriptionPrefilter: Prisma.transactionsWhereInput =
+    rule.matchType === 'contains' && trimmedPattern
+      ? { description: { contains: trimmedPattern, mode: 'insensitive' } }
+      : { description: { not: null } };
+  where.OR = [
+    descriptionPrefilter,
+    ...(originalMatchGuids.length > 0 ? [{ guid: { in: originalMatchGuids } }] : []),
+  ];
   if (options.startDate || options.endDate) {
     where.post_date = {
       ...(options.startDate ? { gte: new Date(`${options.startDate}T00:00:00.000Z`) } : {}),
@@ -591,9 +620,8 @@ export async function planHistoricalApplication(
     orderBy: [{ post_date: 'asc' }, { guid: 'asc' }],
   });
 
-  // Reuse the exact import-time matcher (force-enabled for this explicit action).
-  const matcherRule: CategorizationRule = { ...rule, enabled: true };
-  const matched = txs.filter(t => matchRule([matcherRule], t.description ?? '') !== null);
+  const matched = txs.filter(t =>
+    matchRule([matcherRule], originalByTx.get(t.guid) ?? t.description ?? '') !== null);
 
   const matches: HistoricalMatch[] = [];
   const skipped: HistoricalSkip[] = [];

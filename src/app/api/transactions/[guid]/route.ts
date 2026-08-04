@@ -109,6 +109,19 @@ export async function GET(
             select: { mnemonic: true },
         });
 
+        // App-extension meta: import source and the preserved import-time
+        // payee (original_description) so the detail surface can show what
+        // the bank line originally said after a rename.
+        const meta = await prisma.gnucash_web_transaction_meta.findUnique({
+            where: { transaction_guid: guid },
+            select: {
+                source: true,
+                reviewed: true,
+                match_type: true,
+                original_description: true,
+            },
+        });
+
         // Transform to response format
         const result = {
             guid: transaction.guid,
@@ -118,6 +131,10 @@ export async function GET(
             post_date: transaction.post_date,
             enter_date: transaction.enter_date,
             description: transaction.description,
+            source: meta?.source ?? 'manual',
+            reviewed: meta?.reviewed ?? true,
+            match_type: meta?.match_type ?? null,
+            original_description: meta?.original_description ?? null,
             splits: transaction.splits.map(split => ({
                 guid: split.guid,
                 tx_guid: split.tx_guid,

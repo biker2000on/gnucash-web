@@ -898,6 +898,10 @@ model gnucash_web_transaction_meta {
   match_confidence           String?   @db.VarChar(10)
   matched_at                 DateTime?
   simplefin_transaction_id_2 String?   @db.VarChar(255)
+  // Import-time description (raw provider payee). Set once at import/link
+  // time by db-init's ADD COLUMN migration consumers; never overwritten on
+  // edit — renames keep the original payee for merchant-identity logic.
+  original_description       String?   @db.Text
 
   // DB-only (created by db-init, prisma can't express partial indexes):
   // uq_txn_meta_simplefin_id — UNIQUE ON (simplefin_transaction_id)

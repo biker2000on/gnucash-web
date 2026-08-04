@@ -246,6 +246,23 @@ describe('PUT /api/transactions/[guid] optimistic concurrency', () => {
         expect(snapshotTransactionByGuidMock).toHaveBeenNthCalledWith(1, TX_GUID, prismaMock);
     });
 
+    it('leaves transaction meta (incl. the preserved import payee) untouched on edit', async () => {
+        const response = await PUT(
+            putRequest({
+                ...validBody,
+                original_enter_date: CURRENT_ENTER_DATE.toISOString(),
+            }),
+            routeParams,
+        );
+        expect(response.status).toBe(200);
+        // The edit path must never write gnucash_web_transaction_meta:
+        // original_description is set once at import time, and a rename
+        // (description edit) has to leave it intact. The prisma mock has no
+        // meta model at all, so any model access would throw; raw writes are
+        // asserted empty here.
+        expect(prismaMock.$executeRaw).not.toHaveBeenCalled();
+    });
+
     it('accepts an explicit null token when the row has no enter_date', async () => {
         prismaMock.$queryRaw.mockResolvedValue([{
             guid: TX_GUID, enter_date: null, post_date: POST_DATE,

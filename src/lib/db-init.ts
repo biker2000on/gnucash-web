@@ -546,6 +546,14 @@ async function createExtensionTables() {
         WHERE simplefin_transaction_id_2 IS NOT NULL;
     `;
 
+    // Migration: preserve the description an import arrived with (the raw
+    // provider payee). Set once at import/link time and NEVER overwritten, so
+    // renaming an imported transaction no longer destroys the payee.
+    const transactionMetaAddOriginalDescriptionDDL = `
+        ALTER TABLE gnucash_web_transaction_meta
+        ADD COLUMN IF NOT EXISTS original_description TEXT;
+    `;
+
     // Migration: Add tool_config table
     const toolConfigTableDDL = `
         CREATE TABLE IF NOT EXISTS gnucash_web_tool_config (
@@ -2302,6 +2310,7 @@ async function createExtensionTables() {
         await query(transactionMetaNullableGuidDDL);
         await query(simpleFinAccountMapAddBalanceDDL);
         await query(transactionMetaAddMatchColumnsDDL);
+        await query(transactionMetaAddOriginalDescriptionDDL);
         await query(toolConfigTableDDL);
         await query(toolConfigTriggerDDL);
         await query(accountPreferencesTableDDL);

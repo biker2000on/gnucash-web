@@ -384,8 +384,9 @@ export async function GET(
             source: string;
             reviewed: boolean;
             match_type: string | null;
+            original_description: string | null;
         }[]>`
-            SELECT transaction_guid, source, reviewed, match_type
+            SELECT transaction_guid, source, reviewed, match_type, original_description
             FROM gnucash_web_transaction_meta
             WHERE transaction_guid = ANY(${txGuids}::text[])
         `;
@@ -471,10 +472,11 @@ export async function GET(
                         Number(split.quantity_num) / Number(split.quantity_denom)
                     ).toString(),
                 })),
-                // Transaction meta: reviewed status and source
+                // Transaction meta: reviewed status, source, preserved payee
                 reviewed: meta?.reviewed ?? true, // default to reviewed if no meta row
                 source: meta?.source ?? 'manual',
                 match_type: meta?.match_type ?? null,
+                original_description: meta?.original_description ?? null,
                 // Investment running totals (only present for investment accounts)
                 ...(investmentRunningTotals ? {
                     share_balance: investmentRunningTotals.get(tx.guid)?.shareBalance.toString() ?? '0',
