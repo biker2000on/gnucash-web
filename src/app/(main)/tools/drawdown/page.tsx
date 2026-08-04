@@ -27,6 +27,8 @@ import {
 } from '@/lib/social-security';
 import { FILING_STATUSES, FILING_STATUS_LABELS, type FilingStatus } from '@/lib/tax/types';
 import { STATE_OPTIONS } from '@/lib/tax/state';
+import { useHouseholdFilingStatus } from '@/lib/hooks/useHouseholdNames';
+import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { INPUT, LABEL } from '@/components/ui/form';
@@ -255,6 +257,20 @@ export default function DrawdownPlannerPage() {
     const [prefillState, setPrefillState] = useState<'loading' | 'loaded' | 'error'>('loading');
 
     const patch = (p: Partial<DrawdownParams>) => setParams(prev => ({ ...prev, ...p }));
+
+    /* --- Filing status: inherit from the household profile --- */
+    // Fresh scenarios seed from the household setting instead of the 'mfj'
+    // default. A saved scenario keeps its stored value — never rewritten
+    // silently; the divergence note beside the selector flags any mismatch.
+    const householdFilingStatus = useHouseholdFilingStatus();
+    const seededFilingStatus = useRef(false);
+    useEffect(() => {
+        if (seededFilingStatus.current || householdFilingStatus === null) return;
+        seededFilingStatus.current = true;
+        if (!initial.current.fromStorage) {
+            setParams(prev => ({ ...prev, filingStatus: householdFilingStatus }));
+        }
+    }, [householdFilingStatus]);
 
     /* --- Persist scenario to localStorage --- */
     useEffect(() => {
@@ -775,6 +791,13 @@ export default function DrawdownPlannerPage() {
                                     <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
                                 ))}
                             </select>
+                            <FilingStatusSourceNote
+                                value={params.filingStatus}
+                                householdValue={householdFilingStatus}
+                                onUseHousehold={() => {
+                                    if (householdFilingStatus) patch({ filingStatus: householdFilingStatus });
+                                }}
+                            />
                         </Field>
                         <Field label="State">
                             <select

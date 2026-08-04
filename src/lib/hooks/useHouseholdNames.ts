@@ -1,6 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { normalizeFilingStatus } from '@/lib/tax/filing-status-inheritance';
+import type { FilingStatus } from '@/lib/tax/types';
 
 interface EntityMemberLite {
     role: string;
@@ -8,6 +10,7 @@ interface EntityMemberLite {
 }
 
 interface EntityProfileLite {
+    filingStatus?: string | null;
     members?: EntityMemberLite[];
 }
 
@@ -79,4 +82,26 @@ export function useHouseholdMembers(): HouseholdMember[] {
     return (data?.members ?? [])
         .filter(member => (HOUSEHOLD_ROLES as string[]).includes(member.role))
         .map(member => ({ role: member.role as HouseholdRole, name: member.name?.trim() ?? '' }));
+}
+
+/**
+ * The household/entity profile's filing status — the single source of truth
+ * every tax surface inherits from (see lib/tax/filing-status-inheritance).
+ * Returns null while loading or when the profile has no filing status set.
+ * Shares the react-query cache key with useHouseholdNames; writers of the
+ * profile (Settings, the tax estimator's inline controls) invalidate
+ * ['entity', 'profile'] so changes ripple without stale caches.
+ */
+export function useHouseholdFilingStatus(): FilingStatus | null {
+    const { data } = useQuery<EntityProfileLite | null>({
+        queryKey: ['entity', 'profile'],
+        queryFn: async () => {
+            const res = await fetch('/api/entity');
+            if (!res.ok) return null;
+            return res.json() as Promise<EntityProfileLite>;
+        },
+        staleTime: 1000 * 60 * 5,
+    });
+
+    return normalizeFilingStatus(data?.filingStatus);
 }

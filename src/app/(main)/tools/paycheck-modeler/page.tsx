@@ -22,6 +22,12 @@ import {
   type FilingStatus,
   type TaxYear,
 } from '@/lib/tax/types';
+import {
+  applyFilingStatusSelection,
+  normalizeFilingStatus,
+} from '@/lib/tax/filing-status-inheritance';
+import { useHouseholdFilingStatus } from '@/lib/hooks/useHouseholdNames';
+import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
 
 const MONO = { fontFeatureSettings: "'tnum'" } as const;
 const TOOL_TYPE = 'paycheck_scenarios';
@@ -38,6 +44,10 @@ function makeId(): string {
 /* ------------------------------------------------------------------ */
 
 interface SavedShared {
+  /**
+   * Persisted ONLY when it diverges from the household profile (an explicit
+   * scenario override). Absent = inherit the household setting.
+   */
   filingStatus?: FilingStatus;
   stateCode?: string;
   stateFlatRate?: number;
@@ -382,9 +392,21 @@ export default function PaycheckModelerPage() {
 
   /* ---- Shared tax settings (global across scenarios) ---- */
   const [year, setYear] = useState<TaxYear>(defaultYear);
-  const [filingStatus, setFilingStatus] = useState<FilingStatus>('single');
+  // Filing status inherits from the household profile; a non-null override is
+  // an explicit scenario divergence (the only thing ever persisted).
+  const householdFilingStatus = useHouseholdFilingStatus();
+  const [filingStatusOverride, setFilingStatusOverride] = useState<FilingStatus | null>(null);
+  const filingStatus: FilingStatus = filingStatusOverride ?? householdFilingStatus ?? 'single';
   const [stateCode, setStateCode] = useState('OTHER');
   const [stateFlatRate, setStateFlatRate] = useState(0);
+
+  // A stored copy equal to the household setting is inherited state, not an
+  // override — collapse it so it is never re-persisted redundantly.
+  useEffect(() => {
+    if (filingStatusOverride !== null && filingStatusOverride === householdFilingStatus) {
+      setFilingStatusOverride(null);
+    }
+  }, [filingStatusOverride, householdFilingStatus]);
 
   /* ---- Scenarios ---- */
   const initial = useMemo(() => {
@@ -410,16 +432,12 @@ export default function PaycheckModelerPage() {
     let cancelled = false;
 
     const prefillFromEntity = () => {
+      // Filing status is NOT handled here — it inherits live from the
+      // household profile via useHouseholdFilingStatus unless overridden.
       fetch('/api/entity')
         .then(res => (res.ok ? res.json() : null))
         .then(profile => {
           if (!profile || cancelled || hydratedFromConfig.current) return;
-          if (
-            typeof profile.filingStatus === 'string' &&
-            (FILING_STATUSES as readonly string[]).includes(profile.filingStatus)
-          ) {
-            setFilingStatus(profile.filingStatus as FilingStatus);
-          }
           if (typeof profile.taxState === 'string' && profile.taxState) {
             setStateCode(profile.taxState);
           }
@@ -472,12 +490,13 @@ export default function PaycheckModelerPage() {
             setBaselineId(bl);
             setSelectedId(merged.find(s => s.id !== bl)?.id ?? merged[0].id);
             const sh = saved.shared ?? {};
-            if (
-              typeof sh.filingStatus === 'string' &&
-              (FILING_STATUSES as readonly string[]).includes(sh.filingStatus)
-            ) {
-              setFilingStatus(sh.filingStatus);
-            }
+            // A stored filing status is an explicit override; when it turns
+            // out to equal the household profile, the reconcile effect above
+            // collapses it back to inherited. A stored value that DISAGREES
+            // with the profile is never silently rewritten — the divergence
+            // note surfaces it for the user to resolve.
+            const storedFilingStatus = normalizeFilingStatus(sh.filingStatus);
+            if (storedFilingStatus) setFilingStatusOverride(storedFilingStatus);
             if (typeof sh.stateCode === 'string' && sh.stateCode) setStateCode(sh.stateCode);
             if (typeof sh.stateFlatRate === 'number') setStateFlatRate(sh.stateFlatRate);
             return;
@@ -504,7 +523,13 @@ export default function PaycheckModelerPage() {
       const config: SavedConfig = {
         scenarios,
         baselineId,
-        shared: { filingStatus, stateCode, stateFlatRate },
+        // Inherited filing status persists nothing — only explicit overrides
+        // are stored, so household-profile changes ripple automatically.
+        shared: {
+          ...(filingStatusOverride ? { filingStatus: filingStatusOverride } : {}),
+          stateCode,
+          stateFlatRate,
+        },
       };
       const res = configId
         ? await fetch(`/api/tools/config/${configId}`, {
@@ -526,7 +551,7 @@ export default function PaycheckModelerPage() {
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 3000);
     }
-  }, [scenarios, baselineId, filingStatus, stateCode, stateFlatRate, configId]);
+  }, [scenarios, baselineId, filingStatusOverride, stateCode, stateFlatRate, configId]);
 
   /* ---- Scenario management ---- */
 
@@ -649,13 +674,22 @@ export default function PaycheckModelerPage() {
             Filing status
             <select
               value={filingStatus}
-              onChange={e => setFilingStatus(e.target.value as FilingStatus)}
+              onChange={e =>
+                setFilingStatusOverride(
+                  applyFilingStatusSelection(e.target.value as FilingStatus, householdFilingStatus),
+                )
+              }
               className={selectCls}
             >
               {FILING_STATUSES.map(fs => (
                 <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
               ))}
             </select>
+            <FilingStatusSourceNote
+              value={filingStatus}
+              householdValue={householdFilingStatus}
+              onUseHousehold={() => setFilingStatusOverride(null)}
+            />
           </label>
           <label className="flex flex-col gap-1 text-xs text-foreground-secondary">
             State

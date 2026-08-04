@@ -10,13 +10,15 @@
 
 import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { getAccountGuidsForBook, getBookAccountGuids } from '@/lib/book-scope';
+import { getAccountGuidsForBook, getActiveBookGuid, getBookAccountGuids } from '@/lib/book-scope';
 import { getBaseCurrency, getBaseCurrencyForBook } from '@/lib/currency';
 import { getPreference } from '@/lib/user-preferences';
+import { getEntityProfile } from '@/lib/services/entity.service';
 import { FinancialSummaryService } from '@/lib/services/financial-summary.service';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
 import { annualizeInputs, buildFederalInputsFromBook } from '@/lib/withholding';
-import { FILING_STATUSES, type FilingStatus } from '@/lib/tax/types';
+import { normalizeFilingStatus } from '@/lib/tax/filing-status-inheritance';
+import type { FilingStatus } from '@/lib/tax/types';
 import { toTaxYear } from './engine';
 import type { ScenarioBaseline } from './types';
 
@@ -96,19 +98,23 @@ export async function buildScenarioBaseline(
     ? await getAccountGuidsForBook(bookGuid)
     : await getBookAccountGuids();
 
-  const [filingStatusPref, statePref, flatRatePref, birthday, baseCurrency] = await Promise.all([
-    getPreference<string>(userId, 'tax_filing_status', 'single'),
-    getPreference<string>(userId, 'tax_state', 'OTHER'),
-    getPreference<number>(userId, 'tax_state_flat_rate', 0),
-    getPreference<string | null>(userId, 'birthday', null),
-    bookGuid ? getBaseCurrencyForBook(bookGuid) : getBaseCurrency(),
-  ]);
+  const profileBookGuid = bookGuid ?? (await getActiveBookGuid());
+  const [entity, filingStatusPref, statePref, flatRatePref, birthday, baseCurrency] =
+    await Promise.all([
+      getEntityProfile(profileBookGuid, userId),
+      getPreference<string>(userId, 'tax_filing_status', 'single'),
+      getPreference<string>(userId, 'tax_state', 'OTHER'),
+      getPreference<number>(userId, 'tax_state_flat_rate', 0),
+      getPreference<string | null>(userId, 'birthday', null),
+      bookGuid ? getBaseCurrencyForBook(bookGuid) : getBaseCurrency(),
+    ]);
 
-  const filingStatus: FilingStatus = (FILING_STATUSES as readonly string[]).includes(
-    filingStatusPref,
-  )
-    ? (filingStatusPref as FilingStatus)
-    : 'single';
+  // Book entity profile → user preference → default, same seam as the
+  // estimator/withholding/estimated-tax routes (single source of truth).
+  const filingStatus: FilingStatus =
+    normalizeFilingStatus(entity.filingStatus) ??
+    normalizeFilingStatus(filingStatusPref) ??
+    'single';
 
   const [netWorthSummary, incomeExpense, liquidBalance, bookData] = await Promise.all([
     FinancialSummaryService.computeNetWorthSummary(bookAccountGuids, yearAgo, now, baseCurrency),
