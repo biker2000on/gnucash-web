@@ -1520,7 +1520,13 @@ disposals against same-account/TRADING counters are adjustments, not sales
 per-year reconciliation (2024 −$5,061.11 / 2025 −$1,518.66 match the audit),
 VOO carried basis $199,265.93 on the Ally lot, zero orphans created (the 897
 orphaned `gnucash_web_generated` slots pre-exist on prod — separate hygiene
-item). Prod run still pending, supervised, now that this code is deployed. Findings kept below
+item). **Prod repair executed 2026-08-04**: backup at
+`~/gnucash-prod-pre-lot-repair-20260804-160304.dump` on the truenas host,
+dry-run matched the rehearsal exactly, apply reverted 82 gains transactions
+and wrote 95 carried-basis slots, and every verification (idempotent re-run,
+per-year reconciliation, VOO carried basis, zero orphan splits) matched the
+rehearsal row for row. This item is CLOSED except the 106 no-offset legacy
+lots (report-only; decide whether to sweep them in a follow-up). Findings kept below
 for reference. Audited files: `src/lib/lot-scrub.ts`,
 `src/lib/lot-assignment.ts`, `src/lib/lots.ts`, `src/lib/cost-basis.ts`, and
 `src/components/ledger/investment-utils.ts`, each verified with read-only
