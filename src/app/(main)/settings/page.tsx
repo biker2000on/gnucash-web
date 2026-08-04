@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useToast } from '@/contexts/ToastContext';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { EmailNotificationsSection } from '@/components/settings/EmailNotificationsSection';
@@ -21,6 +22,7 @@ import { useUserPreferences, type CostBasisMethod, type HomeScreen } from '@/con
 import type { DateFormat } from '@/lib/date-format';
 import { BalanceReversal } from '@/lib/format';
 import type { BusinessActivity } from '@/lib/services/entity.service';
+import { FILING_STATUSES, FILING_STATUS_LABELS, type FilingStatus } from '@/lib/tax/types';
 
 // Group heading style for the settings page — matches the sidebar section labels.
 const SETTINGS_GROUP_HEADING = 'text-[11px] font-semibold uppercase tracking-wider text-foreground-muted px-1';
@@ -148,10 +150,18 @@ interface EntityProfileForm {
   entityType: EntityType;
   entityName: string;
   taxState: string;
+  /** 1040 filing status ('' = not set) — the household setting every tax tool inherits. */
+  filingStatus: string;
   businessActivity: BusinessActivity;
   notes: string | null;
   members: EntityMemberForm[];
 }
+
+/** Entity types whose books never file a personal 1040 — no filing status. */
+const NO_FILING_STATUS_ENTITY_TYPES: ReadonlySet<EntityType> = new Set([
+  'c_corp',
+  'nonprofit_501c3',
+]);
 
 const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; description: string }[] = [
   {
@@ -173,6 +183,7 @@ const BALANCE_REVERSAL_OPTIONS: { value: BalanceReversal; label: string; descrip
 
 export default function SettingsPage() {
   const { success, error: showError } = useToast();
+  const queryClient = useQueryClient();
   const { defaultTaxRate, setDefaultTaxRate, dateFormat, setDateFormat, defaultLedgerMode, setDefaultLedgerMode, homeScreen, setHomeScreen, balanceReversal, setBalanceReversal, costBasisCarryOver, setCostBasisCarryOver, costBasisMethod, setCostBasisMethod } = useUserPreferences();
 
   const [schedule, setSchedule] = useState<ScheduleSettings>({ enabled: false, intervalHours: 24, refreshTime: '21:00' });
@@ -282,6 +293,9 @@ export default function SettingsPage() {
             entityType: data.entityType ?? 'household',
             entityName: data.entityName ?? '',
             taxState: data.taxState ?? '',
+            filingStatus: (FILING_STATUSES as readonly string[]).includes(data.filingStatus)
+              ? data.filingStatus
+              : '',
             businessActivity: data.businessActivity === 'farm' ? 'farm' : 'general',
             notes: data.notes ?? null,
             members: (data.members ?? []).map(
@@ -575,6 +589,10 @@ export default function SettingsPage() {
           entityType: entity.entityType,
           entityName: entity.entityName.trim() || null,
           taxState: entity.taxState.trim() || null,
+          // '' clears the stored filing status (the API treats '' as null).
+          filingStatus: NO_FILING_STATUS_ENTITY_TYPES.has(entity.entityType)
+            ? ''
+            : entity.filingStatus,
           businessActivity: ACTIVITY_ENTITY_TYPES.has(entity.entityType)
             ? entity.businessActivity
             : 'general',
@@ -598,6 +616,10 @@ export default function SettingsPage() {
         throw new Error(data?.error || 'Failed to save entity profile');
       }
       success(`${entityNoun(entity.entityType)} profile saved`);
+      // Filing status (and the rest of the profile) is inherited across the
+      // tax tools via the ['entity', 'profile'] query — invalidate so every
+      // surface sees the fresh household setting, never a stale cache.
+      queryClient.invalidateQueries({ queryKey: ['entity', 'profile'] });
       // Let the sidebar re-evaluate whether to show the Business nav group
       // without a page refresh (household ⇄ business/nonprofit toggles it).
       window.dispatchEvent(
@@ -742,6 +764,30 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+
+            {/* Filing Status — the household setting every tax tool inherits */}
+            {!NO_FILING_STATUS_ENTITY_TYPES.has(entity.entityType) && (
+              <div className="space-y-2">
+                <label className="block text-sm text-foreground-secondary">Filing Status</label>
+                <select
+                  value={entity.filingStatus}
+                  onChange={(e) => setEntity({ ...entity, filingStatus: e.target.value })}
+                  className="w-full bg-input-bg border border-border rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary/50"
+                >
+                  <option value="">Not set</option>
+                  {FILING_STATUSES.map((fs: FilingStatus) => (
+                    <option key={fs} value={fs}>
+                      {FILING_STATUS_LABELS[fs]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-foreground-muted">
+                  The 1040 filing status inherited by every tax tool (estimator, withholding
+                  checkup, estimated taxes, planners). Tools can override it per scenario, and
+                  they flag when their value differs from this setting.
+                </p>
+              </div>
+            )}
 
             {/* Members */}
             <div className="space-y-2">

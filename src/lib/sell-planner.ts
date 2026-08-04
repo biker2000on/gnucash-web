@@ -794,9 +794,11 @@ export interface SellTaxContextMeta {
 }
 
 /**
- * Load the user's current-year tax context: filing status / state from
- * preferences (overridable), YTD ordinary income and realized ST/LT gains
- * aggregated from the book (src/lib/tax/book-income.ts).
+ * Load the user's current-year tax context: filing status from the book's
+ * entity profile (the household single source of truth), state from the
+ * profile/preferences — both overridable per request — plus YTD ordinary
+ * income and realized ST/LT gains aggregated from the book
+ * (src/lib/tax/book-income.ts).
  */
 export async function loadSellTaxContext(
   bookAccountGuids: string[],
@@ -810,25 +812,30 @@ export async function loadSellTaxContext(
 ): Promise<{ context: SellTaxContext; meta: SellTaxContextMeta }> {
   const { getPreference } = await import('@/lib/user-preferences');
   const { aggregateBookTaxData } = await import('@/lib/tax/book-income');
-  const { FILING_STATUSES, isSupportedTaxYear } = await import('@/lib/tax/types');
+  const { isSupportedTaxYear } = await import('@/lib/tax/types');
+  const { normalizeFilingStatus } = await import('@/lib/tax/filing-status-inheritance');
+  const { getEntityProfile } = await import('@/lib/services/entity.service');
+  const { getActiveBookGuid } = await import('@/lib/book-scope');
   const { calculateAge } = await import('@/lib/reports/irs-limits');
 
   const currentYear = new Date().getFullYear();
   const year: TaxYear = isSupportedTaxYear(currentYear) ? currentYear : 2026;
 
-  const [birthday, filingStatusPref, statePref, flatRatePref] = await Promise.all([
+  const [birthday, entity, filingStatusPref, statePref, flatRatePref] = await Promise.all([
     getPreference<string | null>(userId, 'birthday', null),
+    getActiveBookGuid().then(bookGuid => getEntityProfile(bookGuid, userId)),
     getPreference<string>(userId, 'tax_filing_status', 'single'),
     getPreference<string>(userId, 'tax_state', 'OTHER'),
     getPreference<number>(userId, 'tax_state_flat_rate', 0),
   ]);
 
+  // Request override → book entity profile → user preference → default,
+  // the same filing-status seam as every other tax surface.
   const filingStatus: FilingStatus =
-    overrides.filingStatus && (FILING_STATUSES as readonly string[]).includes(overrides.filingStatus)
-      ? overrides.filingStatus
-      : (FILING_STATUSES as readonly string[]).includes(filingStatusPref)
-        ? (filingStatusPref as FilingStatus)
-        : 'single';
+    normalizeFilingStatus(overrides.filingStatus) ??
+    normalizeFilingStatus(entity.filingStatus) ??
+    normalizeFilingStatus(filingStatusPref) ??
+    'single';
   const stateCode = overrides.stateCode ?? (statePref || 'OTHER');
   const stateFlatRate = overrides.stateFlatRate ??
     (typeof flatRatePref === 'number' ? flatRatePref : 0);

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
 import { formatCurrency } from '@/lib/format';
 import { computeFederalTax, computeSafeHarbor } from '@/lib/tax/federal';
 import { computeStateTax, STATE_OPTIONS } from '@/lib/tax/state';
@@ -192,6 +193,7 @@ const pct = (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`;
 
 export default function TaxEstimatorPage() {
   const isMobile = useIsMobile();
+  const queryClient = useQueryClient();
   const { spouseName } = useHouseholdNames();
   const currentYear = new Date().getFullYear();
   const defaultYear: TaxYear = isSupportedTaxYear(currentYear) ? currentYear : 2026;
@@ -326,7 +328,14 @@ export default function TaxEstimatorPage() {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(taxFields),
-        }).catch(() => {});
+        })
+          .then(() => {
+            // These inline controls EDIT the household profile (the single
+            // source of truth other tax tools inherit) — refresh the shared
+            // ['entity', 'profile'] cache so the change ripples immediately.
+            queryClient.invalidateQueries({ queryKey: ['entity', 'profile'] });
+          })
+          .catch(() => {});
       }
 
       // Personal details stay user-scoped (they feed synthesized household
@@ -343,7 +352,7 @@ export default function TaxEstimatorPage() {
         }).catch(() => {});
       }
     },
-    [],
+    [queryClient],
   );
 
   /* ---- Mapping save ---- */
@@ -655,6 +664,17 @@ export default function TaxEstimatorPage() {
             )}
           </div>
         </div>
+
+        {showPersonalEstimate && (
+          <p className="mt-2 text-[11px] text-foreground-muted">
+            Filing status and state save to this book&apos;s household profile — the single setting
+            every tax tool inherits (
+            <Link href="/settings" className="text-primary hover:text-primary-hover underline underline-offset-2">
+              Settings → Household &amp; entity
+            </Link>
+            ).
+          </p>
+        )}
 
         {/* Business entities don't file a personal 1040 on this book */}
         {!showPersonalEstimate && (

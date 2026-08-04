@@ -14,8 +14,10 @@ import type {
     SellStrategy,
     SellTaxContextMeta,
 } from '@/lib/sell-planner';
+import { useHouseholdFilingStatus } from '@/lib/hooks/useHouseholdNames';
 import PlanComparisonCards from './PlanComparisonCards';
 import PlanLotTable from './PlanLotTable';
+import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
 import { RelatedLinks } from '@/components/RelatedLinks';
 import { Abbr } from '@/components/ui/Abbr';
 
@@ -63,6 +65,10 @@ export default function SellPlannerPage() {
 
     const [target, setTarget] = useState('');
     const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
+    // Seeded from the server prefill (which resolves the household profile);
+    // changing it here is a scenario override — nothing is persisted, and the
+    // divergence note flags any drift from the household setting.
+    const householdFilingStatus = useHouseholdFilingStatus();
     const [filingStatus, setFilingStatus] = useState<FilingStatus>('single');
     const [stateCode, setStateCode] = useState('OTHER');
     const [stateFlatRate, setStateFlatRate] = useState(0);
@@ -203,6 +209,13 @@ export default function SellPlannerPage() {
                                         <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
                                     ))}
                                 </select>
+                                <FilingStatusSourceNote
+                                    value={filingStatus}
+                                    householdValue={householdFilingStatus}
+                                    onUseHousehold={() => {
+                                        if (householdFilingStatus) setFilingStatus(householdFilingStatus);
+                                    }}
+                                />
                             </label>
                             <label className="block">
                                 <span className="text-xs text-foreground-muted uppercase tracking-wide">State</span>

@@ -12,7 +12,10 @@ import {
   type TaxYear,
 } from '@/lib/tax/types';
 import type { WithholdingCheckupPayload } from '@/lib/withholding';
+import { applyFilingStatusSelection } from '@/lib/tax/filing-status-inheritance';
+import { useHouseholdFilingStatus } from '@/lib/hooks/useHouseholdNames';
 import WithholdingHeadline from './WithholdingHeadline';
+import { FilingStatusSourceNote } from '@/components/tools/tax/FilingStatusSourceNote';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
 import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 import { Abbr } from '@/components/ui/Abbr';
@@ -75,7 +78,10 @@ export default function WithholdingCheckupPage() {
   const defaultYear: TaxYear = isSupportedTaxYear(currentYear) ? currentYear : 2026;
 
   const [year, setYear] = useState<TaxYear>(defaultYear);
-  const [filingStatus, setFilingStatus] = useState<FilingStatus>('single');
+  // Filing status inherits from the household profile; a non-null override is
+  // an explicit scenario divergence, marked by FilingStatusSourceNote.
+  const householdFilingStatus = useHouseholdFilingStatus();
+  const [filingStatusOverride, setFilingStatusOverride] = useState<FilingStatus | null>(null);
   const [filersAge65Plus, setFilersAge65Plus] = useState(0);
   const [annualize, setAnnualize] = useState(true);
   const [priorYearTax, setPriorYearTax] = useState<number | ''>('');
@@ -86,19 +92,27 @@ export default function WithholdingCheckupPage() {
   const [notApplicable, setNotApplicable] = useState<NotApplicableResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [prefsLoaded, setPrefsLoaded] = useState(false);
+
+  // What the selector shows: override > household profile > what the server
+  // actually resolved (meta) > default.
+  const filingStatus: FilingStatus =
+    filingStatusOverride ?? householdFilingStatus ?? data?.meta?.filingStatus ?? 'single';
 
   useEffect(() => {
     let cancelled = false;
+    // Standard fetch-effect pattern: mark loading before the async request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError(null);
 
     const params = new URLSearchParams({
       year: String(year),
-      filingStatus,
       filersAge65Plus: String(filersAge65Plus),
       annualize: String(annualize),
     });
+    // No explicit filingStatus param = the server seeds from the household
+    // profile itself (single source of truth); only overrides are sent.
+    if (filingStatusOverride) params.set('filingStatus', filingStatusOverride);
     if (priorYearTax !== '') params.set('priorYearLiability', String(priorYearTax));
     if (priorYearAgi !== '') params.set('priorYearAGI', String(priorYearAgi));
     if (payFrequency !== 'auto') params.set('payPeriodsPerYear', String(payFrequency));
@@ -120,10 +134,6 @@ export default function WithholdingCheckupPage() {
         }
         const checkupPayload = payload as WithholdingCheckupPayload;
         setData(checkupPayload);
-        if (!prefsLoaded && checkupPayload.meta?.filingStatus) {
-          setFilingStatus(checkupPayload.meta.filingStatus);
-          setPrefsLoaded(true);
-        }
       })
       .catch(err => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
@@ -134,8 +144,7 @@ export default function WithholdingCheckupPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, filingStatus, filersAge65Plus, annualize, priorYearTax, priorYearAgi, payFrequency]);
+  }, [year, filingStatusOverride, filersAge65Plus, annualize, priorYearTax, priorYearAgi, payFrequency]);
 
   const checkup = data?.checkup ?? null;
   const meta = data?.meta ?? null;
@@ -209,13 +218,22 @@ export default function WithholdingCheckupPage() {
           <Field label="Filing status">
             <select
               value={filingStatus}
-              onChange={e => setFilingStatus(e.target.value as FilingStatus)}
+              onChange={e =>
+                setFilingStatusOverride(
+                  applyFilingStatusSelection(e.target.value as FilingStatus, householdFilingStatus),
+                )
+              }
               className={INPUT}
             >
               {FILING_STATUSES.map(fs => (
                 <option key={fs} value={fs}>{FILING_STATUS_LABELS[fs]}</option>
               ))}
             </select>
+            <FilingStatusSourceNote
+              value={filingStatus}
+              householdValue={householdFilingStatus}
+              onUseHousehold={() => setFilingStatusOverride(null)}
+            />
           </Field>
           <Field label="Filers 65+">
             <select
