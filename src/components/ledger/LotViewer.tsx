@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
 import { MobileCard } from '@/components/ui/MobileCard';
+import { Abbr } from '@/components/ui/Abbr';
 import AutoAssignDialog from './AutoAssignDialog';
 
 interface LotSplit {
@@ -198,7 +199,10 @@ export default function LotViewer({ accountGuid, currencyMnemonic, sharePrecisio
                                                     ? 'bg-primary/20 text-primary'
                                                     : 'bg-warning/20 text-warning'
                                             }`}>
-                                                {lot.holdingPeriod === 'long_term' ? 'LT' : 'ST'}
+                                                {/* nested: the lot card is a <button>, so the trigger must not be focusable */}
+                                                <Abbr term={lot.holdingPeriod === 'long_term' ? 'LT' : 'ST'} hideIcon nested>
+                                                    {lot.holdingPeriod === 'long_term' ? 'LT' : 'ST'}
+                                                </Abbr>
                                             </span>
                                         )}
                                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${

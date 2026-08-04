@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 import { useCurrentUser, READONLY_TOOLTIP } from '@/hooks/useCurrentUser';
 import type { ItemDTO, ValuationMethod } from '@/components/business/inventory-ui';
@@ -244,6 +245,11 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                                 <option value="average">Moving average</option>
                                 <option value="fifo">FIFO</option>
                             </select>
+                            <p className="mt-1 text-[11px] text-foreground-muted">
+                                {form.valuationMethod === 'fifo'
+                                    ? <><Abbr term="FIFO" /> consumes the oldest receipts first.</>
+                                    : 'Blends the unit cost across receipts.'}
+                            </p>
                         </div>
                         <div>
                             <label className={labelClass}>Reorder point</label>
@@ -296,7 +302,7 @@ export function ItemFormModal({ editing, onClose, onSaved }: ItemFormModalProps)
                         </button>
                     </div>
                     <p className="text-xs text-foreground-muted mb-2">
-                        Only needed for posting to the ledger: shipping with post requires COGS + asset accounts;
+                        Only needed for posting to the ledger: shipping with post requires <Abbr term="COGS" /> + asset accounts;
                         receiving with post also needs an offset account at receive time.
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

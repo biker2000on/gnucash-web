@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatCurrency } from '@/lib/format';
 import { PersonalToolNotice } from '@/components/PersonalToolNotice';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 import { PAY_FREQUENCIES } from '@/lib/tax/paycheck';
 import { STATE_OPTIONS } from '@/lib/tax/state';
 import {
@@ -305,7 +306,7 @@ function ScenarioEditor({
         </label>
         {scenario.isHdhp && (
           <p className="basis-full text-[11px] text-foreground-muted">
-            HDHP: your HSA payroll contribution earns a tax-value credit at your combined
+            <Abbr term="HDHP" />: your <Abbr term="HSA" /> payroll contribution earns a tax-value credit at your combined
             marginal rate, reducing the all-in healthcare cost.
           </p>
         )}

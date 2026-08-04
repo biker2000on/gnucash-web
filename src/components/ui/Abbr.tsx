@@ -13,6 +13,12 @@ export interface AbbrProps {
     className?: string;
     /** Hide the (i) icon (e.g. cramped column headers); dotted underline remains. */
     hideIcon?: boolean;
+    /**
+     * Use when the abbreviation sits inside an interactive ancestor (button,
+     * link): renders a non-focusable tooltip trigger so no interactive element
+     * is nested illegally. Tooltip opens on hover/tap only.
+     */
+    nested?: boolean;
 }
 
 const warned = new Set<string>();
@@ -43,7 +49,7 @@ function InfoGlyph() {
  * gets an <Abbr>; repeated occurrences in a table column get it in the column
  * header only. Unknown terms fall back to plain text (with a dev-only warning).
  */
-export function Abbr({ term, children, className = '', hideIcon = false }: AbbrProps) {
+export function Abbr({ term, children, className = '', hideIcon = false, nested = false }: AbbrProps) {
     const entry = getGlossaryEntry(term);
 
     if (!entry) {
@@ -56,6 +62,7 @@ export function Abbr({ term, children, className = '', hideIcon = false }: AbbrP
 
     return (
         <Tooltip
+            nested={nested}
             ariaLabel={`${term}: ${entry.expansion}`}
             className={`group underline decoration-dotted decoration-[color:var(--foreground-muted)] underline-offset-2 hover:decoration-[color:var(--primary)] ${className}`}
             content={

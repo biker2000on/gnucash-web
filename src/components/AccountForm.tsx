@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useFormKeyboardShortcuts } from '@/lib/hooks/useFormKeyboardShortcuts';
 import { useHouseholdNames } from '@/lib/hooks/useHouseholdNames';
 import { AccountSelector } from '@/components/ui/AccountSelector';
+import { Abbr } from '@/components/ui/Abbr';
 import { TagPicker, type SelectedTag } from '@/components/tags/TagPicker';
 import type { Tag } from '@/lib/tags';
 
@@ -636,6 +637,15 @@ export function AccountForm({ mode, accountGuid, initialData, parentGuid, onSave
                             <option value="coverdell_esa">Coverdell ESA</option>
                             <option value="brokerage">Brokerage (taxable)</option>
                         </select>
+                    )}
+
+                    {formData.is_retirement
+                        && (formData.retirement_account_type === 'hsa'
+                            || formData.retirement_account_type === 'hsa_family') && (
+                        <p className="text-xs text-foreground-muted">
+                            <Abbr term="HSA" /> coverage level (self-only vs family) sets which IRS
+                            contribution limit applies.
+                        </p>
                     )}
 
                     {OWNER_ELIGIBLE_ACCOUNT_TYPES.has(formData.account_type) && (

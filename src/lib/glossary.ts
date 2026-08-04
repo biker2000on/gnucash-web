@@ -133,6 +133,18 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
         expansion: 'High-Deductible Health Plan',
         gloss: 'A health plan meeting IRS deductible/out-of-pocket thresholds; enrollment is what makes you HSA-eligible.',
     },
+    IRMAA: {
+        expansion: 'Income-Related Monthly Adjustment Amount',
+        gloss: 'The Medicare premium surcharge for higher incomes. Crossing a MAGI tier (with a two-year lookback) raises Part B/D premiums for the whole year.',
+    },
+    TOD: {
+        expansion: 'Transfer on Death',
+        gloss: 'A beneficiary designation on an investment account that passes it directly to the named person, outside the will and probate.',
+    },
+    POD: {
+        expansion: 'Payable on Death',
+        gloss: 'A beneficiary designation on a bank account that pays the balance directly to the named person, outside the will and probate.',
+    },
 
     // ---- Forms & filings ----
     '1040-ES': {
@@ -219,6 +231,10 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
         expansion: 'Old-Age, Survivors, and Disability Insurance',
         gloss: 'The Social Security portion of payroll tax: 6.2% of wages up to the annual wage base.',
     },
+    SS: {
+        expansion: 'Social Security',
+        gloss: 'Federal retirement, survivor, and disability benefits funded by payroll taxes.',
+    },
 
     // ---- Investing ----
     DRIP: {
@@ -231,11 +247,11 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     },
     FIFO: {
         expansion: 'First In, First Out',
-        gloss: 'Cost basis method that sells your oldest shares first.',
+        gloss: 'Costing method that uses up the oldest units first — oldest shares sold first, oldest inventory consumed first.',
     },
     LIFO: {
         expansion: 'Last In, First Out',
-        gloss: 'Cost basis method that sells your newest shares first.',
+        gloss: 'Costing method that uses up the newest units first — newest shares sold first, newest inventory consumed first.',
     },
     'G/L': {
         expansion: 'Gain/Loss',

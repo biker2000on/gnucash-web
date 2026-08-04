@@ -7,6 +7,7 @@
  */
 
 import type { DrawdownYearRow } from '@/lib/drawdown/types';
+import { Abbr } from '@/components/ui/Abbr';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -48,19 +49,23 @@ function Td({ children, align = 'right', className = '' }: {
 export default function DrawdownTable({ rows }: { rows: DrawdownYearRow[] }) {
     return (
         <div className="overflow-x-auto">
+            <p className="mb-2 text-[11px] text-foreground-muted">
+                Flags: <Abbr term="RMD" /> year · <Abbr term="IRMAA" /> premium tier crossed ·
+                SHORT = withdrawals could not cover spending.
+            </p>
             <table className="w-full border-collapse">
                 <thead>
                     <tr className="border-b border-border">
                         <Th align="left">Year</Th>
                         <Th align="left">Age</Th>
                         <Th>Spend</Th>
-                        <Th>SS</Th>
+                        <Th><Abbr term="SS" hideIcon /></Th>
                         <Th>Wd Txbl</Th>
                         <Th>Wd Trad</Th>
                         <Th>Wd Roth</Th>
-                        <Th>Wd HSA</Th>
+                        <Th>Wd <Abbr term="HSA" hideIcon /></Th>
                         <Th>Convert</Th>
-                        <Th>AGI</Th>
+                        <Th><Abbr term="AGI" hideIcon /></Th>
                         <Th>Fed Tax</Th>
                         <Th>State</Th>
                         <Th>Marg</Th>

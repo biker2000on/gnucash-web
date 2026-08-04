@@ -11,6 +11,7 @@ import {
   type PlanGuardrails,
 } from '@/lib/planning/types';
 import { Field, FieldGrid, RecordCard } from '@/components/ui/form';
+import { Abbr } from '@/components/ui/Abbr';
 
 const EVENT_LABELS: Record<LifeEventType, string> = {
   job_change: 'Job change',
@@ -168,7 +169,7 @@ export default function LivingPlanPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Living plan of record</p>
           <h1 className="mt-2 text-2xl font-bold text-foreground">No scenario has been adopted yet</h1>
           <p className="mt-2 max-w-xl text-sm leading-6 text-foreground-secondary">
-            Build a deterministic scenario, inspect its cash, tax, net-worth, and FIRE effects, then adopt it as the baseline this page will reconcile to actual books.
+            Build a deterministic scenario, inspect its cash, tax, net-worth, and <Abbr term="FIRE" /> effects, then adopt it as the baseline this page will reconcile to actual books.
           </p>
           {error && <p className="mt-4 text-sm text-negative">{error}</p>}
           <Link href="/tools/scenario" className="mt-5 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-background hover:bg-primary-hover">

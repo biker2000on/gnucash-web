@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
+import { Abbr } from '@/components/ui/Abbr';
 import { useToast } from '@/contexts/ToastContext';
 
 interface CalendarFeed {
@@ -137,7 +138,7 @@ export function CalendarFeedSection() {
                 <p className="text-sm text-foreground-muted">
                     Subscribe to your finances from any calendar app (Google Calendar, Apple Calendar,
                     Outlook). Feeds include upcoming scheduled transactions, bond/CD maturities and
-                    estimated coupons, and RMD deadlines for the current book. The feed URL contains a
+                    estimated coupons, and <Abbr term="RMD" /> deadlines for the current book. The feed URL contains a
                     secret token — treat it like a password and revoke it if it leaks.
                 </p>
 

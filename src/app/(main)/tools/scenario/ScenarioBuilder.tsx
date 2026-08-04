@@ -7,6 +7,7 @@
  */
 
 import { FieldGrid, INPUT, LABEL } from '@/components/ui/form';
+import { Abbr } from '@/components/ui/Abbr';
 import { computeLoanSchedule } from '@/lib/scenario/engine';
 import {
     DELTA_KIND_LABELS,
@@ -221,6 +222,11 @@ function DeltaForm({ delta, onChange }: {
                             <option value="property_tax">Property tax (SALT deduction)</option>
                             <option value="taxable_income">Taxable income</option>
                         </select>
+                        {delta.taxTreatment === 'property_tax' && (
+                            <p className="mt-1 text-[11px] text-foreground-muted">
+                                Counts toward the itemized <Abbr term="SALT" /> deduction, subject to its cap.
+                            </p>
+                        )}
                     </Field>
                 </FieldGrid>
             );

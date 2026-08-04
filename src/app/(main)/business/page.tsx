@@ -9,6 +9,7 @@ import type {
 import { formatCurrency } from '@/lib/format';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard, StatGrid } from '@/components/ui/StatCard';
+import { Abbr } from '@/components/ui/Abbr';
 
 const TNUM = { fontFeatureSettings: "'tnum'" } as const;
 
@@ -180,7 +181,7 @@ export default function BusinessDashboardPage() {
                 <>
                     <StatGrid cols={4}>
                         <StatCard
-                            label="Revenue YTD"
+                            label={<>Revenue <Abbr term="YTD" /></>}
                             value={formatCurrency(data.revenue.ytd)}
                             sub={`Mo ${formatCurrency(data.revenue.month)} · Qtr ${formatCurrency(data.revenue.quarter)}`}
                             tone={data.revenue.ytd > 0 ? 'positive' : 'default'}

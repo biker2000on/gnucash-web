@@ -61,4 +61,27 @@ describe('Abbr', () => {
         render(<Abbr term="RMD" />);
         expect(screen.getByLabelText(/RMD: Required Minimum Distribution/)).toBeTruthy();
     });
+
+    it('nested mode renders a non-focusable trigger (legal inside buttons/links)', () => {
+        render(
+            <button type="button">
+                <Abbr term="LT" hideIcon nested>LT</Abbr>
+            </button>,
+        );
+        const trigger = screen.getByText('LT');
+        const span = trigger.closest('span')!;
+        expect(span.getAttribute('tabindex')).toBeNull();
+        expect(span.getAttribute('role')).toBeNull();
+        // Tooltip still opens on tap, and the tap does not activate the ancestor.
+        fireEvent.click(trigger);
+        expect(screen.getByRole('tooltip').textContent).toContain('Long-Term');
+    });
+
+    it('a click on the trigger cancels the ancestor default action', () => {
+        render(<Abbr term="AGI" />);
+        const el = screen.getByText('AGI');
+        const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+        fireEvent(el, clickEvent);
+        expect(clickEvent.defaultPrevented).toBe(true);
+    });
 });
