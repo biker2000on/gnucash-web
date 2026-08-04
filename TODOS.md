@@ -1181,6 +1181,91 @@ conflict policy.
 
 ---
 
+## P2 - GnuCash XML Format: Full-Fidelity Round-Trip
+
+**Status:** Open. Requested 2026-08-04.
+
+**Outcome:** The XML export/import path preserves as much of a GnuCash book as
+the format itself can carry, so the XML file is a trustworthy interchange and
+backup medium rather than a lossy subset.
+
+**What:** Reverse engineer / read the GnuCash application source (the libgnucash
+XML backend, `gnucash/libgnucash/backend/xml/` in the upstream repo, plus the
+RELAX NG-ish structure implied by `gnc-v2` files) to enumerate the **entire**
+scope of the XML save format, then close the gap between that and
+`src/lib/gnucash-xml/`.
+
+Current coverage (`src/lib/gnucash-xml/types.ts` / `ImportSummary`):
+commodities, accounts, transactions, splits, prices, budgets. Known-missing
+element families to confirm against source:
+
+- `gnc:schedxaction` + the template-transactions sub-book (scheduled
+  transactions — the app models these natively, so skipping them on
+  export/import loses real data)
+- `gnc:lot` and split lot references (the lot engine is now a core feature;
+  XML round-trip must not sever lot links)
+- KVP slots (`act:slots`, `trn:slots`, `split:slots`, book slots) — notes,
+  hidden/placeholder flags, online banking IDs, reconcile info, and many
+  app-relevant markers live here
+- Business objects: `gnc:GncCustomer`, `GncVendor`, `GncEmployee`,
+  `GncInvoice`, `GncEntry`, `GncJob`, `GncBillTerm`, `GncTaxTable`,
+  `GncOrder`
+- `gnc:count-data` declarations, book options, counters, recurrence
+  encodings, commodity namespaces/quote sources, price source/type fields,
+  and version attributes per element
+
+**Deliverables:**
+
+1. A written schema inventory (docs/) mapping every XML element/attribute to
+   its DB representation, marked supported / unsupported / intentionally
+   skipped — derived from the GnuCash source, not from sample files alone.
+2. Extend parser/importer/exporter/builder to cover everything the app has a
+   native model for (scheduled transactions, lots, slots, business entities).
+3. For elements the app does not model, preserve-and-re-emit where feasible
+   (opaque passthrough) or record them explicitly in `ImportSummary.skipped`
+   — never silently drop.
+4. Round-trip tests: import a desktop-authored file, export, re-import, and
+   diff — including a real `gnc-v2` fixture with business and scheduled data.
+
+**Integration:** Import gaps and skipped elements surface in the import
+summary (and Action Center where a skip loses user data); pairs with the
+P3 Scheduled Book Sync item, which needs the same schema knowledge.
+
+**Depends on:** `src/lib/gnucash-xml/`, upstream GnuCash source reading.
+
+**Effort:** L (schema inventory M; implementation of the missing families M-L).
+
+---
+
+## P3 - Transaction Entry: Memo in Modal + Double-Line Edit View
+
+**Status:** Open. Requested 2026-08-04.
+
+**What:**
+
+1. **Memo field in the new-transaction modal.** The simple mode of
+   `TransactionForm` (`src/components/TransactionForm.tsx`) captures date,
+   description, num, amount, and from/to accounts, but no memo — the memo
+   column exists only in the advanced splits grid. Add a memo input to simple
+   mode and carry it onto the created splits so quick entry doesn't force a
+   trip through advanced mode.
+2. **Shrink the Num field.** The Num input ("Check #, reference, etc.") is
+   currently full-width in the modal, which makes it read as the memo/comments
+   field. Match GnuCash desktop's register proportions: Num is a narrow field
+   (check-number width) beside the date, and the wide field is the
+   description/memo. Rarely used, so it should recede visually.
+3. **Double-line view for edit mode.** Mirror GnuCash desktop's double-line
+   register: each transaction row expands to a second line exposing the
+   transaction-level notes and the per-split memo, editable in place. Apply
+   this as a view layer on the edit surfaces (ledger inline edit /
+   `EditableSplitRows`) so memos are visible and editable without opening the
+   full splits editor. Respect the ledger inline-save rule already shipped:
+   memo/description edits must not reset reconcile state.
+
+**Effort:** S for the modal memo field; M for the double-line edit view.
+
+---
+
 ## P3 - Accounts API: Remove Book Name from `fullname`
 
 **Status:** Implemented 2026-07-26.
