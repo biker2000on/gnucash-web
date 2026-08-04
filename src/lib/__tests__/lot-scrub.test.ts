@@ -32,6 +32,7 @@ const mockBooksFindFirst = vi.fn();
 const mockTransactionsCreate = vi.fn();
 const mockCommoditiesFindUnique = vi.fn();
 const mockCommoditiesFindMany = vi.fn();
+const mockPricesFindFirst = vi.fn();
 
 vi.mock('../prisma', () => ({
   default: {
@@ -66,6 +67,9 @@ vi.mock('../prisma', () => ({
     commodities: {
       findUnique: (...args: unknown[]) => mockCommoditiesFindUnique(...args),
       findMany: (...args: unknown[]) => mockCommoditiesFindMany(...args),
+    },
+    prices: {
+      findFirst: (...args: unknown[]) => mockPricesFindFirst(...args),
     },
   },
 }));
@@ -105,6 +109,9 @@ function createMockTx() {
       findUnique: mockCommoditiesFindUnique,
       findMany: mockCommoditiesFindMany,
     },
+    prices: {
+      findFirst: mockPricesFindFirst,
+    },
   } as never;
 }
 
@@ -113,13 +120,20 @@ import {
   linkTransferToLot,
   splitTransferAcrossSourceLots,
   generateCapitalGains,
+  valueZeroValueTrade,
+  assignAdjustmentToLots,
   classifyAccountTax,
   classifyHoldingPeriod,
+  qtyEpsilonForScu,
+  DEFAULT_QTY_EPSILON,
   type OpenLot,
 } from '../lot-scrub';
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // Full reset (implementations AND once-queues): the scrub engine now makes
+  // additional slots/splits lookups (carried_basis, transfer-out detection),
+  // so leftover mock implementations from a previous test must never bleed in.
+  vi.resetAllMocks();
 });
 
 // ---------------------------------------------------------------------------
@@ -360,6 +374,8 @@ describe('linkTransferToLot', () => {
       lot_guid: null,
       quantity_num: 200n,
       quantity_denom: 100n,
+      value_num: 0n,
+      value_denom: 100n,
       account: { commodity_guid: 'aapl-commodity-guid-0000000000' },
       transaction: {
         post_date: new Date('2024-06-15'),
@@ -388,8 +404,16 @@ describe('linkTransferToLot', () => {
     mockLotsCreate.mockResolvedValue({});
     mockSlotsCreate.mockResolvedValue({});
     mockSplitsUpdate.mockResolvedValue({});
-    // acquisition_date slot from source lot
-    mockSlotsFindFirst.mockResolvedValue({ string_val: '2023-03-01T00:00:00.000Z' });
+    // Source lot splits for the carried-basis computation: 2 shares bought for $300
+    mockSplitsFindMany.mockResolvedValue([
+      { quantity_num: 200n, quantity_denom: 100n, value_num: 30000n, value_denom: 100n },
+    ]);
+    // acquisition_date slot from source lot (carried_basis slot absent)
+    mockSlotsFindFirst.mockImplementation(async (args: { where?: { name?: string } }) =>
+      args?.where?.name === 'acquisition_date'
+        ? { string_val: '2023-03-01T00:00:00.000Z' }
+        : null,
+    );
 
     const result = await linkTransferToLot(split.guid, runId, tx);
 
@@ -419,6 +443,16 @@ describe('linkTransferToLot', () => {
         data: expect.objectContaining({
           name: 'acquisition_date',
           string_val: '2023-03-01T00:00:00.000Z',
+        }),
+      }),
+    );
+    // carried_basis slot: the $0-value transfer carries the source shares'
+    // $300 cost basis into the destination lot
+    expect(mockSlotsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          name: 'carried_basis',
+          string_val: '300',
         }),
       }),
     );
@@ -1189,7 +1223,12 @@ describe('generateCapitalGains', () => {
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: 'p' });
     mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
     // Return acquisition_date from 2022 — this should make it long_term
-    mockSlotsFindFirst.mockResolvedValue({ string_val: '2022-01-01T00:00:00.000Z' });
+    // (keyed by slot name so the carried_basis lookup stays empty)
+    mockSlotsFindFirst.mockImplementation(async (args: { where?: { name?: string } }) =>
+      args?.where?.name === 'acquisition_date'
+        ? { string_val: '2022-01-01T00:00:00.000Z' }
+        : null,
+    );
     mockAccountsFindMany.mockResolvedValue(baseAccountRows());
     mockCommodities();
     mockAccountsFindFirst
@@ -1500,5 +1539,578 @@ describe('classifyHoldingPeriod', () => {
   it('returns short_term for same day', () => {
     const date = new Date('2024-06-15');
     expect(classifyHoldingPeriod(date, date)).toBe('short_term');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyHoldingPeriod — IRS calendar-anniversary rule (leap years)
+// ---------------------------------------------------------------------------
+
+describe('classifyHoldingPeriod uses the IRS calendar-anniversary rule', () => {
+  it('exact one-year anniversary across a leap year (366 elapsed days) is SHORT-term', () => {
+    // Feb 29 2024 sits between these dates: 366 days elapsed, but the sale
+    // falls ON the anniversary, not after it. The old 365-day millisecond
+    // threshold called this long_term; Form 8949 says short_term.
+    const open = new Date('2023-06-15');
+    const close = new Date('2024-06-15');
+    expect(classifyHoldingPeriod(open, close)).toBe('short_term');
+  });
+
+  it('one day past the anniversary is long-term', () => {
+    const open = new Date('2023-06-15');
+    const close = new Date('2024-06-16');
+    expect(classifyHoldingPeriod(open, close)).toBe('long_term');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// qtyEpsilonForScu
+// ---------------------------------------------------------------------------
+
+describe('qtyEpsilonForScu', () => {
+  it('keeps the legacy epsilon for coarse fractions', () => {
+    expect(qtyEpsilonForScu(100)).toBe(DEFAULT_QTY_EPSILON);
+    // Never GROWS beyond the legacy epsilon; finer fractions tighten it
+    expect(qtyEpsilonForScu(10000)).toBeCloseTo(0.5 / 10000, 15);
+  });
+
+  it('shrinks with crypto-scale fractions', () => {
+    expect(qtyEpsilonForScu(100_000_000)).toBeCloseTo(0.5 / 100_000_000, 15);
+  });
+
+  it('falls back to the legacy epsilon for missing/invalid scu', () => {
+    expect(qtyEpsilonForScu(null)).toBe(DEFAULT_QTY_EPSILON);
+    expect(qtyEpsilonForScu(0)).toBe(DEFAULT_QTY_EPSILON);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// splitSellAcrossLots — oversell leaves the remainder UNASSIGNED
+// ---------------------------------------------------------------------------
+
+describe('splitSellAcrossLots oversell handling', () => {
+  const tx = createMockTx();
+  const runId = 'run-oversell';
+
+  it('multi-lot oversell: excess goes to an unassigned sub-split, no lot goes negative', async () => {
+    const sellSplit = makeSplit({
+      quantity_num: -1000n, // -10 shares
+      quantity_denom: 100n,
+      value_num: -100000n,  // -$1000
+      value_denom: 100n,
+    });
+    mockSplitsFindUnique.mockResolvedValue(sellSplit);
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSplitsFindMany.mockResolvedValue([{ value_num: 0n, value_denom: 100n }]);
+
+    const lots = [
+      makeOpenLot('lot-a-guid-00000000000000000', 2.0),
+      makeOpenLot('lot-b-guid-00000000000000000', 3.0),
+    ];
+
+    const result = await splitSellAcrossLots(sellSplit.guid, lots, runId, tx);
+
+    expect(result.warning).toContain('unassigned');
+    // One sub-split per extra lot + one unassigned remainder
+    expect(result.subSplitsCreated).toHaveLength(2);
+    // Lots fully consumed but never negative
+    expect(lots[0].shares).toBeCloseTo(0);
+    expect(lots[1].shares).toBeCloseTo(0);
+    // Last created sub-split is the unassigned remainder: -5 shares / -$500
+    const lastCreate = mockSplitsCreate.mock.calls.at(-1)?.[0] as {
+      data: { lot_guid: string | null; quantity_num: bigint; value_num: bigint };
+    };
+    expect(lastCreate.data.lot_guid).toBeNull();
+    expect(lastCreate.data.quantity_num).toBe(-500n);
+    expect(lastCreate.data.value_num).toBe(-50000n);
+  });
+
+  it('single-lot oversell: original split keeps its totals via an unassigned remainder', async () => {
+    const sellSplit = makeSplit({
+      quantity_num: -1000n, // -10 shares
+      quantity_denom: 100n,
+      value_num: -100000n,  // -$1000
+      value_denom: 100n,
+    });
+    mockSplitsFindUnique.mockResolvedValue(sellSplit);
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSplitsFindMany.mockResolvedValue([{ value_num: 0n, value_denom: 100n }]);
+
+    const lots = [makeOpenLot('lot-a-guid-00000000000000000', 4.0)];
+
+    const result = await splitSellAcrossLots(sellSplit.guid, lots, runId, tx);
+
+    expect(result.warning).toContain('unassigned');
+    expect(result.subSplitsCreated).toHaveLength(1);
+    // The original split was resized to the 4 allocatable shares...
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: sellSplit.guid },
+        data: expect.objectContaining({
+          lot_guid: 'lot-a-guid-00000000000000000',
+          quantity_num: -400n,
+          value_num: -40000n,
+        }),
+      }),
+    );
+    // ...and the 6-share remainder became an UNASSIGNED sub-split, keeping
+    // the transaction's totals intact (previously this path rewrote the split
+    // smaller and blew the balance invariant).
+    const lastCreate = mockSplitsCreate.mock.calls.at(-1)?.[0] as {
+      data: { lot_guid: string | null; quantity_num: bigint; value_num: bigint };
+    };
+    expect(lastCreate.data.lot_guid).toBeNull();
+    expect(lastCreate.data.quantity_num).toBe(-600n);
+    expect(lastCreate.data.value_num).toBe(-60000n);
+    // Lot consumed exactly, not negative
+    expect(lots[0].shares).toBeCloseTo(0);
+    // Originals saved for revert
+    expect(mockSlotsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ obj_guid: sellSplit.guid, name: 'original_quantity_num' }),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// valueZeroValueTrade
+// ---------------------------------------------------------------------------
+
+describe('valueZeroValueTrade', () => {
+  const tx = createMockTx();
+  const runId = 'run-trade';
+  const ETH_GUID = 'eth-commodity-guid-00000000000';
+  const BTC_GUID = 'btc-commodity-guid-00000000000';
+  const USD_GUID = 'usd-guid-00000000000000000000';
+
+  function makeTradeSplit() {
+    const ethSplit = {
+      guid: 'eth-split-guid-000000000000000',
+      tx_guid: 'trade-tx-guid-0000000000000000',
+      account_guid: 'eth-acct-guid-0000000000000000',
+      quantity_num: 300000000n,   // +3 ETH at 1e8
+      quantity_denom: 100000000n,
+      value_num: 0n,
+      value_denom: 100n,
+      lot_guid: null,
+      account: { commodity_guid: ETH_GUID },
+      transaction: {
+        post_date: new Date('2024-05-01'),
+        currency_guid: USD_GUID,
+        splits: [] as unknown[],
+      },
+    };
+    const btcSplit = {
+      guid: 'btc-split-guid-000000000000000',
+      tx_guid: 'trade-tx-guid-0000000000000000',
+      account_guid: 'btc-acct-guid-0000000000000000',
+      quantity_num: -6960000n,    // -0.0696 BTC at 1e8
+      quantity_denom: 100000000n,
+      value_num: 0n,
+      value_denom: 100n,
+      lot_guid: null,
+      account: { guid: 'btc-acct-guid-0000000000000000', commodity_guid: BTC_GUID, account_type: 'STOCK' },
+    };
+    ethSplit.transaction.splits = [
+      { ...ethSplit, account: { guid: 'eth-acct-guid-0000000000000000', commodity_guid: ETH_GUID, account_type: 'STOCK' } },
+      btcSplit,
+    ];
+    return { ethSplit, btcSplit };
+  }
+
+  it('values both legs at the disposal commodity price on the trade date', async () => {
+    const { ethSplit } = makeTradeSplit();
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    // BTC price on/before 2024-05-01: $30,000
+    mockPricesFindFirst.mockImplementation(
+      async (args: { where: { commodity_guid: string } }) =>
+        args.where.commodity_guid === BTC_GUID
+          ? { value_num: 3000000n, value_denom: 100n }
+          : null,
+    );
+
+    const result = await valueZeroValueTrade(ethSplit.guid, runId, tx);
+
+    expect(result.valued).toBe(true);
+    // 0.0696 BTC x $30,000 = $2,088
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: 'eth-split-guid-000000000000000' },
+        data: expect.objectContaining({ value_num: 208800n, value_denom: 100n }),
+      }),
+    );
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: 'btc-split-guid-000000000000000' },
+        data: expect.objectContaining({ value_num: -208800n, value_denom: 100n }),
+      }),
+    );
+    // Originals saved on both legs for revert
+    const originalSlots = mockSlotsCreate.mock.calls
+      .map(c => (c[0] as { data: { obj_guid: string; name: string } }).data)
+      .filter(d => d.name === 'original_value_num')
+      .map(d => d.obj_guid);
+    expect(originalSlots).toContain('eth-split-guid-000000000000000');
+    expect(originalSlots).toContain('btc-split-guid-000000000000000');
+  });
+
+  it('refuses to value the trade when no price exists — warning, no rewrites', async () => {
+    const { ethSplit } = makeTradeSplit();
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+    mockPricesFindFirst.mockResolvedValue(null);
+
+    const result = await valueZeroValueTrade(ethSplit.guid, runId, tx);
+
+    expect(result.valued).toBe(false);
+    expect(result.warning).toContain('No price found');
+    expect(mockSplitsUpdate).not.toHaveBeenCalled();
+    expect(mockSlotsCreate).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent for already-valued splits', async () => {
+    const { ethSplit } = makeTradeSplit();
+    ethSplit.value_num = 208800n;
+    mockSplitsFindUnique.mockResolvedValue(ethSplit);
+
+    const result = await valueZeroValueTrade(ethSplit.guid, runId, tx);
+
+    expect(result.valued).toBe(true);
+    expect(mockSplitsUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assignAdjustmentToLots — stock splits scale lots, not phantom trades
+// ---------------------------------------------------------------------------
+
+describe('assignAdjustmentToLots', () => {
+  const tx = createMockTx();
+  const runId = 'run-adjust';
+
+  function makeAdjSplit(qtyNum: bigint) {
+    return {
+      guid: 'adj-split-guid-0000000000000000',
+      tx_guid: 'adj-tx-guid-000000000000000000',
+      account_guid: 'acct-guid-0000000000000000000',
+      memo: '',
+      action: 'Split',
+      reconcile_state: 'n',
+      reconcile_date: null,
+      quantity_num: qtyNum,
+      quantity_denom: 100n,
+      value_num: 0n,
+      value_denom: 100n,
+      lot_guid: null,
+    };
+  }
+
+  it('assigns a 2:1 stock split to the single open lot, scaling its shares', async () => {
+    mockSplitsFindUnique.mockResolvedValue(makeAdjSplit(1000n)); // +10 shares
+    mockSplitsUpdate.mockResolvedValue({});
+
+    const lots = [makeOpenLot('lot-a-guid-00000000000000000', 10)];
+    const result = await assignAdjustmentToLots('adj-split-guid-0000000000000000', lots, runId, tx);
+
+    expect(result.lotsUsed).toEqual(['lot-a-guid-00000000000000000']);
+    expect(result.subSplitsCreated).toHaveLength(0);
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: 'adj-split-guid-0000000000000000' },
+        data: { lot_guid: 'lot-a-guid-00000000000000000' },
+      }),
+    );
+    // Zero-cost share scaling, not a new zero-cost lot
+    expect(lots[0].shares).toBeCloseTo(20);
+  });
+
+  it('distributes a stock split pro-rata across multiple open lots', async () => {
+    mockSplitsFindUnique.mockResolvedValue(makeAdjSplit(4000n)); // +40 shares
+    mockSplitsUpdate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+
+    const lots = [
+      makeOpenLot('lot-a-guid-00000000000000000', 10),
+      makeOpenLot('lot-b-guid-00000000000000000', 30),
+    ];
+    const result = await assignAdjustmentToLots('adj-split-guid-0000000000000000', lots, runId, tx);
+
+    expect(result.lotsUsed).toHaveLength(2);
+    expect(result.subSplitsCreated).toHaveLength(1);
+    // 10/40 of +40 = +10 to lot a (original split), 30/40 = +30 to lot b (sub-split)
+    expect(mockSplitsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { guid: 'adj-split-guid-0000000000000000' },
+        data: expect.objectContaining({ lot_guid: 'lot-a-guid-00000000000000000', quantity_num: 1000n }),
+      }),
+    );
+    expect(mockSplitsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          lot_guid: 'lot-b-guid-00000000000000000',
+          quantity_num: 3000n,
+          value_num: 0n,
+        }),
+      }),
+    );
+    expect(lots[0].shares).toBeCloseTo(20);
+    expect(lots[1].shares).toBeCloseTo(60);
+  });
+
+  it('handles a reverse split (negative adjustment) without booking a sale', async () => {
+    mockSplitsFindUnique.mockResolvedValue(makeAdjSplit(-500n)); // -5 shares
+    mockSplitsUpdate.mockResolvedValue({});
+
+    const lots = [makeOpenLot('lot-a-guid-00000000000000000', 10)];
+    const result = await assignAdjustmentToLots('adj-split-guid-0000000000000000', lots, runId, tx);
+
+    expect(result.lotsUsed).toEqual(['lot-a-guid-00000000000000000']);
+    expect(lots[0].shares).toBeCloseTo(5);
+  });
+
+  it('warns and leaves the split unassigned when there are no open lots', async () => {
+    mockSplitsFindUnique.mockResolvedValue(makeAdjSplit(1000n));
+
+    const result = await assignAdjustmentToLots('adj-split-guid-0000000000000000', [], runId, tx);
+
+    expect(result.warning).toContain('no open lots');
+    expect(mockSplitsUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateCapitalGains — transfer-close, carried basis, break-even, $0 sells
+// ---------------------------------------------------------------------------
+
+describe('generateCapitalGains transfer-close and basis carryover', () => {
+  const tx = createMockTx();
+  const runId = 'run-xferclose';
+
+  const USD_GUID = 'usd-guid-00000000000000000000';
+  const AAPL_GUID = 'aapl-guid-0000000000000000000';
+  const INVEST_GUID = 'invest-acct-guid-000000000000';
+  const PARENT_GUID = 'parent-guid-00000000000000000';
+  const ROOT_GUID = 'root-guid';
+
+  function accountRows() {
+    return [
+      { guid: INVEST_GUID, name: 'AAPL', parent_guid: PARENT_GUID, account_type: 'STOCK', commodity_guid: AAPL_GUID },
+      { guid: PARENT_GUID, name: 'Brokerage', parent_guid: ROOT_GUID, account_type: 'ASSET', commodity_guid: USD_GUID },
+      { guid: ROOT_GUID, name: 'Root', parent_guid: null, account_type: 'ROOT', commodity_guid: USD_GUID },
+    ];
+  }
+
+  function mockCurrencyCommodities() {
+    mockCommoditiesFindUnique.mockImplementation(
+      async (args: { where: { guid: string } }) =>
+        args.where.guid === USD_GUID
+          ? { namespace: 'CURRENCY', fraction: 100 }
+          : { namespace: 'NASDAQ', fraction: 10000 },
+    );
+    mockCommoditiesFindMany.mockResolvedValue([{ guid: USD_GUID, fraction: 100 }]);
+  }
+
+  function makeLot(splits: Array<{
+    guid: string; txGuid: string;
+    qtyNum: bigint; qtyDenom: bigint;
+    valNum: bigint; valDenom: bigint;
+    postDate: Date;
+  }>) {
+    return {
+      guid: 'lot-guid-00000000000000000000',
+      account_guid: INVEST_GUID,
+      is_closed: 0,
+      account: {
+        guid: INVEST_GUID,
+        commodity_guid: AAPL_GUID,
+        commodity_scu: 100,
+        parent_guid: PARENT_GUID,
+      },
+      splits: splits.map(s => ({
+        guid: s.guid,
+        tx_guid: s.txGuid,
+        quantity_num: s.qtyNum,
+        quantity_denom: s.qtyDenom,
+        value_num: s.valNum,
+        value_denom: s.valDenom,
+        transaction: { post_date: s.postDate, currency_guid: USD_GUID },
+      })),
+    };
+  }
+
+  it('skips gains generation for a lot closed by a transfer-out (not a taxable event)', async () => {
+    // Buy 10 @ $1000, then transfer all 10 out at $0 — shares sum to zero but
+    // NO sale happened. The engine used to book a -$1000 phantom loss here.
+    const lot = makeLot([
+      { guid: 'buy-split', txGuid: 'buy-tx', qtyNum: 1000n, qtyDenom: 100n, valNum: 100000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+      { guid: 'xfer-split', txGuid: 'xfer-tx', qtyNum: -1000n, qtyDenom: 100n, valNum: 0n, valDenom: 100n, postDate: new Date('2024-06-01') },
+    ]);
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockLotsUpdate.mockResolvedValue({});
+    // Sibling lookup for the negative split: positive same-commodity
+    // counter-split in ANOTHER non-TRADING account => transfer-out.
+    mockSplitsFindMany.mockResolvedValue([
+      {
+        guid: 'xfer-split',
+        account_guid: INVEST_GUID,
+        quantity_num: -1000n,
+        quantity_denom: 100n,
+        account: { guid: INVEST_GUID, commodity_guid: AAPL_GUID, account_type: 'STOCK' },
+      },
+      {
+        guid: 'dest-split',
+        account_guid: 'dest-acct-guid-00000000000000',
+        quantity_num: 1000n,
+        quantity_denom: 100n,
+        account: { guid: 'dest-acct-guid-00000000000000', commodity_guid: AAPL_GUID, account_type: 'STOCK' },
+      },
+    ]);
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeNull();
+    expect(result.skippedReason).toContain('transfer');
+    expect(result.gainLoss).toBe(0);
+    // Lot still closed
+    expect(mockLotsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { guid: lot.guid }, data: { is_closed: 1 } }),
+    );
+    // NO gains transaction booked
+    expect(mockTransactionsCreate).not.toHaveBeenCalled();
+  });
+
+  it('consumes carried_basis so a transferred lot books the ORIGINAL basis on sale', async () => {
+    // Destination lot: transfer-in of 10 shares at $0 (carried basis $1,000
+    // stored on the lot), later sold for $1,500 => gain must be $500, not
+    // $1,500 (which a zero-basis lot would book).
+    const lot = makeLot([
+      { guid: 'xferin-split', txGuid: 'xferin-tx', qtyNum: 1000n, qtyDenom: 100n, valNum: 0n, valDenom: 100n, postDate: new Date('2024-01-15') },
+      { guid: 'sell-split', txGuid: 'sell-tx', qtyNum: -1000n, qtyDenom: 100n, valNum: -150000n, valDenom: 100n, postDate: new Date('2024-07-01') },
+    ]);
+    mockLotsFindUnique.mockResolvedValue(lot);
+    // Sibling lookup for the sell: cash counterparty (different commodity) => a real sale
+    mockSplitsFindMany.mockResolvedValue([]);
+    // carried_basis + acquisition_date slots on the lot
+    mockSlotsFindFirst.mockImplementation(async (args: { where?: { name?: string } }) => {
+      if (args?.where?.name === 'carried_basis') return { string_val: '1000' };
+      if (args?.where?.name === 'acquisition_date') return { string_val: '2023-01-01T00:00:00.000Z' };
+      return null;
+    });
+    // classifyAccountTax walk
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: PARENT_GUID });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
+    mockAccountsFindMany.mockResolvedValue(accountRows());
+    mockCurrencyCommodities();
+    mockAccountsFindFirst
+      .mockResolvedValueOnce({ guid: 'income-guid' })
+      .mockResolvedValueOnce({ guid: 'capgains-guid' })
+      .mockResolvedValueOnce({ guid: 'lt-guid' });
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeDefined();
+    expect(result.gainLoss).toBeCloseTo(500);
+    // Acquisition date carried from the source lot => long-term
+    expect(result.holdingPeriod).toBe('long_term');
+    // Invest offset split: +$500
+    const investCall = mockSplitsCreate.mock.calls[0][0] as { data: { value_num: bigint } };
+    expect(investCall.data.value_num).toBe(50000n);
+  });
+
+  it('skips booking a $0-value gains transaction at exact break-even', async () => {
+    const lot = makeLot([
+      { guid: 'buy-split', txGuid: 'buy-tx', qtyNum: 1000n, qtyDenom: 100n, valNum: 100000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+      { guid: 'sell-split', txGuid: 'sell-tx', qtyNum: -1000n, qtyDenom: 100n, valNum: -100000n, valDenom: 100n, postDate: new Date('2024-07-01') },
+    ]);
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockSplitsFindMany.mockResolvedValue([]);
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeNull();
+    expect(result.skippedReason).toContain('Break-even');
+    expect(mockTransactionsCreate).not.toHaveBeenCalled();
+    // Lot still closed
+    expect(mockLotsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { guid: lot.guid }, data: { is_closed: 1 } }),
+    );
+  });
+
+  it('refuses to book a loss from a zero-proceeds (unpriced) disposal', async () => {
+    // 10 shares bought for $1,000 leave the lot with $0 total proceeds and no
+    // transfer counterpart — an unvalued trade. Booking would fabricate a
+    // -$1,000 loss.
+    const lot = makeLot([
+      { guid: 'buy-split', txGuid: 'buy-tx', qtyNum: 1000n, qtyDenom: 100n, valNum: 100000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+      { guid: 'zero-sell-split', txGuid: 'zero-sell-tx', qtyNum: -1000n, qtyDenom: 100n, valNum: 0n, valDenom: 100n, postDate: new Date('2024-07-01') },
+    ]);
+    mockLotsFindUnique.mockResolvedValue(lot);
+    mockSplitsFindMany.mockResolvedValue([]);
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeNull();
+    expect(result.skippedReason).toContain('refusing to book');
+    expect(mockTransactionsCreate).not.toHaveBeenCalled();
+  });
+
+  it('mixed lot (partial sale + transfer-out) realizes only the sold shares', async () => {
+    // Buy 10 @ $1,000. Sell 4 for $600 (gain on those 4 = 600 - 400 = $200),
+    // transfer the other 6 out at $0. Only the $200 is taxable.
+    const lot = makeLot([
+      { guid: 'buy-split', txGuid: 'buy-tx', qtyNum: 1000n, qtyDenom: 100n, valNum: 100000n, valDenom: 100n, postDate: new Date('2024-01-01') },
+      { guid: 'sell-split', txGuid: 'sell-tx', qtyNum: -400n, qtyDenom: 100n, valNum: -60000n, valDenom: 100n, postDate: new Date('2024-05-01') },
+      { guid: 'xfer-split', txGuid: 'xfer-tx', qtyNum: -600n, qtyDenom: 100n, valNum: 0n, valDenom: 100n, postDate: new Date('2024-06-01') },
+    ]);
+    mockLotsFindUnique.mockResolvedValue(lot);
+    // Sibling lookup: keyed by tx — the sell has a cash counterparty (no
+    // same-commodity counter), the transfer has a same-commodity dest split.
+    mockSplitsFindMany.mockImplementation(async (args: { where?: { tx_guid?: string } }) => {
+      if (args?.where?.tx_guid === 'xfer-tx') {
+        return [
+          {
+            guid: 'dest-split',
+            account_guid: 'dest-acct-guid-00000000000000',
+            quantity_num: 600n,
+            quantity_denom: 100n,
+            account: { guid: 'dest-acct-guid-00000000000000', commodity_guid: AAPL_GUID, account_type: 'STOCK' },
+          },
+        ];
+      }
+      return [];
+    });
+    mockSlotsFindFirst.mockResolvedValue(null);
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'AAPL', parent_guid: PARENT_GUID });
+    mockAccountsFindUnique.mockResolvedValueOnce({ name: 'Brokerage', parent_guid: null });
+    mockAccountsFindMany.mockResolvedValue(accountRows());
+    mockCurrencyCommodities();
+    mockAccountsFindFirst
+      .mockResolvedValueOnce({ guid: 'income-guid' })
+      .mockResolvedValueOnce({ guid: 'capgains-guid' })
+      .mockResolvedValueOnce({ guid: 'st-guid' });
+    mockTransactionsCreate.mockResolvedValue({});
+    mockSplitsCreate.mockResolvedValue({});
+    mockSlotsCreate.mockResolvedValue({});
+    mockLotsUpdate.mockResolvedValue({});
+
+    const result = await generateCapitalGains(lot.guid, runId, tx);
+
+    expect(result.gainsTransactionGuid).toBeDefined();
+    expect(result.gainLoss).toBeCloseTo(200);
   });
 });

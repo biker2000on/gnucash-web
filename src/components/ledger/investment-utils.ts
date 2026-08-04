@@ -8,9 +8,7 @@ import { Split } from '@/lib/types';
  * Trading: splits which shouldn't count toward the multi-split threshold.
  */
 export function isMultiSplitTransaction(splits: Split[] | undefined): boolean {
-    const nonTrading = (splits ?? []).filter(
-        s => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
-    );
+    const nonTrading = (splits ?? []).filter(s => !isTradingSplit(s));
     return nonTrading.length > 2;
 }
 
@@ -64,9 +62,7 @@ function findTransferSplit(splits: Split[], accountGuid: string): Split | undefi
     if (otherSplits.length === 0) return undefined;
 
     // Prefer non-trading splits
-    const nonTrading = otherSplits.filter(
-        (s) => !(s.account_fullname ?? s.account_name ?? '').startsWith('Trading:')
-    );
+    const nonTrading = otherSplits.filter((s) => !isTradingSplit(s));
 
     const candidates = nonTrading.length > 0 ? nonTrading : otherSplits;
 
@@ -86,7 +82,12 @@ function findTransferSplit(splits: Split[], accountGuid: string): Split | undefi
  *  - Sell: negative quantity (shares out), negative value (credit)
  *  - Dividend / other: zero quantity
  */
-// ── Account name pattern helpers ─────────────────────────────────────
+// ── Account classification helpers ───────────────────────────────────
+//
+// Prefer the split's `account_type` (shipped by the transactions API from the
+// DB) — renamed roots or non-English books make name prefixes unreliable.
+// The fullname-prefix walk remains only as a fallback for payloads that
+// predate the account_type field.
 
 /**
  * Check whether a colon path starts with the given root segment, tolerating
@@ -98,21 +99,29 @@ function hasRootSegment(name: string, segment: string): boolean {
     return segs[0] === segment || segs[1] === segment;
 }
 
-function isIncomeAccount(name: string): boolean {
-    return hasRootSegment(name, 'Income');
+function splitName(s: Split): string {
+    return s.account_fullname ?? s.account_name ?? '';
 }
 
-function isTradingAccount(name: string): boolean {
-    return hasRootSegment(name, 'Trading');
+function isIncomeSplit(s: Split): boolean {
+    if (s.account_type) return s.account_type === 'INCOME';
+    return hasRootSegment(splitName(s), 'Income');
 }
 
-function isExpenseAccount(name: string): boolean {
+function isTradingSplit(s: Split): boolean {
+    if (s.account_type) return s.account_type === 'TRADING';
+    return hasRootSegment(splitName(s), 'Trading');
+}
+
+function isExpenseSplit(s: Split): boolean {
+    if (s.account_type) return s.account_type === 'EXPENSE';
+    const name = splitName(s);
     return hasRootSegment(name, 'Expenses') || hasRootSegment(name, 'Expense');
 }
 
-function isCashLikeAccount(name: string): boolean {
+function isCashLikeSplit(s: Split): boolean {
     // Not Trading, not Income, not Expense → likely a bank/cash/asset counterparty
-    return !isTradingAccount(name) && !isIncomeAccount(name) && !isExpenseAccount(name);
+    return !isTradingSplit(s) && !isIncomeSplit(s) && !isExpenseSplit(s);
 }
 
 /**
@@ -138,22 +147,17 @@ function classifyInvestmentTransaction(
     // Categorise the other splits (everything except the investment account itself)
     const otherSplits = splits.filter(s => s.account_guid !== accountGuid);
 
-    const hasIncomeSplit = otherSplits.some(s => {
-        const name = s.account_fullname ?? s.account_name ?? '';
-        return isIncomeAccount(name);
-    });
+    const hasIncomeSplit = otherSplits.some(s => isIncomeSplit(s));
 
     const hasCashSplit = otherSplits.some(s => {
-        const name = s.account_fullname ?? s.account_name ?? '';
         const val = Math.abs(parseFloat(s.value_decimal ?? '0'));
-        return isCashLikeAccount(name) && val > 0;
+        return isCashLikeSplit(s) && val > 0;
     });
 
     // Check if all other splits are either Trading accounts or have zero value
     const allOtherAreTradingOrZero = otherSplits.every(s => {
-        const name = s.account_fullname ?? s.account_name ?? '';
         const val = Math.abs(parseFloat(s.value_decimal ?? '0'));
-        return isTradingAccount(name) || val === 0;
+        return isTradingSplit(s) || val === 0;
     });
 
     const hasShares = shares !== 0;
@@ -226,16 +230,21 @@ export function transformToInvestmentRow(
 ): InvestmentRowData {
     const splits = tx.splits ?? [];
 
-    // Find the account's own split
-    const accountSplit = splits.find((s) => s.account_guid === accountGuid);
+    // SUM the account's splits rather than reading only the first one: the
+    // scrub engine sub-splits a multi-lot sell/transfer into several
+    // same-account splits, and the row must show the whole trade (same
+    // summation the transactions API uses for the running balance).
+    const accountSplits = splits.filter((s) => s.account_guid === accountGuid);
 
-    const shares = accountSplit
-        ? parseFloat(accountSplit.quantity_decimal ?? '0')
-        : 0;
+    const shares = accountSplits.reduce(
+        (sum, s) => sum + parseFloat(s.quantity_decimal ?? '0'),
+        0,
+    );
 
-    const value = accountSplit
-        ? parseFloat(accountSplit.value_decimal ?? '0')
-        : 0;
+    const value = accountSplits.reduce(
+        (sum, s) => sum + parseFloat(s.value_decimal ?? '0'),
+        0,
+    );
 
     const absValue = Math.abs(value);
     const absShares = Math.abs(shares);

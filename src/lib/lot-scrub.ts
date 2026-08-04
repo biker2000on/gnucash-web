@@ -5,14 +5,27 @@
  * 1. splitSellAcrossLots — split a sell across multiple lots when it exceeds one lot's balance
  * 2. linkTransferToLot — create destination lots for share transfers with metadata linking
  * 3. generateCapitalGains — create double-balance gains transactions for closed lots
+ * 4. valueZeroValueTrade — value zero-value commodity-for-commodity trades from the price DB
+ * 5. assignAdjustmentToLots — scale existing lots for stock splits / reverse splits
  *
  * Also provides helpers:
  * - classifyAccountTax — determine TAX_NORMAL / TAX_DEFERRED / TAX_EXEMPT
- * - classifyHoldingPeriod — short_term vs long_term (1-year threshold)
+ * - classifyHoldingPeriod — short_term vs long_term (IRS calendar-anniversary rule)
+ * - qtyEpsilonForScu — commodity-aware share epsilon (crypto at 1e8 precision)
+ *
+ * Transfer basis carryover: when shares move between accounts, the destination
+ * lot stores the transferred shares' remaining cost basis in a `carried_basis`
+ * slot (a decimal string, same slots-table pattern as `acquisition_date` /
+ * `source_lot_guid`). This was chosen over rewriting the transfer splits'
+ * values because it leaves the user's transactions untouched and keeps the
+ * revert path (restore original_* slots, delete generated slots) unchanged.
+ * generateCapitalGains consumes the slot as extra basis; a transfer is NOT a
+ * taxable event, so lots closed purely by transfer-out never book gains.
  */
 
 import prisma from './prisma';
 import { generateGuid, toDecimalNumber, fromDecimal, findOrCreateAccount } from './gnucash';
+import { isLongTerm } from './holding-period';
 
 /** Prisma interactive transaction client type */
 export type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
@@ -28,7 +41,25 @@ export interface OpenLot {
   guid: string;
   /** Remaining shares in the lot — MUTATED IN-PLACE by splitSellAcrossLots */
   shares: number;
+  /**
+   * Consumption-ordering date. For transferred lots this is the CARRIED
+   * acquisition date (from the `acquisition_date` slot), not the transfer
+   * date, so FIFO/LIFO order transferred shares by when they were originally
+   * bought.
+   */
   openDate: Date | null;
+}
+
+export interface ValueTradeResult {
+  /** True when the trade legs now carry a non-zero value. */
+  valued: boolean;
+  warning?: string;
+}
+
+export interface AdjustmentResult {
+  subSplitsCreated: string[];
+  lotsUsed: string[];
+  warning?: string;
 }
 
 export interface SplitSellResult {
@@ -67,21 +98,58 @@ export interface CapitalGainsResult {
 
 /**
  * Classify a holding period as short-term or long-term.
- * Uses a 1-year (365-day) threshold.
+ *
+ * Delegates to the shared IRS calendar-anniversary rule in
+ * `@/lib/holding-period` (long-term = sold strictly AFTER the one-year
+ * anniversary of acquisition). The old 365-day millisecond threshold
+ * disagreed with Form 8949 on exact-anniversary sales across leap years.
  */
 export function classifyHoldingPeriod(openDate: Date, closeDate: Date): HoldingPeriod {
-  const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-  const held = closeDate.getTime() - openDate.getTime();
-  return held > oneYearMs ? 'long_term' : 'short_term';
+  return isLongTerm(openDate, closeDate) ? 'long_term' : 'short_term';
+}
+
+// ---------------------------------------------------------------------------
+// qtyEpsilonForScu
+// ---------------------------------------------------------------------------
+
+/** Legacy share epsilon, correct for stocks/funds at scu 100–10000. */
+export const DEFAULT_QTY_EPSILON = 0.0001;
+
+/**
+ * Commodity-aware share epsilon derived from the commodity's fraction
+ * (`commodity_scu`). At crypto's 1e8 precision, 0.0001 BTC is real money, so
+ * the epsilon shrinks to half the smallest representable unit. It never grows
+ * beyond the legacy 0.0001 so coarse-scu stocks keep their behavior.
+ */
+export function qtyEpsilonForScu(scu: number | bigint | null | undefined): number {
+  const n = Number(scu);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_QTY_EPSILON;
+  return Math.min(DEFAULT_QTY_EPSILON, 0.5 / n);
 }
 
 // ---------------------------------------------------------------------------
 // classifyAccountTax
 // ---------------------------------------------------------------------------
 
+/** Map an explicit retirement_account_type preference to a tax classification. */
+function classifyRetirementType(type: string): TaxClassification | null {
+  const t = type.toLowerCase();
+  if (t === 'brokerage') return 'TAX_NORMAL';
+  if (t.includes('roth') || t.startsWith('hsa') || t === 'coverdell_esa' || t === 'education_529') {
+    return 'TAX_EXEMPT';
+  }
+  // 401k / 403b / 457 / traditional_ira / sep_ira / simple_ira / hra / fsa / ...
+  return 'TAX_DEFERRED';
+}
+
 /**
  * Walk the account hierarchy upward to determine tax classification.
- * Checks account names for IRA/401k/Roth/HSA patterns.
+ *
+ * The account preference system's EXPLICIT retirement flag wins when set on
+ * the account or any ancestor (nearest wins): retirement_account_type maps
+ * roth/hsa types to TAX_EXEMPT, brokerage to TAX_NORMAL, other retirement
+ * types to TAX_DEFERRED. Only when no ancestor carries a preference does the
+ * legacy name walk (IRA/401k/Roth/HSA patterns) apply:
  *
  * - TAX_EXEMPT: Roth IRA, Roth 401k, HSA
  * - TAX_DEFERRED: Traditional IRA, 401k (non-Roth), 403b, 457
@@ -93,6 +161,7 @@ export async function classifyAccountTax(
 ): Promise<TaxClassification> {
   const db = tx || prisma;
   const names: string[] = [];
+  const walkGuids: string[] = [];
 
   let currentGuid: string | null = accountGuid;
   // Walk up to 20 levels to avoid infinite loops
@@ -103,8 +172,45 @@ export async function classifyAccountTax(
         select: { name: true, parent_guid: true },
       });
     if (!acct) break;
+    walkGuids.push(currentGuid);
     names.push(acct.name.toLowerCase());
     currentGuid = acct.parent_guid;
+  }
+
+  // Explicit preference beats name-walking. Query defensively: the model may
+  // be absent in mocked test clients or pre-migration databases.
+  try {
+    const prefRows: Array<{
+      account_guid: string;
+      is_retirement: boolean | null;
+      retirement_account_type: string | null;
+    }> = await (db as unknown as {
+      gnucash_web_account_preferences: {
+        findMany: (args: unknown) => Promise<Array<{
+          account_guid: string;
+          is_retirement: boolean | null;
+          retirement_account_type: string | null;
+        }>>;
+      };
+    }).gnucash_web_account_preferences.findMany({
+      where: { account_guid: { in: walkGuids } },
+      select: { account_guid: true, is_retirement: true, retirement_account_type: true },
+    });
+    const prefByGuid = new Map(prefRows.map(p => [p.account_guid, p]));
+    // Nearest ancestor (self first) with a retirement flag wins.
+    for (const guid of walkGuids) {
+      const pref = prefByGuid.get(guid);
+      if (!pref) continue;
+      if (pref.is_retirement && pref.retirement_account_type) {
+        const mapped = classifyRetirementType(pref.retirement_account_type);
+        if (mapped) return mapped;
+      }
+      if (pref.is_retirement === false && pref.retirement_account_type === 'brokerage') {
+        return 'TAX_NORMAL';
+      }
+    }
+  } catch {
+    // Preference model unavailable — fall through to the name walk.
   }
 
   const joined = names.join(' ');
@@ -130,12 +236,19 @@ export async function classifyAccountTax(
  * When a sell split exceeds a single lot's remaining shares, split it into
  * sub-splits (one per lot consumed). Creates new `splits` rows in the DB.
  *
+ * Oversell (sell exceeds ALL open lot balances): matching GnuCash desktop,
+ * the un-allocatable remainder stays UNASSIGNED — it becomes a sub-split with
+ * `lot_guid = null`. No lot is driven negative and the original split's
+ * quantity/value totals are preserved across the sub-splits, so the
+ * transaction keeps balancing.
+ *
  * **IMPORTANT**: Mutates `openLots[].shares` in-place to reflect consumption.
  *
  * @param sellSplitGuid - GUID of the original sell split
  * @param openLots - Open lots sorted in consumption order (FIFO/LIFO). `.shares` is mutated.
  * @param runId - Unique run identifier for tagging generated entities
  * @param tx - Prisma transaction client
+ * @param qtyEpsilon - Commodity-aware share epsilon (see qtyEpsilonForScu)
  * @returns SplitSellResult with sub-splits created and lots used
  */
 export async function splitSellAcrossLots(
@@ -143,6 +256,7 @@ export async function splitSellAcrossLots(
   openLots: OpenLot[],
   runId: string,
   tx: PrismaTx,
+  qtyEpsilon: number = DEFAULT_QTY_EPSILON,
 ): Promise<SplitSellResult> {
   // Fetch the original sell split
   const sellSplit = await tx.splits.findUnique({
@@ -156,12 +270,12 @@ export async function splitSellAcrossLots(
   const sellVal = toDecimalNumber(sellSplit.value_num, sellSplit.value_denom);       // negative (credit) in native GnuCash data
   const remainingSell = Math.abs(sellQty);
 
-  if (remainingSell < 0.0001) {
+  if (remainingSell < qtyEpsilon) {
     return { subSplitsCreated: [], lotsUsed: [], warning: 'Sell quantity is zero' };
   }
 
   // Filter lots with shares > 0
-  const availableLots = openLots.filter(l => l.shares > 0.0001);
+  const availableLots = openLots.filter(l => l.shares > qtyEpsilon);
 
   if (availableLots.length === 0) {
     return { subSplitsCreated: [], lotsUsed: [], warning: 'No open lots available' };
@@ -176,18 +290,19 @@ export async function splitSellAcrossLots(
   let leftToSell = remainingSell;
 
   for (const lot of availableLots) {
-    if (leftToSell < 0.0001) break;
+    if (leftToSell < qtyEpsilon) break;
     const take = Math.min(lot.shares, leftToSell);
     allocations.push({ lot, shares: take });
     leftToSell -= take;
   }
 
-  const warning = leftToSell > 0.0001
-    ? `Sell of ${remainingSell} shares exceeds available lot balance by ${leftToSell.toFixed(4)}`
+  const isOversell = leftToSell > qtyEpsilon;
+  const warning = isOversell
+    ? `Sell of ${remainingSell} shares exceeds available lot balance by ${leftToSell.toFixed(8)} — remainder left unassigned`
     : undefined;
 
   // If sell fits in one lot, just assign the original split — no sub-splits needed
-  if (allocations.length === 1 && leftToSell < 0.0001) {
+  if (allocations.length === 1 && !isOversell) {
     const alloc = allocations[0];
     await tx.splits.update({
       where: { guid: sellSplitGuid },
@@ -252,6 +367,41 @@ export async function splitSellAcrossLots(
   const qtyDenom = Number(sellSplit.quantity_denom);
   const valDenom = Number(sellSplit.value_denom);
 
+  /** Create one tagged sub-split of the original sell. */
+  const createSubSplit = async (
+    subQty: { num: bigint; denom: bigint },
+    subVal: { num: bigint; denom: bigint },
+    lotGuid: string | null,
+  ): Promise<string> => {
+    const subGuid = generateGuid();
+    await tx.splits.create({
+      data: {
+        guid: subGuid,
+        tx_guid: sellSplit.tx_guid,
+        account_guid: sellSplit.account_guid,
+        memo: sellSplit.memo,
+        action: sellSplit.action,
+        reconcile_state: sellSplit.reconcile_state,
+        reconcile_date: sellSplit.reconcile_date,
+        value_num: subVal.num,
+        value_denom: subVal.denom,
+        quantity_num: subQty.num,
+        quantity_denom: subQty.denom,
+        lot_guid: lotGuid,
+      },
+    });
+    await tx.slots.create({
+      data: {
+        obj_guid: subGuid,
+        name: 'gnucash_web_generated',
+        slot_type: 4,
+        string_val: runId,
+      },
+    });
+    subSplitsCreated.push(subGuid);
+    return subGuid;
+  };
+
   // Assign the first allocation to the original split, create sub-splits for the rest
   const firstAlloc = allocations[0];
   const firstQty = fromDecimal(-firstAlloc.shares, qtyDenom);
@@ -270,64 +420,44 @@ export async function splitSellAcrossLots(
   firstAlloc.lot.shares -= firstAlloc.shares;
   lotsUsed.push(firstAlloc.lot.guid);
 
+  let usedQtyNum = firstQty.num;
+  let usedValNum = firstVal.num;
+
   // Create sub-splits for remaining allocations
   for (let i = 1; i < allocations.length; i++) {
     const alloc = allocations[i];
     const isLast = i === allocations.length - 1;
 
-    // For the last sub-split, ensure we account for rounding
     let subQty: { num: bigint; denom: bigint };
     let subVal: { num: bigint; denom: bigint };
 
-    if (isLast) {
-      // Last sub-split gets the remainder to maintain balance
-      const usedQtyNum = allocations.slice(0, i).reduce((sum, a) => {
-        const q = fromDecimal(-a.shares, qtyDenom);
-        return sum + q.num;
-      }, 0n);
-      const usedValNum = allocations.slice(0, i).reduce((sum, a) => {
-        const v = fromDecimal(valueSign * a.shares * pricePerShare, valDenom);
-        return sum + v.num;
-      }, 0n);
-
+    if (isLast && !isOversell) {
+      // Last sub-split gets the remainder to absorb rounding drift — but only
+      // when the sell fully fits in the lots. On an oversell the excess must
+      // NOT be dumped into the last lot (it would go negative); it goes to the
+      // unassigned remainder split below instead.
       subQty = { num: sellSplit.quantity_num - usedQtyNum, denom: BigInt(qtyDenom) };
       subVal = { num: sellSplit.value_num - usedValNum, denom: BigInt(valDenom) };
     } else {
       subQty = fromDecimal(-alloc.shares, qtyDenom);
       subVal = fromDecimal(valueSign * alloc.shares * pricePerShare, valDenom);
     }
+    usedQtyNum += subQty.num;
+    usedValNum += subVal.num;
 
-    const subGuid = generateGuid();
-    await tx.splits.create({
-      data: {
-        guid: subGuid,
-        tx_guid: sellSplit.tx_guid,
-        account_guid: sellSplit.account_guid,
-        memo: sellSplit.memo,
-        action: sellSplit.action,
-        reconcile_state: sellSplit.reconcile_state,
-        reconcile_date: sellSplit.reconcile_date,
-        value_num: subVal.num,
-        value_denom: subVal.denom,
-        quantity_num: subQty.num,
-        quantity_denom: subQty.denom,
-        lot_guid: alloc.lot.guid,
-      },
-    });
-
-    // Tag sub-split
-    await tx.slots.create({
-      data: {
-        obj_guid: subGuid,
-        name: 'gnucash_web_generated',
-        slot_type: 4,
-        string_val: runId,
-      },
-    });
-
-    subSplitsCreated.push(subGuid);
+    await createSubSplit(subQty, subVal, alloc.lot.guid);
     lotsUsed.push(alloc.lot.guid);
     alloc.lot.shares -= alloc.shares;
+  }
+
+  // Oversell: the un-allocatable excess becomes an UNASSIGNED sub-split
+  // (lot_guid null), exactly like GnuCash desktop leaves the remainder split
+  // outside any lot. Quantity/value totals across the original split and all
+  // sub-splits still equal the user's original amounts.
+  if (isOversell) {
+    const remainderQty = { num: sellSplit.quantity_num - usedQtyNum, denom: BigInt(qtyDenom) };
+    const remainderVal = { num: sellSplit.value_num - usedValNum, denom: BigInt(valDenom) };
+    await createSubSplit(remainderQty, remainderVal, null);
   }
 
   // Assert transaction balance == 0
@@ -348,12 +478,95 @@ export async function splitSellAcrossLots(
 }
 
 // ---------------------------------------------------------------------------
+// Carried basis (transfer basis carryover)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a lot's `carried_basis` slot (decimal string). Returns 0 when absent.
+ * The slot stores the cost basis carried into a transfer-destination lot when
+ * the transfer transaction itself carries no value.
+ */
+export async function readCarriedBasis(lotGuid: string, tx: PrismaTx): Promise<number> {
+  const slot = await tx.slots.findFirst({
+    where: { obj_guid: lotGuid, name: 'carried_basis' },
+    select: { string_val: true },
+  });
+  const parsed = slot?.string_val ? parseFloat(slot.string_val) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Compute the cost basis carried by `transferredShares` leaving a source lot:
+ * pro-rata share of (buy cost + the source lot's own carried basis) over the
+ * shares that entered the lot. Chains correctly across repeated transfers —
+ * a scrub-created destination lot has one zero-value transfer-in split plus a
+ * carried_basis slot, so its basis-per-share is carried_basis / shares.
+ *
+ * Returns null when the source lot has no incoming shares to derive a basis
+ * from (nothing to carry).
+ */
+export async function computeCarriedBasis(
+  sourceLotGuid: string,
+  transferredShares: number,
+  tx: PrismaTx,
+): Promise<number | null> {
+  const sourceLotSplits = (await tx.splits.findMany({
+    where: { lot_guid: sourceLotGuid },
+    select: {
+      quantity_num: true,
+      quantity_denom: true,
+      value_num: true,
+      value_denom: true,
+    },
+  })) ?? [];
+  let boughtShares = 0;
+  let buyCost = 0;
+  for (const s of sourceLotSplits) {
+    const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
+    if (qty > 0) {
+      boughtShares += qty;
+      buyCost += Math.abs(toDecimalNumber(s.value_num, s.value_denom));
+    }
+  }
+  if (boughtShares <= 0) return null;
+  const carried = await readCarriedBasis(sourceLotGuid, tx);
+  return ((buyCost + carried) / boughtShares) * transferredShares;
+}
+
+/**
+ * Store the carried basis on a destination lot as a `carried_basis` slot,
+ * tagged like the other transfer-metadata slots. No-op for null/0.
+ */
+async function writeCarriedBasisSlot(
+  lotGuid: string,
+  carriedBasis: number | null,
+  tx: PrismaTx,
+): Promise<void> {
+  if (carriedBasis === null || !(Math.abs(carriedBasis) > 0)) return;
+  await tx.slots.create({
+    data: {
+      obj_guid: lotGuid,
+      name: 'carried_basis',
+      slot_type: 4,
+      string_val: String(Math.round(carriedBasis * 1e6) / 1e6),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // linkTransferToLot
 // ---------------------------------------------------------------------------
 
 /**
  * For a transfer-in split (positive qty, same commodity sent from another account),
  * create a new lot in the destination account with metadata linking to the source lot.
+ *
+ * Besides `source_lot_guid` and `acquisition_date`, the destination lot also
+ * carries the transferred shares' remaining cost basis in a `carried_basis`
+ * slot whenever the transfer split itself carries (approximately) zero value —
+ * the common shape for in-kind transfers. generateCapitalGains consumes it so
+ * the eventual real sale computes proceeds − original basis instead of
+ * proceeds − 0.
  *
  * Idempotency: if the split already has a lot_guid, returns the existing lot.
  *
@@ -434,6 +647,17 @@ export async function linkTransferToLot(
         string_val: sourceSplit.lot_guid,
       },
     });
+
+    // Carry the transferred shares' cost basis when the transfer transaction
+    // itself has no value (a $0 in-kind transfer). If the transfer split DOES
+    // carry a value, that value already represents the shares' basis in the
+    // destination lot and adding carried_basis would double-count.
+    const transferValue = toDecimalNumber(split.value_num, split.value_denom);
+    const transferQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
+    if (Math.abs(transferValue) < 0.005 && transferQty > 0) {
+      const carried = await computeCarriedBasis(sourceSplit.lot_guid, transferQty, tx);
+      await writeCarriedBasisSlot(lotGuid, carried, tx);
+    }
 
     // Try to find the acquisition date from the source lot
     const acqDateSlot = await tx.slots.findFirst({
@@ -588,7 +812,11 @@ export async function splitTransferAcrossSourceLots(
   }));
 
   // Helper: create a destination lot for a source lot
-  async function createDestLot(sourceLotGuid: string, postDate: Date | null | undefined): Promise<string> {
+  async function createDestLot(
+    sourceLotGuid: string,
+    postDate: Date | null | undefined,
+    allocShares: number,
+  ): Promise<string> {
     const lotGuid = generateGuid();
     await tx.lots.create({
       data: {
@@ -617,6 +845,13 @@ export async function splitTransferAcrossSourceLots(
         string_val: sourceLotGuid,
       },
     });
+
+    // Carry the allocated shares' cost basis for zero-value transfers (see
+    // linkTransferToLot — same rule, per source lot here).
+    if (Math.abs(transferVal) < 0.005 && allocShares > 0) {
+      const carried = await computeCarriedBasis(sourceLotGuid, allocShares, tx);
+      await writeCarriedBasisSlot(lotGuid, carried, tx);
+    }
 
     // Carry acquisition_date: check slot first, fall back to earliest split date
     const acqDateSlot = await tx.slots.findFirst({
@@ -718,7 +953,7 @@ export async function splitTransferAcrossSourceLots(
 
   // First allocation reuses the original split
   const firstAlloc = allocations[0];
-  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date);
+  const firstLotGuid = await createDestLot(firstAlloc.sourceLotGuid, split.transaction?.post_date, firstAlloc.shares);
   lotGuids.push(firstLotGuid);
 
   const firstQty = fromDecimal(firstAlloc.shares, qtyDenom);
@@ -744,7 +979,7 @@ export async function splitTransferAcrossSourceLots(
   for (let i = 1; i < allocations.length; i++) {
     const alloc = allocations[i];
     const isLast = i === allocations.length - 1;
-    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date);
+    const lotGuid = await createDestLot(alloc.sourceLotGuid, split.transaction?.post_date, alloc.shares);
     lotGuids.push(lotGuid);
 
     let subQty: { num: bigint; denom: bigint };
@@ -812,6 +1047,292 @@ export async function splitTransferAcrossSourceLots(
 }
 
 // ---------------------------------------------------------------------------
+// valueZeroValueTrade
+// ---------------------------------------------------------------------------
+
+/** Latest price for a commodity on or before a date, preferring the given currency. */
+async function lookupPriceOn(
+  commodityGuid: string,
+  preferredCurrencyGuid: string | null,
+  date: Date,
+  tx: PrismaTx,
+): Promise<number | null> {
+  const where = (withCurrency: boolean) => ({
+    commodity_guid: commodityGuid,
+    ...(withCurrency && preferredCurrencyGuid ? { currency_guid: preferredCurrencyGuid } : {}),
+    date: { lte: date },
+  });
+  let row = preferredCurrencyGuid
+    ? await tx.prices.findFirst({
+        where: where(true),
+        orderBy: { date: 'desc' },
+        select: { value_num: true, value_denom: true },
+      })
+    : null;
+  if (!row) {
+    row = await tx.prices.findFirst({
+      where: where(false),
+      orderBy: { date: 'desc' },
+      select: { value_num: true, value_denom: true },
+    });
+  }
+  if (!row) return null;
+  const price = toDecimalNumber(row.value_num, row.value_denom);
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
+/**
+ * Value a zero-value commodity-for-commodity trade from the price DB.
+ *
+ * Shape: a STOCK/MUTUAL split changes quantity with value ≈ 0 and the
+ * transaction's counter-split is a DIFFERENT commodity also changing quantity
+ * at value ≈ 0 (e.g. "Buy ETH": ETH +3 / BTC −0.0696, both $0). Without a
+ * value, the scrub treats the negative side as a $0-proceeds sell (phantom
+ * loss) and the positive side as a zero-cost buy lot (phantom gain later).
+ *
+ * This rewrites BOTH legs' values to ± the trade's market value on the trade
+ * date, derived from the price DB (disposal leg's commodity preferred, then
+ * the acquisition leg's), keeping the transaction balanced. Original values
+ * are preserved in original_* slots and both legs are tagged with the runId so
+ * clear/revert restores them.
+ *
+ * Idempotent: returns immediately when the split already carries a value.
+ * When NO price exists for either commodity, nothing is rewritten and a
+ * warning is returned — the caller must not book a gain/loss from a $0 sell.
+ */
+export async function valueZeroValueTrade(
+  splitGuid: string,
+  runId: string,
+  tx: PrismaTx,
+): Promise<ValueTradeResult> {
+  const split = await tx.splits.findUnique({
+    where: { guid: splitGuid },
+    include: {
+      transaction: {
+        include: {
+          splits: {
+            include: {
+              account: {
+                select: { guid: true, commodity_guid: true, account_type: true },
+              },
+            },
+          },
+        },
+      },
+      account: { select: { commodity_guid: true } },
+    },
+  });
+  if (!split) {
+    throw new Error(`Split not found: ${splitGuid}`);
+  }
+
+  const ownValue = toDecimalNumber(split.value_num, split.value_denom);
+  const ownQty = toDecimalNumber(split.quantity_num, split.quantity_denom);
+  if (Math.abs(ownValue) > 0.005) {
+    return { valued: true }; // already valued (or a second visit from the counter account's scrub)
+  }
+  if (!(Math.abs(ownQty) > 0)) {
+    return { valued: false, warning: 'Zero-quantity split is not a trade leg' };
+  }
+
+  const ownCommodity = split.account?.commodity_guid ?? null;
+  const txCurrencyGuid = split.transaction?.currency_guid ?? null;
+  const postDate = split.transaction?.post_date ?? new Date();
+
+  // Counter legs: other accounts, DIFFERENT commodity, nonzero quantity,
+  // zero value (the other side of the barter trade).
+  const counterLegs = (split.transaction?.splits ?? []).filter(s => {
+    if (s.guid === split.guid || s.account_guid === split.account_guid) return false;
+    if (!s.account?.commodity_guid || s.account.commodity_guid === ownCommodity) return false;
+    if (s.account.account_type === 'TRADING') return false;
+    const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
+    const val = toDecimalNumber(s.value_num, s.value_denom);
+    return Math.abs(qty) > 0 && Math.abs(val) < 0.005;
+  });
+  if (counterLegs.length === 0) {
+    return { valued: false, warning: 'No opposite-commodity counter leg found for zero-value trade' };
+  }
+  // Primary counter = largest |quantity|.
+  const counter = counterLegs.reduce((best, cur) => {
+    const b = Math.abs(toDecimalNumber(best.quantity_num, best.quantity_denom));
+    const c = Math.abs(toDecimalNumber(cur.quantity_num, cur.quantity_denom));
+    return c > b ? cur : best;
+  });
+  const counterQty = toDecimalNumber(counter.quantity_num, counter.quantity_denom);
+  const counterCommodity = counter.account!.commodity_guid!;
+
+  // Trade value: FMV of the DISPOSAL side at the trade date (IRS: proceeds of
+  // the disposed asset = FMV of property received; a same-moment trade makes
+  // the two equal, and the disposal side's price is the better-attested one).
+  const disposal = ownQty < 0
+    ? { qty: ownQty, commodity: ownCommodity }
+    : { qty: counterQty, commodity: counterCommodity };
+  const acquisition = ownQty < 0
+    ? { qty: counterQty, commodity: counterCommodity }
+    : { qty: ownQty, commodity: ownCommodity };
+
+  let tradeValue: number | null = null;
+  if (disposal.commodity) {
+    const p = await lookupPriceOn(disposal.commodity, txCurrencyGuid, postDate, tx);
+    if (p !== null) tradeValue = Math.abs(disposal.qty) * p;
+  }
+  if (tradeValue === null && acquisition.commodity) {
+    const p = await lookupPriceOn(acquisition.commodity, txCurrencyGuid, postDate, tx);
+    if (p !== null) tradeValue = Math.abs(acquisition.qty) * p;
+  }
+  if (tradeValue === null || !(tradeValue > 0)) {
+    return {
+      valued: false,
+      warning: `No price found on/before ${postDate.toISOString().slice(0, 10)} to value zero-value trade (tx ${split.tx_guid}) — refusing to book a gain/loss from a $0-value trade`,
+    };
+  }
+
+  // Rewrite both legs: positive-qty leg debits +value, negative-qty leg
+  // credits −value; the transaction stays balanced.
+  const legs = [
+    { guid: split.guid, qty: ownQty, value_num: split.value_num, value_denom: split.value_denom, quantity_num: split.quantity_num, quantity_denom: split.quantity_denom },
+    { guid: counter.guid, qty: counterQty, value_num: counter.value_num, value_denom: counter.value_denom, quantity_num: counter.quantity_num, quantity_denom: counter.quantity_denom },
+  ];
+  for (const leg of legs) {
+    const denom = Number(leg.value_denom) > 0 ? Number(leg.value_denom) : 100;
+    const newVal = fromDecimal(leg.qty > 0 ? tradeValue : -tradeValue, denom);
+    // Save originals (quantity too — the revert path restores splits keyed on
+    // the original_quantity_num slot).
+    for (const [name, val] of [
+      ['original_quantity_num', leg.quantity_num.toString()],
+      ['original_quantity_denom', leg.quantity_denom.toString()],
+      ['original_value_num', leg.value_num.toString()],
+      ['original_value_denom', leg.value_denom.toString()],
+      ['gnucash_web_generated', runId],
+    ] as const) {
+      await tx.slots.create({
+        data: { obj_guid: leg.guid, name, slot_type: 4, string_val: val },
+      });
+    }
+    await tx.splits.update({
+      where: { guid: leg.guid },
+      data: { value_num: newVal.num, value_denom: newVal.denom },
+    });
+  }
+
+  return { valued: true };
+}
+
+// ---------------------------------------------------------------------------
+// assignAdjustmentToLots
+// ---------------------------------------------------------------------------
+
+/**
+ * Assign a stock-split / reverse-split adjustment split (single-account
+ * quantity change with zero value and no counter-quantity splits anywhere in
+ * the transaction) across the account's open lots, SCALING them pro-rata by
+ * their current shares instead of opening a zero-cost lot (forward split) or
+ * realizing a $0-proceeds "sale" (reverse split).
+ *
+ * The adjustment splits carry zero value, so lot basis is untouched — exactly
+ * what a stock split means economically.
+ *
+ * **IMPORTANT**: Mutates `openLots[].shares` in-place.
+ */
+export async function assignAdjustmentToLots(
+  adjSplitGuid: string,
+  openLots: OpenLot[],
+  runId: string,
+  tx: PrismaTx,
+  qtyEpsilon: number = DEFAULT_QTY_EPSILON,
+): Promise<AdjustmentResult> {
+  const adjSplit = await tx.splits.findUnique({ where: { guid: adjSplitGuid } });
+  if (!adjSplit) {
+    throw new Error(`Adjustment split not found: ${adjSplitGuid}`);
+  }
+
+  const adjQty = toDecimalNumber(adjSplit.quantity_num, adjSplit.quantity_denom);
+  const targets = openLots.filter(l => l.shares > qtyEpsilon);
+  if (targets.length === 0) {
+    return { subSplitsCreated: [], lotsUsed: [], warning: 'Stock split adjustment with no open lots — left unassigned' };
+  }
+
+  // Single open lot: assign the original split to it directly.
+  if (targets.length === 1) {
+    await tx.splits.update({
+      where: { guid: adjSplitGuid },
+      data: { lot_guid: targets[0].guid },
+    });
+    targets[0].shares += adjQty;
+    return { subSplitsCreated: [], lotsUsed: [targets[0].guid] };
+  }
+
+  // Multiple open lots: distribute pro-rata by current shares, sub-splitting
+  // like splitSellAcrossLots (original split takes the first allocation, the
+  // last allocation absorbs rounding).
+  const totalShares = targets.reduce((sum, l) => sum + l.shares, 0);
+  const qtyDenom = Number(adjSplit.quantity_denom);
+
+  for (const [name, val] of [
+    ['original_quantity_num', adjSplit.quantity_num.toString()],
+    ['original_quantity_denom', adjSplit.quantity_denom.toString()],
+    ['original_value_num', adjSplit.value_num.toString()],
+    ['original_value_denom', adjSplit.value_denom.toString()],
+    ['gnucash_web_generated', runId],
+  ] as const) {
+    await tx.slots.create({
+      data: { obj_guid: adjSplitGuid, name, slot_type: 4, string_val: val },
+    });
+  }
+
+  const subSplitsCreated: string[] = [];
+  const lotsUsed: string[] = [];
+  let usedQtyNum = 0n;
+
+  for (let i = 0; i < targets.length; i++) {
+    const lot = targets[i];
+    const isLast = i === targets.length - 1;
+    const allocQty = isLast
+      ? { num: adjSplit.quantity_num - usedQtyNum, denom: BigInt(qtyDenom) }
+      : fromDecimal(adjQty * (lot.shares / totalShares), qtyDenom);
+    usedQtyNum += allocQty.num;
+    const allocDecimal = toDecimalNumber(allocQty.num, allocQty.denom);
+
+    if (i === 0) {
+      await tx.splits.update({
+        where: { guid: adjSplitGuid },
+        data: {
+          lot_guid: lot.guid,
+          quantity_num: allocQty.num,
+          quantity_denom: allocQty.denom,
+        },
+      });
+    } else {
+      const subGuid = generateGuid();
+      await tx.splits.create({
+        data: {
+          guid: subGuid,
+          tx_guid: adjSplit.tx_guid,
+          account_guid: adjSplit.account_guid,
+          memo: adjSplit.memo,
+          action: adjSplit.action,
+          reconcile_state: adjSplit.reconcile_state,
+          reconcile_date: adjSplit.reconcile_date,
+          value_num: 0n,
+          value_denom: adjSplit.value_denom,
+          quantity_num: allocQty.num,
+          quantity_denom: allocQty.denom,
+          lot_guid: lot.guid,
+        },
+      });
+      await tx.slots.create({
+        data: { obj_guid: subGuid, name: 'gnucash_web_generated', slot_type: 4, string_val: runId },
+      });
+      subSplitsCreated.push(subGuid);
+    }
+    lot.shares += allocDecimal;
+    lotsUsed.push(lot.guid);
+  }
+
+  return { subSplitsCreated, lotsUsed };
+}
+
+// ---------------------------------------------------------------------------
 // generateCapitalGains
 // ---------------------------------------------------------------------------
 
@@ -834,6 +1355,19 @@ export async function splitTransferAcrossSourceLots(
  * creates `Income:Capital Gains:...` when no match exists.
  *
  * Classifies ST/LT by holding period; handles TAX_EXEMPT (skip) and TAX_DEFERRED.
+ *
+ * Skip rules (the lot is still marked closed):
+ * - TRANSFER-CLOSED lots: a lot whose only share-consuming splits are
+ *   transfer-outs (same-commodity positive counter-split in another
+ *   non-TRADING account) books NO gains — a transfer is not a taxable event.
+ *   The basis travels to the destination lot via its `carried_basis` slot.
+ * - Break-even lots (|gain| < $0.005): no $0-value bookkeeping transaction.
+ * - Zero-proceeds sells: when shares were disposed with ~$0 total proceeds
+ *   (an unvalued trade with no price in the price DB), no gain/loss is booked.
+ *
+ * Basis: a destination lot's `carried_basis` slot (written by the transfer
+ * linking functions) counts as additional basis. Mixed lots (partial sale +
+ * transfer-out) realize only the SOLD shares' pro-rata gain.
  *
  * @param lotGuid - GUID of the closed lot
  * @param runId - Unique run identifier for tagging
@@ -868,15 +1402,19 @@ export async function generateCapitalGains(
     throw new Error(`Lot or account not found: ${lotGuid}`);
   }
 
+  // Commodity-aware share epsilon: 0.0001 shares of a 1e8-precision crypto is
+  // real money, so the closure threshold shrinks with the commodity's scu.
+  const qtyEps = qtyEpsilonForScu(lot.account.commodity_scu);
+
   // Check if lot is actually closed (shares ~0)
   const totalShares = lot.splits.reduce(
     (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom),
     0,
   );
-  if (Math.abs(totalShares) > 0.0001) {
+  if (Math.abs(totalShares) > qtyEps) {
     return {
       gainsTransactionGuid: null,
-      skippedReason: `Lot is not closed (remaining shares: ${totalShares.toFixed(4)})`,
+      skippedReason: `Lot is not closed (remaining shares: ${totalShares.toFixed(8)})`,
       gainLoss: 0,
       holdingPeriod: null,
       taxClassification: 'TAX_NORMAL',
@@ -887,7 +1425,7 @@ export async function generateCapitalGains(
   const existingGainsSplit = lot.splits.find(s => {
     const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
     const val = toDecimalNumber(s.value_num, s.value_denom);
-    return Math.abs(qty) < 0.0001 && Math.abs(val) > 0.0001;
+    return Math.abs(qty) < qtyEps && Math.abs(val) > 0.0001;
   });
   if (existingGainsSplit) {
     return {
@@ -899,14 +1437,118 @@ export async function generateCapitalGains(
     };
   }
 
-  // Calculate gain/loss. Native GnuCash sign convention: a buy split has
-  // POSITIVE value (debit) and a sell split NEGATIVE value (credit), so the
-  // lot's splits sum to basis - proceeds. The realized gain is the negation:
-  // gain = proceeds - basis. Positive = gain, negative = loss.
-  const gainLoss = -lot.splits.reduce(
-    (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
-    0,
+  // ── Classify the lot's share-moving splits ────────────────────────────────
+  // A negative split whose transaction carries a same-commodity positive
+  // counter-split in ANOTHER non-TRADING account is a TRANSFER-OUT (the same
+  // predicate splitTransferAcrossSourceLots uses), not a sale.
+  const accountCommodityGuid = lot.account.commodity_guid;
+  type LotSplit = (typeof lot.splits)[number];
+  const buySplits: LotSplit[] = [];
+  const sellSplits: LotSplit[] = [];
+  const transferOutSplits: LotSplit[] = [];
+  for (const s of lot.splits) {
+    const qty = toDecimalNumber(s.quantity_num, s.quantity_denom);
+    if (qty > qtyEps) {
+      buySplits.push(s);
+    } else if (qty < -qtyEps) {
+      const siblings = (await tx.splits.findMany({
+        where: { tx_guid: s.tx_guid },
+        include: {
+          account: { select: { guid: true, commodity_guid: true, account_type: true } },
+        },
+      })) ?? [];
+      const isTransferOut = siblings.some(o =>
+        o.account_guid !== lot.account!.guid &&
+        o.account?.commodity_guid === accountCommodityGuid &&
+        o.account?.account_type !== 'TRADING' &&
+        toDecimalNumber(o.quantity_num, o.quantity_denom) > 0,
+      );
+      (isTransferOut ? transferOutSplits : sellSplits).push(s);
+    }
+  }
+
+  // TRANSFER-CLOSED lot: not a taxable event. The basis was carried to the
+  // destination lot (carried_basis slot); booking proceeds − basis here would
+  // fabricate a phantom gain/loss. Close the lot and skip.
+  if (transferOutSplits.length > 0 && sellSplits.length === 0) {
+    await tx.lots.update({
+      where: { guid: lotGuid },
+      data: { is_closed: 1 },
+    });
+    return {
+      gainsTransactionGuid: null,
+      skippedReason: 'Closed by transfer — not a taxable event (basis carried to destination lot)',
+      gainLoss: 0,
+      holdingPeriod: null,
+      taxClassification: 'TAX_NORMAL',
+    };
+  }
+
+  // ── Calculate gain/loss ──────────────────────────────────────────────────
+  // Native GnuCash sign convention: a buy split has POSITIVE value (debit)
+  // and a sell split NEGATIVE value (credit), so the lot's splits sum to
+  // basis - proceeds and gain = -(sum). That legacy form only holds when every
+  // consumed share was SOLD and no basis was carried in from a transfer;
+  // otherwise realize the sold shares' pro-rata share of the total basis
+  // (buy cost + carried_basis).
+  const carriedBasis = await readCarriedBasis(lotGuid, tx);
+  const soldShares = sellSplits.reduce(
+    (sum, s) => sum + Math.abs(toDecimalNumber(s.quantity_num, s.quantity_denom)), 0,
   );
+  const saleProceeds = -sellSplits.reduce(
+    (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom), 0,
+  );
+
+  let gainLoss: number;
+  if (transferOutSplits.length === 0 && Math.abs(carriedBasis) < 0.005) {
+    gainLoss = -lot.splits.reduce(
+      (sum, s) => sum + toDecimalNumber(s.value_num, s.value_denom),
+      0,
+    );
+  } else {
+    const boughtShares = buySplits.reduce(
+      (sum, s) => sum + toDecimalNumber(s.quantity_num, s.quantity_denom), 0,
+    );
+    const buyCost = buySplits.reduce(
+      (sum, s) => sum + Math.abs(toDecimalNumber(s.value_num, s.value_denom)), 0,
+    );
+    const basisPerShare = boughtShares > qtyEps ? (buyCost + carriedBasis) / boughtShares : 0;
+    gainLoss = saleProceeds - soldShares * basisPerShare;
+  }
+
+  // Break-even: a $0-value gains transaction is pure noise — the lot already
+  // sums to zero. Close it and skip the booking.
+  if (Math.abs(gainLoss) < 0.005) {
+    await tx.lots.update({
+      where: { guid: lotGuid },
+      data: { is_closed: 1 },
+    });
+    return {
+      gainsTransactionGuid: null,
+      skippedReason: 'Break-even — no gains entry needed',
+      gainLoss: 0,
+      holdingPeriod: null,
+      taxClassification: 'TAX_NORMAL',
+    };
+  }
+
+  // Zero-proceeds disposal: shares left the lot with ~$0 total proceeds. This
+  // is an unvalued trade (no price in the price DB — see valueZeroValueTrade),
+  // not a real sale at zero; refusing to book prevents a phantom loss equal to
+  // the entire basis.
+  if (soldShares > qtyEps && Math.abs(saleProceeds) < 0.005) {
+    await tx.lots.update({
+      where: { guid: lotGuid },
+      data: { is_closed: 1 },
+    });
+    return {
+      gainsTransactionGuid: null,
+      skippedReason: 'Zero-proceeds disposal (no price to value the trade) — refusing to book a gain/loss from a $0-value sell',
+      gainLoss: 0,
+      holdingPeriod: null,
+      taxClassification: 'TAX_NORMAL',
+    };
+  }
 
   // Classify tax status
   const taxClassification = await classifyAccountTax(lot.account.guid, tx);

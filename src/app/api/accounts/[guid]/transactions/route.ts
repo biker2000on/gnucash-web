@@ -362,6 +362,7 @@ export async function GET(
                         account: {
                             select: {
                                 name: true,
+                                account_type: true,
                                 commodity: { select: { mnemonic: true } },
                             },
                         },
@@ -433,6 +434,7 @@ export async function GET(
                 lot_guid: split.lot_guid,
                 account_name: split.account.name,
                 account_fullname: accountPathMap.get(split.account_guid) || split.account.name,
+                account_type: split.account.account_type,
                 commodity_mnemonic: split.account.commodity?.mnemonic,
                 value_decimal: toDecimal(split.value_num, split.value_denom),
                 quantity_decimal: toDecimal(split.quantity_num, split.quantity_denom),
