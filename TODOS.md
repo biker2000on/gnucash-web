@@ -1239,7 +1239,18 @@ P3 Scheduled Book Sync item, which needs the same schema knowledge.
 
 ## P3 - Transaction Entry: Memo in Modal + Double-Line Edit View
 
-**Status:** Open. Requested 2026-08-04.
+**Status:** Implemented 2026-08-04.
+
+**Delivered:** Simple mode of `TransactionForm` gained a Memo field written
+to both splits (matching desktop's Transfer dialog); editing a transaction
+whose two memos differ seeds blank and preserves each split's own memo
+untouched. Simple-mode edits now reuse split guids and preserve reconcile
+state (previously regenerated). Num is a narrow check-number field beside
+the date. Double-line edit view (ledger `ViewMenu` toggle, persisted):
+transaction notes (new slots-backed `transaction-notes.ts`,
+undefined=untouched/''=clear contract) and this-account memo editable in
+place on `EditableRow`/`InlineEditRow` without resetting reconcile state.
+Bonus fix: inline saves no longer blank the check number.
 
 **What:**
 
@@ -1892,7 +1903,20 @@ for the farmer rule + date rolling; M for annualized installments.
 
 ## P2 - Filing Status as a Global Setting, Inherited by Feature Packs
 
-**Status:** Proposed 2026-08-04.
+**Status:** Implemented 2026-08-04.
+
+**Delivered:** `src/lib/tax/filing-status-inheritance.ts` models
+inherited/override/divergence states (a stored value equal to the profile
+collapses to inherited and stops being persisted); a shared
+`FilingStatusSourceNote` renders the "differs from household setting" note
+with one-click revert. Converted: withholding checkup, paycheck modeler,
+sell planner (server context now profile-first), drawdown planner (seeds
+from profile instead of hardcoded MFJ), scenario sandbox (was reading only
+the user preference — real bug), tax estimator (edits the profile and
+invalidates the shared cache), and Settings gained the missing Filing
+Status field on the entity editor. Estimated taxes, bunching, farm/S-corp
+analyzers, tax package, and resilience packs were already profile-first.
+Divergent stored configs are flagged, never rewritten.
 
 **Outcome:** Filing status is set once, in household/entity settings, and
 every tax-aware surface inherits it — the same "define the person once"
@@ -1929,7 +1953,23 @@ persistence, household settings UI.
 
 ## P2 - MFJ vs MFS Filing Comparison with Breakeven Analysis
 
-**Status:** Proposed 2026-08-04.
+**Status:** Implemented 2026-08-04.
+
+**Delivered:** `src/lib/tax/filing-comparison.ts` splits book data per
+spouse via `gnucash_web_account_preferences.owner` (payslips post into
+owned wage accounts, so account owner covers both wage and investment
+attribution), with explicit residual sliders for joint/unowned amounts and
+a CTC-claimant choice; both sides assemble through the shared
+estimator-inputs helpers. Comparison runs MFJ vs MFS×2 (each MFS side
+evaluated under both legal deduction combinations) plus a clearly-labeled
+hypothetical single×2 lens; ranked per-line divergence explanations and an
+always-visible caveats panel (EITC, education credits, student-loan
+interest, IDR plans, itemization symmetry). Breakeven sweep over spouse
+wages / deduction allocation / added LTCG with crossover interpolation and
+a recharts chart marking "now" and "breakeven". Engine gap found and
+fixed: §63(c)(6)(A) — an MFS filer whose spouse itemizes has a zero
+standard deduction (`mfsSpouseItemizes` input). New page at
+`tools/filing-comparison` with empty states for non-MFJ/QSS books.
 
 **Outcome:** A couple can see, from their real book data, whether filing
 jointly or separately is better this year, by how much, and where the
@@ -1987,9 +2027,11 @@ farm/S-corp analyzers, estimated taxes, bunching, sell planner, HSA shoebox,
 FIRE calculator, FX revaluation, investment ledger — `TransactionTypeIcon`
 dropped its native `title=`). DESIGN.md has the rule;
 `src/__tests__/abbr-coverage.test.ts` fails on new bare abbreviations and on
-stale allowlist entries. **Remaining long tail:** 30 allowlisted surfaces
-(resilience pages, planning, settings, business inventory, 990, LotViewer
-badges, etc.) — each is a one-line allowlist deletion once retrofitted.
+stale allowlist entries. **Long tail completed 2026-08-04:** all 30
+allowlisted surfaces retrofitted and the allowlist emptied; Tooltip gained
+a `nested` mode (span trigger, event containment) so hints can sit legally
+inside clickable cards/links (LotViewer badges, reports index); new terms
+IRMAA, TOD, POD, SS, IDR.
 
 Original request: the app is dense with financial,
 tax, and accounting abbreviations that are not obvious to every user.
