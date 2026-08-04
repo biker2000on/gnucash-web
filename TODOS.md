@@ -897,6 +897,90 @@ milestones feed the Money Timeline.
 
 # Core workflow and connector backlog
 
+## P1 - Action Center Signal Quality
+
+**Status:** Proposed 2026-08-02.
+
+**Outcome:** Every item in the Action Center is worth reading. Today the
+surface raises items the user can only dismiss, which trains them to ignore
+the lane that is supposed to drive the weekly close.
+
+**Evidence (production book, 2026-08-02):** all-time action outcomes are
+dominated by dismissals — 83 notifications, 25 insights, 25 failed jobs, and
+every one of the 12 transaction-review items ever raised were dismissed.
+
+### Pay-cycle-aware savings rate
+
+`detectSavingsRateDrop` (`src/lib/insights.ts`) compares the **partial**
+current month against the average of six **complete** prior months. In the
+first days of a month, income is usually zero because the paycheck has not
+landed, so the rate reads 0% and the detector reports a 29-point collapse.
+The comparison is not like-for-like.
+
+The detector should understand the household's pay cycle before judging a
+partial month. Options, in preference order:
+
+1. Derive the expected pay dates from payslip history and recurring income
+   deposits (both already modelled) and suppress the comparison until the
+   month's expected income has actually arrived.
+2. Compare month-to-date against prior months truncated to the same day of
+   month, so both sides cover the same fraction of a cycle.
+3. As a floor, require a minimum elapsed fraction of the month before the
+   detector may fire at all.
+
+Whichever is chosen, the trace must state the window and the assumption. The
+same partial-period flaw should be audited in the other monthly detectors
+(category spike, net-worth milestone).
+
+### Suppress review noise for transactions that need no review
+
+`transactionReviewActions` (`src/lib/financial-actions/sources.ts`) selects on
+`reviewed = FALSE` alone, without considering `source`. It should never raise
+an item for a transaction the user entered manually — authoring a transaction
+is the review — and never re-raise one already reviewed after import.
+`gnucash_web_transaction_meta` already carries `source` (`manual`, `simplefin`,
+`payslip`) and defaults `reviewed` to true, so the gate is available; the
+adapter simply does not use it. Confirm no write path creates a manual
+transaction with `reviewed = FALSE`.
+
+### Preserve the original imported payee alongside a rename
+
+`gnucash_web_transaction_meta` has no column for the description an import
+arrived with, so renaming an imported transaction destroys the payee
+permanently. This is not an edge case — the user's convention is to name
+transactions by **what was purchased**, not by the vendor.
+
+Real examples from the production book: raw imports look like
+`HARBOR FREIGHT PAYMENT`, `Publix #1548 Boone Nc`, and
+`CALDWELL COUNTY UTILITY~ Future Amount: 29.65 ~ Tran: ACHDW`, while renamed
+ones read `pajamas`, `beach chairs`, `Selle Italia SLR Boost S3`, or fold the
+vendor into the item as `Dollar General fans` and
+`Walmart buckets for honey harvest`.
+
+Because `detectNewMerchants` keys on the *description*, every rename to an
+item name over $100 registers as a merchant never paid before — noise that
+cannot be fixed without keeping the original payee.
+
+Work:
+
+1. Store the import-time description (and the raw payee string where the
+   provider supplies one) on the transaction meta row; never overwrite it on
+   edit.
+2. Point merchant-identity logic — new-merchant detection, categorization
+   rules, recurring/subscription matching, duplicate detection — at the
+   preserved payee rather than the display description.
+3. Surface both in the UI: show the user's name, reveal the original on the
+   transaction detail so a bank line can still be traced.
+4. Backfill is not possible for transactions already renamed; state that
+   plainly rather than guessing a vendor from the item name.
+
+**Depends on:** transaction meta, SimpleFIN import, insights, categorization
+rules, Action Center.
+
+**Effort:** M.
+
+---
+
 ## P1 - Scheduled Transactions: Edit and Create from Existing
 
 **Status:** Implemented 2026-07-24.
