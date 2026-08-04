@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
 import {
   COLLEGE_START_AGE,
+  ageFromBirthday,
   birthYearFromBirthday,
   findDependentMember,
   normalizePersonName,
@@ -345,7 +346,73 @@ export function UtilitiesPlannerPage() {
 }
 
 type AccountOption = { guid: string; fullname: string; name: string; type: string };
-type FamilyResponse = { profile: FamilyBankingProfile; children: Array<{ child: FamilyBankChild; balance: number; pendingCount: number; pendingAmount: number; goalRemaining: number; goalProgressPercent: number; allowanceDue: boolean }> };
+type FamilyResponse = {
+  profile: FamilyBankingProfile;
+  children: Array<{ child: FamilyBankChild; balance: number; pendingCount: number; pendingAmount: number; goalRemaining: number; goalProgressPercent: number; allowanceDue: boolean }>;
+  /** Household roster from Settings; absent on responses from an older server. */
+  household?: { members: HouseholdMember[] };
+};
+
+/**
+ * Identity fields for one family-banking child.
+ *
+ * Household dependents are the source of truth: picking one takes the name
+ * from Settings, and the on-file birthday supplies the age shown on the panel.
+ * Manual name entry stays available for a child who is not a household
+ * dependent — a visiting cousin's ledger, say.
+ */
+function FamilyChildIdentityFields(props: {
+  child: FamilyBankChild;
+  members: HouseholdMember[];
+  /** Named dependents not already claimed by another child row. */
+  available: HouseholdMember[];
+  onChange: (patch: Partial<FamilyBankChild>) => void;
+}) {
+  const { child, members } = props;
+  // Same matcher the server uses, so the picker and the ledger never disagree.
+  const linked = findDependentMember(child, members);
+
+  const selectMember = (value: string) => {
+    if (value === '') {
+      props.onChange({ memberRole: null, memberName: null });
+      return;
+    }
+    const member = props.available.find(item => normalizePersonName(item.name) === value)
+      ?? members.find(item => normalizePersonName(item.name) === value);
+    if (!member) return;
+    // Snapshot the name: it is both the display value and the link key.
+    props.onChange({
+      memberRole: 'dependent',
+      memberName: member.name.trim(),
+      name: member.name.trim(),
+    });
+  };
+
+  return (
+    <>
+      <Field label="Household member">
+        <select
+          className={INPUT}
+          aria-label="Household member"
+          value={linked ? normalizePersonName(linked.name) : ''}
+          onChange={event => selectMember(event.target.value)}
+        >
+          <option value="">Not a household dependent — enter manually</option>
+          {props.available.map(member => (
+            <option key={member.role + member.name} value={normalizePersonName(member.name)}>
+              {member.name}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {!linked && (
+        <Field label="Name (manual)">
+          <input className={INPUT} value={child.name} onChange={event => props.onChange({ name: event.target.value })} />
+        </Field>
+      )}
+    </>
+  );
+}
 
 export function FamilyBankingPage() {
   const state = useSection<FamilyBankingProfile, FamilyResponse>('family_banking', { children: [] });
@@ -355,7 +422,23 @@ export function FamilyBankingPage() {
   useEffect(() => { fetch('/api/accounts?flat=true&noBalances=true').then(result => result.json()).then(json => setAccounts(Array.isArray(json) ? json : json.accounts ?? [])).catch(() => undefined); }, []);
   if (state.loading) return <div className="p-6 text-sm text-foreground-muted">Loading family banking…</div>;
   const update = (id: string, patch: Partial<FamilyBankChild>) => state.change({ children: state.profile.children.map(child => child.id === id ? { ...child, ...patch } : child) });
-  const addChild = () => state.change({ children: [...state.profile.children, { id: uid(), name: 'New child', liabilityAccountGuid: '', allowanceAmount: 5, allowanceCadence: 'weekly', nextAllowanceDate: today(), parentMatchPercent: 0, savingsGoal: 100, entries: [] }] });
+  const addChild = () => state.change({ children: [...state.profile.children, { id: uid(), memberRole: null, memberName: null, name: 'New child', liabilityAccountGuid: '', allowanceAmount: 5, allowanceCadence: 'weekly', nextAllowanceDate: today(), parentMatchPercent: 0, savingsGoal: 100, entries: [] }] });
+  // Household dependents from Settings — the source of truth for who these
+  // children are. Empty when none are configured; manual entry then works
+  // exactly as it did before.
+  const householdMembers = state.response?.household?.members ?? [];
+  const dependents = householdMembers.filter(member => member.role === 'dependent' && member.name.trim());
+  /** Dependents free to pick: not already claimed by a different child row. */
+  const availableFor = (child: FamilyBankChild) => {
+    const claimed = new Set(state.profile.children
+      .filter(item => item.id !== child.id && item.memberRole === 'dependent')
+      .map(item => normalizePersonName(item.memberName?.trim() || item.name)));
+    const own = normalizePersonName(child.memberName?.trim() || child.name);
+    return dependents.filter(member => {
+      const key = normalizePersonName(member.name);
+      return key === own || !claimed.has(key);
+    });
+  };
   const addEntry = (child: FamilyBankChild, kind: FamilyBankEntryKind, approved: boolean) => {
     const raw = numberValue(entryAmount[child.id] ?? '');
     if (raw <= 0 || !(entryText[child.id] ?? '').trim()) return;
@@ -383,12 +466,25 @@ export function FamilyBankingPage() {
   return (
     <div className="mx-auto max-w-[1400px] space-y-6 p-4 sm:p-6">
       <PageHeader title="Family Banking" subtitle="Liability-backed child balances, allowances, chores, savings goals, and parent approvals." actions={<button type="button" onClick={addChild} className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">Add child</button>} />
+      <p className="text-xs text-foreground-muted">
+        {dependents.length === 0
+          ? <>No household dependents are configured yet. Add them (with birthdays) in <Link href="/settings" className={SETTINGS_LINK}>Settings</Link> and this page fills in names and ages automatically. Until then, enter children manually.</>
+          : <>Child names and ages come from your household dependents — <Link href="/settings" className={SETTINGS_LINK}>change them in Settings</Link> and every planning pack follows. Only the ledger lives here.</>}
+      </p>
       {state.profile.children.length === 0 ? <Empty>Add a child and link a liability account to start an honest family ledger.</Empty> : state.profile.children.map(child => {
         const result = state.response?.children.find(item => item.child.id === child.id);
-        return <Panel key={child.id} title={child.name} description={child.liabilityAccountGuid ? 'Backed by a linked liability account' : 'Link a liability account before treating this balance as funded'} action={<div className="flex gap-3"><a href={`/planning/family-banking/${child.id}`} className="text-xs text-primary">Kid view</a><button type="button" onClick={() => state.change({ children: state.profile.children.filter(item => item.id !== child.id) })} className="text-xs text-negative">Remove</button></div>}>
+        // Age comes from the linked dependent's birthday on file in Settings.
+        const linkedAge = ageFromBirthday(findDependentMember(child, householdMembers)?.birthday);
+        const accountNote = child.liabilityAccountGuid ? 'Backed by a linked liability account' : 'Link a liability account before treating this balance as funded';
+        return <Panel key={child.id} title={child.name} description={linkedAge != null ? `Age ${linkedAge} (household settings) · ${accountNote}` : accountNote} action={<div className="flex gap-3"><a href={`/planning/family-banking/${child.id}`} className="text-xs text-primary">Kid view</a><button type="button" onClick={() => state.change({ children: state.profile.children.filter(item => item.id !== child.id) })} className="text-xs text-negative">Remove</button></div>}>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4"><Metric label="Owed balance" value={formatCurrency(result?.balance ?? 0)} tone="positive" /><Metric label="Savings goal remaining" value={formatCurrency(result?.goalRemaining ?? child.savingsGoal)} /><Metric label="Goal progress" value={`${result?.goalProgressPercent ?? 0}%`} /><Metric label="Pending approval" value={String(result?.pendingCount ?? 0)} tone={(result?.pendingCount ?? 0) > 0 ? 'warning' : undefined} /></div>
           <FieldGrid className="mt-4">
-            <Field label="Name"><input className={INPUT} value={child.name} onChange={event => update(child.id, { name: event.target.value })} /></Field>
+            <FamilyChildIdentityFields
+              child={child}
+              members={householdMembers}
+              available={availableFor(child)}
+              onChange={patch => update(child.id, patch)}
+            />
             <Field label="Liability account"><select className={INPUT} value={child.liabilityAccountGuid} onChange={event => update(child.id, { liabilityAccountGuid: event.target.value })}><option value="">Select liability account</option>{accounts.filter(account => account.type === 'LIABILITY').map(account => <option key={account.guid} value={account.guid}>{account.fullname || account.name}</option>)}</select></Field>
             <Field label="Allowance"><input type="number" className={`${INPUT} font-mono`} value={child.allowanceAmount} onChange={event => update(child.id, { allowanceAmount: numberValue(event.target.value) })} /></Field>
             <Field label="Cadence"><select className={INPUT} value={child.allowanceCadence} onChange={event => update(child.id, { allowanceCadence: event.target.value as FamilyBankChild['allowanceCadence'] })}><option>weekly</option><option>monthly</option></select></Field>

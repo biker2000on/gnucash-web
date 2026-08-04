@@ -1,10 +1,23 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/format';
-import type { HealthcareClaim, HealthcarePlan, HealthcareProfile, PersonalPriceIndexItem } from '@/lib/resilience/types';
+import {
+  HOUSEHOLD_ROLE_LABELS,
+  findDependentMember,
+  findRosterMember,
+  normalizePersonName,
+} from '@/lib/resilience/household';
+import type {
+  HealthcareClaim,
+  HealthcarePlan,
+  HealthcareProfile,
+  HouseholdMember,
+  PersonalPriceIndexItem,
+} from '@/lib/resilience/types';
 import { Empty, Field, FieldGrid, INPUT, Metric, Panel, RecordCard, SaveBar, Tabs, TNUM } from '@/components/resilience/ui';
 
 type Tab = 'prices' | 'healthcare';
@@ -28,6 +41,36 @@ interface HealthcareResponse {
     netAnnualCost: number;
     differenceFromBest: number;
   }>;
+  /** Household roster from Settings; absent on responses from an older server. */
+  household?: { members: HouseholdMember[] };
+  /** Employer-plan coverage recorded in Settings, as eligibility context. */
+  employerPlan?: { covered: string[]; notCovered: string[] };
+}
+
+const SETTINGS_LINK = 'text-primary underline-offset-2 hover:underline';
+
+/**
+ * The roster member a claim is linked to, or null when unlinked, unmatched, or
+ * ambiguous — the same matcher the server uses, so the picker and the analysis
+ * never disagree.
+ */
+function linkedClaimMember(claim: HealthcareClaim, members: HouseholdMember[]): HouseholdMember | null {
+  const role = claim.memberRole ?? null;
+  if (!role) return null;
+  return role === 'dependent'
+    ? findDependentMember({ memberRole: role, memberName: claim.member, name: claim.member }, members)
+    : findRosterMember(members, role);
+}
+
+/** Stable option key for a roster member ('self', 'spouse', 'dependent:<name>'). */
+function memberOptionValue(member: HouseholdMember): string {
+  return member.role === 'dependent' ? `dependent:${normalizePersonName(member.name)}` : member.role;
+}
+
+/** "Cara Crawford (Spouse)" when named, else just the role label. */
+function memberOptionLabel(member: HouseholdMember): string {
+  const role = HOUSEHOLD_ROLE_LABELS[member.role];
+  return member.name.trim() ? `${member.name.trim()} (${role})` : role;
 }
 
 export default function HouseholdResiliencePage() {
@@ -115,10 +158,42 @@ export default function HouseholdResiliencePage() {
     updateProfile({ ...healthcare.profile, plans: [...healthcare.profile.plans, plan] });
   };
 
+  // Household members from Settings — the source of truth for who a claim
+  // belongs to. Empty when none are configured; free-text entry then works
+  // exactly as it did before. Nameless dependents are skipped because the
+  // link key for a dependent is the name.
+  const householdMembers = (healthcare?.household?.members ?? [])
+    .filter(member => member.role !== 'dependent' || member.name.trim());
+
   const addClaim = () => {
     if (!healthcare) return;
-    const claim: HealthcareClaim = { id: uid(), date: today(), member: '', category: 'Medical', allowedAmount: 0 };
+    // Seed the new claim with the first household member so the picker starts
+    // on a real person; without a roster it stays free-text as before.
+    const seed = householdMembers[0] ?? null;
+    const claim: HealthcareClaim = {
+      id: uid(),
+      date: today(),
+      memberRole: seed?.role ?? null,
+      member: seed?.name.trim() ?? '',
+      category: 'Medical',
+      allowedAmount: 0,
+    };
     updateProfile({ ...healthcare.profile, claims: [...healthcare.profile.claims, claim] });
+  };
+
+  const selectClaimMember = (claim: HealthcareClaim, value: string) => {
+    if (value === '') {
+      updateClaim(claim.id, { memberRole: null });
+      return;
+    }
+    const member = householdMembers.find(item => memberOptionValue(item) === value);
+    if (!member) return;
+    // Snapshot the name: it is the display value, and for a dependent also the
+    // link key. The roster wins on read while the member exists.
+    updateClaim(claim.id, {
+      memberRole: member.role,
+      member: member.name.trim() || HOUSEHOLD_ROLE_LABELS[member.role],
+    });
   };
 
   return (
@@ -208,6 +283,15 @@ export default function HouseholdResiliencePage() {
           )}
 
           <Panel title="Candidate plans" action={<button type="button" onClick={addPlan} className="text-sm text-primary">Add plan</button>}>
+            {healthcare.employerPlan && (healthcare.employerPlan.covered.length > 0 || healthcare.employerPlan.notCovered.length > 0) && (
+              <p className="mb-3 text-xs text-foreground-muted">
+                Employer-plan coverage from <Link href="/settings" className={SETTINGS_LINK}>Settings</Link>:{' '}
+                {healthcare.employerPlan.covered.length > 0 && <>covered — {healthcare.employerPlan.covered.join(', ')}</>}
+                {healthcare.employerPlan.covered.length > 0 && healthcare.employerPlan.notCovered.length > 0 && '; '}
+                {healthcare.employerPlan.notCovered.length > 0 && <>not covered — {healthcare.employerPlan.notCovered.join(', ')}</>}
+                . Employer premiums and HSA contributions below only apply to plans covering the members with employer eligibility.
+              </p>
+            )}
             {healthcare.profile.plans.length === 0 ? <Empty>Add the current plan and each open-enrollment candidate.</Empty> : (
               <div className="space-y-3">
                 {healthcare.profile.plans.map(plan => (
@@ -240,23 +324,48 @@ export default function HouseholdResiliencePage() {
           </Panel>
 
           <Panel title="Actual claims" description="Use allowed amounts, not provider sticker prices." action={<button type="button" onClick={addClaim} className="text-sm text-primary">Add claim</button>}>
+            <p className="mb-3 text-xs text-foreground-muted">
+              {householdMembers.length === 0
+                ? <>No household members are configured yet. Add them in <Link href="/settings" className={SETTINGS_LINK}>Settings</Link> and claims group by person automatically; until then, enter names manually.</>
+                : <>Claim members come from your household — <Link href="/settings" className={SETTINGS_LINK}>rename someone in Settings</Link> and their claim history follows instead of splitting.</>}
+            </p>
             {healthcare.profile.claims.length === 0 ? <Empty>Add claims or representative annual usage to compare plans.</Empty> : (
               <div className="space-y-3">
-                {healthcare.profile.claims.map(claim => (
-                  <RecordCard
-                    key={claim.id}
-                    title={claim.member || 'Claim'}
-                    removeLabel="Remove claim"
-                    onRemove={() => updateProfile({ ...healthcare.profile, claims: healthcare.profile.claims.filter(item => item.id !== claim.id) })}
-                  >
-                    <FieldGrid>
-                      <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={claim.date} onChange={event => updateClaim(claim.id, { date: event.target.value })} /></Field>
-                      <Field label="Family member"><input className={INPUT} placeholder="Family member" value={claim.member} onChange={event => updateClaim(claim.id, { member: event.target.value })} /></Field>
-                      <Field label="Category"><input className={INPUT} placeholder="Category" value={claim.category} onChange={event => updateClaim(claim.id, { category: event.target.value })} /></Field>
-                      <Field label="Allowed amount"><input type="number" min="0" className={`${INPUT} font-mono`} value={claim.allowedAmount} onChange={event => updateClaim(claim.id, { allowedAmount: Number(event.target.value) })} /></Field>
-                    </FieldGrid>
-                  </RecordCard>
-                ))}
+                {healthcare.profile.claims.map(claim => {
+                  const linked = linkedClaimMember(claim, householdMembers);
+                  return (
+                    <RecordCard
+                      key={claim.id}
+                      title={claim.member || 'Claim'}
+                      removeLabel="Remove claim"
+                      onRemove={() => updateProfile({ ...healthcare.profile, claims: healthcare.profile.claims.filter(item => item.id !== claim.id) })}
+                    >
+                      <FieldGrid>
+                        <Field label="Date"><input type="date" className={`${INPUT} font-mono`} value={claim.date} onChange={event => updateClaim(claim.id, { date: event.target.value })} /></Field>
+                        <Field label="Household member">
+                          <select
+                            className={INPUT}
+                            aria-label="Household member"
+                            value={linked ? memberOptionValue(linked) : ''}
+                            onChange={event => selectClaimMember(claim, event.target.value)}
+                          >
+                            <option value="">Not a household member — enter manually</option>
+                            {householdMembers.map(member => (
+                              <option key={memberOptionValue(member)} value={memberOptionValue(member)}>
+                                {memberOptionLabel(member)}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        {!linked && (
+                          <Field label="Member (manual)"><input className={INPUT} placeholder="Family member" value={claim.member} onChange={event => updateClaim(claim.id, { member: event.target.value })} /></Field>
+                        )}
+                        <Field label="Category"><input className={INPUT} placeholder="Category" value={claim.category} onChange={event => updateClaim(claim.id, { category: event.target.value })} /></Field>
+                        <Field label="Allowed amount"><input type="number" min="0" className={`${INPUT} font-mono`} value={claim.allowedAmount} onChange={event => updateClaim(claim.id, { allowedAmount: Number(event.target.value) })} /></Field>
+                      </FieldGrid>
+                    </RecordCard>
+                  );
+                })}
               </div>
             )}
           </Panel>

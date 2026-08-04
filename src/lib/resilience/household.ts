@@ -15,6 +15,10 @@
 import type {
   EducationChild,
   EducationProfile,
+  FamilyBankChild,
+  FamilyBankingProfile,
+  HealthcareClaim,
+  HealthcareProfile,
   HouseholdMember,
   HouseholdRole,
   LifePerson,
@@ -75,6 +79,27 @@ const EDUCATION_SEED_DEFAULTS = {
 } as const;
 
 /**
+ * Defaults for a seeded family-banking child. Identical to what the "Add
+ * child" button creates, so a seeded row and a hand-added row are
+ * indistinguishable once the user starts editing.
+ */
+const FAMILY_BANK_SEED_DEFAULTS = {
+  liabilityAccountGuid: '',
+  allowanceAmount: 5,
+  allowanceCadence: 'weekly',
+  parentMatchPercent: 0,
+  savingsGoal: 100,
+} as const;
+
+/**
+ * Days ahead the first allowance of a seeded family-banking child is dated.
+ * Seeding runs on every read until the user saves, so dating it "today" (the
+ * Add-child default) would make a never-configured pack raise an "allowance
+ * due" action the moment the household gains a dependent.
+ */
+export const FAMILY_BANK_SEED_ALLOWANCE_LEAD_DAYS = 7;
+
+/**
  * Normalize a person's name for comparison: lowercase, single-spaced, no
  * punctuation. Shared with the estate pack's `matchEstateMemberRole` so that
  * "Rowan Crawford", "rowan  crawford" and "Rowan Crawford." all match.
@@ -129,6 +154,26 @@ export function birthYearFromBirthday(birthday: string | null | undefined): numb
   if (!birthday) return null;
   const year = Number(birthday.slice(0, 4));
   return Number.isInteger(year) && year >= 1900 && year <= 2300 ? year : null;
+}
+
+/**
+ * Age in whole years at `asOf` from an ISO birthday, or null when absent or
+ * unparseable. Used wherever a pack needs an age for a linked member — the
+ * family banking pack shows it next to each child — so the birthday recorded
+ * once in Settings is the single source.
+ */
+export function ageFromBirthday(birthday: string | null | undefined, asOf = new Date()): number | null {
+  if (birthYearFromBirthday(birthday) == null) return null;
+  const month = Number(birthday!.slice(5, 7));
+  const day = Number(birthday!.slice(8, 10));
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > 31) {
+    return null;
+  }
+  const years = asOf.getUTCFullYear() - Number(birthday!.slice(0, 4));
+  const hadBirthdayThisYear = asOf.getUTCMonth() + 1 > month
+    || (asOf.getUTCMonth() + 1 === month && asOf.getUTCDate() >= day);
+  const age = hadBirthdayThisYear ? years : years - 1;
+  return age >= 0 ? age : null;
 }
 
 /**
@@ -297,11 +342,12 @@ export function resolveEducationChild(
 }
 
 /**
- * Deterministic id for a seeded student. Dependents have no stable id, so the
- * normalized name is the key — repeated reads must produce the same id or React
- * keys and analysis ids churn on every refresh.
+ * Deterministic id for a row seeded from a dependent (529 students, family
+ * banking children). Dependents have no stable id, so the normalized name is
+ * the key — repeated reads must produce the same id or React keys and analysis
+ * ids churn on every refresh.
  */
-function educationSeedId(name: string): string {
+function dependentSeedId(name: string): string {
   return `household-dependent-${normalizePersonName(name).replace(/\s+/g, '-')}`;
 }
 
@@ -327,7 +373,7 @@ export function resolveEducationProfile(
       .map<EducationChild>(member => {
         const birthYear = birthYearFromBirthday(member.birthday);
         return {
-          id: educationSeedId(member.name),
+          id: dependentSeedId(member.name),
           memberRole: 'dependent',
           memberName: member.name.trim(),
           name: member.name.trim(),
@@ -340,6 +386,121 @@ export function resolveEducationProfile(
     return seeded.length === 0 ? profile : { ...profile, children: seeded };
   }
   return { ...profile, children: profile.children.map(child => resolveEducationChild(child, roster)) };
+}
+
+/**
+ * Resolve one healthcare claim against the roster.
+ *
+ * 'self' and 'spouse' link by role alone (they are unique); 'dependent' links
+ * by role + normalized `member` name through the same strict matcher the 529
+ * pack uses, so an ambiguous or missing match keeps the stored text rather
+ * than guessing. A claim with no `memberRole` (every claim saved before this
+ * existed) is returned unchanged. Only the display name resolves — the date,
+ * category, and allowed amount are claim facts, never household data.
+ */
+export function resolveHealthcareClaim(
+  claim: HealthcareClaim,
+  roster: HouseholdMember[],
+): HealthcareClaim {
+  const role = claim.memberRole ?? null;
+  if (!role) return claim;
+  const member = role === 'dependent'
+    ? findDependentMember({ memberRole: role, memberName: claim.member, name: claim.member }, roster)
+    : findRosterMember(roster, role);
+  if (!member) return claim;
+  return { ...claim, member: displayName(claim.member, member, role) };
+}
+
+/**
+ * Healthcare profile with claim members resolved against the roster.
+ *
+ * Claims are historical facts, so nothing is seeded when the pack is empty —
+ * the roster itself seeds the *member options* the page offers instead. Plans
+ * and the current-plan choice pass through untouched.
+ */
+export function resolveHealthcareProfile(
+  profile: HealthcareProfile,
+  roster: HouseholdMember[],
+): HealthcareProfile {
+  if (profile.claims.length === 0) return profile;
+  return { ...profile, claims: profile.claims.map(claim => resolveHealthcareClaim(claim, roster)) };
+}
+
+/**
+ * Employer-plan eligibility context for the healthcare comparator, from
+ * `EntityMember.coveredByEmployerPlan` in household settings. Only members
+ * whose coverage is actually recorded appear — a roster loaded without the
+ * flag contributes nothing, so the comparator never invents eligibility.
+ */
+export interface EmployerPlanCoverage {
+  /** Display names of members covered by an employer plan. */
+  covered: string[];
+  /** Display names of members recorded as not covered. */
+  notCovered: string[];
+}
+
+export function employerPlanCoverage(roster: HouseholdMember[]): EmployerPlanCoverage {
+  const coverage: EmployerPlanCoverage = { covered: [], notCovered: [] };
+  for (const member of roster) {
+    if (member.coveredByEmployerPlan == null) continue;
+    const name = member.name.trim() || HOUSEHOLD_ROLE_LABELS[member.role];
+    (member.coveredByEmployerPlan ? coverage.covered : coverage.notCovered).push(name);
+  }
+  return coverage;
+}
+
+/**
+ * Resolve one family-banking child against the roster.
+ *
+ * Same strict dependent matcher as the 529 pack: role + normalized name,
+ * resolved only when exactly one dependent matches. A child with no
+ * `memberRole` (every ledger saved before this existed) is returned unchanged,
+ * as is one whose link is ambiguous or unmatched. Only identity resolves —
+ * the ledger, allowance schedule, and goals are pack data.
+ */
+export function resolveFamilyBankChild(
+  child: FamilyBankChild,
+  roster: HouseholdMember[],
+): FamilyBankChild {
+  const member = findDependentMember(child, roster);
+  if (!member) return child;
+  return {
+    ...child,
+    name: displayName(child.name, member, 'dependent'),
+    memberName: member.name.trim() || child.memberName || null,
+  };
+}
+
+/**
+ * Family banking profile with children resolved against the roster, seeding
+ * one ledger per *named* household dependent when the pack is empty — every
+ * child ledger corresponds to a dependent, so the page starts with the right
+ * names instead of a blank list. Nameless dependents are skipped: the link key
+ * is the name, so a nameless row could never be resolved back.
+ */
+export function resolveFamilyBankingProfile(
+  profile: FamilyBankingProfile,
+  roster: HouseholdMember[],
+  asOf = new Date(),
+): FamilyBankingProfile {
+  if (profile.children.length === 0) {
+    const firstAllowance = new Date(asOf.getTime() + FAMILY_BANK_SEED_ALLOWANCE_LEAD_DAYS * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const seeded = roster
+      .filter(member => member.role === 'dependent' && member.name.trim())
+      .map<FamilyBankChild>(member => ({
+        id: dependentSeedId(member.name),
+        memberRole: 'dependent',
+        memberName: member.name.trim(),
+        name: member.name.trim(),
+        nextAllowanceDate: firstAllowance,
+        ...FAMILY_BANK_SEED_DEFAULTS,
+        entries: [],
+      }));
+    return seeded.length === 0 ? profile : { ...profile, children: seeded };
+  }
+  return { ...profile, children: profile.children.map(child => resolveFamilyBankChild(child, roster)) };
 }
 
 /**

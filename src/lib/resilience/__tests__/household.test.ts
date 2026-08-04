@@ -7,25 +7,34 @@
 import { describe, it, expect } from 'vitest';
 import {
   COLLEGE_START_AGE,
+  FAMILY_BANK_SEED_ALLOWANCE_LEAD_DAYS,
   LEGACY_PACK_FILING_STATUS,
   SEED_BIRTH_YEAR,
   SEED_PLANNED_CLAIM_AGE,
+  ageFromBirthday,
   birthYearFromBirthday,
+  employerPlanCoverage,
   findDependentMember,
   mapEntityFilingStatus,
   normalizePersonName,
   resolveEducationProfile,
+  resolveFamilyBankingProfile,
   resolveFilingStatus,
+  resolveHealthcareProfile,
   resolveLifeProfile,
   resolveRetirementIncomeProfile,
   withResolvedFilingStatus,
 } from '../household';
 import { analyzeRetirementIncome } from '../retirement-income-core';
-import { calculateLifeNeeds } from '../core';
-import { calculateEducationPlan } from '../p3-core';
+import { calculateLifeNeeds, compareHealthPlans } from '../core';
+import { calculateEducationPlan, calculateFamilyBanking } from '../p3-core';
 import type {
   EducationChild,
   EducationProfile,
+  FamilyBankChild,
+  FamilyBankingProfile,
+  HealthcareClaim,
+  HealthcareProfile,
   HouseholdMember,
   LifePerson,
   LifeProfile,
@@ -451,6 +460,263 @@ describe('resolveEducationProfile', () => {
     expect(after.projectedCost).toBe(before.projectedCost);
     expect(after.fundingGap).toBe(before.fundingGap);
     expect(after.requiredMonthlyContribution).toBe(before.requiredMonthlyContribution);
+  });
+});
+
+function healthcareClaim(overrides: Partial<HealthcareClaim> = {}): HealthcareClaim {
+  return {
+    id: 'hc1',
+    date: '2026-03-14',
+    member: 'Stored Member',
+    category: 'Medical',
+    allowedAmount: 1_200,
+    ...overrides,
+  };
+}
+
+function healthcareProfile(claims: HealthcareClaim[]): HealthcareProfile {
+  return {
+    currentPlanId: 'plan-a',
+    plans: [{
+      id: 'plan-a',
+      name: 'HDHP',
+      annualPremium: 3_600,
+      familyDeductible: 4_000,
+      coinsurancePercent: 20,
+      outOfPocketMax: 8_000,
+      employerHsaContribution: 1_000,
+      employeeHsaContribution: 2_000,
+      marginalTaxRate: 24,
+      hsaEligible: true,
+    }],
+    claims,
+  };
+}
+
+describe('resolveHealthcareProfile', () => {
+  it('takes the member name from a linked self or spouse, keeping the claim facts', () => {
+    const resolved = resolveHealthcareProfile(
+      healthcareProfile([healthcareClaim({ memberRole: 'spouse', member: 'Stale Name' })]),
+      ROSTER,
+    );
+    expect(resolved.claims[0]).toMatchObject({
+      member: 'Cara Crawford',
+      // Claim facts are never touched.
+      date: '2026-03-14',
+      category: 'Medical',
+      allowedAmount: 1_200,
+    });
+  });
+
+  it('links a dependent claim by role plus normalized name', () => {
+    const resolved = resolveHealthcareProfile(
+      healthcareProfile([healthcareClaim({ memberRole: 'dependent', member: 'rowan  crawford.' })]),
+      TWO_DEPENDENTS,
+    );
+    expect(resolved.claims[0].member).toBe('Rowan Crawford');
+  });
+
+  it('keeps the stored text when two dependents share the name', () => {
+    const twins: HouseholdMember[] = [
+      { role: 'dependent', name: 'Rowan Crawford', birthday: '2012-01-20' },
+      { role: 'dependent', name: 'rowan crawford', birthday: '2014-03-05' },
+    ];
+    const resolved = resolveHealthcareProfile(
+      healthcareProfile([healthcareClaim({ memberRole: 'dependent', member: 'Rowan Crawford' })]),
+      twins,
+    );
+    expect(resolved.claims[0].member).toBe('Rowan Crawford');
+    expect(resolved.claims[0]).toEqual(healthcareClaim({ memberRole: 'dependent', member: 'Rowan Crawford' }));
+  });
+
+  it('keeps the stored text when the linked member is not on the roster', () => {
+    const resolved = resolveHealthcareProfile(
+      healthcareProfile([healthcareClaim({ memberRole: 'spouse' })]),
+      [ROSTER[0]],
+    );
+    expect(resolved.claims[0].member).toBe('Stored Member');
+  });
+
+  it('leaves a legacy claim (no memberRole) untouched even with a name-matching roster', () => {
+    const legacy = healthcareProfile([healthcareClaim({ member: 'Rowan Crawford' })]);
+    const resolved = resolveHealthcareProfile(legacy, TWO_DEPENDENTS);
+    expect(resolved.claims).toEqual(legacy.claims);
+  });
+
+  it('seeds nothing when the pack is empty — claims are historical facts', () => {
+    const empty = healthcareProfile([]);
+    expect(resolveHealthcareProfile(empty, ROSTER)).toBe(empty);
+  });
+
+  it('does not change the plan comparison math', () => {
+    const stored = healthcareProfile([
+      healthcareClaim({ id: 'hc1', memberRole: 'self', member: 'Old Self Name', allowedAmount: 5_000 }),
+      healthcareClaim({ id: 'hc2', member: 'Manual Member', allowedAmount: 2_500 }),
+    ]);
+    const resolved = resolveHealthcareProfile(stored, ROSTER);
+    const before = compareHealthPlans(stored.plans, stored.claims);
+    const after = compareHealthPlans(resolved.plans, resolved.claims);
+    expect(after.map(row => row.netAnnualCost)).toEqual(before.map(row => row.netAnnualCost));
+    expect(after.map(row => row.allowed)).toEqual(before.map(row => row.allowed));
+  });
+});
+
+describe('employerPlanCoverage', () => {
+  it('splits recorded members into covered and not covered by name', () => {
+    expect(employerPlanCoverage([
+      { role: 'self', name: 'Justin Crawford', birthday: null, coveredByEmployerPlan: true },
+      { role: 'spouse', name: 'Cara Crawford', birthday: null, coveredByEmployerPlan: false },
+    ])).toEqual({ covered: ['Justin Crawford'], notCovered: ['Cara Crawford'] });
+  });
+
+  it('falls back to the role label for a nameless member', () => {
+    expect(employerPlanCoverage([
+      { role: 'spouse', name: '', birthday: null, coveredByEmployerPlan: true },
+    ])).toEqual({ covered: ['Spouse'], notCovered: [] });
+  });
+
+  it('skips members whose coverage is not recorded, never inventing eligibility', () => {
+    expect(employerPlanCoverage(ROSTER)).toEqual({ covered: [], notCovered: [] });
+    expect(employerPlanCoverage([])).toEqual({ covered: [], notCovered: [] });
+  });
+});
+
+describe('ageFromBirthday', () => {
+  const asOf = new Date('2026-08-03T00:00:00Z');
+
+  it('counts whole years, respecting whether the birthday has passed', () => {
+    expect(ageFromBirthday('2012-01-20', asOf)).toBe(14);
+    expect(ageFromBirthday('2012-09-20', asOf)).toBe(13);
+    expect(ageFromBirthday('2012-08-03', asOf)).toBe(14);
+  });
+
+  it('returns null for missing or unparseable values', () => {
+    expect(ageFromBirthday(null, asOf)).toBeNull();
+    expect(ageFromBirthday('', asOf)).toBeNull();
+    expect(ageFromBirthday('not-a-date', asOf)).toBeNull();
+    // A birthday in the future is not an age.
+    expect(ageFromBirthday('2030-01-01', asOf)).toBeNull();
+  });
+});
+
+function familyBankChild(overrides: Partial<FamilyBankChild> = {}): FamilyBankChild {
+  return {
+    id: 'fb1',
+    name: 'Stored Child',
+    liabilityAccountGuid: 'a'.repeat(32),
+    allowanceAmount: 10,
+    allowanceCadence: 'weekly',
+    nextAllowanceDate: '2026-08-01',
+    parentMatchPercent: 50,
+    savingsGoal: 500,
+    entries: [
+      { id: 'e1', date: '2026-07-01', description: 'Birthday deposit', amount: 40, kind: 'deposit', approved: true, transactionGuid: null },
+      { id: 'e2', date: '2026-07-15', description: 'Mow the lawn', amount: 5, kind: 'chore', approved: false, transactionGuid: null },
+    ],
+    ...overrides,
+  };
+}
+
+describe('resolveFamilyBankingProfile', () => {
+  const asOf = new Date('2026-08-03T00:00:00Z');
+
+  it('takes the name from the linked dependent and keeps every ledger input', () => {
+    const resolved = resolveFamilyBankingProfile(
+      { children: [familyBankChild({ memberRole: 'dependent', memberName: 'Rowan Crawford' })] },
+      TWO_DEPENDENTS,
+      asOf,
+    );
+    expect(resolved.children[0]).toMatchObject({
+      name: 'Rowan Crawford',
+      // Ledger data is never touched by resolution.
+      liabilityAccountGuid: 'a'.repeat(32),
+      allowanceAmount: 10,
+      nextAllowanceDate: '2026-08-01',
+      savingsGoal: 500,
+    });
+    expect(resolved.children[0].entries).toHaveLength(2);
+  });
+
+  it('keeps stored values when the link is ambiguous', () => {
+    const twins: HouseholdMember[] = [
+      { role: 'dependent', name: 'Rowan Crawford', birthday: '2012-01-20' },
+      { role: 'dependent', name: 'Rowan Crawford', birthday: '2014-03-05' },
+    ];
+    const resolved = resolveFamilyBankingProfile(
+      { children: [familyBankChild({ memberRole: 'dependent', memberName: 'Rowan Crawford' })] },
+      twins,
+      asOf,
+    );
+    expect(resolved.children[0].name).toBe('Stored Child');
+  });
+
+  it('keeps stored values when the dependent left the roster', () => {
+    const resolved = resolveFamilyBankingProfile(
+      { children: [familyBankChild({ memberRole: 'dependent', memberName: 'Rowan Crawford' })] },
+      [TWO_DEPENDENTS[0]],
+      asOf,
+    );
+    expect(resolved.children[0].name).toBe('Stored Child');
+  });
+
+  it('leaves a legacy child (no memberRole) untouched even with a matching roster', () => {
+    const legacy: FamilyBankingProfile = { children: [familyBankChild({ name: 'Rowan Crawford' })] };
+    const resolved = resolveFamilyBankingProfile(legacy, TWO_DEPENDENTS, asOf);
+    expect(resolved.children).toEqual(legacy.children);
+  });
+
+  it('does not change the ledger math for a linked child', () => {
+    const stored: FamilyBankingProfile = {
+      children: [familyBankChild({ memberRole: 'dependent', memberName: 'Rowan Crawford' })],
+    };
+    const resolved = resolveFamilyBankingProfile(stored, TWO_DEPENDENTS, asOf);
+    expect(calculateFamilyBanking(resolved.children[0], asOf)).toMatchObject(
+      { ...calculateFamilyBanking(stored.children[0], asOf), child: resolved.children[0] },
+    );
+  });
+
+  it('seeds one ledger per named dependent when the pack is empty', () => {
+    const resolved = resolveFamilyBankingProfile({ children: [] }, TWO_DEPENDENTS, asOf);
+    expect(resolved.children).toHaveLength(2);
+    expect(resolved.children[0]).toMatchObject({
+      id: 'household-dependent-rowan-crawford',
+      memberRole: 'dependent',
+      memberName: 'Rowan Crawford',
+      name: 'Rowan Crawford',
+      allowanceAmount: 5,
+      allowanceCadence: 'weekly',
+      savingsGoal: 100,
+      entries: [],
+    });
+    expect(resolved.children[1].name).toBe('Sage Crawford');
+    // Adults never get a ledger.
+    expect(resolved.children.some(child => child.name === 'Justin Crawford')).toBe(false);
+  });
+
+  it('dates the seeded allowance ahead so a never-saved seed is not instantly due', () => {
+    const resolved = resolveFamilyBankingProfile({ children: [] }, TWO_DEPENDENTS, asOf);
+    expect(FAMILY_BANK_SEED_ALLOWANCE_LEAD_DAYS).toBeGreaterThan(0);
+    expect(resolved.children[0].nextAllowanceDate).toBe('2026-08-10');
+    expect(calculateFamilyBanking(resolved.children[0], asOf).allowanceDue).toBe(false);
+  });
+
+  it('skips nameless dependents, which could never be linked back', () => {
+    const resolved = resolveFamilyBankingProfile(
+      { children: [] },
+      [{ role: 'dependent', name: '', birthday: '2012-01-20' }],
+      asOf,
+    );
+    expect(resolved.children).toEqual([]);
+  });
+
+  it('uses stable ids when seeding so repeated reads do not churn', () => {
+    const first = resolveFamilyBankingProfile({ children: [] }, TWO_DEPENDENTS, asOf);
+    const second = resolveFamilyBankingProfile({ children: [] }, TWO_DEPENDENTS, asOf);
+    expect(first.children.map(child => child.id)).toEqual(second.children.map(child => child.id));
+  });
+
+  it('leaves an empty pack empty when there is no household roster', () => {
+    expect(resolveFamilyBankingProfile({ children: [] }, [], asOf).children).toEqual([]);
   });
 });
 
