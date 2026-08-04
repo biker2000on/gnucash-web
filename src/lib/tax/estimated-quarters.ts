@@ -10,11 +10,21 @@
  *   Q4  due Jan 15   window Sep 16          – Jan 15 (year + 1)
  *
  * Windows are PAYMENT-date windows anchored to the due dates: a voucher paid
- * January 1–15 of `year` is the PRIOR year's Q4 payment and is excluded from
- * this year's buckets; anything after the Q4 due date still counts as (late)
- * Q4. Withholding is treated as paid evenly across the four installments —
- * the IRS default treatment on Form 2210.
+ * on or before the prior year's (rolled) Q4 due date is the PRIOR year's Q4
+ * payment and is excluded from this year's buckets; anything after the Q4
+ * due date still counts as (late) Q4. Withholding is treated as paid evenly
+ * across the four installments — the IRS default treatment on Form 2210.
+ *
+ * Due dates falling on a weekend or legal holiday roll forward to the next
+ * business day per IRC §7503 (same helper as the compliance calendar), and
+ * each window extends through its rolled due date.
+ *
+ * SIMPLIFICATION: the Form 2210 Schedule AI annualized-installment method is
+ * NOT implemented — required cumulative amounts follow the even 25/50/75/100%
+ * schedule.
  */
+
+import { adjustDueDate } from '@/lib/compliance';
 
 export interface EstimatedPayment {
   /** ISO YYYY-MM-DD payment (post) date. */
@@ -51,13 +61,28 @@ export interface QuarterStatus extends QuarterWindow {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** The four IRS installment windows for tax year `year`. */
+/** Day after an ISO date (UTC-safe). */
+function dayAfter(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d) + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/** The four IRS installment windows for tax year `year`, §7503-rolled. */
 export function quarterWindows(year: number): QuarterWindow[] {
+  const roll = (iso: string) => adjustDueDate(iso).dueDate;
+  // Each window runs from the day after the previous (rolled) due date
+  // through this quarter's rolled due date. Q1 opens the day after the
+  // PRIOR year's Q4 due date (Jan 15 of `year`, rolled).
+  const prevQ4Due = roll(`${year}-01-15`);
+  const q1Due = roll(`${year}-04-15`);
+  const q2Due = roll(`${year}-06-15`);
+  const q3Due = roll(`${year}-09-15`);
+  const q4Due = roll(`${year + 1}-01-15`);
   return [
-    { quarter: 1, period: `${year}-Q1`, start: `${year}-01-16`, end: `${year}-04-15`, dueDate: `${year}-04-15` },
-    { quarter: 2, period: `${year}-Q2`, start: `${year}-04-16`, end: `${year}-06-15`, dueDate: `${year}-06-15` },
-    { quarter: 3, period: `${year}-Q3`, start: `${year}-06-16`, end: `${year}-09-15`, dueDate: `${year}-09-15` },
-    { quarter: 4, period: `${year}-Q4`, start: `${year}-09-16`, end: `${year + 1}-01-15`, dueDate: `${year + 1}-01-15` },
+    { quarter: 1, period: `${year}-Q1`, start: dayAfter(prevQ4Due), end: q1Due, dueDate: q1Due },
+    { quarter: 2, period: `${year}-Q2`, start: dayAfter(q1Due), end: q2Due, dueDate: q2Due },
+    { quarter: 3, period: `${year}-Q3`, start: dayAfter(q2Due), end: q3Due, dueDate: q3Due },
+    { quarter: 4, period: `${year}-Q4`, start: dayAfter(q3Due), end: q4Due, dueDate: q4Due },
   ];
 }
 

@@ -197,6 +197,56 @@ describe('capital gain netting', () => {
     expect(n.preferentialLtcg).toBe(6_000);
     expect(n.ordinaryStcg).toBe(4_000);
   });
+
+  it('no carryover when gains stay net positive', () => {
+    expect(netCapitalGains(4_000, 6_000, 'single').carryoverToNextYear).toBe(0);
+  });
+});
+
+describe('capital-loss carryover', () => {
+  it('prior-year carryover offsets gains before the loss cap', () => {
+    // LT 10,000 − carryover 4,000 → 6,000 preferential, nothing carried
+    const n = netCapitalGains(0, 10_000, 'single', 4_000);
+    expect(n.includedInAgi).toBe(6_000);
+    expect(n.preferentialLtcg).toBe(6_000);
+    expect(n.carryoverToNextYear).toBe(0);
+  });
+
+  it('excess beyond the -3,000 cap carries to next year', () => {
+    // LT 10,000 − carryover 15,000 → net −5,000 → AGI −3,000, carry 2,000
+    const n = netCapitalGains(0, 10_000, 'single', 15_000);
+    expect(n.includedInAgi).toBe(-3_000);
+    expect(n.preferentialLtcg).toBe(0);
+    expect(n.carryoverToNextYear).toBe(2_000);
+  });
+
+  it('MFS cap is -1,500', () => {
+    const n = netCapitalGains(0, 0, 'mfs', 5_000);
+    expect(n.includedInAgi).toBe(-1_500);
+    expect(n.carryoverToNextYear).toBe(3_500);
+  });
+
+  it('flows through computeFederalTax and surfaces the remainder', () => {
+    const r = computeFederalTax(inputs({
+      wages: 100_000,
+      longTermCapitalGains: 2_000,
+      priorYearCapitalLossCarryover: 12_000,
+    }));
+    // 2,000 − 12,000 = −10,000 → −3,000 in AGI, 7,000 carried forward
+    expect(r.agi).toBe(97_000);
+    expect(r.capitalLossCarryoverToNextYear).toBe(7_000);
+  });
+
+  it('carryover offsets LTCG so no preferential income remains', () => {
+    const withCarryover = computeFederalTax(inputs({
+      wages: 100_000,
+      longTermCapitalGains: 10_000,
+      priorYearCapitalLossCarryover: 10_000,
+    }));
+    expect(withCarryover.preferentialIncome).toBe(0);
+    expect(withCarryover.capitalGainsTax).toBe(0);
+    expect(withCarryover.capitalLossCarryoverToNextYear).toBe(0);
+  });
 });
 
 describe('self-employment tax', () => {
@@ -251,6 +301,26 @@ describe('NIIT and Additional Medicare', () => {
 
   it('no NIIT below the threshold', () => {
     const r = computeFederalTax(inputs({ wages: 150_000, ordinaryDividends: 20_000 }));
+    expect(r.niit).toBe(0);
+  });
+
+  it('the allowed -3,000 capital loss reduces net investment income (Form 8960)', () => {
+    const r = computeFederalTax(inputs({
+      wages: 250_000,
+      interest: 20_000,
+      shortTermCapitalGains: -10_000,
+    }));
+    // NII = 20,000 interest − 3,000 allowed loss = 17,000 (MAGI excess is larger)
+    expect(r.niit).toBeCloseTo(0.038 * 17_000, 2);
+  });
+
+  it('a large loss cannot push NII below zero', () => {
+    const r = computeFederalTax(inputs({
+      wages: 250_000,
+      interest: 1_000,
+      shortTermCapitalGains: -10_000,
+    }));
+    // 1,000 − 3,000 → NII floors at 0
     expect(r.niit).toBe(0);
   });
 
@@ -358,6 +428,86 @@ describe('safe harbor / estimated payments', () => {
       withholding: 0,
     });
     expect(r.priorYearMultiplier).toBe(1.1);
+  });
+
+  it('rolls weekend due dates forward per §7503 (2024: Jun 15 Sat, Sep 15 Sun)', () => {
+    const r = computeSafeHarbor({
+      year: 2024, filingStatus: 'single',
+      currentYearTax: 10_000, priorYearTax: null, priorYearAgi: null,
+      withholding: 0,
+    });
+    expect(r.quarterlySchedule.map(q => q.dueDate)).toEqual([
+      '2024-04-15', // Monday
+      '2024-06-17', // Jun 15 is a Saturday → Monday
+      '2024-09-16', // Sep 15 is a Sunday → Monday
+      '2025-01-15', // Wednesday
+    ]);
+  });
+
+  it('rolls 2025 Q2 (Jun 15 Sunday) to Jun 16', () => {
+    const r = computeSafeHarbor({
+      year: 2025, filingStatus: 'single',
+      currentYearTax: 10_000, priorYearTax: null, priorYearAgi: null,
+      withholding: 0,
+    });
+    expect(r.quarterlySchedule[1].dueDate).toBe('2025-06-16');
+  });
+});
+
+describe('qualifying farmer safe harbor (IRC §6654(i))', () => {
+  it('uses 66 2/3% of current-year tax as a single Jan 15 installment', () => {
+    const r = computeSafeHarbor({
+      year: 2025, filingStatus: 'mfj',
+      currentYearTax: 30_000, priorYearTax: null, priorYearAgi: null,
+      withholding: 0,
+      isQualifyingFarmer: true,
+    });
+    expect(r.isQualifyingFarmer).toBe(true);
+    expect(r.currentYearFactor).toBeCloseTo(2 / 3, 6);
+    expect(r.ninetyPercentCurrent).toBe(20_000); // 66 2/3% of 30,000
+    expect(r.requiredAnnualPayment).toBe(20_000);
+    expect(r.quarterlySchedule).toHaveLength(1);
+    // Jan 15, 2026 is a Thursday — the §7503-rolled statutory date.
+    expect(r.quarterlySchedule[0]).toEqual({
+      quarter: 4,
+      dueDate: '2026-01-15',
+      amount: 20_000,
+    });
+  });
+
+  it('prior-year rule stays 100% for farmers — the 110% multiplier never applies', () => {
+    const r = computeSafeHarbor({
+      year: 2025, filingStatus: 'single',
+      currentYearTax: 30_000, priorYearTax: 15_000, priorYearAgi: 500_000,
+      withholding: 0,
+      isQualifyingFarmer: true,
+    });
+    expect(r.priorYearMultiplier).toBe(1.0);
+    expect(r.priorYearSafeHarbor).toBe(15_000);
+    // min(66 2/3% × 30,000 = 20,000, 100% × 15,000) = 15,000
+    expect(r.requiredAnnualPayment).toBe(15_000);
+  });
+
+  it('withholding reduces the single farmer installment', () => {
+    const r = computeSafeHarbor({
+      year: 2025, filingStatus: 'single',
+      currentYearTax: 30_000, priorYearTax: null, priorYearAgi: null,
+      withholding: 12_000,
+      isQualifyingFarmer: true,
+    });
+    expect(r.estimatedPaymentsNeeded).toBe(8_000);
+    expect(r.quarterlySchedule[0].amount).toBe(8_000);
+  });
+
+  it('non-farmers keep the 90% factor and four installments', () => {
+    const r = computeSafeHarbor({
+      year: 2025, filingStatus: 'single',
+      currentYearTax: 30_000, priorYearTax: null, priorYearAgi: null,
+      withholding: 0,
+    });
+    expect(r.isQualifyingFarmer).toBe(false);
+    expect(r.currentYearFactor).toBe(0.9);
+    expect(r.quarterlySchedule).toHaveLength(4);
   });
 });
 

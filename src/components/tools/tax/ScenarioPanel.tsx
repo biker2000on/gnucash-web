@@ -6,6 +6,7 @@ import {
   evaluateScenario,
   maxOutScenario,
   remainingHeadroom,
+  type ScenarioIraDeductionContext,
   type ScenarioLimits,
 } from '@/lib/tax/scenario';
 import {
@@ -30,6 +31,8 @@ interface ScenarioPanelProps {
   stateCode: string;
   stateFlatRateOverride?: number;
   baselineLiability: number;
+  /** §219(g) deductibility context for traditional-IRA additions. */
+  iraDeduction?: ScenarioIraDeductionContext;
   scenarios: ContributionScenario[];
   onScenariosChange: (scenarios: ContributionScenario[]) => void;
   onSaveScenarios?: () => void;
@@ -42,6 +45,7 @@ export default function ScenarioPanel({
   stateCode,
   stateFlatRateOverride,
   baselineLiability,
+  iraDeduction,
   scenarios,
   onScenariosChange,
   onSaveScenarios,
@@ -59,9 +63,10 @@ export default function ScenarioPanel({
           stateCode,
           stateFlatRateOverride,
           baselineLiability,
+          iraDeduction,
         }),
       ),
-    [scenarios, baseInputs, limits, stateCode, stateFlatRateOverride, baselineLiability],
+    [scenarios, baseInputs, limits, stateCode, stateFlatRateOverride, baselineLiability, iraDeduction],
   );
 
   const addScenario = (scenario: ContributionScenario) => {
@@ -211,6 +216,14 @@ export default function ScenarioPanel({
                     {issue.message}
                   </p>
                 ))}
+
+                {/* IRA deductibility (§219(g)) */}
+                {result.nonDeductibleTradIra > 0.004 && (
+                  <p className="text-[11px] text-warning bg-warning/10 border border-warning/30 rounded px-2 py-1.5">
+                    {formatCurrency(result.nonDeductibleTradIra)} of the traditional IRA dollars are
+                    non-deductible at this income level (Form 8606) — they produce no tax savings.
+                  </p>
+                )}
 
                 {/* Results */}
                 <dl className="space-y-1.5 text-xs">

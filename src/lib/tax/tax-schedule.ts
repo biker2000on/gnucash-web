@@ -284,6 +284,24 @@ export async function generateTaxSchedule(
             AND s2.value_denom = s.value_denom
             AND s2.account_guid = ANY(${shelteredGuids})
         )
+        -- Mirror guard, asset side: a split INTO a sheltered account whose
+        -- exact-opposite counter is an INCOME account is income earned inside
+        -- the shelter (reinvested dividend/interest/match), not a real flow —
+        -- without this an IRA-internal dividend can still land on the tax
+        -- schedule via a mapped sheltered asset account (see book-income.ts,
+        -- contribution-summing-paths rule: both guards or neither).
+        AND NOT (
+          s.account_guid = ANY(${shelteredGuids})
+          AND EXISTS (
+            SELECT 1 FROM splits s2
+            JOIN accounts a2 ON a2.guid = s2.account_guid
+            WHERE s2.tx_guid = s.tx_guid
+              AND s2.guid != s.guid
+              AND s2.value_num = -s.value_num
+              AND s2.value_denom = s.value_denom
+              AND a2.account_type = 'INCOME'
+          )
+        )
       GROUP BY s.account_guid
     `;
     for (const row of rows) {

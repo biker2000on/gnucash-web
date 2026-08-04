@@ -18,10 +18,10 @@
  */
 
 import {
+  additionalMedicareThreshold,
   computeFederalTax,
   emptyFederalInputs,
   getSsWageBase,
-  getYearStatusParams,
 } from './federal';
 import { computeStateTax } from './state';
 import type { FederalTaxResult, FilingStatus, StateTaxResult, TaxYear } from './types';
@@ -126,7 +126,9 @@ export function computePaycheck(inputs: PaycheckInputs): PaycheckResult {
   const federalTax = Math.max(0, federal.totalTax - federal.additionalMedicareTax);
 
   const ssWageBase = getSsWageBase(inputs.year);
-  const addlMedicareThreshold = getYearStatusParams(inputs.year, inputs.filingStatus).niitThreshold;
+  // §3101(b)(2) wage threshold — NOT the NIIT threshold (they differ for
+  // QSS: $200k Additional Medicare vs $250k NIIT).
+  const addlMedicareThreshold = additionalMedicareThreshold(inputs.filingStatus);
   const socialSecurity = SS_RATE * Math.min(ficaWages, ssWageBase);
   const medicare =
     MEDICARE_RATE * ficaWages +

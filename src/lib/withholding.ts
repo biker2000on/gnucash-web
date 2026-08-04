@@ -17,9 +17,15 @@
  * ESTIMATES ONLY — not tax advice.
  */
 
-import { computeFederalTax, computeSafeHarbor, emptyFederalInputs } from '@/lib/tax/federal';
-import { resolveContributionActuals, summarizeTaxPayments } from '@/lib/tax/payments';
+import { computeFederalTax, computeSafeHarbor } from '@/lib/tax/federal';
+import { summarizeTaxPayments } from '@/lib/tax/payments';
 import { aggregateBookTaxData } from '@/lib/tax/book-income';
+import {
+  applyHouseholdTaxDetails,
+  buildFederalInputsFromBookData,
+  type EstimatorPhaseOuts,
+  type HouseholdTaxContext,
+} from '@/lib/tax/estimator-inputs';
 import {
   isSupportedTaxYear,
   type BookTaxData,
@@ -28,7 +34,6 @@ import {
   type FilingStatus,
   type QuarterlyPayment,
   type SafeHarborResult,
-  type TaxCategory,
   type TaxYear,
 } from '@/lib/tax/types';
 
@@ -63,15 +68,11 @@ const ANNUALIZABLE_INPUT_FIELDS = [
   'otherDeductions',
 ] as const satisfies readonly (keyof FederalTaxInputs)[];
 
-function categoryTotal(bookData: BookTaxData, category: TaxCategory): number {
-  return bookData.categories.find(c => c.category === category)?.total ?? 0;
-}
-
 /**
  * Map aggregated book data to raw YTD FederalTaxInputs (no annualization).
- * Mirrors the tax estimator page's `buildInputs` at factor = 1, reusing
- * `resolveContributionActuals` so flagged retirement contributions stay
- * authoritative. Annualization happens later inside the pure checkup.
+ * Delegates to the SHARED estimator input assembly at factor = 1 — the same
+ * code path the tax estimator page uses — so the two surfaces can never
+ * drift. Annualization happens later inside the pure checkup.
  */
 export function buildFederalInputsFromBook(
   bookData: BookTaxData,
@@ -79,39 +80,7 @@ export function buildFederalInputsFromBook(
   filingStatus: FilingStatus,
   filersAge65Plus = 0,
 ): FederalTaxInputs {
-  const g = (c: TaxCategory) => categoryTotal(bookData, c);
-  const qualifiedDividends = g('qualified_dividends');
-  const { trad401k, tradIra, hsa, sepIra, simpleIra } = resolveContributionActuals(bookData);
-
-  return {
-    ...emptyFederalInputs(year, filingStatus),
-    wages: g('w2_wages'),
-    interest: g('interest_income'),
-    taxExemptInterest: g('tax_exempt_interest'),
-    ordinaryDividends: g('ordinary_dividends') + qualifiedDividends,
-    qualifiedDividends,
-    shortTermCapitalGains: bookData.realizedGains.shortTerm,
-    longTermCapitalGains: bookData.realizedGains.longTerm,
-    selfEmploymentIncome: g('self_employment_income') - g('business_expense'),
-    rentalIncome: g('rental_income'),
-    retirementIncome: g('retirement_income'),
-    socialSecurityBenefits: g('social_security_benefits'),
-    otherIncome: g('other_income'),
-    traditional401kContributions: trad401k,
-    traditionalIraContributions: tradIra,
-    hsaContributions: hsa,
-    sepIraContributions: sepIra,
-    simpleIraContributions: simpleIra,
-    charitableDonations: g('charitable_donation'),
-    mortgageInterest: g('mortgage_interest'),
-    // State estimated payments count as state income tax paid (Schedule A 5a),
-    // same as state withholding — matches the estimator.
-    stateLocalTaxesPaid:
-      g('state_withholding') + g('state_estimated_tax_payment') + g('property_tax') + g('state_local_tax_paid'),
-    medicalExpenses: g('medical_expense'),
-    otherDeductions: g('other_deduction'),
-    filersAge65Plus,
-  };
+  return buildFederalInputsFromBookData(bookData, year, filingStatus, filersAge65Plus, 1);
 }
 
 /** Scale the annualizable flows of a YTD input set by `factor`. */
@@ -134,6 +103,7 @@ export function annualizeInputs(ytd: FederalTaxInputs, factor: number): FederalT
 export type WithholdingStatus = 'refund' | 'owe' | 'balanced';
 export type SafeHarborBasis =
   | '90% of current-year tax'
+  | '66⅔% of current-year tax (qualifying farmer)'
   | '100% of prior-year tax'
   | '110% of prior-year tax';
 
@@ -158,6 +128,15 @@ export interface WithholdingCheckupInput {
   remainingPayPeriods: number | null;
   /** As-of date (YYYY-MM-DD) — picks the next quarterly due date. */
   asOfDate: string;
+  /**
+   * Household details (Child Tax Credit count, employer-plan coverage, IRA
+   * limits) — applied to the PROJECTED full-year inputs exactly like the
+   * estimator page applies them (shared applyHouseholdTaxDetails). Optional
+   * for callers without household data.
+   */
+  household?: HouseholdTaxContext | null;
+  /** IRC §6654(i) qualifying farmer — see SafeHarborInputs. */
+  isQualifyingFarmer?: boolean;
 }
 
 export interface WithholdingCheckup {
@@ -175,6 +154,11 @@ export interface WithholdingCheckup {
   projectedInputs: FederalTaxInputs;
   /** Full federal engine result for the projected year. */
   federal: FederalTaxResult;
+  /**
+   * IRA deduction phase-out detail when household context was supplied
+   * (same shape the estimator page displays), else null.
+   */
+  phaseOuts: EstimatorPhaseOuts | null;
 
   projectedAgi: number;
   /** Projected year-end federal liability (federal.totalTax). */
@@ -222,7 +206,9 @@ function resolveSafeHarborBasis(sh: SafeHarborResult): SafeHarborBasis {
       ? '110% of prior-year tax'
       : '100% of prior-year tax';
   }
-  return '90% of current-year tax';
+  return sh.isQualifyingFarmer
+    ? '66⅔% of current-year tax (qualifying farmer)'
+    : '90% of current-year tax';
 }
 
 /**
@@ -242,12 +228,22 @@ export function computeWithholdingCheckup(input: WithholdingCheckupInput): Withh
     priorYearAgi,
     remainingPayPeriods,
     asOfDate,
+    household,
+    isQualifyingFarmer,
   } = input;
 
   const fraction = Math.min(1, Math.max(0.0001, elapsedYearFraction));
   const factor = annualize && fraction < 1 ? 1 / fraction : 1;
 
-  const projectedInputs = annualizeInputs(ytdInputs, factor);
+  // Household details (CTC + §219(g) IRA cap) apply to the PROJECTED
+  // full-year inputs — the phase-out depends on full-year MAGI, not YTD.
+  let projectedInputs = annualizeInputs(ytdInputs, factor);
+  let phaseOuts: EstimatorPhaseOuts | null = null;
+  if (household) {
+    const detailed = applyHouseholdTaxDetails(projectedInputs, household);
+    projectedInputs = detailed.inputs;
+    phaseOuts = detailed.phaseOuts;
+  }
   const federal = computeFederalTax(projectedInputs);
   const projectedLiability = federal.totalTax;
 
@@ -270,6 +266,7 @@ export function computeWithholdingCheckup(input: WithholdingCheckupInput): Withh
     priorYearTax,
     priorYearAgi,
     withholding: projectedWithholding,
+    isQualifyingFarmer: isQualifyingFarmer === true,
   });
   const safeHarborBasis = resolveSafeHarborBasis(safeHarbor);
 
@@ -314,6 +311,7 @@ export function computeWithholdingCheckup(input: WithholdingCheckupInput): Withh
     hasPayments,
     projectedInputs,
     federal,
+    phaseOuts,
     projectedAgi: federal.agi,
     projectedLiability,
     projectedWithholding,
@@ -387,6 +385,14 @@ export interface WithholdingCheckupLoaderOptions {
   priorYearAgi?: number | null;
   /** Override the pay cadence; otherwise inferred from payslips (default 26). */
   payPeriodsPerYear?: number;
+  /**
+   * Household details (dependents under 17, employer-plan coverage, IRA
+   * limits) resolved by the caller — the per-owner contribution split is
+   * filled in from the aggregated book data automatically.
+   */
+  household?: Omit<HouseholdTaxContext, 'contributionsByTypeAndOwner'> | null;
+  /** IRC §6654(i) qualifying farmer flag (explicit — never inferred). */
+  isQualifyingFarmer?: boolean;
 }
 
 export interface WithholdingCheckupPayload {
@@ -475,6 +481,8 @@ export async function loadWithholdingCheckup(
     priorYearTax = null,
     priorYearAgi = null,
     payPeriodsPerYear,
+    household = null,
+    isQualifyingFarmer = false,
   } = options;
 
   if (!isSupportedTaxYear(year)) {
@@ -508,6 +516,10 @@ export async function loadWithholdingCheckup(
     priorYearAgi,
     remainingPayPeriods,
     asOfDate: bookData.asOfDate,
+    household: household
+      ? { ...household, contributionsByTypeAndOwner: bookData.contributionsByTypeAndOwner }
+      : null,
+    isQualifyingFarmer,
   });
 
   return {

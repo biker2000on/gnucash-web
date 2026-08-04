@@ -30,6 +30,7 @@
  * ESTIMATES ONLY — not tax advice.
  */
 
+import { adjustDueDate } from '@/lib/compliance';
 import type {
   BracketFill,
   CapitalGainsBracketFill,
@@ -312,16 +313,27 @@ export interface CapitalGainNetting {
   preferentialLtcg: number;
   /** ST gain taxed as ordinary (>= 0) */
   ordinaryStcg: number;
+  /** Loss beyond the annual cap, carried forward to next year (>= 0). */
+  carryoverToNextYear: number;
 }
 
+/**
+ * Schedule D netting.
+ *
+ * @param priorYearCapitalLossCarryover Prior-year loss carryover (POSITIVE
+ *   number). Simplification: applied as a LONG-TERM loss (offsets LTCG first,
+ *   then STCG via cross-netting) rather than tracking ST/LT character
+ *   separately.
+ */
 export function netCapitalGains(
   shortTerm: number,
   longTerm: number,
   filingStatus: FilingStatus,
+  priorYearCapitalLossCarryover: number = 0,
 ): CapitalGainNetting {
   const lossLimit = filingStatus === 'mfs' ? -1_500 : -3_000;
   let st = shortTerm;
-  let lt = longTerm;
+  let lt = longTerm - Math.max(0, priorYearCapitalLossCarryover);
   // Cross-netting: losses offset gains of the other character
   if (st < 0 && lt > 0) {
     const offset = Math.min(-st, lt);
@@ -334,12 +346,19 @@ export function netCapitalGains(
   }
   const totalNet = st + lt;
   if (totalNet < 0) {
-    return { includedInAgi: Math.max(totalNet, lossLimit), preferentialLtcg: 0, ordinaryStcg: 0 };
+    const includedInAgi = Math.max(totalNet, lossLimit);
+    return {
+      includedInAgi,
+      preferentialLtcg: 0,
+      ordinaryStcg: 0,
+      carryoverToNextYear: round2(includedInAgi - totalNet),
+    };
   }
   return {
     includedInAgi: totalNet,
     preferentialLtcg: Math.max(0, lt),
     ordinaryStcg: Math.max(0, st),
+    carryoverToNextYear: 0,
   };
 }
 
@@ -386,8 +405,13 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
   /* --- SE tax (needed before AGI for the half-SE deduction) --- */
   const se = computeSeTax(inputs.selfEmploymentIncome, inputs.year, inputs.wages);
 
-  /* --- Capital gain netting --- */
-  const cg = netCapitalGains(inputs.shortTermCapitalGains, inputs.longTermCapitalGains, inputs.filingStatus);
+  /* --- Capital gain netting (with prior-year loss carryover) --- */
+  const cg = netCapitalGains(
+    inputs.shortTermCapitalGains,
+    inputs.longTermCapitalGains,
+    inputs.filingStatus,
+    Math.max(0, inputs.priorYearCapitalLossCarryover ?? 0),
+  );
 
   /* --- Income before Social Security taxability --- */
   const qualifiedDividends = Math.min(Math.max(0, inputs.qualifiedDividends), Math.max(0, inputs.ordinaryDividends));
@@ -504,10 +528,14 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     { rate: 0.20, amountInBracket: round2(at20), taxInBracket: round2(at20 * 0.20) },
   ];
 
-  /* --- NIIT --- */
+  /* --- NIIT ---
+   * Form 8960 line 5a takes Schedule D's net gain INCLUDING the allowed
+   * capital loss (down to -$3,000), so a loss year genuinely reduces net
+   * investment income. Only the NII total floors at 0.
+   */
   const netInvestmentIncome = Math.max(
     0,
-    inputs.interest + inputs.ordinaryDividends + Math.max(0, cg.includedInAgi) + Math.max(0, inputs.rentalIncome),
+    inputs.interest + inputs.ordinaryDividends + cg.includedInAgi + Math.max(0, inputs.rentalIncome),
   );
   const magi = agi; // common case: MAGI == AGI
   const niit = NIIT_RATE * Math.min(netInvestmentIncome, Math.max(0, magi - p.niitThreshold));
@@ -573,6 +601,7 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     standardDeduction: round2(standardDeduction),
     itemizedDeduction: round2(itemizedDeduction),
     itemizedBreakdown,
+    capitalLossCarryoverToNextYear: round2(cg.carryoverToNextYear),
     usedItemized,
     deductionTaken: round2(deductionTaken),
     seniorDeduction: round2(seniorDeduction),
@@ -600,16 +629,38 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
 
 const HIGH_AGI_THRESHOLD = 150_000;
 const HIGH_AGI_THRESHOLD_MFS = 75_000;
+/** IRC §6654(i): qualifying farmers substitute 66 2/3% for 90%. */
+const FARMER_CURRENT_YEAR_FACTOR = 2 / 3;
 
+/**
+ * Safe-harbor targets and the 1040-ES installment schedule.
+ *
+ * Standard filers: min(90% of current-year tax, 100%/110% of prior-year tax)
+ * across four equal installments. Qualifying farmers (IRC §6654(i), explicit
+ * `isQualifyingFarmer` flag): min(66 2/3% of current, 100% of prior — the
+ * 110% high-AGI multiplier does not apply) as a SINGLE installment due
+ * January 15 of the following year.
+ *
+ * Due dates are rolled forward past weekends and legal holidays per IRC
+ * §7503, matching the compliance calendar (adjustDueDate).
+ *
+ * SIMPLIFICATION: the Form 2210 Schedule AI annualized-installment method
+ * (uneven installments for lumpy income) is NOT implemented — installments
+ * are always the even statutory 25/50/75/100% schedule.
+ */
 export function computeSafeHarbor(inputs: SafeHarborInputs): SafeHarborResult {
-  const ninetyPercentCurrent = round2(0.9 * Math.max(0, inputs.currentYearTax));
+  const isQualifyingFarmer = inputs.isQualifyingFarmer === true;
+  const currentYearFactor = isQualifyingFarmer ? FARMER_CURRENT_YEAR_FACTOR : 0.9;
+  const ninetyPercentCurrent = round2(currentYearFactor * Math.max(0, inputs.currentYearTax));
 
   let priorYearSafeHarbor: number | null = null;
   let priorYearMultiplier: number | null = null;
   if (inputs.priorYearTax !== null && inputs.priorYearTax >= 0) {
     const highAgiThreshold = inputs.filingStatus === 'mfs' ? HIGH_AGI_THRESHOLD_MFS : HIGH_AGI_THRESHOLD;
-    priorYearMultiplier =
-      inputs.priorYearAgi !== null && inputs.priorYearAgi > highAgiThreshold ? 1.1 : 1.0;
+    // §6654(i)(1)(D): the 110% high-AGI multiplier does not apply to farmers.
+    priorYearMultiplier = isQualifyingFarmer
+      ? 1.0
+      : inputs.priorYearAgi !== null && inputs.priorYearAgi > highAgiThreshold ? 1.1 : 1.0;
     priorYearSafeHarbor = round2(inputs.priorYearTax * priorYearMultiplier);
   }
 
@@ -623,17 +674,31 @@ export function computeSafeHarbor(inputs: SafeHarborInputs): SafeHarborResult {
   const balanceDueAfterWithholding = Math.max(0, inputs.currentYearTax - withholding);
   const underThousandDollarRule = balanceDueAfterWithholding < 1_000;
 
-  const perQuarter = round2(estimatedPaymentsNeeded / 4);
   const y = inputs.year;
-  const quarterlySchedule: QuarterlyPayment[] = [
-    { quarter: 1, dueDate: `${y}-04-15`, amount: perQuarter },
-    { quarter: 2, dueDate: `${y}-06-15`, amount: perQuarter },
-    { quarter: 3, dueDate: `${y}-09-15`, amount: perQuarter },
-    { quarter: 4, dueDate: `${y + 1}-01-15`, amount: round2(estimatedPaymentsNeeded - perQuarter * 3) },
-  ];
+  // §7503: due dates falling on a weekend/legal holiday roll to the next
+  // business day (same helper the compliance calendar uses).
+  const due = (iso: string) => adjustDueDate(iso).dueDate;
+
+  let quarterlySchedule: QuarterlyPayment[];
+  if (isQualifyingFarmer) {
+    // Single farmer installment, due Jan 15 of the following year.
+    quarterlySchedule = [
+      { quarter: 4, dueDate: due(`${y + 1}-01-15`), amount: estimatedPaymentsNeeded },
+    ];
+  } else {
+    const perQuarter = round2(estimatedPaymentsNeeded / 4);
+    quarterlySchedule = [
+      { quarter: 1, dueDate: due(`${y}-04-15`), amount: perQuarter },
+      { quarter: 2, dueDate: due(`${y}-06-15`), amount: perQuarter },
+      { quarter: 3, dueDate: due(`${y}-09-15`), amount: perQuarter },
+      { quarter: 4, dueDate: due(`${y + 1}-01-15`), amount: round2(estimatedPaymentsNeeded - perQuarter * 3) },
+    ];
+  }
 
   return {
     ninetyPercentCurrent,
+    currentYearFactor,
+    isQualifyingFarmer,
     priorYearSafeHarbor,
     priorYearMultiplier,
     requiredAnnualPayment: round2(requiredAnnualPayment),
@@ -667,6 +732,7 @@ export function emptyFederalInputs(year: TaxYear, filingStatus: FilingStatus): F
     sepIraContributions: 0,
     simpleIraContributions: 0,
     qualifyingChildrenUnder17: 0,
+    priorYearCapitalLossCarryover: 0,
     charitableDonations: 0,
     mortgageInterest: 0,
     stateLocalTaxesPaid: 0,

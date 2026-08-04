@@ -28,6 +28,12 @@
  * with single filers, but we intentionally use MFJ ranges here to keep the
  * model consistent with the rest of the engine (which treats qss as mfj).
  *
+ * SIMPLIFICATION: mfs always uses the 0–10,000 range. The IRS lets an MFS
+ * filer who lived APART from their spouse ALL year use the single filer's
+ * ranges instead (Pub 590-A); this model has no lived-apart input and
+ * applies the harsher married ranges unconditionally, so such filers see
+ * their deductible/contributable limit UNDERSTATED.
+ *
  * ESTIMATES ONLY — not tax advice.
  */
 

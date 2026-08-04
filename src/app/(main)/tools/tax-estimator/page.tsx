@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { formatCurrency } from '@/lib/format';
-import { computeFederalTax, computeSafeHarbor, emptyFederalInputs } from '@/lib/tax/federal';
+import { computeFederalTax, computeSafeHarbor } from '@/lib/tax/federal';
 import { computeStateTax, STATE_OPTIONS } from '@/lib/tax/state';
 import type { ScenarioLimits } from '@/lib/tax/scenario';
 import {
@@ -19,8 +19,12 @@ import {
   type TaxCategory,
   type TaxYear,
 } from '@/lib/tax/types';
-import { computeIraDeductionLimit, computeRothIraContributionLimit } from '@/lib/tax/phaseouts';
-import { resolveContributionActuals, summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
+import {
+  ANNUALIZABLE_CATEGORIES,
+  applyHouseholdTaxDetails,
+  buildFederalInputsFromBookData,
+} from '@/lib/tax/estimator-inputs';
+import { summarizeTaxPayments, type TaxPaymentsSummary } from '@/lib/tax/payments';
 import { CollapsibleConfigSection } from '@/components/ui/CollapsibleConfigSection';
 import { Field, FieldGrid, INPUT } from '@/components/ui/form';
 import { useIsMobile } from '@/lib/hooks/useIsMobile';
@@ -112,18 +116,14 @@ function categoryTotal(bookData: BookTaxData, category: TaxCategory): number {
   return bookData.categories.find(c => c.category === category)?.total ?? 0;
 }
 
-/** Categories that are simple annual flows we can annualize from YTD */
-const ANNUALIZABLE: TaxCategory[] = [
-  'w2_wages', 'federal_withholding', 'state_withholding', 'estimated_tax_payment',
-  'state_estimated_tax_payment', 'fica_social_security',
-  'fica_medicare', 'interest_income', 'tax_exempt_interest', 'ordinary_dividends',
-  'qualified_dividends',
-  'self_employment_income', 'business_expense', 'rental_income', 'retirement_income',
-  'social_security_benefits', 'charitable_donation', 'mortgage_interest',
-  'property_tax', 'state_local_tax_paid', 'medical_expense', 'education_expense',
-  'other_income', 'other_deduction',
-];
+/** Categories that are simple annual flows we can annualize from YTD (shared) */
+const ANNUALIZABLE = ANNUALIZABLE_CATEGORIES;
 
+/**
+ * Book data → engine inputs + payments summary. The input assembly itself is
+ * SHARED with the withholding checkup (buildFederalInputsFromBookData) so
+ * the two surfaces can never drift.
+ */
 function buildInputs(
   bookData: BookTaxData,
   year: TaxYear,
@@ -134,55 +134,8 @@ function buildInputs(
   const factor = annualize && bookData.elapsedYearFraction < 1
     ? 1 / bookData.elapsedYearFraction
     : 1;
-  const get = (c: TaxCategory) =>
-    categoryTotal(bookData, c) * (ANNUALIZABLE.includes(c) ? factor : 1);
-
-  const qualifiedDividends = get('qualified_dividends');
-  // 401k/IRA/HSA contributions: the classifier-based contribution summary is
-  // authoritative for flagged retirement types (it excludes internal
-  // dividends/transfers/match); category totals only serve as fallback for
-  // books without retirement flags. See resolveContributionActuals.
-  const {
-    trad401k,
-    tradIra,
-    hsa,
-    sepIra,
-    simpleIra,
-  } = resolveContributionActuals(bookData);
-
-  const inputs: FederalTaxInputs = {
-    ...emptyFederalInputs(year, filingStatus),
-    wages: get('w2_wages'),
-    interest: get('interest_income'),
-    // Muni interest: excluded from taxable income/AGI; only feeds Social
-    // Security taxability (Pub 915) inside the federal engine.
-    taxExemptInterest: get('tax_exempt_interest'),
-    ordinaryDividends: get('ordinary_dividends') + qualifiedDividends,
-    qualifiedDividends,
-    shortTermCapitalGains: bookData.realizedGains.shortTerm,
-    longTermCapitalGains: bookData.realizedGains.longTerm,
-    selfEmploymentIncome: get('self_employment_income') - get('business_expense'),
-    rentalIncome: get('rental_income'),
-    retirementIncome: get('retirement_income'),
-    socialSecurityBenefits: get('social_security_benefits'),
-    otherIncome: get('other_income'),
-    traditional401kContributions: trad401k,
-    traditionalIraContributions: tradIra,
-    hsaContributions: hsa,
-    sepIraContributions: sepIra,
-    simpleIraContributions: simpleIra,
-    charitableDonations: get('charitable_donation'),
-    mortgageInterest: get('mortgage_interest'),
-    // State estimated payments count as state income tax paid during the
-    // year (Schedule A line 5a), same as state withholding.
-    stateLocalTaxesPaid: get('state_withholding') + get('state_estimated_tax_payment')
-      + get('property_tax') + get('state_local_tax_paid'),
-    medicalExpenses: get('medical_expense'),
-    otherDeductions: get('other_deduction'),
-    filersAge65Plus,
-  };
   return {
-    inputs,
+    inputs: buildFederalInputsFromBookData(bookData, year, filingStatus, filersAge65Plus, factor),
     payments: summarizeTaxPayments(bookData, factor),
   };
 }
@@ -250,6 +203,8 @@ export default function TaxEstimatorPage() {
   const [filersAge65Plus, setFilersAge65Plus] = useState(0);
   const [priorYearTax, setPriorYearTax] = useState<number | ''>('');
   const [priorYearAgi, setPriorYearAgi] = useState<number | ''>('');
+  const [priorYearCapLoss, setPriorYearCapLoss] = useState<number | ''>('');
+  const [qualifyingFarmer, setQualifyingFarmer] = useState(false);
   const [spouseBirthday, setSpouseBirthday] = useState('');
   const [coveredByPlan, setCoveredByPlan] = useState(true);
   const [spouseCovered, setSpouseCovered] = useState(false);
@@ -326,10 +281,14 @@ export default function TaxEstimatorPage() {
           scenarios?: ContributionScenario[];
           priorYearTax?: number;
           priorYearAgi?: number;
+          priorYearCapLoss?: number;
+          qualifyingFarmer?: boolean;
         };
         if (Array.isArray(saved.scenarios)) setScenarios(saved.scenarios.slice(0, 3));
         if (typeof saved.priorYearTax === 'number') setPriorYearTax(Math.max(0, saved.priorYearTax));
         if (typeof saved.priorYearAgi === 'number') setPriorYearAgi(Math.max(0, saved.priorYearAgi));
+        if (typeof saved.priorYearCapLoss === 'number') setPriorYearCapLoss(Math.max(0, saved.priorYearCapLoss));
+        if (typeof saved.qualifyingFarmer === 'boolean') setQualifyingFarmer(saved.qualifyingFarmer);
       })
       .catch(() => {});
   }, []);
@@ -407,6 +366,8 @@ export default function TaxEstimatorPage() {
           scenarios,
           priorYearTax: priorYearTax === '' ? undefined : priorYearTax,
           priorYearAgi: priorYearAgi === '' ? undefined : priorYearAgi,
+          priorYearCapLoss: priorYearCapLoss === '' ? undefined : priorYearCapLoss,
+          qualifyingFarmer: qualifyingFarmer || undefined,
         },
       };
       const res = scenarioConfigId
@@ -429,7 +390,7 @@ export default function TaxEstimatorPage() {
       setScenarioSaveStatus('error');
       setTimeout(() => setScenarioSaveStatus('idle'), 3000);
     }
-  }, [scenarios, priorYearTax, priorYearAgi, scenarioConfigId]);
+  }, [scenarios, priorYearTax, priorYearAgi, priorYearCapLoss, qualifyingFarmer, scenarioConfigId]);
 
   /* ---- Compute ---- */
 
@@ -438,74 +399,24 @@ export default function TaxEstimatorPage() {
     const { inputs: baseInputs, payments } = buildInputs(
       estimate.bookData, year, filingStatus, annualize, filersAge65Plus,
     );
-    // Child Tax Credit: qualifying children come from the household profile
-    // (dependents under 17 at year end).
-    const inputs: FederalTaxInputs = {
-      ...baseInputs,
-      qualifyingChildrenUnder17: estimate.entity?.dependentsUnder17 ?? 0,
-    };
-
-    // ---- Income-based IRA deduction phase-out ----
-    // MAGI for IRA purposes is computed WITHOUT the IRA deduction itself, so
-    // run a first pass with zero traditional IRA contributions.
-    const magiPass = computeFederalTax({ ...inputs, traditionalIraContributions: 0 });
-    const magi = magiPass.agi;
-
-    const isJoint = filingStatus === 'mfj' || filingStatus === 'qss';
-    const byOwner = estimate.bookData.contributionsByTypeAndOwner;
-    const tradIraSelf = isJoint && byOwner
-      ? byOwner['traditional_ira']?.self ?? 0
-      : inputs.traditionalIraContributions;
-    const tradIraSpouse = isJoint && byOwner ? byOwner['traditional_ira']?.spouse ?? 0 : 0;
-    // Owner attribution may not cover category-mapped contributions; put any
-    // remainder on self so nothing is silently dropped.
-    const attributed = tradIraSelf + tradIraSpouse;
-    const remainder = Math.max(0, inputs.traditionalIraContributions - attributed);
-
-    const selfIraLimit = estimate.limits.ira?.total ?? null;
-    const spouseIraLimit = estimate.limits.spouseIra?.total ?? null;
-
-    const selfPhaseOut = selfIraLimit !== null
-      ? computeIraDeductionLimit({
-          year, filingStatus, magi,
-          coveredByEmployerPlan: coveredByPlan,
-          spouseCoveredByEmployerPlan: spouseCovered,
-          iraLimit: selfIraLimit,
-        })
-      : null;
-    const spousePhaseOut = isJoint && spouseIraLimit !== null
-      ? computeIraDeductionLimit({
-          year, filingStatus, magi,
-          coveredByEmployerPlan: spouseCovered,
-          spouseCoveredByEmployerPlan: coveredByPlan,
-          iraLimit: spouseIraLimit,
-        })
-      : null;
-
-    const selfRoth = selfIraLimit !== null
-      ? computeRothIraContributionLimit({ year, filingStatus, magi, iraLimit: selfIraLimit })
-      : null;
-    const spouseRoth = isJoint && spouseIraLimit !== null
-      ? computeRothIraContributionLimit({ year, filingStatus, magi, iraLimit: spouseIraLimit })
-      : null;
-
-    const deductibleSelf = selfPhaseOut
-      ? Math.min(tradIraSelf + remainder, selfPhaseOut.deductibleLimit)
-      : tradIraSelf + remainder;
-    const deductibleSpouse = spousePhaseOut
-      ? Math.min(tradIraSpouse, spousePhaseOut.deductibleLimit)
-      : tradIraSpouse;
-    const deductibleIra = Math.round((deductibleSelf + deductibleSpouse) * 100) / 100;
-    const nonDeductibleIra = Math.max(0, inputs.traditionalIraContributions - deductibleIra);
-
-    const cappedInputs: FederalTaxInputs = { ...inputs, traditionalIraContributions: deductibleIra };
+    // Household layer (SHARED with the withholding checkup): Child Tax
+    // Credit count from the household profile + §219(g) traditional-IRA
+    // deduction phase-out cap.
+    const { inputs: cappedInputs, phaseOuts } = applyHouseholdTaxDetails(
+      {
+        ...baseInputs,
+        priorYearCapitalLossCarryover: priorYearCapLoss === '' ? 0 : priorYearCapLoss,
+      },
+      {
+        qualifyingChildrenUnder17: estimate.entity?.dependentsUnder17 ?? 0,
+        coveredByEmployerPlan: coveredByPlan,
+        spouseCoveredByEmployerPlan: spouseCovered,
+        selfIraLimit: estimate.limits.ira?.total ?? null,
+        spouseIraLimit: estimate.limits.spouseIra?.total ?? null,
+        contributionsByTypeAndOwner: estimate.bookData.contributionsByTypeAndOwner,
+      },
+    );
     const federal = computeFederalTax(cappedInputs);
-    const phaseOuts = {
-      magi,
-      self: { deduction: selfPhaseOut, roth: selfRoth, tradContrib: tradIraSelf + remainder },
-      spouse: isJoint ? { deduction: spousePhaseOut, roth: spouseRoth, tradContrib: tradIraSpouse } : null,
-      nonDeductibleIra,
-    };
     const state = computeStateTax(stateCode, {
       year,
       filingStatus,
@@ -526,9 +437,10 @@ export default function TaxEstimatorPage() {
       priorYearTax: priorYearTax === '' ? null : priorYearTax,
       priorYearAgi: priorYearAgi === '' ? null : priorYearAgi,
       withholding: payments.withholding,
+      isQualifyingFarmer: qualifyingFarmer,
     });
     return { inputs: cappedInputs, federal, state, totalLiability, payments, totalWithheld, balance, safeHarbor, phaseOuts };
-  }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi, coveredByPlan, spouseCovered]);
+  }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi, priorYearCapLoss, qualifyingFarmer, coveredByPlan, spouseCovered]);
 
   const scenarioLimits: ScenarioLimits | null = useMemo(() => {
     if (!estimate || !computed) return null;
@@ -1301,6 +1213,12 @@ export default function TaxEstimatorPage() {
                   <BreakdownRow label={`${computed.state.stateName} tax`} value={computed.state.tax} />
                   <BreakdownRow label="Combined liability" value={computed.totalLiability} strong />
                 </dl>
+                {computed.federal.capitalLossCarryoverToNextYear > 0.004 && (
+                  <p className="mt-2 text-[11px] text-foreground-muted">
+                    Capital loss beyond the annual cap: {formatCurrency(computed.federal.capitalLossCarryoverToNextYear)}{' '}
+                    carries over — enter it as next year&apos;s prior-year capital-loss carryover.
+                  </p>
+                )}
                 {computed.state.notes.length > 0 && (
                   <ul className="mt-3 space-y-1">
                     {computed.state.notes.map((n, i) => (
@@ -1350,9 +1268,34 @@ export default function TaxEstimatorPage() {
                       style={{ fontFeatureSettings: "'tnum'" }}
                     />
                   </Field>
+                  <Field label="Prior-year capital-loss carryover">
+                    <input
+                      type="number"
+                      min={0}
+                      value={priorYearCapLoss}
+                      placeholder="e.g. 5000"
+                      onChange={e => setPriorYearCapLoss(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
+                      className={`${INPUT} text-right font-mono`}
+                      style={{ fontFeatureSettings: "'tnum'" }}
+                    />
+                  </Field>
                 </FieldGrid>
+                <label className="flex items-center gap-2 text-xs text-foreground-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={qualifyingFarmer}
+                    onChange={e => setQualifyingFarmer(e.target.checked)}
+                    className="accent-[var(--primary)]"
+                  />
+                  Qualifying farmer (⅔ of gross income from farming) — single Jan 15 installment of 66⅔%
+                </label>
                 <dl className="space-y-1.5 font-mono text-xs" style={{ fontFeatureSettings: "'tnum'" }}>
-                  <BreakdownRow label="90% of current-year tax" value={computed.safeHarbor.ninetyPercentCurrent} />
+                  <BreakdownRow
+                    label={computed.safeHarbor.isQualifyingFarmer
+                      ? '66⅔% of current-year tax (farmer)'
+                      : '90% of current-year tax'}
+                    value={computed.safeHarbor.ninetyPercentCurrent}
+                  />
                   {computed.safeHarbor.priorYearSafeHarbor !== null && (
                     <BreakdownRow
                       label={`${Math.round((computed.safeHarbor.priorYearMultiplier ?? 1) * 100)}% of prior-year tax`}
@@ -1433,6 +1376,15 @@ export default function TaxEstimatorPage() {
                 stateCode={stateCode}
                 stateFlatRateOverride={stateFlatRate}
                 baselineLiability={computed.totalLiability}
+                iraDeduction={{
+                  coveredByEmployerPlan: coveredByPlan,
+                  spouseCoveredByEmployerPlan: spouseCovered,
+                  iraLimit: scenarioLimits.limits.tradIra,
+                  // Uncapped actuals: capped base + the portion already
+                  // non-deductible at the base MAGI.
+                  baseTraditionalIraContributions:
+                    computed.inputs.traditionalIraContributions + computed.phaseOuts.nonDeductibleIra,
+                }}
                 scenarios={scenarios}
                 onScenariosChange={setScenarios}
                 onSaveScenarios={handleSaveScenarios}

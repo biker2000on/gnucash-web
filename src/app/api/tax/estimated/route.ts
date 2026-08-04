@@ -8,88 +8,26 @@ import { ToolConfigService } from '@/lib/services/tool-config.service';
 import { calculateAge } from '@/lib/reports/irs-limits';
 import { aggregateBookTaxData, expandMappingsToDescendants } from '@/lib/tax/book-income';
 import { getLinkedBusinessIncome, applyLinkedBusinessIncome } from '@/lib/tax/linked-business';
-import { computeFederalTax, computeSafeHarbor, emptyFederalInputs } from '@/lib/tax/federal';
-import { summarizeTaxPayments, resolveContributionActuals } from '@/lib/tax/payments';
+import { computeFederalTax, computeSafeHarbor } from '@/lib/tax/federal';
+import { summarizeTaxPayments } from '@/lib/tax/payments';
+import { applyHouseholdTaxDetails, buildFederalInputsFromBookData } from '@/lib/tax/estimator-inputs';
+import { getContributionLimit } from '@/lib/reports/irs-limits';
 import { computeQuarterStatuses, quarterForPaymentDate, type EstimatedPayment } from '@/lib/tax/estimated-quarters';
 import { createCalculationTrace, persistCalculationTrace } from '@/lib/provenance';
 import {
   FILING_STATUSES,
   isSupportedTaxYear,
   isTaxCategory,
-  type BookTaxData,
-  type FederalTaxInputs,
   type FilingStatus,
   type TaxCategory,
-  type TaxYear,
 } from '@/lib/tax/types';
 
 const TOOL_TYPE = 'estimated_tax';
 const CONFIG_NAME = 'Estimated tax tracker inputs';
 
-function categoryTotal(bookData: BookTaxData, category: TaxCategory): number {
-  return bookData.categories.find(c => c.category === category)?.total ?? 0;
-}
-
-/**
- * Annualizable categories — mirrors buildInputs on the tax-estimator page
- * (src/app/(main)/tools/tax-estimator/page.tsx): simple annual flows whose
- * YTD totals scale by 1/elapsedYearFraction.
- */
-const ANNUALIZABLE: TaxCategory[] = [
-  'w2_wages', 'federal_withholding', 'state_withholding', 'estimated_tax_payment',
-  'state_estimated_tax_payment', 'fica_social_security',
-  'fica_medicare', 'interest_income', 'tax_exempt_interest', 'ordinary_dividends',
-  'qualified_dividends',
-  'self_employment_income', 'business_expense', 'rental_income', 'retirement_income',
-  'social_security_benefits', 'charitable_donation', 'mortgage_interest',
-  'property_tax', 'state_local_tax_paid', 'medical_expense', 'education_expense',
-  'other_income', 'other_deduction',
-];
-
-/** Server-side twin of the estimator page's buildInputs (always annualized). */
-function buildFederalInputs(
-  bookData: BookTaxData,
-  year: TaxYear,
-  filingStatus: FilingStatus,
-  filersAge65Plus: number,
-  qualifyingChildrenUnder17: number,
-): FederalTaxInputs {
-  const factor = bookData.elapsedYearFraction < 1 ? 1 / bookData.elapsedYearFraction : 1;
-  const get = (c: TaxCategory) =>
-    categoryTotal(bookData, c) * (ANNUALIZABLE.includes(c) ? factor : 1);
-
-  const qualifiedDividends = get('qualified_dividends');
-  const { trad401k, tradIra, hsa, sepIra, simpleIra } = resolveContributionActuals(bookData);
-
-  return {
-    ...emptyFederalInputs(year, filingStatus),
-    wages: get('w2_wages'),
-    interest: get('interest_income'),
-    taxExemptInterest: get('tax_exempt_interest'),
-    ordinaryDividends: get('ordinary_dividends') + qualifiedDividends,
-    qualifiedDividends,
-    shortTermCapitalGains: bookData.realizedGains.shortTerm,
-    longTermCapitalGains: bookData.realizedGains.longTerm,
-    selfEmploymentIncome: get('self_employment_income') - get('business_expense'),
-    rentalIncome: get('rental_income'),
-    retirementIncome: get('retirement_income'),
-    socialSecurityBenefits: get('social_security_benefits'),
-    otherIncome: get('other_income'),
-    traditional401kContributions: trad401k,
-    traditionalIraContributions: tradIra,
-    hsaContributions: hsa,
-    sepIraContributions: sepIra,
-    simpleIraContributions: simpleIra,
-    qualifyingChildrenUnder17,
-    charitableDonations: get('charitable_donation'),
-    mortgageInterest: get('mortgage_interest'),
-    stateLocalTaxesPaid: get('state_withholding') + get('state_estimated_tax_payment')
-      + get('property_tax') + get('state_local_tax_paid'),
-    medicalExpenses: get('medical_expense'),
-    otherDeductions: get('other_deduction'),
-    filersAge65Plus,
-  };
-}
+// Input assembly is SHARED with the estimator page and withholding checkup
+// (buildFederalInputsFromBookData + applyHouseholdTaxDetails) — do not
+// re-implement it here.
 
 function parseMoney(raw: string | null): number | null {
   if (raw === null || raw === '') return null;
@@ -239,13 +177,33 @@ export async function GET(request: NextRequest) {
     }
 
     /* --- Projected full-year federal liability ------------------------- */
-    const inputs = buildFederalInputs(
-      bookData, year, filingStatus, filersAge65Plus, dependentsUnder17,
+    const factor = bookData.elapsedYearFraction < 1 ? 1 / bookData.elapsedYearFraction : 1;
+    const rawInputs = buildFederalInputsFromBookData(
+      bookData, year, filingStatus, filersAge65Plus, factor,
     );
+    // Household layer (shared with the estimator page + withholding checkup):
+    // Child Tax Credit + §219(g) traditional-IRA deduction phase-out cap.
+    const [coveredPref, spouseCoveredPref, limitIra, limitSpouseIra] = await Promise.all([
+      getPreference<boolean>(user.id, 'tax_covered_by_employer_plan', true),
+      getPreference<boolean>(user.id, 'tax_spouse_covered_by_employer_plan', false),
+      getContributionLimit(year, 'traditional_ira', birthday),
+      getContributionLimit(year, 'traditional_ira', spouseMember?.birthday ?? null),
+    ]);
+    const { inputs } = applyHouseholdTaxDetails(rawInputs, {
+      qualifyingChildrenUnder17: dependentsUnder17,
+      coveredByEmployerPlan: !entity.synthesized && selfMember
+        ? selfMember.coveredByEmployerPlan
+        : (typeof coveredPref === 'boolean' ? coveredPref : true),
+      spouseCoveredByEmployerPlan: !entity.synthesized && spouseMember
+        ? spouseMember.coveredByEmployerPlan
+        : (typeof spouseCoveredPref === 'boolean' ? spouseCoveredPref : false),
+      selfIraLimit: limitIra?.total ?? null,
+      spouseIraLimit: limitSpouseIra?.total ?? null,
+      contributionsByTypeAndOwner: bookData.contributionsByTypeAndOwner,
+    });
     const federal = computeFederalTax(inputs);
 
     /* --- Withholding (annualized for the target, YTD for display) ------ */
-    const factor = bookData.elapsedYearFraction < 1 ? 1 / bookData.elapsedYearFraction : 1;
     const annualized = summarizeTaxPayments(bookData, factor);
     const ytd = summarizeTaxPayments(bookData, 1);
 
