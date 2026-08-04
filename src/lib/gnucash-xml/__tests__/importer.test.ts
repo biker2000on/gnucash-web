@@ -76,6 +76,13 @@ const tx = {
   },
   splits: {
     createMany: recordMany('splits.createMany'),
+    findMany: vi.fn(async () => []),
+  },
+  slots: {
+    deleteMany: vi.fn(async (args: { where: unknown }) => {
+      calls.push({ op: 'slots.deleteMany', data: args });
+      return { count: 0 };
+    }),
   },
   prices: {
     createMany: recordMany('prices.createMany'),
