@@ -1525,8 +1525,15 @@ item). **Prod repair executed 2026-08-04**: backup at
 dry-run matched the rehearsal exactly, apply reverted 82 gains transactions
 and wrote 95 carried-basis slots, and every verification (idempotent re-run,
 per-year reconciliation, VOO carried basis, zero orphan splits) matched the
-rehearsal row for row. This item is CLOSED except the 106 no-offset legacy
-lots (report-only; decide whether to sweep them in a follow-up). Findings kept below
+rehearsal row for row. **Sweep of the 106 no-offset lots resolved
+2026-08-04**: `scripts/sweep-lot-gains.ts` runs the real engine
+(`generateCapitalGains`) on every closed lot missing a gains offset; on both
+the rehearsal snapshot and prod (dry-run, rolled back) the engine correctly
+books NOTHING — all 106 sit under Roth IRA / HSA accounts (the audit's
+"none sit under Roth/HSA" claim was wrong) and are TAX_EXEMPT skips, and
+the other candidates are the 80 correctly-repaired transfer-closed lots
+plus one zero-proceeds disposal and one break-even. No data change needed.
+This item is fully CLOSED. Findings kept below
 for reference. Audited files: `src/lib/lot-scrub.ts`,
 `src/lib/lot-assignment.ts`, `src/lib/lots.ts`, `src/lib/cost-basis.ts`, and
 `src/components/ledger/investment-utils.ts`, each verified with read-only
@@ -1643,11 +1650,12 @@ transfer-ins, and bound the heuristic to buys ≤ sell date. **Effort:** M.
 
 ### Data-health note (no code change decided)
 
-106 closed lots have a nonzero value sum and **no** gains offset split, and
-none sit under Roth/HSA accounts — so they are not the TAX_EXEMPT skip path.
-Likely closed by earlier runs or desktop scrubs before gains generation
-existed. `computeRealizedGain` handles them correctly for display, but any
-repair pass from finding 1 should sweep these too.
+106 closed lots have a nonzero value sum and **no** gains offset split.
+~~None sit under Roth/HSA accounts~~ — **correction (2026-08-04 sweep): all
+106 sit under Roth IRA / HSA accounts** and are exactly the TAX_EXEMPT skip
+path; the engine correctly declines to book gains there. Verified against
+prod with `scripts/sweep-lot-gains.ts` (engine-driven, dry-run). No repair
+needed.
 
 ---
 
