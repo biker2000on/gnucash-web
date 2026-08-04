@@ -146,3 +146,71 @@ describe('maxOutScenario', () => {
     expect(validateScenario(s, LIMITS)).toHaveLength(0);
   });
 });
+
+describe('scenario IRA deductibility (§219(g))', () => {
+  // 2025 single, covered by an employer plan: phase-out 79,000–89,000 MAGI.
+  const coveredCtx = {
+    coveredByEmployerPlan: true,
+    spouseCoveredByEmployerPlan: false,
+    iraLimit: 7_000,
+  };
+
+  it('fully phased-out filer gets no deduction — and no phantom savings', () => {
+    // MAGI without IRA = 150,000 − 10,000 401k − 1,000 HSA = 139,000 > 89,000
+    const result = evaluateScenario({
+      baseInputs: baseInputs(),
+      scenario: scenario({ tradIra: 7_000 }, 'Max Trad IRA'),
+      limits: LIMITS,
+      stateCode: 'PA',
+      baselineLiability: (() => {
+        const fed = computeFederalTax(baseInputs());
+        const st = computeStateTax('PA', { year: 2025, filingStatus: 'single', federalAgi: fed.agi });
+        return fed.totalTax + st.tax;
+      })(),
+      iraDeduction: coveredCtx,
+    });
+    expect(result.federal.agi).toBe(computeFederalTax(baseInputs()).agi);
+    expect(result.taxSaved).toBeCloseTo(0, 2);
+    expect(result.nonDeductibleTradIra).toBe(7_000);
+  });
+
+  it('applyScenario caps the deduction at the phase-out limit', () => {
+    const applied = applyScenario(baseInputs(), scenario({ tradIra: 7_000 }), coveredCtx);
+    expect(applied.traditionalIraContributions).toBe(0); // fully phased out
+  });
+
+  it('partial phase-out allows the reduced limit', () => {
+    // wages 95,000, no other adjustments → MAGI without IRA = 95,000... use
+    // wages 84,000 → MAGI 84,000, inside 79k–89k: 7,000 × 5,000/10,000 = 3,500
+    const base = { ...baseInputs(), wages: 84_000, traditional401kContributions: 0, hsaContributions: 0 };
+    const applied = applyScenario(base, scenario({ tradIra: 7_000 }), coveredCtx);
+    expect(applied.traditionalIraContributions).toBe(3_500);
+  });
+
+  it('other pre-tax additions lower MAGI and unlock more IRA deduction', () => {
+    // wages 95,000 alone → MAGI 95,000 (fully phased out). Adding a 10,000
+    // 401k deferral drops MAGI to 85,000 → limit 7,000 × 4,000/10,000 = 2,800.
+    const base = { ...baseInputs(), wages: 95_000, traditional401kContributions: 0, hsaContributions: 0 };
+    const applied = applyScenario(
+      base,
+      scenario({ trad401k: 10_000, tradIra: 7_000 }),
+      coveredCtx,
+    );
+    expect(applied.traditional401kContributions).toBe(10_000);
+    expect(applied.traditionalIraContributions).toBe(2_800);
+  });
+
+  it('not covered by any plan → fully deductible at any income', () => {
+    const applied = applyScenario(
+      baseInputs(),
+      scenario({ tradIra: 7_000 }),
+      { coveredByEmployerPlan: false, spouseCoveredByEmployerPlan: false, iraLimit: 7_000 },
+    );
+    expect(applied.traditionalIraContributions).toBe(7_000);
+  });
+
+  it('without a context the old additive behavior is preserved', () => {
+    const applied = applyScenario(baseInputs(), scenario({ tradIra: 7_000 }));
+    expect(applied.traditionalIraContributions).toBe(7_000);
+  });
+});

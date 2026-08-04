@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth';
 import { getBookAccountGuids } from '@/lib/book-scope';
 import { getPreference } from '@/lib/user-preferences';
 import { getEntityProfile } from '@/lib/services/entity.service';
+import { calculateAge, getContributionLimit } from '@/lib/reports/irs-limits';
 import { loadWithholdingCheckup } from '@/lib/withholding';
 import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/tax/types';
 
@@ -17,6 +18,7 @@ import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/ta
  *   priorYearLiability    Prior-year total federal tax (safe harbor), optional
  *   priorYearAGI          Prior-year AGI (110% high-income multiplier), optional
  *   payPeriodsPerYear     Override pay cadence (else inferred from payslips)
+ *   qualifyingFarmer      'true' for the IRC §6654(i) farmer safe harbor
  *
  * Auth: readonly. Book-scoped. Returns the withholding checkup + provenance.
  */
@@ -54,6 +56,11 @@ export async function GET(request: NextRequest) {
 
     const filingStatusPref = await getPreference<string>(user.id, 'tax_filing_status', 'single');
     const birthday = await getPreference<string | null>(user.id, 'birthday', null);
+    const spouseBirthdayPref = await getPreference<string | null>(user.id, 'spouse_birthday', null);
+    const coveredPref = await getPreference<boolean>(user.id, 'tax_covered_by_employer_plan', true);
+    const spouseCoveredPref = await getPreference<boolean>(
+      user.id, 'tax_spouse_covered_by_employer_plan', false,
+    );
 
     // Book profile → user preference → default (book-scoped like the estimator)
     const filingStatusFallback = entity.filingStatus ?? filingStatusPref;
@@ -85,17 +92,56 @@ export async function GET(request: NextRequest) {
 
     const bookAccountGuids = await getBookAccountGuids();
 
+    // ---- Household context (Child Tax Credit + IRA phase-out parity with
+    // the estimator page: same sources as /api/tax/estimate) ----
+    const selfMember = entity.members.find(m => m.role === 'self') ?? null;
+    const spouseMember = entity.members.find(m => m.role === 'spouse') ?? null;
+    const effectiveBirthday =
+      (!entity.synthesized && selfMember?.birthday) ||
+      (typeof birthday === 'string' ? birthday : null);
+    const effectiveSpouseBirthday = !entity.synthesized
+      ? (spouseMember?.birthday ?? null)
+      : (typeof spouseBirthdayPref === 'string' ? spouseBirthdayPref : null);
+    const coveredByEmployerPlan = !entity.synthesized && selfMember
+      ? selfMember.coveredByEmployerPlan
+      : (typeof coveredPref === 'boolean' ? coveredPref : true);
+    const spouseCoveredByEmployerPlan = !entity.synthesized && spouseMember
+      ? spouseMember.coveredByEmployerPlan
+      : (typeof spouseCoveredPref === 'boolean' ? spouseCoveredPref : false);
+
+    const yearEnd = new Date(`${year}-12-31`);
+    const dependentsUnder17 = entity.members.filter(m => {
+      if (m.role !== 'dependent' || !m.birthday) return false;
+      const age = calculateAge(m.birthday, yearEnd);
+      return age !== null && age < 17;
+    }).length;
+
+    const [limitIra, limitSpouseIra] = await Promise.all([
+      getContributionLimit(year, 'traditional_ira', effectiveBirthday),
+      getContributionLimit(year, 'traditional_ira', effectiveSpouseBirthday),
+    ]);
+
+    const isQualifyingFarmer = searchParams.get('qualifyingFarmer') === 'true';
+
     const payload = await loadWithholdingCheckup({
       bookAccountGuids,
       bookGuid,
       year,
       filingStatus,
-      birthday: typeof birthday === 'string' ? birthday : null,
+      birthday: effectiveBirthday,
       filersAge65Plus,
       annualize,
       priorYearTax,
       priorYearAgi,
       payPeriodsPerYear,
+      household: {
+        qualifyingChildrenUnder17: dependentsUnder17,
+        coveredByEmployerPlan,
+        spouseCoveredByEmployerPlan,
+        selfIraLimit: limitIra?.total ?? null,
+        spouseIraLimit: limitSpouseIra?.total ?? null,
+      },
+      isQualifyingFarmer,
     });
 
     return NextResponse.json(payload);

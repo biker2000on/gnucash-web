@@ -7,6 +7,7 @@
  */
 
 import { computeFederalTax } from './federal';
+import { computeIraDeductionLimit } from './phaseouts';
 import { computeStateTax } from './state';
 import type {
   ContributionScenario,
@@ -99,21 +100,79 @@ export function validateScenario(
   return issues;
 }
 
-/** Apply a scenario's additional contributions to federal inputs. */
+/**
+ * Deductibility context for hypothetical traditional-IRA additions
+ * (IRC §219(g)). Without it, scenario IRA dollars are deducted in full —
+ * which overstates savings for plan-covered filers above the MAGI range.
+ */
+export interface ScenarioIraDeductionContext {
+  /** Filer is an active participant in an employer plan. */
+  coveredByEmployerPlan: boolean;
+  /** Spouse is an active participant in an employer plan. */
+  spouseCoveredByEmployerPlan: boolean;
+  /**
+   * Household IRA contribution limit for the phase-out math (self + spouse
+   * for joint filers). null = unknown → no cap applied.
+   *
+   * SIMPLIFICATION: joint filers get ONE phase-out pass using the filer's
+   * coverage flags and the combined limit, not the per-spouse split the
+   * estimator base computation does.
+   */
+  iraLimit: number | null;
+  /**
+   * UNCAPPED traditional IRA contributions already made (base actuals before
+   * the base estimate's own §219(g) cap). Defaults to the base input value
+   * (which may already be capped) when omitted.
+   */
+  baseTraditionalIraContributions?: number;
+}
+
+/**
+ * Apply a scenario's additional contributions to federal inputs.
+ *
+ * When `iraDeduction` context is provided, hypothetical traditional-IRA
+ * dollars are routed through computeIraDeductionLimit using MAGI computed
+ * WITHOUT the IRA deduction (the same pass the estimator page does), so a
+ * "max out traditional IRA" scenario for a plan-covered filer above the
+ * MAGI range shows no phantom savings.
+ */
 export function applyScenario(
   base: FederalTaxInputs,
   scenario: ContributionScenario,
+  iraDeduction?: ScenarioIraDeductionContext,
 ): FederalTaxInputs {
   const add = scenario.additional;
-  return {
+  const addTradIra = Math.max(0, add.tradIra ?? 0);
+  const applied: FederalTaxInputs = {
     ...base,
     traditional401kContributions:
       base.traditional401kContributions + Math.max(0, add.trad401k ?? 0),
-    traditionalIraContributions:
-      base.traditionalIraContributions + Math.max(0, add.tradIra ?? 0),
+    traditionalIraContributions: base.traditionalIraContributions + addTradIra,
     hsaContributions: base.hsaContributions + Math.max(0, add.hsa ?? 0),
     // Roth contributions don't change federal taxable income
   };
+
+  if (iraDeduction && iraDeduction.iraLimit !== null && applied.traditionalIraContributions > 0) {
+    // MAGI for §219(g) is computed without the IRA deduction itself — the
+    // scenario's other pre-tax additions (401k/HSA) DO lower it.
+    const magiPass = computeFederalTax({ ...applied, traditionalIraContributions: 0 });
+    const phaseOut = computeIraDeductionLimit({
+      year: base.year,
+      filingStatus: base.filingStatus,
+      magi: magiPass.agi,
+      coveredByEmployerPlan: iraDeduction.coveredByEmployerPlan,
+      spouseCoveredByEmployerPlan: iraDeduction.spouseCoveredByEmployerPlan,
+      iraLimit: iraDeduction.iraLimit,
+    });
+    const totalRequested =
+      (iraDeduction.baseTraditionalIraContributions ?? base.traditionalIraContributions) +
+      addTradIra;
+    applied.traditionalIraContributions = round2(
+      Math.min(totalRequested, phaseOut.deductibleLimit),
+    );
+  }
+
+  return applied;
 }
 
 export interface EvaluateScenarioOptions {
@@ -124,11 +183,20 @@ export interface EvaluateScenarioOptions {
   stateFlatRateOverride?: number;
   /** Precomputed baseline liability (federal + state) for delta math */
   baselineLiability: number;
+  /** §219(g) deductibility context for traditional-IRA additions. */
+  iraDeduction?: ScenarioIraDeductionContext;
 }
 
 export function evaluateScenario(opts: EvaluateScenarioOptions): ScenarioResult {
   const issues = validateScenario(opts.scenario, opts.limits);
-  const inputs = applyScenario(opts.baseInputs, opts.scenario);
+  const inputs = applyScenario(opts.baseInputs, opts.scenario, opts.iraDeduction);
+  const addTradIra = Math.max(0, opts.scenario.additional.tradIra ?? 0);
+  const requestedTradIra =
+    (opts.iraDeduction?.baseTraditionalIraContributions ??
+      opts.baseInputs.traditionalIraContributions) + addTradIra;
+  const nonDeductibleTradIra = round2(
+    Math.max(0, requestedTradIra - inputs.traditionalIraContributions),
+  );
   const federal = computeFederalTax(inputs);
   const stateInputs: StateTaxInputs = {
     year: inputs.year,
@@ -156,6 +224,7 @@ export function evaluateScenario(opts: EvaluateScenarioOptions): ScenarioResult 
     effectiveRate: federal.effectiveRate,
     takeHomeChange: round2(taxSaved - totalAdditional),
     totalAdditional: round2(totalAdditional),
+    nonDeductibleTradIra,
   };
 }
 

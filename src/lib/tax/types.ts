@@ -211,6 +211,15 @@ export interface FederalTaxInputs {
   simpleIraContributions?: number;
   /** Qualifying children under 17 at year end (Child Tax Credit) — optional, defaults to 0 */
   qualifyingChildrenUnder17?: number;
+  /**
+   * Prior-year capital-loss carryover (Schedule D line 6/14), entered as a
+   * POSITIVE number. Applied against net capital gains before the -$3,000
+   * (-$1,500 MFS) loss cap; any unused portion is surfaced on the result as
+   * `capitalLossCarryoverToNextYear`. Simplification: treated as a long-term
+   * carryover (it offsets LTCG first, then STCG) rather than tracking
+   * short/long character separately. Optional, defaults to 0.
+   */
+  priorYearCapitalLossCarryover?: number;
 
   /** Itemized deduction components */
   charitableDonations: number;
@@ -286,6 +295,13 @@ export interface FederalTaxResult {
   /** Net capital gain + qualified dividends taxed at preferential rates */
   preferentialIncome: number;
 
+  /**
+   * Capital loss (including any prior-year carryover) not usable this year
+   * beyond the -$3,000/-$1,500 cap — carry this into next year's
+   * `priorYearCapitalLossCarryover`. Always >= 0.
+   */
+  capitalLossCarryoverToNextYear: number;
+
   ordinaryTax: number;
   capitalGainsTax: number;
   selfEmploymentTax: number;
@@ -314,6 +330,14 @@ export interface SafeHarborInputs {
   priorYearAgi: number | null;
   /** Total expected withholding for the year */
   withholding: number;
+  /**
+   * IRC §6654(i) qualifying farmer (or fisherman): at least 2/3 of gross
+   * income from farming/fishing. Explicit user flag — never auto-inferred
+   * from book activity. Changes the safe harbor to a single Jan 15
+   * installment of 66 2/3% of current-year tax (prior-year 100% still
+   * applies; the 110% high-AGI multiplier does not).
+   */
+  isQualifyingFarmer?: boolean;
 }
 
 export interface QuarterlyPayment {
@@ -323,7 +347,17 @@ export interface QuarterlyPayment {
 }
 
 export interface SafeHarborResult {
+  /**
+   * Current-year-based safe harbor: 90% of current-year tax, or 66 2/3%
+   * for a qualifying farmer (IRC §6654(i)). The field name reflects the
+   * common case; check `isQualifyingFarmer` / `currentYearFactor` for the
+   * multiplier actually applied.
+   */
   ninetyPercentCurrent: number;
+  /** 0.9 normally; 2/3 for a qualifying farmer. */
+  currentYearFactor: number;
+  /** Echo of SafeHarborInputs.isQualifyingFarmer (default false). */
+  isQualifyingFarmer: boolean;
   priorYearSafeHarbor: number | null;
   /** 1.0 or 1.1 */
   priorYearMultiplier: number | null;
@@ -467,4 +501,11 @@ export interface ScenarioResult {
   /** Change in take-home cash: taxSaved − total additional out-of-pocket contributions */
   takeHomeChange: number;
   totalAdditional: number;
+  /**
+   * Portion of the scenario's traditional IRA dollars (base + additional)
+   * that is NOT deductible under the §219(g) phase-out — a Form 8606
+   * non-deductible contribution with no tax savings. 0 when no IRA
+   * deduction context was supplied.
+   */
+  nonDeductibleTradIra: number;
 }

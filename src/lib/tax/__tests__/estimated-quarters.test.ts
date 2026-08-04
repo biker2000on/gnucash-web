@@ -25,6 +25,24 @@ describe('quarterWindows', () => {
     expect(windows[2].start).toBe('2026-06-16');
     expect(windows[3].start).toBe('2026-09-16');
   });
+
+  it('rolls weekend due dates forward per §7503 (2025: Jun 15 is a Sunday)', () => {
+    const windows = quarterWindows(2025);
+    expect(windows.map(w => w.dueDate)).toEqual([
+      '2025-04-15', '2025-06-16', '2025-09-15', '2026-01-15',
+    ]);
+    // Q3 window opens the day after the ROLLED Q2 due date.
+    expect(windows[1].end).toBe('2025-06-16');
+    expect(windows[2].start).toBe('2025-06-17');
+  });
+
+  it('rolls 2024 Q2 (Saturday) and Q3 (Sunday) to the following Monday', () => {
+    const windows = quarterWindows(2024);
+    expect(windows[1].dueDate).toBe('2024-06-17');
+    expect(windows[2].dueDate).toBe('2024-09-16');
+    expect(windows[2].start).toBe('2024-06-18');
+    expect(windows[3].start).toBe('2024-09-17');
+  });
 });
 
 describe('quarterForPaymentDate', () => {
@@ -46,6 +64,12 @@ describe('quarterForPaymentDate', () => {
   it('counts payments after the Q4 due date as late Q4', () => {
     expect(quarterForPaymentDate('2027-01-20', 2026)).toBe(4);
     expect(quarterForPaymentDate('2027-03-01', 2026)).toBe(4);
+  });
+
+  it('a payment on a rolled due date is timely for that quarter (§7503)', () => {
+    // 2025 Q2 statutory date Jun 15 is a Sunday → due Jun 16.
+    expect(quarterForPaymentDate('2025-06-16', 2025)).toBe(2);
+    expect(quarterForPaymentDate('2025-06-17', 2025)).toBe(3);
   });
 });
 
