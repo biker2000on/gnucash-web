@@ -234,13 +234,29 @@ export interface FederalTaxInputs {
   filersAge65Plus: number;
 
   /**
-   * Typed extension point for OBBBA provisions not implemented in v1
-   * (tip income deduction, overtime deduction). Reserved — currently unused.
+   * OBBBA qualified tip income (IRC §224, 2025-2028): cash tips in a
+   * Treasury-listed tipped occupation, W-2 box 7 / Form 4137 / 1099-reported.
+   * The engine caps the deduction at $25,000 per return and applies the
+   * $150,000 ($300,000 MFJ) MAGI phase-out; MFS is statutorily excluded.
+   * Optional, defaults to 0.
    */
-  obbbaExtensions?: {
-    tipIncomeDeduction?: number;
-    overtimeDeduction?: number;
-  };
+  qualifiedTipIncome?: number;
+  /**
+   * OBBBA qualified overtime compensation (IRC §225, 2025-2028): ONLY the
+   * FLSA §7 half-time premium portion (the "0.5" in time-and-a-half), not
+   * the whole overtime paycheck. Deduction capped at $12,500 ($25,000 MFJ)
+   * with the $150,000 ($300,000 MFJ) MAGI phase-out; MFS excluded.
+   * Optional, defaults to 0.
+   */
+  qualifiedOvertimeCompensation?: number;
+  /**
+   * OBBBA qualified passenger vehicle loan interest (IRC §163(h)(4),
+   * 2025-2028): interest on a post-2024 loan for a NEW personal-use vehicle
+   * with final assembly in the United States. Deduction capped at $10,000
+   * per return (not doubled for MFJ) with the $100,000 ($200,000 MFJ) MAGI
+   * phase-out. Optional, defaults to 0.
+   */
+  qualifiedCarLoanInterest?: number;
 }
 
 export interface BracketFill {
@@ -270,19 +286,50 @@ export interface FederalTaxResult {
   taxableSocialSecurity: number;
 
   standardDeduction: number;
+  /**
+   * Itemized total after the §170(q) charitable floor but BEFORE the §68
+   * 2/37 limitation (`itemizedLimitationReduction` is reported separately;
+   * `deductionTaken` reflects it when itemizing).
+   */
   itemizedDeduction: number;
   itemizedBreakdown: {
     saltAllowed: number;
     saltCap: number;
     mortgageInterest: number;
+    /** Charitable allowed on Schedule A (after the 2026+ §170(q) floor). */
     charitable: number;
+    /**
+     * Charitable disallowed by the §170(q) 0.5%-of-AGI floor (2026+, 0
+     * before). Only meaningful when itemizing; the floored amount would
+     * carry forward under §170(d) (carryover not modeled here).
+     */
+    charitableFloorDisallowed: number;
     medicalAllowed: number;
     other: number;
   };
   usedItemized: boolean;
   deductionTaken: number;
+  /**
+   * §68 (2026+) 2/37 overall limitation on itemized deductions for filers
+   * whose income reaches the 37% bracket: 2/37 × min(itemized deductions,
+   * taxable income (computed without §68, plus those itemized deductions)
+   * over the 37%-bracket start). 0 when not itemizing or below the bracket.
+   */
+  itemizedLimitationReduction: number;
   /** OBBBA senior deduction (2025+), after phase-out */
   seniorDeduction: number;
+  /** §224 qualified tips deduction (2025-2028), after cap and phase-out. */
+  tipsDeduction: number;
+  /** §225 qualified overtime deduction (2025-2028), after cap and phase-out. */
+  overtimeDeduction: number;
+  /** §163(h)(4) car-loan interest deduction (2025-2028), after cap and phase-out. */
+  carLoanInterestDeduction: number;
+  /**
+   * §170(p) non-itemizer charitable deduction (2026+): up to $1,000
+   * ($2,000 MFJ) of cash gifts when taking the standard deduction. 0 when
+   * itemizing.
+   */
+  nonItemizerCharitableDeduction: number;
   /**
    * §199A qualified business income deduction, applied AFTER the standard /
    * itemized and senior deductions. Simplified below-threshold model — see the

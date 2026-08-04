@@ -125,6 +125,16 @@ export interface HouseholdTaxContext {
    * contributions are attributed to the filer.
    */
   contributionsByTypeAndOwner?: Record<string, { self: number; spouse: number }>;
+  /**
+   * OBBBA §224 qualified tip income (2025-2028) — user-entered, not
+   * book-derived. The engine applies the cap, MAGI phase-out, and MFS
+   * exclusion. Optional; omitted/undefined leaves the base input untouched.
+   */
+  qualifiedTipIncome?: number;
+  /** OBBBA §225 qualified overtime premium (2025-2028) — user-entered. */
+  qualifiedOvertimeCompensation?: number;
+  /** OBBBA §163(h)(4) qualified car-loan interest (2025-2028) — user-entered. */
+  qualifiedCarLoanInterest?: number;
 }
 
 export interface PhaseOutPerson {
@@ -154,6 +164,9 @@ export interface HouseholdTaxDetailsResult {
  * inputs — shared verbatim by the withholding checkup:
  *
  * - Child Tax Credit: sets `qualifyingChildrenUnder17`.
+ * - OBBBA §224/§225/§163(h)(4) amounts (tips / overtime premium / car-loan
+ *   interest): user-entered, passed through to the engine which owns the
+ *   caps, phase-outs, and year gating.
  * - Traditional IRA deduction: caps `traditionalIraContributions` at the
  *   §219(g) deductible limit per spouse, using MAGI computed without the
  *   IRA deduction itself.
@@ -166,6 +179,17 @@ export function applyHouseholdTaxDetails(
   const inputs: FederalTaxInputs = {
     ...base,
     qualifyingChildrenUnder17: Math.max(0, household.qualifyingChildrenUnder17),
+    // OBBBA below-the-line inputs (do not affect AGI, so the §219(g) MAGI
+    // pass below is unaffected). undefined = leave the base value as-is.
+    ...(household.qualifiedTipIncome !== undefined
+      ? { qualifiedTipIncome: Math.max(0, household.qualifiedTipIncome) }
+      : {}),
+    ...(household.qualifiedOvertimeCompensation !== undefined
+      ? { qualifiedOvertimeCompensation: Math.max(0, household.qualifiedOvertimeCompensation) }
+      : {}),
+    ...(household.qualifiedCarLoanInterest !== undefined
+      ? { qualifiedCarLoanInterest: Math.max(0, household.qualifiedCarLoanInterest) }
+      : {}),
   };
 
   // MAGI for IRA purposes is computed WITHOUT the IRA deduction itself, so

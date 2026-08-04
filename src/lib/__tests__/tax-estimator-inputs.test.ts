@@ -147,6 +147,36 @@ describe('applyHouseholdTaxDetails', () => {
     expect(phaseOuts.nonDeductibleIra).toBe(0);
   });
 
+  it('threads OBBBA tips/overtime/car-loan amounts into the engine inputs', () => {
+    const base = buildFederalInputsFromBookData(bookData({ w2_wages: 90_000 }, {
+      realizedGains: { shortTerm: 0, longTerm: 0, accounts: [] },
+    }), 2025, 'single', 0, 1);
+    const { inputs } = applyHouseholdTaxDetails(base, household({
+      qualifyingChildrenUnder17: 0,
+      qualifiedTipIncome: 6_000,
+      qualifiedOvertimeCompensation: 2_500,
+      qualifiedCarLoanInterest: 1_200,
+    }));
+    expect(inputs.qualifiedTipIncome).toBe(6_000);
+    expect(inputs.qualifiedOvertimeCompensation).toBe(2_500);
+    expect(inputs.qualifiedCarLoanInterest).toBe(1_200);
+    const federal = computeFederalTax(inputs);
+    expect(federal.tipsDeduction).toBe(6_000);
+    expect(federal.overtimeDeduction).toBe(2_500);
+    expect(federal.carLoanInterestDeduction).toBe(1_200);
+  });
+
+  it('leaves OBBBA inputs untouched when the household omits them', () => {
+    const base = {
+      ...buildFederalInputsFromBookData(bookData({ w2_wages: 90_000 }, {
+        realizedGains: { shortTerm: 0, longTerm: 0, accounts: [] },
+      }), 2025, 'single', 0, 1),
+      qualifiedTipIncome: 4_000,
+    };
+    const { inputs } = applyHouseholdTaxDetails(base, household({ qualifyingChildrenUnder17: 0 }));
+    expect(inputs.qualifiedTipIncome).toBe(4_000);
+  });
+
   it('splits joint contributions per spouse for the phase-out', () => {
     const base = buildFederalInputsFromBookData(
       bookData({ w2_wages: 100_000 }, {
