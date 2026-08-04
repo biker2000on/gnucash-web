@@ -11,7 +11,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const state = vi.hoisted(() => ({
   stored: {} as Record<string, unknown>,
   /** Rows returned for gnucash_web_entity_members. */
-  members: [] as Array<{ role: string; name: string; birthday: string | null }>,
+  members: [] as Array<{
+    role: string;
+    name: string;
+    birthday: string | null;
+    covered_by_employer_plan?: boolean;
+  }>,
   /** filing_status column on gnucash_web_entity_profiles; null = no row. */
   filingStatus: null as string | null,
   /** When true, entity queries throw — a fresh install with no entity tables. */
@@ -59,12 +64,16 @@ vi.mock('@/lib/documents', () => ({ listLinkedDocuments: vi.fn(async () => []) }
 
 import {
   getResilienceSection,
+  getResolvedFamilyBankingProfile,
   loadHouseholdFilingStatus,
   loadHouseholdRoster,
   saveResilienceProfile,
 } from '../service';
+import { compareHealthPlans } from '../core';
 import type {
   EducationProfile,
+  FamilyBankingProfile,
+  HealthcareProfile,
   HouseholdMember,
   LifeProfile,
   PlanningFilingStatus,
@@ -107,8 +116,17 @@ describe('loadHouseholdRoster', () => {
   it('returns household members with their birthdays', async () => {
     state.members = [{ role: 'self', name: 'Justin Crawford', birthday: '1978-04-02' }];
     expect(await loadHouseholdRoster(BOOK)).toEqual([
-      { role: 'self', name: 'Justin Crawford', birthday: '1978-04-02' },
+      { role: 'self', name: 'Justin Crawford', birthday: '1978-04-02', coveredByEmployerPlan: false },
     ]);
+  });
+
+  it('carries the employer-plan coverage flag through', async () => {
+    state.members = [
+      { role: 'self', name: 'Justin Crawford', birthday: '1978-04-02', covered_by_employer_plan: true },
+      { role: 'spouse', name: 'Cara Crawford', birthday: '1980-09-14', covered_by_employer_plan: false },
+    ];
+    expect((await loadHouseholdRoster(BOOK)).map(member => member.coveredByEmployerPlan))
+      .toEqual([true, false]);
   });
 
   it('returns an empty roster when the entity tables are missing', async () => {
@@ -427,5 +445,169 @@ describe('giving section', () => {
     expect(result.profile.settings.filingStatus).toBeNull();
     expect(result.plan.settings.filingStatus).toBe('married_joint');
     expect(result.household).toMatchObject({ filingStatus: 'married_joint', filingStatusInherited: true });
+  });
+});
+
+describe('healthcare section', () => {
+  const plan = {
+    id: 'plan-a',
+    name: 'HDHP',
+    annualPremium: 3_600,
+    familyDeductible: 4_000,
+    coinsurancePercent: 20,
+    outOfPocketMax: 8_000,
+    employerHsaContribution: 1_000,
+    employeeHsaContribution: 2_000,
+    marginalTaxRate: 24,
+    hsaEligible: true,
+  };
+  const claim = {
+    id: 'hc1',
+    date: '2026-03-14',
+    member: 'Stale Name',
+    category: 'Medical',
+    allowedAmount: 1_200,
+  };
+
+  it('resolves linked claim members and surfaces household and employer-plan context', async () => {
+    state.members = [
+      { role: 'self', name: 'Justin Crawford', birthday: '1978-04-02', covered_by_employer_plan: true },
+      { role: 'spouse', name: 'Cara Crawford', birthday: '1980-09-14', covered_by_employer_plan: false },
+    ];
+    await saveResilienceProfile({
+      bookGuid: BOOK,
+      userId: 1,
+      section: 'healthcare',
+      data: {
+        currentPlanId: 'plan-a',
+        plans: [plan],
+        claims: [{ ...claim, memberRole: 'spouse' }],
+      },
+    });
+    const result = await getResilienceSection(BOOK, 'healthcare') as {
+      profile: HealthcareProfile;
+      comparison: Array<{ allowed: number; netAnnualCost: number }>;
+      household: HouseholdContext;
+      employerPlan: { covered: string[]; notCovered: string[] };
+    };
+    // A rename in Settings follows the person; the claim history stays whole.
+    expect(result.profile.claims[0].member).toBe('Cara Crawford');
+    expect(result.comparison[0].allowed).toBe(1_200);
+    expect(result.household.members).toHaveLength(2);
+    expect(result.employerPlan).toEqual({ covered: ['Justin Crawford'], notCovered: ['Cara Crawford'] });
+  });
+
+  it('round-trips a legacy claim unchanged and computes the comparison identically', async () => {
+    state.members = [{ role: 'self', name: 'Stale Name', birthday: null }];
+    const legacy = { currentPlanId: 'plan-a', plans: [plan], claims: [claim] };
+    const saved = await saveResilienceProfile({
+      bookGuid: BOOK,
+      userId: 1,
+      section: 'healthcare',
+      data: legacy,
+    }) as HealthcareProfile;
+    // memberRole is absent, not invented, even though the name matches 'self'.
+    expect(saved.claims[0].memberRole ?? null).toBeNull();
+
+    const result = await getResilienceSection(BOOK, 'healthcare') as {
+      profile: HealthcareProfile;
+      comparison: Array<{ netAnnualCost: number }>;
+    };
+    expect(result.profile.claims[0].member).toBe('Stale Name');
+    expect(result.comparison.map(row => row.netAnnualCost))
+      .toEqual(compareHealthPlans(legacy.plans, legacy.claims).map(row => row.netAnnualCost));
+  });
+});
+
+describe('family banking section', () => {
+  const bankChild = {
+    id: 'fb1',
+    name: 'Stored Child',
+    liabilityAccountGuid: '',
+    allowanceAmount: 10,
+    allowanceCadence: 'weekly',
+    nextAllowanceDate: '2026-08-01',
+    parentMatchPercent: 0,
+    savingsGoal: 500,
+    entries: [],
+  };
+
+  it('seeds one ledger per named household dependent when the pack is empty', async () => {
+    state.members = [
+      { role: 'self', name: 'Justin Crawford', birthday: '1978-04-02' },
+      { role: 'dependent', name: 'Rowan Crawford', birthday: '2012-01-20' },
+      { role: 'dependent', name: 'Sage Crawford', birthday: '2015-06-11' },
+    ];
+    const result = await getResilienceSection(BOOK, 'family_banking') as {
+      profile: FamilyBankingProfile;
+      children: Array<{ child: { id: string }; allowanceDue: boolean }>;
+      household: HouseholdContext;
+    };
+    expect(result.profile.children.map(child => child.name)).toEqual(['Rowan Crawford', 'Sage Crawford']);
+    expect(result.profile.children[0]).toMatchObject({
+      id: 'household-dependent-rowan-crawford',
+      memberRole: 'dependent',
+      memberName: 'Rowan Crawford',
+    });
+    // Ledger analyses run for the seeded children, and a never-saved seed is
+    // never instantly "allowance due".
+    expect(result.children).toHaveLength(2);
+    expect(result.children.every(child => !child.allowanceDue)).toBe(true);
+    expect(result.household.members).toHaveLength(3);
+
+    // The kid-view accessor resolves the same seeded ledger by its stable id.
+    const resolved = await getResolvedFamilyBankingProfile(BOOK);
+    expect(resolved.children.map(child => child.id)).toEqual(result.profile.children.map(child => child.id));
+  });
+
+  it('resolves a linked child against the roster, roster name winning', async () => {
+    state.members = [{ role: 'dependent', name: 'Rowan Crawford', birthday: '2012-01-20' }];
+    await saveResilienceProfile({
+      bookGuid: BOOK,
+      userId: 1,
+      section: 'family_banking',
+      data: { children: [{ ...bankChild, memberRole: 'dependent', memberName: 'Rowan Crawford' }] },
+    });
+    const result = await getResilienceSection(BOOK, 'family_banking') as { profile: FamilyBankingProfile };
+    expect(result.profile.children[0]).toMatchObject({
+      name: 'Rowan Crawford',
+      // Ledger inputs are never touched by resolution.
+      allowanceAmount: 10,
+      savingsGoal: 500,
+      nextAllowanceDate: '2026-08-01',
+    });
+  });
+
+  it('does not guess when two dependents share a name', async () => {
+    state.members = [
+      { role: 'dependent', name: 'Rowan Crawford', birthday: '2012-01-20' },
+      { role: 'dependent', name: 'rowan crawford', birthday: '2014-03-05' },
+    ];
+    await saveResilienceProfile({
+      bookGuid: BOOK,
+      userId: 1,
+      section: 'family_banking',
+      data: { children: [{ ...bankChild, memberRole: 'dependent', memberName: 'Rowan Crawford' }] },
+    });
+    const result = await getResilienceSection(BOOK, 'family_banking') as { profile: FamilyBankingProfile };
+    expect(result.profile.children[0].name).toBe('Stored Child');
+  });
+
+  it('round-trips a legacy child unchanged, even with a name-matching roster', async () => {
+    state.members = [{ role: 'dependent', name: 'Stored Child', birthday: '2012-01-20' }];
+    const saved = await saveResilienceProfile({
+      bookGuid: BOOK,
+      userId: 1,
+      section: 'family_banking',
+      data: { children: [bankChild] },
+    }) as FamilyBankingProfile;
+    expect(saved.children[0].memberRole ?? null).toBeNull();
+
+    const result = await getResilienceSection(BOOK, 'family_banking') as {
+      profile: FamilyBankingProfile;
+      children: Array<{ child: { name: string } }>;
+    };
+    expect(result.profile.children[0]).toMatchObject({ name: 'Stored Child', allowanceAmount: 10 });
+    expect(result.children[0].child.name).toBe('Stored Child');
   });
 });

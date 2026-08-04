@@ -38,6 +38,13 @@ export interface HouseholdMember {
   name: string;
   /** ISO date (YYYY-MM-DD) from household settings, or null when unset. */
   birthday: string | null;
+  /**
+   * Whether this member is covered by an employer health/retirement plan, from
+   * household settings (`covered_by_employer_plan`). The healthcare comparator
+   * uses it as plan-eligibility context. Optional so hand-built rosters (tests,
+   * older callers) need not carry it; absent reads as unknown, not false.
+   */
+  coveredByEmployerPlan?: boolean;
 }
 
 /**
@@ -159,6 +166,20 @@ export interface LifeProfile {
 export interface HealthcareClaim {
   id: string;
   date: string;
+  /**
+   * Household member this claim belongs to, when linked. 'self' and 'spouse'
+   * are unique, so the role alone links; 'dependent' is not, so the link is
+   * role + normalized `member` name (same strict matcher as the 529 pack — an
+   * ambiguous or missing match keeps the stored text rather than guessing).
+   * `null`/absent means a free-text member (every claim saved before this
+   * existed), which keeps behaving exactly as it did.
+   */
+  memberRole?: HouseholdRole | null;
+  /**
+   * Member display name. When the link resolves against the roster the
+   * roster's name wins, so a rename in Settings no longer splits a person's
+   * claim history. For a linked dependent it is also the disambiguator.
+   */
   member: string;
   category: string;
   allowedAmount: number;
@@ -361,6 +382,25 @@ export interface FamilyBankEntry {
 
 export interface FamilyBankChild {
   id: string;
+  /**
+   * Household member this ledger belongs to, when linked. In practice only
+   * 'dependent' is meaningful here. As in the 529 pack, 'dependent' is not
+   * unique and the entity API has no stable per-member id, so the link is
+   * role + normalized name (`memberName`, falling back to `name`), and an
+   * ambiguous or missing match keeps the stored values rather than guessing.
+   * `null`/absent means a manually entered child (every ledger saved before
+   * this existed), which keeps behaving exactly as it did.
+   */
+  memberRole?: HouseholdRole | null;
+  /**
+   * Display snapshot of the linked member's name, and the disambiguator that
+   * picks which dependent this is. Falls back to `name` when absent.
+   */
+  memberName?: string | null;
+  /**
+   * Display name. A fallback only: when the link resolves to exactly one
+   * dependent, that member's name wins.
+   */
   name: string;
   liabilityAccountGuid: string;
   allowanceAmount: number;

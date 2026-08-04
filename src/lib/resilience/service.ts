@@ -29,9 +29,12 @@ import {
   calculateEstateReadiness,
 } from './estate-core';
 import {
+  employerPlanCoverage,
   mapEntityFilingStatus,
   resolveEducationProfile,
+  resolveFamilyBankingProfile,
   resolveFilingStatus,
+  resolveHealthcareProfile,
   resolveLifeProfile,
   resolveRetirementIncomeProfile,
   withResolvedFilingStatus,
@@ -206,6 +209,8 @@ const healthcareSchema = z.object({
   claims: z.array(z.object({
     id,
     date,
+    memberRole: householdRole,
+    /** Display name; for a linked dependent, also the disambiguator. */
     member: z.string().trim().max(120),
     category: z.string().trim().max(120),
     allowedAmount: money,
@@ -315,6 +320,9 @@ const utilitiesSchema = z.object({
 const familyBankingSchema = z.object({
   children: z.array(z.object({
     id,
+    memberRole: householdRole,
+    /** Disambiguates which dependent this is; 'dependent' is not unique. */
+    memberName: z.string().trim().max(120).nullable().optional(),
     name: z.string().trim().min(1).max(120),
     liabilityAccountGuid: z.string().max(32),
     allowanceAmount: money,
@@ -902,8 +910,17 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
     };
   }
   if (section === 'healthcare') {
-    const health = profile as HealthcareProfile;
-    return { profile, comparison: compareHealthPlans(health.plans, health.claims) };
+    // Claim members come from the household roster; the plans, claim amounts,
+    // and comparison math are pack-specific. Employer-plan coverage recorded in
+    // Settings is surfaced as eligibility context for the comparator.
+    const roster = await loadHouseholdRoster(bookGuid);
+    const resolved = resolveHealthcareProfile(profile as HealthcareProfile, roster);
+    return {
+      profile: resolved,
+      comparison: compareHealthPlans(resolved.plans, resolved.claims),
+      household: householdContext(roster, null),
+      employerPlan: employerPlanCoverage(roster),
+    };
   }
   if (section === 'mileage') {
     return {
@@ -931,9 +948,13 @@ export async function getResilienceSection(bookGuid: string, section: Resilience
     };
   }
   if (section === 'family_banking') {
+    // Children are household dependents; only the ledger data is pack-specific.
+    const roster = await loadHouseholdRoster(bookGuid);
+    const resolved = resolveFamilyBankingProfile(profile as FamilyBankingProfile, roster);
     return {
-      profile,
-      children: (profile as FamilyBankingProfile).children.map(child => calculateFamilyBanking(child)),
+      profile: resolved,
+      children: resolved.children.map(child => calculateFamilyBanking(child)),
+      household: householdContext(roster, null),
     };
   }
   if (section === 'trips') {
@@ -1052,18 +1073,25 @@ function charityMileageContext(mileage: MileageProfile, now = new Date()): Givin
 export async function loadHouseholdRoster(bookGuid: string): Promise<HouseholdMember[]> {
   try {
     const result = await query(
-      `SELECT role, COALESCE(name, '') AS name, birthday
+      `SELECT role, COALESCE(name, '') AS name, birthday,
+              COALESCE(covered_by_employer_plan, false) AS covered_by_employer_plan
          FROM gnucash_web_entity_members
         WHERE book_guid = $1
           AND role IN ('self', 'spouse', 'dependent')
         ORDER BY sort_order ASC, id ASC`,
       [bookGuid],
     );
-    return (result.rows as Array<{ role: string; name: string; birthday: Date | string | null }>)
+    return (result.rows as Array<{
+      role: string;
+      name: string;
+      birthday: Date | string | null;
+      covered_by_employer_plan?: boolean | null;
+    }>)
       .map(row => ({
         role: row.role as HouseholdMember['role'],
         name: row.name,
         birthday: toIsoBirthday(row.birthday),
+        coveredByEmployerPlan: Boolean(row.covered_by_employer_plan),
       }));
   } catch {
     // A missing entity table (fresh install) must not break any pack.
@@ -1118,6 +1146,22 @@ export async function getResolvedRetirementIncomeProfile(
     resolveRetirementIncomeProfile(profile, roster),
     householdFilingStatus,
   );
+}
+
+/**
+ * Family banking profile with its children resolved against the household —
+ * the exact profile the family-banking page renders. Used by the kid-view API
+ * so a seeded (not yet saved) ledger resolves to the same child the parent
+ * page shows instead of a 404.
+ */
+export async function getResolvedFamilyBankingProfile(
+  bookGuid: string,
+): Promise<FamilyBankingProfile> {
+  const [profile, roster] = await Promise.all([
+    getResilienceProfile(bookGuid, 'family_banking') as Promise<FamilyBankingProfile>,
+    loadHouseholdRoster(bookGuid),
+  ]);
+  return resolveFamilyBankingProfile(profile, roster);
 }
 
 /** Normalise a birthday column (Date from pg, string from a mock) to YYYY-MM-DD. */
@@ -1638,6 +1682,8 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
   const givingProfile = withResolvedFilingStatus(giving as GivingProfile, householdFilingStatus);
   const lifeProfile = resolveLifeProfile(life as LifeProfile, householdRoster);
   const educationProfile = resolveEducationProfile(education as EducationProfile, householdRoster);
+  const healthcareProfile = resolveHealthcareProfile(healthcare as HealthcareProfile, householdRoster);
+  const familyBankingProfile = resolveFamilyBankingProfile(familyBanking as FamilyBankingProfile, householdRoster);
   const retirementProfile = withResolvedFilingStatus(
     resolveRetirementIncomeProfile(retirementIncome as RetirementIncomeProfile, householdRoster),
     householdFilingStatus,
@@ -1801,8 +1847,8 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: [{ kind: 'assumption', id: person.person.id, label: `${person.person.name} planning inputs`, source: 'manual', href: '/home/protection?tab=life', verified: false }],
     }));
   }
-  const comparisons = compareHealthPlans((healthcare as HealthcareProfile).plans, (healthcare as HealthcareProfile).claims);
-  const currentId = (healthcare as HealthcareProfile).currentPlanId;
+  const comparisons = compareHealthPlans(healthcareProfile.plans, healthcareProfile.claims);
+  const currentId = healthcareProfile.currentPlanId;
   const current = comparisons.find(row => row.plan.id === currentId);
   if (current && comparisons[0] && current.netAnnualCost - comparisons[0].netAnnualCost > 100) {
     const savings = current.netAnnualCost - comparisons[0].netAnnualCost;
@@ -1898,7 +1944,7 @@ export async function loadResilienceActions(bookGuid: string): Promise<Financial
       evidence: [{ kind: 'assumption', id: 'solar', label: 'Solar scenario inputs', source: 'manual', href: '/planning/utilities?tab=solar', verified: false }],
     }));
   }
-  for (const child of (familyBanking as FamilyBankingProfile).children.map(item => calculateFamilyBanking(item))) {
+  for (const child of familyBankingProfile.children.map(item => calculateFamilyBanking(item))) {
     if (child.pendingCount > 0) {
       actions.push(action({
         stableKey: `family-approval:${child.child.id}:${child.pendingCount}`,
@@ -2515,9 +2561,12 @@ export async function loadResilienceEvents(
       metadata: { monthlyFunding: asset.monthlyFunding },
     });
   }
+  // Household identity is loaded once and shared by every pack below that has
+  // people in it, so the timeline agrees with the pages.
+  const householdRoster = await loadHouseholdRoster(bookGuid);
   const educationProfile = resolveEducationProfile(
     education as EducationProfile,
-    await loadHouseholdRoster(bookGuid),
+    householdRoster,
     now,
   );
   for (const plan of educationProfile.children.map(child => calculateEducationPlan(child, now))) {
@@ -2569,7 +2618,12 @@ export async function loadResilienceEvents(
       metadata: { expectedUsage: row.latest.usage, unit: row.latest.unit },
     });
   }
-  for (const child of (familyBanking as FamilyBankingProfile).children) {
+  const familyBankingProfile = resolveFamilyBankingProfile(
+    familyBanking as FamilyBankingProfile,
+    householdRoster,
+    now,
+  );
+  for (const child of familyBankingProfile.children) {
     if (child.nextAllowanceDate < today) continue;
     events.push({
       id: `family:allowance:${child.id}:${child.nextAllowanceDate}`,
