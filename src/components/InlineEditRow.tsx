@@ -25,8 +25,14 @@ interface InlineEditRowProps {
         accountName: string;
         amount: string;
         original_enter_date?: string | null;
+        /** Double-line edit: this account's split memo. Undefined = untouched. */
+        memo?: string;
+        /** Double-line edit: transaction-level notes. Undefined = untouched. */
+        notes?: string;
     }) => Promise<void>;
     onCancel: () => void;
+    /** Render the GnuCash-style second line (notes + split memo). */
+    doubleLine?: boolean;
 }
 
 export function InlineEditRow({
@@ -36,6 +42,7 @@ export function InlineEditRow({
     columnCount,
     onSave,
     onCancel,
+    doubleLine,
 }: InlineEditRowProps) {
     const { defaultTaxRate, balanceReversal, dateFormat } = useUserPreferences();
     const { success } = useToast();
@@ -55,6 +62,16 @@ export function InlineEditRow({
     const [debit, setDebit] = useState(splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '');
     const [credit, setCredit] = useState(splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '');
     const [saving, setSaving] = useState(false);
+
+    // Double-line fields: transaction notes + this account's split memo.
+    // Editing these must never reset reconcile state (only amount/account
+    // edits do — see inlineTwoSplitPayload in AccountLedger).
+    const ownSplit = transaction.splits?.find(s => s.guid === transaction.account_split_guid)
+        ?? transaction.splits?.find(s => s.account_guid === accountGuid);
+    const origNotes = transaction.notes ?? '';
+    const origMemo = ownSplit?.memo ?? '';
+    const [notes, setNotes] = useState(origNotes);
+    const [memo, setMemo] = useState(origMemo);
 
     const dateRef = useRef<HTMLInputElement>(null);
 
@@ -117,11 +134,15 @@ export function InlineEditRow({
                 accountName: otherAccountName,
                 amount: signedAmount,
                 original_enter_date: originalEnterDate,
+                // Only pass memo/notes when edited so an untouched row keeps
+                // its stored values verbatim.
+                ...(memo !== origMemo ? { memo } : {}),
+                ...(notes !== origNotes ? { notes } : {}),
             });
         } finally {
             setSaving(false);
         }
-    }, [saving, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
+    }, [saving, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName, memo, notes, origMemo, origNotes]);
 
     // Global key handler for Enter (save) and Escape (cancel)
     useEffect(() => {
@@ -147,6 +168,7 @@ export function InlineEditRow({
     const balanceValue = applyBalanceReversal(parseFloat(transaction.running_balance), accountType, balanceReversal);
 
     return (
+        <>
         <tr className="bg-primary/5 ring-2 ring-primary/30 ring-inset">
             {/* Reconcile checkbox column placeholder (during reconciliation) */}
             {columnCount > 6 && <td className="px-3 py-1"></td>}
@@ -245,5 +267,44 @@ export function InlineEditRow({
                 {formatCurrency(balanceValue, transaction.commodity_mnemonic)}
             </td>
         </tr>
+        {doubleLine && (
+            /* GnuCash double-line register: notes under Description, this
+               account's split memo under Transfer */
+            <tr className="bg-primary/5">
+                {columnCount > 6 && <td className="px-3 py-1"></td>}
+                <td className="px-3 py-1"></td>
+                <td className="px-2 py-1"></td>
+                <td className="px-2 py-1 align-middle">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[9px] uppercase tracking-wider text-foreground-muted flex-shrink-0">Notes</span>
+                        <input
+                            type="text"
+                            value={notes}
+                            onChange={(e) => setNotes(e.target.value)}
+                            placeholder="Transaction notes..."
+                            aria-label="Transaction notes"
+                            className="flex-1 min-w-0 bg-transparent text-xs text-foreground-secondary placeholder-foreground-muted/60 outline-none border-b border-transparent focus:border-primary/50"
+                        />
+                    </div>
+                </td>
+                <td className="px-2 py-1 align-middle">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[9px] uppercase tracking-wider text-foreground-muted flex-shrink-0">Memo</span>
+                        <input
+                            type="text"
+                            value={memo}
+                            onChange={(e) => setMemo(e.target.value)}
+                            placeholder="Split memo..."
+                            aria-label="Split memo"
+                            className="flex-1 min-w-0 bg-transparent text-xs text-foreground-secondary placeholder-foreground-muted/60 outline-none border-b border-transparent focus:border-primary/50"
+                        />
+                    </div>
+                </td>
+                <td className="px-2 py-1"></td>
+                <td className="px-2 py-1"></td>
+                <td className="px-4 py-1"></td>
+            </tr>
+        )}
+        </>
     );
 }

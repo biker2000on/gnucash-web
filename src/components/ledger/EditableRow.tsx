@@ -15,7 +15,7 @@ import { TransactionSuggestion } from '@/app/api/transactions/descriptions/route
 export interface EditableRowHandle {
     save: () => Promise<boolean>;
     isDirty: () => boolean;
-    getTransactionData: () => { post_date: string; description: string; currency_guid: string };
+    getTransactionData: () => { post_date: string; description: string; currency_guid: string; notes?: string };
 }
 
 interface EditableRowProps {
@@ -34,6 +34,10 @@ interface EditableRowProps {
         amount: string;
         original_enter_date?: string | null;
         splits?: Array<{ accountGuid: string; accountName: string; amount: number }>;
+        /** Double-line edit: this account's split memo. Undefined = untouched. */
+        memo?: string;
+        /** Double-line edit: transaction-level notes. Undefined = untouched. */
+        notes?: string;
     }) => Promise<void>;
     onEditModal: (guid: string) => void;
     onDuplicate?: (guid: string) => void;
@@ -50,6 +54,12 @@ interface EditableRowProps {
     onShiftTabFromDate?: () => void;
     columnIds?: string[];
     onDescriptionSuggestion?: (suggestion: TransactionSuggestion) => void;
+    /**
+     * GnuCash desktop's double-line register: render a second row under the
+     * transaction exposing transaction-level notes and this account's split
+     * memo, editable in place.
+     */
+    doubleLine?: boolean;
 }
 
 export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
@@ -76,6 +86,7 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         onShiftTabFromDate,
         columnIds,
         onDescriptionSuggestion,
+        doubleLine,
     }, ref) {
         const handleRowClick = (e: React.MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -98,6 +109,16 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         const [credit, setCredit] = useState(splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '');
         const [saveError, setSaveError] = useState(false);
 
+        // Double-line fields: transaction-level notes and this account's
+        // split memo. Editing these must never reset reconcile state — only
+        // amount/account edits do (see inlineTwoSplitPayload).
+        const ownSplitForMemo = transaction.splits?.find(s => s.guid === transaction.account_split_guid)
+            ?? transaction.splits?.find(s => s.account_guid === accountGuid);
+        const origNotes = transaction.notes ?? '';
+        const origMemo = ownSplitForMemo?.memo ?? '';
+        const [notes, setNotes] = useState(origNotes);
+        const [memo, setMemo] = useState(origMemo);
+
         const originalEnterDate = transaction.enter_date
             ? new Date(transaction.enter_date).toISOString()
             : null;
@@ -118,9 +139,10 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         const txSignature = [
             transaction.post_date,
             transaction.description ?? '',
+            transaction.notes ?? '',
             transaction.account_split_value ?? '',
             (transaction.splits ?? [])
-                .map((s) => `${s.account_guid}:${s.value_num}/${s.value_denom}`)
+                .map((s) => `${s.account_guid}:${s.value_num}/${s.value_denom}:${s.memo ?? ''}`)
                 .join(','),
         ].join('|');
         useEffect(() => {
@@ -132,6 +154,10 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             const nextSplitValue = parseFloat(transaction.account_split_value);
             setDebit(nextSplitValue >= 0 ? Math.abs(nextSplitValue).toFixed(2) : '');
             setCredit(nextSplitValue < 0 ? Math.abs(nextSplitValue).toFixed(2) : '');
+            setNotes(transaction.notes ?? '');
+            const nextOwn = transaction.splits?.find(s => s.guid === transaction.account_split_guid)
+                ?? transaction.splits?.find(s => s.account_guid === accountGuid);
+            setMemo(nextOwn?.memo ?? '');
             // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [txSignature]);
 
@@ -214,9 +240,13 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
         }, [accountGuid, isSlimMode, onDescriptionSuggestion, debit, credit, postDate, transaction.guid, originalEnterDate, onSave]);
 
         const isDirty = useCallback(() => {
+            const notesDirty = notes !== origNotes;
+            const memoDirty = memo !== origMemo;
             // A multi-split transaction cannot be represented by this inline 2-split
-            // editor, so it is never "dirty" from here and must never be saved from here.
-            if (isMultiSplit) return false;
+            // editor, so it is never "dirty" from here and must never be saved from
+            // here. In slim mode the parent journal save owns the payload (splits
+            // come from EditableSplitRows), so a notes edit still counts as dirty.
+            if (isMultiSplit) return isSlimMode && notesDirty;
             const origDate = transaction.post_date ? toUTCDateString(new Date(transaction.post_date)) : '';
             const origDebit = splitValue >= 0 ? Math.abs(splitValue).toFixed(2) : '';
             const origCredit = splitValue < 0 ? Math.abs(splitValue).toFixed(2) : '';
@@ -224,8 +254,10 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 || description !== (transaction.description || '')
                 || otherAccountGuid !== (otherSplit?.account_guid || '')
                 || debit !== origDebit
-                || credit !== origCredit;
-        }, [postDate, description, otherAccountGuid, debit, credit, splitValue, transaction, otherSplit, isMultiSplit]);
+                || credit !== origCredit
+                || notesDirty
+                || (!isSlimMode && memoDirty);
+        }, [postDate, description, otherAccountGuid, debit, credit, splitValue, transaction, otherSplit, isMultiSplit, notes, memo, origNotes, origMemo, isSlimMode]);
 
         const save = useCallback(async (): Promise<boolean> => {
             if (isSlimMode) return true; // Parent handles save in journal/autosplit
@@ -247,13 +279,17 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     accountName: otherAccountName,
                     amount: signedAmount,
                     original_enter_date: originalEnterDate,
+                    // Double-line fields: pass only when edited so an
+                    // untouched row keeps its stored memo/notes verbatim.
+                    ...(memo !== origMemo ? { memo } : {}),
+                    ...(notes !== origNotes ? { notes } : {}),
                 });
                 return true;
             } catch {
                 setSaveError(true);
                 return false;
             }
-        }, [isDirty, isSlimMode, isMultiSplit, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName]);
+        }, [isDirty, isSlimMode, isMultiSplit, description, otherAccountGuid, debit, credit, postDate, transaction.guid, originalEnterDate, onSave, otherAccountName, memo, notes, origMemo, origNotes]);
 
         useImperativeHandle(ref, () => ({
             save,
@@ -262,8 +298,10 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                 post_date: postDate,
                 description,
                 currency_guid: transaction.currency_guid,
+                // Journal saves send notes only when edited, mirroring save().
+                ...(notes !== origNotes ? { notes } : {}),
             }),
-        }), [save, isDirty, postDate, description, transaction.currency_guid]);
+        }), [save, isDirty, postDate, description, transaction.currency_guid, notes, origNotes]);
 
         const reconcileState = transaction.account_split_reconcile_state;
         const reconcileIcon = reconcileState === 'y' ? 'Y' : reconcileState === 'c' ? 'C' : 'N';
@@ -397,10 +435,79 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
             </td>
         );
 
+        // GnuCash desktop double-line register: a second row per transaction
+        // exposing transaction-level notes (under Description) and this
+        // account's split memo (under Transfer). In slim (journal/autosplit)
+        // mode the memo column belongs to EditableSplitRows, so the second
+        // row carries only the notes.
+        const renderDoubleLineRow = (editable: boolean, active: boolean) => {
+            const handleFieldKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onEnter?.();
+                }
+            };
+            const labelClass = 'text-[9px] uppercase tracking-wider text-foreground-muted flex-shrink-0';
+            const inputClass = 'flex-1 min-w-0 bg-transparent text-xs text-foreground-secondary placeholder-foreground-muted/60 outline-none border-b border-transparent focus:border-primary/50';
+            return (
+                <tr
+                    data-double-line
+                    className={`border-b border-border/30 ${active ? 'bg-primary/5' : 'bg-background-secondary/20'}`}
+                    onClick={editable ? undefined : handleRowClick}
+                >
+                    {renderCells({
+                        description: (
+                            <td className="px-4 py-1 align-middle">
+                                <div className="flex items-center gap-2">
+                                    <span className={labelClass}>Notes</span>
+                                    {editable ? (
+                                        <input
+                                            type="text"
+                                            value={notes}
+                                            onChange={(e) => setNotes(e.target.value)}
+                                            onKeyDown={handleFieldKeyDown}
+                                            placeholder="Transaction notes..."
+                                            aria-label="Transaction notes"
+                                            className={inputClass}
+                                        />
+                                    ) : (
+                                        <span className="text-xs text-foreground-muted truncate">{notes}</span>
+                                    )}
+                                </div>
+                            </td>
+                        ),
+                        transfer: isSlimMode ? (
+                            <td className="px-4 py-1"></td>
+                        ) : (
+                            <td className="px-4 py-1 align-middle">
+                                <div className="flex items-center gap-2">
+                                    <span className={labelClass}>Memo</span>
+                                    {editable ? (
+                                        <input
+                                            type="text"
+                                            value={memo}
+                                            onChange={(e) => setMemo(e.target.value)}
+                                            onKeyDown={handleFieldKeyDown}
+                                            placeholder="Split memo..."
+                                            aria-label="Split memo"
+                                            className={inputClass}
+                                        />
+                                    ) : (
+                                        <span className="text-xs text-foreground-muted truncate">{memo}</span>
+                                    )}
+                                </div>
+                            </td>
+                        ),
+                    })}
+                </tr>
+            );
+        };
+
         // Multi-split: read-only with edit button (skip in slim mode where all splits are rendered below)
         if (isMultiSplit && !isSlimMode) {
             const otherSplits = transaction.splits?.filter(s => s.account_guid !== accountGuid) || [];
             return (
+                <>
                 <tr className={rowClass} onClick={handleRowClick}>
                     {renderCells({
                         select: selectCell,
@@ -435,12 +542,15 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         actions: actionsCellReadOnly,
                     })}
                 </tr>
+                {doubleLine && renderDoubleLineRow(false, isActive)}
+                </>
             );
         }
 
         // Slim inactive row (journal/autosplit): show date + description, empty account/amount cells
         if (!isActive && isSlimMode) {
             return (
+                <>
                 <tr className={rowClass} onClick={handleRowClick}>
                     {renderCells({
                         select: selectCell,
@@ -467,12 +577,15 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         actions: actionsCellReadOnly,
                     })}
                 </tr>
+                {doubleLine && renderDoubleLineRow(false, false)}
+                </>
             );
         }
 
         // 2-split: read-only when not active
         if (!isActive) {
             return (
+                <>
                 <tr className={rowClass} onClick={handleRowClick}>
                     {renderCells({
                         select: selectCell,
@@ -511,12 +624,15 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         actions: actionsCellReadOnly,
                     })}
                 </tr>
+                {doubleLine && renderDoubleLineRow(false, false)}
+                </>
             );
         }
 
         // Slim active row (journal/autosplit): editable date + description, empty account/amount cells
         if (isActive && isSlimMode) {
             return (
+                <>
                 <tr className="bg-primary/5 ring-2 ring-primary/30 ring-inset">
                     {renderCells({
                         select: selectCell,
@@ -563,11 +679,14 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                         actions: actionsCellNoTab,
                     })}
                 </tr>
+                {doubleLine && renderDoubleLineRow(true, true)}
+                </>
             );
         }
 
         // Active editable row
         return (
+            <>
             <tr className={rowClass}>
                 {renderCells({
                     select: selectCell,
@@ -647,6 +766,8 @@ export const EditableRow = forwardRef<EditableRowHandle, EditableRowProps>(
                     actions: actionsCellWithTab,
                 })}
             </tr>
+            {doubleLine && renderDoubleLineRow(true, true)}
+            </>
         );
     }
 );

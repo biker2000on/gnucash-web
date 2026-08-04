@@ -8,6 +8,7 @@ import { buildAccountPathMap } from '@/lib/reports/utils';
 import { traceCostBasis, isTransferIn, createCostBasisCache, preloadLotSplits, type CostBasisMethod } from '@/lib/cost-basis';
 import { parseSearchQuery } from '@/lib/tags';
 import { getTagsForTransactions } from '@/lib/services/tag.service';
+import { readTransactionNotes } from '@/lib/transaction-notes';
 
 export async function GET(
     request: Request,
@@ -407,6 +408,9 @@ export async function GET(
         // 3d. Fetch direct tags for these transactions
         const tagMap = await getTagsForTransactions(txGuids);
 
+        // 3e. Fetch transaction-level notes (slots, name='notes') in one batch
+        const notesMap = await readTransactionNotes(prisma, txGuids);
+
         // 4. Build account path map for only the accounts referenced by this
         // page's splits (buildAccountPathMap resolves missing ancestors, so
         // full paths are preserved without loading every account in the DB)
@@ -459,6 +463,7 @@ export async function GET(
                 post_date: tx.post_date,
                 enter_date: tx.enter_date,
                 description: tx.description,
+                notes: notesMap.get(tx.guid) ?? null,
                 receipt_count: receiptCountMap.get(tx.guid) ?? 0,
                 tags: tagMap.get(tx.guid) ?? [],
                 splits: enrichedSplits,

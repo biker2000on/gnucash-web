@@ -9,6 +9,7 @@ import { getBookAccountGuids, getActiveBookGuid } from '@/lib/book-scope';
 import { cacheInvalidateFrom } from '@/lib/cache';
 import { publishDataChange } from '@/lib/data-events';
 import { requireRole } from '@/lib/auth';
+import { readTransactionNotes, writeTransactionNotes } from '@/lib/transaction-notes';
 import {
     assertNotLocked,
     PeriodLockedError,
@@ -122,6 +123,9 @@ export async function GET(
             },
         });
 
+        // Transaction-level notes (slots, name='notes')
+        const notesMap = await readTransactionNotes(prisma, [guid]);
+
         // Transform to response format
         const result = {
             guid: transaction.guid,
@@ -131,6 +135,7 @@ export async function GET(
             post_date: transaction.post_date,
             enter_date: transaction.enter_date,
             description: transaction.description,
+            notes: notesMap.get(guid) ?? null,
             source: meta?.source ?? 'manual',
             reviewed: meta?.reviewed ?? true,
             match_type: meta?.match_type ?? null,
@@ -316,6 +321,11 @@ export async function PUT(
                     where: { obj_guid: { in: removedSplitGuids } },
                 });
             }
+
+            // Transaction-level notes (slots, name='notes'): undefined leaves
+            // stored notes untouched so callers unaware of notes cannot wipe
+            // them; '' clears; a string upserts.
+            await writeTransactionNotes(tx, guid, body.notes);
 
             // Delete existing splits
             await tx.splits.deleteMany({
