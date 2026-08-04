@@ -410,12 +410,14 @@ export async function postPayslipTransaction(
         },
       });
 
-      // Record transaction meta (source: payslip)
+      // Record transaction meta (source: payslip). The import-time
+      // description is preserved so a later rename keeps the original payee.
       await tx.gnucash_web_transaction_meta.create({
         data: {
           transaction_guid: newGuid,
           source: 'payslip',
           reviewed: true,
+          original_description: description,
         },
       });
 

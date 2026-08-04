@@ -74,6 +74,24 @@ export const SAVINGS_RATE_DROP_PTS = 10;
 export const NET_WORTH_MILESTONE_STEP = 25_000;
 export const BALANCE_DROP_PCT = 30;
 export const BALANCE_DROP_MIN_PRIOR = 100;
+/**
+ * Month-to-date detectors (category spike, savings rate) never fire before
+ * this day of the month. Even with prior months truncated to the same day,
+ * the first few days of a month are dominated by pay-cycle timing (rent out,
+ * paycheck not yet landed), so any comparison is noise rather than signal.
+ */
+export const PARTIAL_MONTH_MIN_DAY = 7;
+
+/** Options for the month-to-date detectors. */
+export interface PartialMonthOptions {
+    /**
+     * UTC day-of-month of "now". When provided, the caller is asserting that
+     * prior-month figures were truncated to this same day (like-for-like
+     * windows) and the detector both applies the PARTIAL_MONTH_MIN_DAY floor
+     * and states the comparison window in its detail text.
+     */
+    dayOfMonth?: number;
+}
 
 function round2(n: number): number {
     return Math.round(n * 100) / 100;
@@ -104,12 +122,20 @@ export interface CategorySeries {
  * Top-category spike: current-month spend more than 25% above the average of
  * the prior months (needs at least one prior month with data). Only the
  * single largest current-month category is examined ("top category").
+ *
+ * When `options.dayOfMonth` is provided, the prior-month figures are assumed
+ * truncated to the same day (like-for-like month-to-date windows), the
+ * detector stays quiet before PARTIAL_MONTH_MIN_DAY, and the detail states
+ * the comparison window.
  */
 export function detectCategorySpike(
     month: string,
     categories: CategorySeries[],
-    currency = 'USD'
+    currency = 'USD',
+    options: PartialMonthOptions = {}
 ): InsightCandidate[] {
+    const day = options.dayOfMonth;
+    if (day !== undefined && day < PARTIAL_MONTH_MIN_DAY) return [];
     if (categories.length === 0) return [];
     const top = [...categories].sort(
         (a, b) => b.current - a.current || a.name.localeCompare(b.name)
@@ -122,13 +148,19 @@ export function detectCategorySpike(
     const pct = ((top.current - avg) / avg) * 100;
     if (pct <= CATEGORY_SPIKE_PCT) return [];
 
+    const detail = day !== undefined
+        ? `You have spent ${formatCurrency(round2(top.current), currency)} on ${top.name} in the ` +
+          `first ${day} days of this month, ${Math.round(pct)}% above its 3-month average of ` +
+          `${formatCurrency(round2(avg), currency)} for the same first ${day} days ` +
+          `(prior months truncated to day ${day} so the windows match).`
+        : `You have spent ${formatCurrency(round2(top.current), currency)} on ${top.name} this month, ` +
+          `${Math.round(pct)}% above its 3-month average of ${formatCurrency(round2(avg), currency)}.`;
+
     return [{
         kind: 'category-spike',
         severity: pct > 50 ? 'warning' : 'info',
         title: `${top.name} spending is up ${Math.round(pct)}%`,
-        detail:
-            `You have spent ${formatCurrency(round2(top.current), currency)} on ${top.name} this month, ` +
-            `${Math.round(pct)}% above its 3-month average of ${formatCurrency(round2(avg), currency)}.`,
+        detail,
         href: '/tools/digest',
         dedupeKey: `category-spike:${month}:${slug(top.name)}`,
     }];
@@ -164,25 +196,40 @@ export function detectNewMerchants(
 /**
  * Savings-rate drop: current month at least 10 percentage points below the
  * average of the prior months (needs >= 3 prior months for a stable base).
+ *
+ * Pay-cycle awareness: when `options.dayOfMonth` is provided, the prior-month
+ * rates are assumed computed over the same first-N-days window (like-for-like
+ * month-to-date comparison) and the detector never fires before
+ * PARTIAL_MONTH_MIN_DAY — early in a month the paycheck usually has not
+ * landed, so a raw comparison against complete months reports a phantom
+ * collapse. The detail states the window and the truncation assumption.
  */
 export function detectSavingsRateDrop(
     month: string,
     currentRate: number,
-    priorRates: number[]
+    priorRates: number[],
+    options: PartialMonthOptions = {}
 ): InsightCandidate[] {
+    const day = options.dayOfMonth;
+    if (day !== undefined && day < PARTIAL_MONTH_MIN_DAY) return [];
     const priors = priorRates.filter(v => Number.isFinite(v));
     if (priors.length < 3) return [];
     const avg = priors.reduce((s, v) => s + v, 0) / priors.length;
     const drop = avg - currentRate;
     if (drop < SAVINGS_RATE_DROP_PTS) return [];
 
+    const detail = day !== undefined
+        ? `Your savings rate for the first ${day} days of this month is ${currentRate.toFixed(1)}%, ` +
+          `versus a ${avg.toFixed(1)}% average over the same first ${day} days of the prior 6 months. ` +
+          `Prior months are truncated to day ${day}, so this compares like-for-like pay-cycle windows.`
+        : `Your savings rate this month is ${currentRate.toFixed(1)}%, versus a ` +
+          `6-month average of ${avg.toFixed(1)}%.`;
+
     return [{
         kind: 'savings-rate-drop',
         severity: 'warning',
         title: `Savings rate down ${Math.round(drop)} points`,
-        detail:
-            `Your savings rate this month is ${currentRate.toFixed(1)}%, versus a ` +
-            `6-month average of ${avg.toFixed(1)}%.`,
+        detail,
         href: '/tools/digest',
         dedupeKey: `savings-rate:${month}`,
     }];
@@ -296,6 +343,12 @@ export function isoWeekKey(d: Date): string {
 export interface InsightSource {
     /** YYYY-MM of the current month */
     month: string;
+    /**
+     * UTC day-of-month of "now". The loader truncates prior-month category
+     * and savings figures to this day so the month-to-date detectors compare
+     * like-for-like windows (and stay quiet before PARTIAL_MONTH_MIN_DAY).
+     */
+    dayOfMonth: number;
     /** ISO week key used for balance-drop dedupe */
     weekKey: string;
     currency: string;
@@ -308,13 +361,21 @@ export interface InsightSource {
 
 /** Run every detector over a loaded source. Pure. */
 export function computeInsights(source: InsightSource): InsightCandidate[] {
+    // Partial-period audit (2026-08): category-spike and savings-rate compare
+    // the partial current month against prior months, so both use truncated
+    // prior windows + the elapsed-day floor. Net-worth milestone and
+    // balance-drop compare point-in-time values (not partial periods) and
+    // new-merchant is a first-occurrence check — none of those need it.
     return [
-        ...detectCategorySpike(source.month, source.categories, source.currency),
+        ...detectCategorySpike(source.month, source.categories, source.currency, {
+            dayOfMonth: source.dayOfMonth,
+        }),
         ...detectNewMerchants(source.month, source.newMerchants, source.currency),
         ...detectSavingsRateDrop(
             source.month,
             source.savingsRate.current,
-            source.savingsRate.priorRates
+            source.savingsRate.priorRates,
+            { dayOfMonth: source.dayOfMonth }
         ),
         ...detectNetWorthMilestone(
             source.netWorth.previous,
@@ -473,8 +534,13 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
 
     const month = monthKeyUTC(now);
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    // Like-for-like month-to-date windows: every month (current AND prior) is
+    // truncated to this day so partial-month detectors never compare a few
+    // elapsed days against complete months (the phantom-collapse bug).
+    const dayOfMonth = now.getUTCDate();
 
-    // --- 1. Category spend: current month + 3 prior full months -----------
+    // --- 1. Category spend: month-to-date + 3 prior months truncated to the
+    // --- same day of month --------------------------------------------------
     const catWindowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
     const catRows = await prisma.$queryRaw<Array<{
         month: string;
@@ -492,6 +558,7 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
           AND a.hidden = 0
           AND s.account_guid = ANY(${guids})
           AND t.post_date >= ${catWindowStart}
+          AND EXTRACT(DAY FROM t.post_date) <= ${dayOfMonth}
         GROUP BY 1, 2
     `;
     const byCategory = new Map<string, { current: number; priors: Map<string, number> }>();
@@ -511,6 +578,11 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
     }));
 
     // --- 2. New merchants: first-ever charge lands in the current month ---
+    // Merchant identity is the preserved import-time payee
+    // (gnucash_web_transaction_meta.original_description) with the display
+    // description as fallback: the user renames imports to "what was
+    // purchased", and keying on the rename would flag every renamed item as a
+    // brand-new merchant.
     const merchantRows = await prisma.$queryRaw<Array<{
         description: string;
         first_date: Date;
@@ -518,17 +590,18 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
     }>>`
         WITH tx_amounts AS (
             SELECT t.guid,
-                   t.description,
+                   COALESCE(NULLIF(btrim(m.original_description), ''), t.description) AS description,
                    t.post_date,
                    SUM(s.value_num::double precision / NULLIF(s.value_denom, 0)::double precision) AS amount
             FROM transactions t
             JOIN splits s ON s.tx_guid = t.guid
             JOIN accounts a ON a.guid = s.account_guid
+            LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
             WHERE a.account_type = 'EXPENSE'
               AND s.account_guid = ANY(${guids})
-              AND t.description IS NOT NULL
-              AND btrim(t.description) <> ''
-            GROUP BY t.guid, t.description, t.post_date
+              AND COALESCE(NULLIF(btrim(m.original_description), ''), t.description) IS NOT NULL
+              AND btrim(COALESCE(NULLIF(btrim(m.original_description), ''), t.description)) <> ''
+            GROUP BY t.guid, COALESCE(NULLIF(btrim(m.original_description), ''), t.description), t.post_date
         ),
         ranked AS (
             SELECT *,
@@ -548,7 +621,8 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
         firstAmount: Number(r.first_amount),
     }));
 
-    // --- 3. Savings rate: current month vs prior 6 months -----------------
+    // --- 3. Savings rate: month-to-date vs prior 6 months truncated to the
+    // --- same day of month (pay-cycle-aware, like-for-like windows) --------
     const srWindowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, 1));
     const srRows = await prisma.$queryRaw<Array<{
         month: string;
@@ -569,6 +643,7 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
           AND a.hidden = 0
           AND s.account_guid = ANY(${guids})
           AND t.post_date >= ${srWindowStart}
+          AND EXTRACT(DAY FROM t.post_date) <= ${dayOfMonth}
         GROUP BY 1
     `;
     const rateFor = (income: number, expenses: number) =>
@@ -636,6 +711,7 @@ export async function loadInsightSource(bookGuid: string, now = new Date()): Pro
 
     return {
         month,
+        dayOfMonth,
         weekKey: isoWeekKey(now),
         currency,
         categories,

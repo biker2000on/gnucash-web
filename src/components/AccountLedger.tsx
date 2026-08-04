@@ -8,7 +8,7 @@ import { formatDisplayAccountPath } from '@/lib/account-path';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import { ReconciliationPanel } from './ReconciliationPanel';
 import { suppressNextDataEvent } from './DataEventsProvider';
-import { TransactionModal } from './TransactionModal';
+import { TransactionModal, originalPayeeLine } from './TransactionModal';
 import { TransactionFormModal } from './TransactionFormModal';
 import { InvestmentTransactionForm } from './InvestmentTransactionForm';
 import { ConfirmationDialog } from './ui/ConfirmationDialog';
@@ -72,6 +72,8 @@ export interface AccountTransaction extends Transaction {
     reviewed?: boolean;
     source?: string;
     match_type?: string | null;
+    /** Preserved import-time payee; null/absent for manual transactions. */
+    original_description?: string | null;
     receipt_count?: number;
 }
 
@@ -3066,6 +3068,11 @@ export default function AccountLedger({
                                                                 />
                                                             )}
                                                         </div>
+                                                        {originalPayeeLine(tx) && (
+                                                            <div className="text-[11px] text-foreground-muted truncate" title={originalPayeeLine(tx) ?? undefined}>
+                                                                Imported as &ldquo;{originalPayeeLine(tx)}&rdquo;
+                                                            </div>
+                                                        )}
                                                         {tx.num && <span className="text-[10px] text-foreground-muted font-mono">#{tx.num}</span>}
                                                     </td>
                                                 );

@@ -284,9 +284,15 @@ function mockSplits(
     ];
 }
 
-function installPlanMocks(txs: MockTx[], allSplits: MockSplitRow[]) {
+function installPlanMocks(
+    txs: MockTx[],
+    allSplits: MockSplitRow[],
+    originals: Array<{ tx_guid: string; original_description: string }> = [],
+) {
     mockPrisma.accounts.findUnique.mockResolvedValue(TARGET_ACCOUNT);
     mockPrisma.transactions.findMany.mockResolvedValue(txs);
+    // Preserved import-time payees (gnucash_web_transaction_meta.original_description)
+    mockPrisma.$queryRaw.mockResolvedValue(originals);
     mockPrisma.splits.findMany.mockImplementation(async (args: { where: { tx_guid: { in: string[] } } }) => {
         const wanted = new Set(args.where.tx_guid.in);
         return allSplits.filter(s => wanted.has(s.tx_guid));
@@ -320,6 +326,36 @@ describe('planHistoricalApplication', () => {
             amount: 5,
         });
         expect(plan.moreRemain).toBe(false);
+    });
+
+    it('matches on the preserved import payee, not the renamed description', async () => {
+        // Renamed import: displayed as "pajamas", arrived as HARBOR FREIGHT.
+        const renamed = mockTx('pajamas');
+        // Manual transaction whose display text happens to contain the pattern
+        // but has no preserved payee — still matches via description fallback.
+        const manual = mockTx('Harbor Freight sanding discs');
+        const miss = mockTx('COSTCO WHOLESALE');
+        installPlanMocks(
+            [renamed, manual, miss],
+            [
+                ...mockSplits(renamed, { accountGuid: GUIDS.imbalance, name: 'Imbalance-USD', type: 'BANK' }),
+                ...mockSplits(manual, { accountGuid: GUIDS.imbalance, name: 'Imbalance-USD', type: 'BANK' }),
+                ...mockSplits(miss, { accountGuid: GUIDS.imbalance, name: 'Imbalance-USD', type: 'BANK' }),
+            ],
+            [{ tx_guid: renamed.guid, original_description: 'HARBOR FREIGHT PAYMENT' }],
+        );
+
+        const plan = await planHistoricalApplication(
+            makeRule({ pattern: 'harbor freight', matchType: 'contains' }),
+            BOOK_GUIDS,
+        );
+        expect(plan.matches.map(m => m.guid)).toEqual([renamed.guid, manual.guid]);
+        // The SQL prefilter must not drop renamed imports whose display
+        // description does not contain the pattern.
+        const findManyWhere = mockPrisma.transactions.findMany.mock.calls[0][0].where;
+        expect(findManyWhere.OR).toEqual(expect.arrayContaining([
+            { guid: { in: [renamed.guid] } },
+        ]));
     });
 
     it('reuses import-time matching semantics: exact', async () => {

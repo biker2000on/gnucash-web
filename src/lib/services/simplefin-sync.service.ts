@@ -829,7 +829,7 @@ async function findAndLinkManualMatch(
     SELECT
       t.guid AS transaction_guid,
       t.post_date,
-      t.description,
+      COALESCE(NULLIF(btrim(m.original_description), ''), t.description) AS description,
       CASE WHEN m.id IS NOT NULL THEN TRUE ELSE FALSE END AS has_meta
     FROM transactions t
     JOIN splits s ON s.tx_guid = t.guid AND s.account_guid = ${bankAccountGuid}
@@ -846,18 +846,21 @@ async function findAndLinkManualMatch(
   const match = selectManualReconciliationMatch(sfTxn, candidates, matchWindowDays);
   if (!match) return false;
 
-  // Wrap in transaction for atomicity
+  // Wrap in transaction for atomicity. The provider's raw payee is preserved
+  // in original_description via COALESCE — set only when still null, never
+  // overwriting an original captured earlier.
+  const providerPayee = importedOriginalDescription(sfTxn);
   await prisma.$transaction(async (tx) => {
     if (match.has_meta) {
-      await tx.gnucash_web_transaction_meta.update({
-        where: { transaction_guid: match.transaction_guid },
-        data: {
-          simplefin_transaction_id: sfTxn.id,
-          match_type: 'manual_reconciliation',
-          match_confidence: match.confidence,
-          matched_at: new Date(),
-        },
-      });
+      await tx.$executeRaw`
+        UPDATE gnucash_web_transaction_meta
+        SET simplefin_transaction_id = ${sfTxn.id},
+            match_type = 'manual_reconciliation',
+            match_confidence = ${match.confidence},
+            matched_at = NOW(),
+            original_description = COALESCE(original_description, ${providerPayee})
+        WHERE transaction_guid = ${match.transaction_guid}
+      `;
     } else {
       await tx.gnucash_web_transaction_meta.create({
         data: {
@@ -868,6 +871,7 @@ async function findAndLinkManualMatch(
           match_type: 'manual_reconciliation',
           match_confidence: match.confidence,
           matched_at: new Date(),
+          original_description: providerPayee,
         },
       });
     }
@@ -947,6 +951,37 @@ async function findAndLinkTransferDedupMatch(
   });
 
   return true;
+}
+
+/**
+ * The raw provider payee/description an import arrived with. Preserved on the
+ * meta row (original_description) so a later rename of the transaction can
+ * never destroy the payee. Null when the provider sent neither field.
+ */
+export function importedOriginalDescription(
+  sfTxn: Pick<SimpleFinTransaction, 'description' | 'payee'>,
+): string | null {
+  return sfTxn.description || sfTxn.payee || null;
+}
+
+/**
+ * Meta row data for a freshly imported SimpleFin transaction. Exported for
+ * tests: imports arrive unreviewed, carry their feed id for dedup, and keep
+ * the ORIGINAL provider description so renames preserve the payee.
+ */
+export function buildImportedTransactionMeta(
+  sfTxn: Pick<SimpleFinTransaction, 'id' | 'description' | 'payee'>,
+  transactionGuid: string,
+  confidence: 'high' | 'medium' | 'low',
+) {
+  return {
+    transaction_guid: transactionGuid,
+    source: 'simplefin',
+    reviewed: false,
+    simplefin_transaction_id: sfTxn.id,
+    confidence,
+    original_description: importedOriginalDescription(sfTxn),
+  };
 }
 
 /**
@@ -1033,15 +1068,10 @@ async function importTransaction(
       },
     });
 
-    // Insert transaction meta (reviewed=false for imports)
+    // Insert transaction meta (reviewed=false for imports; the raw provider
+    // description is preserved in original_description)
     await tx.gnucash_web_transaction_meta.create({
-      data: {
-        transaction_guid: txGuid,
-        source: 'simplefin',
-        reviewed: false,
-        simplefin_transaction_id: sfTxn.id,
-        confidence: guess.confidence,
-      },
+      data: buildImportedTransactionMeta(sfTxn, txGuid, guess.confidence),
     });
   });
 }
@@ -1087,13 +1117,18 @@ async function guessCategory(
     console.warn('Categorization rules lookup failed, falling back to history guess:', err);
   }
 
-  // 2. Find the most frequent counterpart account for similar descriptions
+  // 2. Find the most frequent counterpart account for similar descriptions.
+  // History is keyed on the preserved import-time payee (original_description)
+  // with the display description as fallback, so user renames ("pajamas") do
+  // not hide the vendor history the incoming feed description matches.
   const matches = await prisma.$queryRaw<{ account_guid: string; cnt: bigint }[]>`
     SELECT s2.account_guid, COUNT(*) as cnt
     FROM transactions t
     JOIN splits s1 ON s1.tx_guid = t.guid AND s1.account_guid = ${bankAccountGuid}
     JOIN splits s2 ON s2.tx_guid = t.guid AND s2.account_guid != ${bankAccountGuid}
-    WHERE LOWER(t.description) LIKE LOWER(${`%${description.substring(0, 50)}%`})
+    LEFT JOIN gnucash_web_transaction_meta m ON m.transaction_guid = t.guid
+    WHERE LOWER(COALESCE(NULLIF(btrim(m.original_description), ''), t.description))
+          LIKE LOWER(${`%${description.substring(0, 50)}%`})
     GROUP BY s2.account_guid
     ORDER BY cnt DESC
     LIMIT 1
@@ -1409,15 +1444,14 @@ async function importInvestmentTransaction(
       },
     });
 
-    // Insert transaction meta (reviewed=false for imports)
+    // Insert transaction meta (reviewed=false for imports; the raw provider
+    // description is preserved in original_description)
     await tx.gnucash_web_transaction_meta.create({
-      data: {
-        transaction_guid: txGuid,
-        source: 'simplefin',
-        reviewed: false,
-        simplefin_transaction_id: sfTxn.id,
-        confidence: isSymbolMatched ? 'medium' : counterConfidence,
-      },
+      data: buildImportedTransactionMeta(
+        sfTxn,
+        txGuid,
+        isSymbolMatched ? 'medium' : counterConfidence,
+      ),
     });
   });
 }

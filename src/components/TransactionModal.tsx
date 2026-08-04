@@ -31,6 +31,10 @@ interface TransactionModalProps {
 
 export interface TransactionDetail extends Transaction {
     currency_mnemonic?: string;
+    /** Import source from transaction meta ('manual' when none). */
+    source?: string;
+    /** Preserved import-time payee; null for manual transactions. */
+    original_description?: string | null;
     splits: (Split & {
         account_name: string;
         account_fullname?: string;
@@ -38,6 +42,20 @@ export interface TransactionDetail extends Transaction {
         value_decimal: string;
         quantity_decimal: string;
     })[];
+}
+
+/**
+ * The preserved import-time payee to show as a secondary line: only when it
+ * exists and differs from the display description (a renamed import).
+ */
+export function originalPayeeLine(transaction: {
+    description?: string | null;
+    original_description?: string | null;
+}): string | null {
+    const original = (transaction.original_description ?? '').trim();
+    if (!original) return null;
+    if (original === (transaction.description ?? '').trim()) return null;
+    return original;
 }
 
 function getReconcileLabel(state: string) {
@@ -130,6 +148,11 @@ export function TransactionDetailContent({
                         <h3 className="text-xl font-semibold text-foreground">
                             {transaction.description}
                         </h3>
+                        {originalPayeeLine(transaction) && (
+                            <div className="text-sm text-foreground-muted mt-0.5">
+                                Imported as &ldquo;{originalPayeeLine(transaction)}&rdquo;
+                            </div>
+                        )}
                         {transaction.num && (
                             <span className="text-sm text-foreground-muted">#{transaction.num}</span>
                         )}
