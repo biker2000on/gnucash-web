@@ -1,6 +1,6 @@
 # Product Roadmap and TODOs
 
-Updated 2026-08-03.
+Updated 2026-08-04.
 
 GnuCash Web has passed the point where desktop parity or raw feature count is the
 right roadmap. The product already has accounting-grade books, household and
@@ -1475,6 +1475,294 @@ and produces scattered *timeout* failures in unrelated suites (PayslipDetailPane
 bulk-upload-ui, InvestmentTransactionForm, the docs layout). Those are
 contention-sensitive rather than order-dependent, and none recur in normal runs —
 worth knowing if CI ever gets slower.
+
+---
+
+## P1 - Lot Scrub and Investment-Type Correctness (2026-08-04 audit)
+
+**Status:** Open. Findings from a code audit of `src/lib/lot-scrub.ts`,
+`src/lib/lot-assignment.ts`, `src/lib/lots.ts`, `src/lib/cost-basis.ts`, and
+`src/components/ledger/investment-utils.ts`, each verified with read-only
+queries against the prod database on truenas (`gnucash-web-prod-postgres-1`).
+
+### 1. Transfer-closed lots generate phantom realized gains/losses — data + engine
+
+`generateCapitalGains` fires for every lot whose shares sum to zero, including
+lots closed by a **transfer-out** to another account. A transfer is not a
+taxable event, but the engine books `proceeds − basis` against the transfer
+value anyway. When the transfer transaction carries zero value (the common case
+in this book), the source lot books a phantom **loss equal to its full basis**,
+and the destination lot opens with **zero basis** (`linkTransferToLot` carries
+`acquisition_date` but not cost), so the eventual real sale books a phantom
+gain of the full proceeds.
+
+Prod impact (verified 2026-08-04): 84 transfer-closed lots, **all 84** carrying
+`gnucash_web_generated` gains splits, summing to **−$236,065.76** of recorded
+phantom loss; 93 lots have positive shares-in with ~$0 basis, of which 38 are
+closed with $2,604.79 of overstated gains already booked. These flow into
+realized-gain reporting (8949 / capital-gains surfaces) with wrong amounts in
+the wrong tax years.
+
+Fix direction: in `generateCapitalGains`, detect that the lot's closing
+negative split belongs to a transfer transaction (same-commodity positive
+counter-split in another non-TRADING account — the same predicate
+`splitTransferAcrossSourceLots` already uses) and **skip gains generation**;
+instead carry the source lot's remaining basis into the destination lot
+(rewrite the transfer splits' value to basis, or store a `carried_basis` slot
+the gains pass consumes later). Then a data repair: revert/regenerate the 84
+transfer-gains transactions. **Effort:** M, plus a supervised prod repair.
+
+### 2. Zero-value crypto-to-crypto trades scrub into phantom losses
+
+60 splits on STOCK/MUTUAL accounts change quantity with `value_num = 0` and no
+same-commodity counter-split — all crypto-to-crypto trades ("Buy ETH": ETH +3 /
+BTC −0.0696, both $0). The scrub treats the negative side as a **$0-proceeds
+sell** (phantom loss equal to consumed basis) and the positive side as a
+**zero-cost buy lot** (phantom gain later). Fix direction: value these trades
+at the price-DB rate on the trade date during scrub (or flag them as warnings
+and refuse to book a gain from a $0-value sell). The same shape covers true
+stock splits/reverse splits, which should scale existing lots rather than open
+zero-cost lots or realize $0-proceeds "sales". **Effort:** M.
+
+### 3. LIFO assignment is anachronistic
+
+`assignWithStrategy` creates lots for **all** buys first, then processes sells
+against a single statically-sorted lot list. Under LIFO, a sell consumes the
+newest lot **including buys dated after the sell**. True LIFO must consume, per
+sell, the newest lot existing **at the sell date**. FIFO is safe (chronological
+replay), but FIFO ordering for transferred lots uses the transfer date instead
+of the carried `acquisition_date`, so transferred (older) shares are consumed
+after newer direct buys. **Effort:** S–M. (`cost-basis.ts` already implements
+the correct per-sale replay — see `consumptionOrder` — and can serve as the
+reference.)
+
+### 4. Oversell handling is inconsistent and can corrupt a lot
+
+When a sell exceeds all open lots (`splitSellAcrossLots`): with multiple lots,
+the "remainder" logic dumps the un-allocatable excess into the **last lot**,
+leaving it with negative shares (warning only); with a single lot, the split's
+quantity/value are rewritten smaller, the transaction stops balancing, and the
+invariant check throws — failing the whole account scrub with a cryptic
+"balance invariant violated". Desktop GnuCash leaves the unallocatable
+remainder **unassigned**. Do that in both paths and keep the warning. No prod
+lots are currently negative (verified), so this is latent. **Effort:** S.
+
+### 5. Two conflicting long-term rules
+
+`classifyHoldingPeriod` (lot-scrub) uses a 365-day millisecond threshold;
+`isLongTerm` (reports/capital-gains, used by lots UI and 8949) uses the
+IRS-correct calendar-anniversary rule. They disagree on exact-anniversary sales
+across leap years (366 days elapsed = still short-term per IRS; the scrub calls
+it long-term and posts to the **Long Term** gains account while 8949 reports
+short-term). Unify on `isLongTerm`. **Effort:** S.
+
+### 6. Investment ledger row reads only the first account split
+
+`transformToInvestmentRow` uses `splits.find(s => s.account_guid ===
+accountGuid)`, but the scrub engine sub-splits sells/transfers into multiple
+same-account splits. A scrubbed multi-lot sell displays only the first
+sub-split's shares/value/price. 109 (transaction, account) pairs in prod have
+multiple nonzero-quantity stock splits today. Sum the account's splits the way
+the API route already does for the running balance
+(`src/app/api/accounts/[guid]/transactions/route.ts`). **Effort:** S.
+
+### 7. Wash-sale detector false positives
+
+`detectWashSales` counts **any** positive-quantity split as replacement shares:
+(a) the sold shares' own purchase within 30 days flags the sale against itself
+(IRS excludes the shares bought-and-sold in the wash; 677 prod sells have a
+same-account buy within the prior 30 days — DRIP-heavy accounts drown in
+noise); (b) transfer-in sub-splits are "buys", so moving shares between own
+accounts flags a wash; (c) the no-lot loss heuristic averages **all** buys
+including ones after the sell. Exclude the sell's own lot-opening buy and
+transfer-ins, and bound the heuristic to buys ≤ sell date. **Effort:** M.
+
+### 8. Fragile name-based classification (lower priority)
+
+- `classifyAccountTax` walks account **names** for roth/ira/401k/hsa; the
+  account preference system already has an explicit retirement flag that should
+  win when set.
+- `classifyInvestmentTransaction` (investment-utils) detects Income/Expense/
+  Trading counterparties by fullname prefix instead of `account_type`, which the
+  DB knows; renamed roots or non-English books silently misclassify. Ship
+  `account_type` on ledger splits and key off it.
+- Epsilons: the scrub uses 0.0001-share thresholds throughout; at crypto's 1e8
+  precision, 0.0001 BTC is real money — dust below the epsilon is silently
+  treated as closed/consumed.
+- `generateCapitalGains` books a $0-value gains transaction when a lot closes
+  at exactly break-even — harmless but noisy.
+
+**Effort:** S each.
+
+### Data-health note (no code change decided)
+
+106 closed lots have a nonzero value sum and **no** gains offset split, and
+none sit under Roth/HSA accounts — so they are not the TAX_EXEMPT skip path.
+Likely closed by earlier runs or desktop scrubs before gains generation
+existed. `computeRealizedGain` handles them correctly for display, but any
+repair pass from finding 1 should sweep these too.
+
+---
+
+## P1 - Tax Estimator and Withholding Correctness (2026-08-04 audit)
+
+**Status:** Open. Findings from a code audit of `src/lib/tax/federal.ts`,
+`src/lib/withholding.ts`, `src/lib/tax/{book-income,payments,estimated-quarters,
+paycheck,phaseouts,scenario,suggest,tax-schedule}.ts`, `src/lib/tax/state/`,
+and the estimator page wiring, with prod-data verification on truenas. The
+pure federal engine held up well: 2024/2025 constants match the Rev. Procs. +
+OBBBA, the QSS-vs-others Additional Medicare distinction is right, MFS is
+correctly excluded from the senior deduction, the Pub 915 muni-interest
+handling is correct, and there are 59 federal engine tests. The findings are
+mostly at the seams.
+
+### 1. Estimator capital gains inherit the lot-engine defects — and add their own
+
+`aggregateBookTaxData` builds STCG/LTCG **only** from closed lots
+(`src/lib/tax/book-income.ts`). Three problems, all verified in prod:
+
+- **Phantom transfer gains flow into supported tax years**: the transfer-close
+  gains from the lot audit land −$5,061.11 in 2024 and −$1,518.66 in 2025
+  STCG/LTCG (the −$220k bulk is in 2023). The estimator, withholding checkup,
+  and tax package all consume these.
+- **Open (partially-sold) lots are skipped entirely** (`if (!lot.isClosed)
+  continue`), even though `computeRealizedGain` already returns the realized
+  portion of open lots. Prod: 2 open lots with **$36,607** of 2025 sale
+  proceeds contribute zero realized gain to the 2025 estimate.
+- **Whole-lot gains attributed to the close year**: a lot with sells across
+  years books its entire gain in the final year. 22 closed lots in prod span
+  multiple sell years. The 8949 report does per-sale rows; the estimator
+  should follow the same per-sale attribution (share
+  `loadRealizedSales`-style extraction instead of per-lot sums).
+- Also: a **fourth** copy of the long-term rule (`ONE_YEAR_MS` 365-day
+  threshold at book-income.ts:25) disagreeing with `isLongTerm`, and year
+  bucketing via local-time `getFullYear()` on a UTC ISO date. Unify on
+  `isLongTerm` + UTC.
+
+**Effort:** M. Fixing the lot engine first (previous section) is a
+prerequisite for the data to come clean.
+
+### 2. Withholding checkup diverges from the estimator it mirrors
+
+`buildFederalInputsFromBook` (withholding.ts) rebuilds the estimator's
+`buildInputs` but skips two things the estimator page applies:
+
+- **No Child Tax Credit**: `qualifyingChildrenUnder17` is never set (the page
+  pulls `entity.dependentsUnder17`; the checkup loader has no input for it).
+  A family with 2 kids sees liability overstated by $4,400 and gets told to
+  over-withhold.
+- **No trad-IRA deduction phase-out**: the page caps
+  `traditionalIraContributions` at the §219(g) deductible limit via
+  `computeIraDeductionLimit`; the checkup deducts the full contribution, so
+  covered high-MAGI filers see understated liability.
+
+Extract the page's input-assembly (CTC + phase-out cap) into a shared helper
+both surfaces call. **Effort:** S–M.
+
+### 3. Paycheck model uses the NIIT threshold for Additional Medicare
+
+`paycheck.ts:129` reads `getYearStatusParams(...).niitThreshold` for the 0.9%
+Additional Medicare wage threshold. For QSS the two differ ($250k NIIT vs
+$200k §3101(b)(2)) — and `federal.ts` already exports
+`additionalMedicareThreshold(filingStatus)` documenting exactly this trap.
+One-line fix. **Effort:** XS.
+
+### 4. Contribution scenarios ignore IRA deductibility
+
+`applyScenario` adds hypothetical trad-IRA dollars straight into
+`traditionalIraContributions`; validation checks only the *contribution*
+limit. The base estimate applies the §219(g) phase-out, but a "max out
+traditional IRA" scenario for a plan-covered filer above the MAGI range shows
+tax savings that don't exist. Route scenario additions through
+`computeIraDeductionLimit` (same MAGI-without-IRA pass the page already
+does). **Effort:** S.
+
+### 5. Missing OBBBA individual provisions (2025 ones are live now)
+
+Not modeled anywhere: **tips deduction** and **overtime deduction**
+(2025-2028), **car-loan interest** deduction (2025-2028), the 2026 **0.5% AGI
+floor** on itemized charitable contributions, the 2026 **non-itemizer
+charitable deduction** ($1,000/$2,000), and the 2026 **2/37 itemized
+limitation** for 37%-bracket filers. The header documents the §199A
+simplifications but none of these. At minimum add inputs for tips/overtime
+(they change 2025 returns) and the 2026 charitable floor; document the rest
+as known simplifications. **Effort:** M.
+
+### 6. No farmer safe harbor, despite the farm feature set
+
+`computeSafeHarbor` models only 90%-current / 100%/110%-prior with four equal
+installments. IRC §6654(i): a qualifying farmer (⅔ of gross income from
+farming) owes a **single Jan 15 installment of 66⅔%** of current-year tax —
+and this product ships Schedule F, a farm analyzer, and NC farm rules, so the
+person most likely to use it qualifies. Also: due dates are not
+weekend/holiday-rolled here (the compliance calendar pre-rolls per §7503 —
+inconsistent), and the annualized-installment method (Form 2210 Sch. AI) is
+absent, which penalizes lumpy income in the quarter tracker. **Effort:** S
+for the farmer rule + date rolling; M for annualized installments.
+
+### 7. Smaller correctness notes
+
+- **NIIT loss clamp** (federal.ts:510): `Math.max(0, cg.includedInAgi)` —
+  Form 8960 lets the allowed capital loss (−$3,000) reduce net investment
+  income; clamping overstates NIIT in loss years. **XS.**
+- **Capital-loss carryover**: no input for prior-year carryover, so loss
+  years' −$3,000 cap discards the excess with no way to model next year.
+  **S.**
+- **Tax-schedule sheltered guard is one-sided** (tax-schedule.ts): it has the
+  retirement-counter guard but not the asset-side mirror guard book-income.ts
+  carries — an IRA internal dividend can still land on the tax schedule
+  report via a mapped sheltered asset account, though it is excluded from the
+  estimator. Same-guard parity, per the contribution-summing-paths rule.
+  **S.**
+- **Roth phase-out for MFS living apart** uses the 0–10k range
+  unconditionally (IRS allows single ranges when living apart all year) —
+  acceptable simplification, but undocumented, unlike the QSS note beside it.
+  **XS (doc).**
+
+---
+
+## P2 - Abbreviation Glossary with Hover Tooltips (app-wide)
+
+**Status:** Open. Requested 2026-08-04: the app is dense with financial,
+tax, and accounting abbreviations that are not obvious to every user.
+
+Every user-visible abbreviation should carry a small (i) affordance that
+reveals the expansion (and, where one line helps, a plain-English gloss) on
+hover — and on tap/focus for mobile and keyboard users.
+
+**Approach:**
+
+1. **One shared glossary, one shared component.** A central
+   `src/lib/glossary.ts` mapping term → { expansion, gloss? } and an
+   `<Abbr term="QBI" />` (or `<InfoHint>`) component in `src/components/ui/`
+   that renders the abbreviation with the (i) icon and tooltip. There is no
+   Tooltip primitive in `src/components/ui/` today — build it once there
+   (positioning, delay, `aria-describedby`, Escape-to-dismiss, touch/focus
+   trigger) instead of scattering `title=` attributes, and style it per
+   DESIGN.md semantic tokens. Native `title=` is not acceptable as the final
+   mechanism: no mobile support, no styling, poor discoverability — the (i)
+   icon is the point.
+2. **App-wide audit to find them.** Sweep every user-facing surface (pages,
+   components, report headers/columns, chart legends, empty states, toasts)
+   for abbreviations. Non-exhaustive starter list from recent work: AGI,
+   MAGI, QBI, SE, NIIT, SALT, LTCG/STCG, CTC/ACTC, HSA, FSA, IRA, SEP,
+   SIMPLE, RMD, QSS/MFJ/MFS/HOH, 1040-ES, TXF, 8949, W-2/W-9, 1099, 990-N,
+   DRIP, ROC (the ledger's TransactionTypeIcon labels), G/L, FIFO/LIFO, FICA,
+   OASDI, SCU, AR/AP, COGS, QBO, PUV, FIRE, KPI, YTD, FX, ES (estimated
+   tax), plus business/farm terms (Schedule C/E/F as "Schedule F (Form 1040),
+   Profit or Loss From Farming", §179, §1091, OBBBA). The audit should also
+   catch column headers like "ST/LT" and axis/legend labels in charts.
+3. **Coverage without noise.** First occurrence per view gets the (i);
+   repeated occurrences in the same table column don't need one each — put
+   the hint in the column header. Keep tooltips to one or two sentences; link
+   to the docs page for anything needing more.
+4. **Keep it maintainable.** A lint-style check (or test) that greps new UI
+   strings for known glossary terms rendered without `<Abbr>` would stop
+   regressions; at minimum, add the rule to DESIGN.md so new surfaces adopt
+   it.
+
+**Effort:** M–L (the component and glossary are S; the app-wide sweep and
+retrofit are the bulk).
 
 ---
 
