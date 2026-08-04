@@ -897,6 +897,40 @@ milestones feed the Money Timeline.
 
 # Core workflow and connector backlog
 
+## P3 - Finish Household Identity Integration
+
+**Status:** Proposed 2026-08-04.
+
+**Outcome:** A person is defined once, in household settings, and every pack
+refers to that person. The app should behave as one integrated system rather
+than a set of tools that each keep their own copy of the family.
+
+Estate, retirement income, life insurance, and the 529 planner now resolve
+people from the household roster (`loadHouseholdRoster` plus the pure
+resolution helpers in `src/lib/resilience/household.ts`), seed themselves from
+it, and inherit filing status from `EntityProfile`. Two packs still identify
+people by loose text:
+
+- **Healthcare comparator** — `HealthcareClaim.member` is a free-text string,
+  so claims cannot be grouped by household member reliably and a rename
+  silently splits a person's claim history. `EntityMember.coveredByEmployerPlan`
+  already exists and should drive plan-eligibility context too.
+- **Family banking** — `FamilyBankChild.name` is free text, though every child
+  ledger corresponds to a household `dependent` with a birthday on file.
+
+Apply the established pattern: an optional member link on the record, service
+side resolution against the roster before the pure engine runs, seeding from
+the roster when a pack is empty, and strict matching for dependents (role plus
+normalized name, falling back to stored values on an ambiguous or missing
+match rather than guessing). Existing profiles must keep parsing and computing
+identically, with the link never inferred from a name collision alone.
+
+**Depends on:** `src/lib/resilience/household.ts`, entity profile/members.
+
+**Effort:** S-M.
+
+---
+
 ## P1 - Action Center Signal Quality
 
 **Status:** Proposed 2026-08-02.
