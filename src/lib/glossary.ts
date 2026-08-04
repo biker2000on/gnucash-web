@@ -51,7 +51,11 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     },
     EITC: {
         expansion: 'Earned Income Tax Credit',
-        gloss: 'A refundable credit for lower-income workers; amount depends on earned income and number of children.',
+        gloss: 'A refundable credit for lower-income workers; amount depends on earned income and number of children. Not allowed on a married-filing-separately return.',
+    },
+    IDR: {
+        expansion: 'Income-Driven Repayment',
+        gloss: 'Federal student-loan plans (IBR, PAYE, ICR) that set the monthly payment from the borrower’s income. Filing separately can shrink the payment because only the borrower’s own AGI counts.',
     },
     CTC: {
         expansion: 'Child Tax Credit',

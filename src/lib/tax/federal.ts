@@ -605,7 +605,15 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
 
   /* --- Standard deduction --- */
   const filers65 = Math.max(0, Math.min(2, Math.floor(inputs.filersAge65Plus)));
-  const standardDeduction = p.standardDeduction + filers65 * p.additionalStdDed65;
+  // §63(c)(6)(A): an MFS filer whose spouse itemizes gets a ZERO standard
+  // deduction (the additional 65+ amounts are part of the standard deduction
+  // and vanish with it). With a zero standard deduction, any positive
+  // itemized total wins the election below — which is exactly the statutory
+  // pressure that forces both spouses to itemize together.
+  const standardDeduction =
+    inputs.filingStatus === 'mfs' && inputs.mfsSpouseItemizes === true
+      ? 0
+      : p.standardDeduction + filers65 * p.additionalStdDed65;
 
   /* --- Itemized deduction --- */
   let saltCap = p.saltCap;
@@ -956,6 +964,7 @@ export function emptyFederalInputs(year: TaxYear, filingStatus: FilingStatus): F
     medicalExpenses: 0,
     otherDeductions: 0,
     filersAge65Plus: 0,
+    mfsSpouseItemizes: false,
     qualifiedTipIncome: 0,
     qualifiedOvertimeCompensation: 0,
     qualifiedCarLoanInterest: 0,

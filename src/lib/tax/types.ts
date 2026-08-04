@@ -234,6 +234,15 @@ export interface FederalTaxInputs {
   filersAge65Plus: number;
 
   /**
+   * §63(c)(6)(A): a married individual filing a separate return whose spouse
+   * itemizes deductions has a standard deduction of ZERO (including the
+   * additional 65+ amounts, which are part of the standard deduction). Set
+   * this on an MFS run when the other spouse's return itemizes; ignored for
+   * every other filing status. Optional, defaults to false.
+   */
+  mfsSpouseItemizes?: boolean;
+
+  /**
    * OBBBA qualified tip income (IRC §224, 2025-2028): cash tips in a
    * Treasury-listed tipped occupation, W-2 box 7 / Form 4137 / 1099-reported.
    * The engine caps the deduction at $25,000 per return and applies the

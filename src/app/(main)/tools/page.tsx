@@ -38,6 +38,12 @@ function ToolIcon({ icon }: { icon: string }) {
                     <circle cx="16.5" cy="16.5" r="2.5" strokeWidth={1.5} />
                 </svg>
             );
+        case 'scale':
+            return (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 3v18M8 21h8M12 6H5m7 0h7M5 6l-2.5 6a3 3 0 005 0L5 6zm14 0l-2.5 6a3 3 0 005 0L19 6z" />
+                </svg>
+            );
         case 'building':
             return (
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -259,6 +265,12 @@ export default function ToolsPage() {
             description: 'Estimate federal and state taxes from your book data, with contribution scenarios and IRS limit tracking.',
             icon: 'percent',
             href: '/tools/tax-estimator',
+        },
+        {
+            title: 'Filing Comparison (MFJ vs MFS)',
+            description: 'Joint or separate? Split your book data per spouse, run both filings side by side, and sweep one variable to find the breakeven.',
+            icon: 'scale',
+            href: '/tools/filing-comparison',
         },
         {
             title: 'In Case of Emergency',
