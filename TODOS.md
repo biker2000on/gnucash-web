@@ -1756,10 +1756,21 @@ deleted); scenarios route trad-IRA additions through
 installment behind an explicit flag and all due dates roll per §7503; NIIT
 loss clamp removed, `priorYearCapitalLossCarryover` input added with
 carryover-out on the result, tax-schedule mirror sheltered guard added, MFS
-Roth simplification documented. **Remaining:** finding 1 (per-sale lot-gain
-extraction — unblocked now that the lot engine is fixed), finding 5 (OBBBA
-tips/overtime/car-loan/charitable-floor provisions), and Form 2210 Sch. AI
-annualized installments. Original audit scope: `src/lib/tax/federal.ts`,
+Roth simplification documented. **Findings 1 and 5 implemented 2026-08-04
+(wave 2):** the estimator, withholding checkup, and tax package now consume
+the same per-sale extraction as the 8949 (`lotToRealizedSales` in
+`src/lib/reports/capital-gains.ts` — per-sale year attribution, open-lot
+realized portions, UTC bucketing, carried basis/dates, shared `isLongTerm`;
+this also fixed the 8949's own per-lot rows), and the OBBBA individual
+provisions are modeled with statute-verified parameters: §224 tips and §225
+overtime deductions (2025-2028, per-return caps, floor-rounded phase-outs,
+MFS excluded per the joint-filing requirement), §163(h)(4) car-loan
+interest (ceiling-rounded phase-out), the 2026 §170(q) 0.5% AGI charitable
+floor, §170(p) non-itemizer charitable deduction, and the §68 2/37
+itemized limitation (correct measure: taxable income before §68 plus
+itemized deductions over the 37% bracket start). **Remaining:** Form 2210
+Sch. AI annualized installments only. Original audit scope:
+`src/lib/tax/federal.ts`,
 `src/lib/withholding.ts`, `src/lib/tax/{book-income,payments,estimated-quarters,
 paycheck,phaseouts,scenario,suggest,tax-schedule}.ts`, `src/lib/tax/state/`,
 and the estimator page wiring, with prod-data verification on truenas. The
