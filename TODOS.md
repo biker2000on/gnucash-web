@@ -1887,7 +1887,24 @@ for the farmer rule + date rolling; M for annualized installments.
 
 ## P2 - Abbreviation Glossary with Hover Tooltips (app-wide)
 
-**Status:** Open. Requested 2026-08-04: the app is dense with financial,
+**Status:** Implemented 2026-08-04.
+
+**Delivered:** Dependency-free `Tooltip` primitive in `src/components/ui/`
+(portal-rendered, viewport-aware flip/clamp, hover/focus/tap triggers,
+Escape-to-dismiss, `aria-describedby`, DESIGN.md tokens), `src/lib/glossary.ts`
+(~78 terms), and `<Abbr term="…">` with dotted underline + (i) glyph and
+plain-text fallback for unknown terms. Retrofitted first-occurrence-per-view
+across 18 dense surfaces (tax estimator, withholding checkup, 8949/Schedule D,
+lots, harvesting, TXF schedule, tax package, contribution summary, Schedule F,
+farm/S-corp analyzers, estimated taxes, bunching, sell planner, HSA shoebox,
+FIRE calculator, FX revaluation, investment ledger — `TransactionTypeIcon`
+dropped its native `title=`). DESIGN.md has the rule;
+`src/__tests__/abbr-coverage.test.ts` fails on new bare abbreviations and on
+stale allowlist entries. **Remaining long tail:** 30 allowlisted surfaces
+(resilience pages, planning, settings, business inventory, 990, LotViewer
+badges, etc.) — each is a one-line allowlist deletion once retrofitted.
+
+Original request: the app is dense with financial,
 tax, and accounting abbreviations that are not obvious to every user.
 
 Every user-visible abbreviation should carry a small (i) affordance that
