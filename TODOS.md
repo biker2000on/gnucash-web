@@ -899,7 +899,16 @@ milestones feed the Money Timeline.
 
 ## P3 - Finish Household Identity Integration
 
-**Status:** Proposed 2026-08-04.
+**Status:** Implemented 2026-08-04.
+
+**Delivered:** Healthcare claims carry an optional `memberRole` link (strict
+dependent matching, stored-text fallback), the claim member picker seeds from
+the roster, and `coveredByEmployerPlan` now flows from household settings into
+plan-eligibility context. Family banking children link to roster dependents,
+seed one ledger per named dependent, and show age from the on-file birthday;
+the kid-view API resolves seeded ledgers instead of 404ing. Legacy text-only
+profiles parse and compute identically (regression-tested); links are never
+inferred from a name collision alone.
 
 **Outcome:** A person is defined once, in household settings, and every pack
 refers to that person. The app should behave as one integrated system rather
@@ -933,7 +942,18 @@ identically, with the link never inferred from a name collision alone.
 
 ## P1 - Action Center Signal Quality
 
-**Status:** Proposed 2026-08-02.
+**Status:** Implemented 2026-08-04.
+
+**Delivered:** Review actions are source-gated (`source <> 'manual'`; a write-
+path audit confirmed no path creates manual rows with `reviewed = FALSE`).
+Savings-rate and category-spike detectors compare like-for-like first-N-days
+windows with a day-7 floor and state the window in their trace; the point-in-
+time detectors were audited and need no change. New `original_description`
+column (idempotent raw-SQL migration) preserves the imported payee: set by
+SimpleFIN/payslip imports, never overwritten on edit, consumed by new-merchant
+detection, categorization rules, recurring detection, and duplicate matching,
+and shown as "Imported as …" on transaction detail. No backfill for
+already-renamed rows, as specified.
 
 **Outcome:** Every item in the Action Center is worth reading. Today the
 surface raises items the user can only dismiss, which trains them to ignore
@@ -1480,7 +1500,19 @@ worth knowing if CI ever gets slower.
 
 ## P1 - Lot Scrub and Investment-Type Correctness (2026-08-04 audit)
 
-**Status:** Open. Findings from a code audit of `src/lib/lot-scrub.ts`,
+**Status:** Engine fixes for all 8 findings implemented 2026-08-04 (single
+`isLongTerm` in `src/lib/holding-period.ts`; transfer-close skips gains and
+carries basis via a `carried_basis` lot slot; zero-value trades valued from
+the price DB with refuse-to-book fallback and stock splits scale lots;
+per-sale LIFO replay with acquisition-date FIFO ordering; oversell remainder
+left unassigned; ledger rows sum sub-splits; wash-sale exclusions;
+preference-flag/account-type classification with commodity-aware epsilons).
+**Remaining:** the supervised prod data repair —
+`scripts/repair-transfer-lot-gains.mjs` (dry-run by default, `--apply` to
+write) reverts the 84 transfer-close gains transactions, re-links carried
+basis along transfer chains, and reports the 106 no-offset lots. Rehearse on
+the dev copy, then run on prod after this code deploys. Findings kept below
+for reference. Audited files: `src/lib/lot-scrub.ts`,
 `src/lib/lot-assignment.ts`, `src/lib/lots.ts`, `src/lib/cost-basis.ts`, and
 `src/components/ledger/investment-utils.ts`, each verified with read-only
 queries against the prod database on truenas (`gnucash-web-prod-postgres-1`).
@@ -1606,7 +1638,20 @@ repair pass from finding 1 should sweep these too.
 
 ## P1 - Tax Estimator and Withholding Correctness (2026-08-04 audit)
 
-**Status:** Open. Findings from a code audit of `src/lib/tax/federal.ts`,
+**Status:** Findings 2, 3, 4, 6 (farmer rule + §7503 rolling), and 7
+implemented 2026-08-04: shared input assembly in
+`src/lib/tax/estimator-inputs.ts` now feeds the estimator page, withholding
+checkup, and `/api/tax/estimated` (which held a third divergent copy, now
+deleted); scenarios route trad-IRA additions through
+`computeIraDeductionLimit`; paycheck uses `additionalMedicareThreshold`;
+`computeSafeHarbor` models the §6654(i) qualifying-farmer single 66⅔% Jan 15
+installment behind an explicit flag and all due dates roll per §7503; NIIT
+loss clamp removed, `priorYearCapitalLossCarryover` input added with
+carryover-out on the result, tax-schedule mirror sheltered guard added, MFS
+Roth simplification documented. **Remaining:** finding 1 (per-sale lot-gain
+extraction — unblocked now that the lot engine is fixed), finding 5 (OBBBA
+tips/overtime/car-loan/charitable-floor provisions), and Form 2210 Sch. AI
+annualized installments. Original audit scope: `src/lib/tax/federal.ts`,
 `src/lib/withholding.ts`, `src/lib/tax/{book-income,payments,estimated-quarters,
 paycheck,phaseouts,scenario,suggest,tax-schedule}.ts`, `src/lib/tax/state/`,
 and the estimator page wiring, with prod-data verification on truenas. The
