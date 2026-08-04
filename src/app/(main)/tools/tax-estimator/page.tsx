@@ -205,6 +205,11 @@ export default function TaxEstimatorPage() {
   const [priorYearAgi, setPriorYearAgi] = useState<number | ''>('');
   const [priorYearCapLoss, setPriorYearCapLoss] = useState<number | ''>('');
   const [qualifyingFarmer, setQualifyingFarmer] = useState(false);
+  // OBBBA §224/§225/§163(h)(4) user-entered amounts (2025-2028) — the
+  // engine owns the caps, MAGI phase-outs, and year gating.
+  const [qualifiedTips, setQualifiedTips] = useState<number | ''>('');
+  const [qualifiedOvertime, setQualifiedOvertime] = useState<number | ''>('');
+  const [qualifiedCarLoanInterest, setQualifiedCarLoanInterest] = useState<number | ''>('');
   const [spouseBirthday, setSpouseBirthday] = useState('');
   const [coveredByPlan, setCoveredByPlan] = useState(true);
   const [spouseCovered, setSpouseCovered] = useState(false);
@@ -283,12 +288,18 @@ export default function TaxEstimatorPage() {
           priorYearAgi?: number;
           priorYearCapLoss?: number;
           qualifyingFarmer?: boolean;
+          qualifiedTips?: number;
+          qualifiedOvertime?: number;
+          qualifiedCarLoanInterest?: number;
         };
         if (Array.isArray(saved.scenarios)) setScenarios(saved.scenarios.slice(0, 3));
         if (typeof saved.priorYearTax === 'number') setPriorYearTax(Math.max(0, saved.priorYearTax));
         if (typeof saved.priorYearAgi === 'number') setPriorYearAgi(Math.max(0, saved.priorYearAgi));
         if (typeof saved.priorYearCapLoss === 'number') setPriorYearCapLoss(Math.max(0, saved.priorYearCapLoss));
         if (typeof saved.qualifyingFarmer === 'boolean') setQualifyingFarmer(saved.qualifyingFarmer);
+        if (typeof saved.qualifiedTips === 'number') setQualifiedTips(Math.max(0, saved.qualifiedTips));
+        if (typeof saved.qualifiedOvertime === 'number') setQualifiedOvertime(Math.max(0, saved.qualifiedOvertime));
+        if (typeof saved.qualifiedCarLoanInterest === 'number') setQualifiedCarLoanInterest(Math.max(0, saved.qualifiedCarLoanInterest));
       })
       .catch(() => {});
   }, []);
@@ -368,6 +379,9 @@ export default function TaxEstimatorPage() {
           priorYearAgi: priorYearAgi === '' ? undefined : priorYearAgi,
           priorYearCapLoss: priorYearCapLoss === '' ? undefined : priorYearCapLoss,
           qualifyingFarmer: qualifyingFarmer || undefined,
+          qualifiedTips: qualifiedTips === '' ? undefined : qualifiedTips,
+          qualifiedOvertime: qualifiedOvertime === '' ? undefined : qualifiedOvertime,
+          qualifiedCarLoanInterest: qualifiedCarLoanInterest === '' ? undefined : qualifiedCarLoanInterest,
         },
       };
       const res = scenarioConfigId
@@ -390,7 +404,7 @@ export default function TaxEstimatorPage() {
       setScenarioSaveStatus('error');
       setTimeout(() => setScenarioSaveStatus('idle'), 3000);
     }
-  }, [scenarios, priorYearTax, priorYearAgi, priorYearCapLoss, qualifyingFarmer, scenarioConfigId]);
+  }, [scenarios, priorYearTax, priorYearAgi, priorYearCapLoss, qualifyingFarmer, qualifiedTips, qualifiedOvertime, qualifiedCarLoanInterest, scenarioConfigId]);
 
   /* ---- Compute ---- */
 
@@ -414,6 +428,11 @@ export default function TaxEstimatorPage() {
         selfIraLimit: estimate.limits.ira?.total ?? null,
         spouseIraLimit: estimate.limits.spouseIra?.total ?? null,
         contributionsByTypeAndOwner: estimate.bookData.contributionsByTypeAndOwner,
+        // OBBBA §224/§225/§163(h)(4) user-entered amounts — the engine
+        // applies the caps, MAGI phase-outs, and 2025-2028 year gating.
+        qualifiedTipIncome: qualifiedTips === '' ? undefined : qualifiedTips,
+        qualifiedOvertimeCompensation: qualifiedOvertime === '' ? undefined : qualifiedOvertime,
+        qualifiedCarLoanInterest: qualifiedCarLoanInterest === '' ? undefined : qualifiedCarLoanInterest,
       },
     );
     const federal = computeFederalTax(cappedInputs);
@@ -440,7 +459,7 @@ export default function TaxEstimatorPage() {
       isQualifyingFarmer: qualifyingFarmer,
     });
     return { inputs: cappedInputs, federal, state, totalLiability, payments, totalWithheld, balance, safeHarbor, phaseOuts };
-  }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi, priorYearCapLoss, qualifyingFarmer, coveredByPlan, spouseCovered]);
+  }, [estimate, year, filingStatus, annualize, filersAge65Plus, stateCode, stateFlatRate, priorYearTax, priorYearAgi, priorYearCapLoss, qualifyingFarmer, qualifiedTips, qualifiedOvertime, qualifiedCarLoanInterest, coveredByPlan, spouseCovered]);
 
   const scenarioLimits: ScenarioLimits | null = useMemo(() => {
     if (!estimate || !computed) return null;
@@ -717,6 +736,58 @@ export default function TaxEstimatorPage() {
           )}
           </>
           )}
+        </div>
+        )}
+
+        {/* OBBBA individual deductions (2025-2028): tips, overtime, car-loan interest */}
+        {showPersonalEstimate && year >= 2025 && (
+        <div className="mt-3 pt-3 border-t border-border/60">
+          <p className="text-xs font-medium text-foreground-secondary mb-2">
+            OBBBA deductions (2025–2028) — enter qualified amounts; caps and income
+            phase-outs are applied automatically
+          </p>
+          <FieldGrid cols={3}>
+            <Field label="Qualified tip income (§224)">
+              <input
+                type="number"
+                min={0}
+                value={qualifiedTips}
+                placeholder="e.g. 8000"
+                onChange={e => setQualifiedTips(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
+                className={`${INPUT} text-right font-mono`}
+                style={{ fontFeatureSettings: "'tnum'" }}
+              />
+            </Field>
+            <Field label="Qualified overtime premium (§225)">
+              <input
+                type="number"
+                min={0}
+                value={qualifiedOvertime}
+                placeholder="e.g. 4000"
+                onChange={e => setQualifiedOvertime(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
+                className={`${INPUT} text-right font-mono`}
+                style={{ fontFeatureSettings: "'tnum'" }}
+              />
+            </Field>
+            <Field label="Car-loan interest (§163(h)(4))">
+              <input
+                type="number"
+                min={0}
+                value={qualifiedCarLoanInterest}
+                placeholder="e.g. 1500"
+                onChange={e => setQualifiedCarLoanInterest(e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))}
+                className={`${INPUT} text-right font-mono`}
+                style={{ fontFeatureSettings: "'tnum'" }}
+              />
+            </Field>
+          </FieldGrid>
+          <p className="text-[11px] text-foreground-muted mt-1.5">
+            Tips: reported cash tips in a Treasury-listed tipped occupation (deduction up to
+            $25,000; not available for married filing separately). Overtime: only the FLSA
+            half-time premium portion of time-and-a-half (up to $12,500 / $25,000 joint).
+            Car loan: interest on a post-2024 loan for a new personal-use vehicle assembled
+            in the US (up to $10,000). Amounts you enter are assumed to qualify.
+          </p>
         </div>
         )}
       </CollapsibleConfigSection>
@@ -1195,6 +1266,18 @@ export default function TaxEstimatorPage() {
                   {computed.federal.seniorDeduction > 0 && (
                     <BreakdownRow label="Senior deduction (OBBBA)" value={-computed.federal.seniorDeduction} />
                   )}
+                  {computed.federal.tipsDeduction > 0 && (
+                    <BreakdownRow label="Tips deduction (OBBBA §224)" value={-computed.federal.tipsDeduction} />
+                  )}
+                  {computed.federal.overtimeDeduction > 0 && (
+                    <BreakdownRow label="Overtime deduction (OBBBA §225)" value={-computed.federal.overtimeDeduction} />
+                  )}
+                  {computed.federal.carLoanInterestDeduction > 0 && (
+                    <BreakdownRow label="Car-loan interest deduction (OBBBA)" value={-computed.federal.carLoanInterestDeduction} />
+                  )}
+                  {computed.federal.nonItemizerCharitableDeduction > 0 && (
+                    <BreakdownRow label="Charitable deduction (non-itemizer)" value={-computed.federal.nonItemizerCharitableDeduction} />
+                  )}
                   <BreakdownRow label="Taxable income" value={computed.federal.taxableIncome} strong />
                   <div className="pt-2" />
                   <BreakdownRow label="Ordinary income tax" value={computed.federal.ordinaryTax} />
@@ -1217,6 +1300,20 @@ export default function TaxEstimatorPage() {
                   <p className="mt-2 text-[11px] text-foreground-muted">
                     Capital loss beyond the annual cap: {formatCurrency(computed.federal.capitalLossCarryoverToNextYear)}{' '}
                     carries over — enter it as next year&apos;s prior-year capital-loss carryover.
+                  </p>
+                )}
+                {computed.federal.usedItemized && computed.federal.itemizedBreakdown.charitableFloorDisallowed > 0.004 && (
+                  <p className="mt-2 text-[11px] text-foreground-muted">
+                    Charitable floor (2026+): the first{' '}
+                    {formatCurrency(computed.federal.itemizedBreakdown.charitableFloorDisallowed)} of charitable
+                    gifts (0.5% of AGI) is not deductible when itemizing.
+                  </p>
+                )}
+                {computed.federal.itemizedLimitationReduction > 0.004 && (
+                  <p className="mt-2 text-[11px] text-foreground-muted">
+                    37%-bracket itemized limitation (2026+): itemized deductions reduced by{' '}
+                    {formatCurrency(computed.federal.itemizedLimitationReduction)} (2/37 rule) — already
+                    reflected in the deduction above.
                   </p>
                 )}
                 {computed.state.notes.length > 0 && (

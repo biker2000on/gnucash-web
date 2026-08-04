@@ -19,6 +19,9 @@ import { FILING_STATUSES, isSupportedTaxYear, type FilingStatus } from '@/lib/ta
  *   priorYearAGI          Prior-year AGI (110% high-income multiplier), optional
  *   payPeriodsPerYear     Override pay cadence (else inferred from payslips)
  *   qualifyingFarmer      'true' for the IRC §6654(i) farmer safe harbor
+ *   qualifiedTips         OBBBA §224 qualified tip income (2025-2028), optional
+ *   qualifiedOvertime     OBBBA §225 overtime premium (2025-2028), optional
+ *   qualifiedCarLoanInterest  OBBBA §163(h)(4) car-loan interest, optional
  *
  * Auth: readonly. Book-scoped. Returns the withholding checkup + provenance.
  */
@@ -86,6 +89,11 @@ export async function GET(request: NextRequest) {
     };
     const priorYearTax = parseMoney('priorYearLiability');
     const priorYearAgi = parseMoney('priorYearAGI');
+    // OBBBA §224/§225/§163(h)(4) user-entered amounts (engine owns caps,
+    // phase-outs, and year gating) — parity with the estimator page inputs.
+    const qualifiedTips = parseMoney('qualifiedTips');
+    const qualifiedOvertime = parseMoney('qualifiedOvertime');
+    const qualifiedCarLoanInterest = parseMoney('qualifiedCarLoanInterest');
 
     const periodsRaw = parseInt(searchParams.get('payPeriodsPerYear') ?? '', 10);
     const payPeriodsPerYear = Number.isFinite(periodsRaw) && periodsRaw > 0 ? periodsRaw : undefined;
@@ -140,6 +148,9 @@ export async function GET(request: NextRequest) {
         spouseCoveredByEmployerPlan,
         selfIraLimit: limitIra?.total ?? null,
         spouseIraLimit: limitSpouseIra?.total ?? null,
+        qualifiedTipIncome: qualifiedTips ?? undefined,
+        qualifiedOvertimeCompensation: qualifiedOvertime ?? undefined,
+        qualifiedCarLoanInterest: qualifiedCarLoanInterest ?? undefined,
       },
       isQualifyingFarmer,
     });

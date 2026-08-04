@@ -12,6 +12,45 @@
  * - Additional Medicare thresholds (IRC §1401(b)(2)/§3101(b)(2), NOT indexed):
  *   $250,000 MFJ, $125,000 MFS, $200,000 any other case — QSS included.
  *
+ * OBBBA INDIVIDUAL PROVISIONS (verified against IRC §224/§225/§163(h)(4)/
+ * §170(p)/(q)/§68 as amended by P.L. 119-21, IRS Notice 2025-69, and the 2025
+ * Schedule 1-A):
+ * - Tips deduction (§224, 2025-2028): up to $25,000 per return; reduced $100
+ *   for each FULL $1,000 of MAGI over $150,000 ($300,000 joint) — the statute
+ *   has no "or fraction thereof", and Schedule 1-A rounds the quotient DOWN.
+ *   Married taxpayers must file jointly (§224(f)) — MFS gets $0.
+ * - Overtime deduction (§225, 2025-2028): up to $12,500 ($25,000 joint) for
+ *   the FLSA §7 half-time premium portion only; same phase-out and MFS
+ *   exclusion as tips.
+ * - Car-loan interest (§163(h)(4), 2025-2028): up to $10,000 per return (NOT
+ *   doubled for MFJ); reduced $200 for each $1,000 "or portion thereof" of
+ *   MAGI over $100,000 ($200,000 joint) — Schedule 1-A rounds UP. No joint
+ *   filing requirement; MFS uses the $100,000 threshold.
+ * - Charitable (2026+, permanent): itemizers deduct only contributions above
+ *   a 0.5%-of-AGI floor (§170(q)); non-itemizers deduct up to $1,000 ($2,000
+ *   joint) of cash gifts (§170(p)).
+ * - §68 (2026+): itemized deductions are reduced by 2/37 of the lesser of
+ *   (a) itemized deductions or (b) taxable income (computed without §68 and
+ *   INCREASED by those itemized deductions) over the 37%-bracket start.
+ *
+ * OBBBA SIMPLIFICATIONS (deliberate):
+ * - MAGI for §224/§225/§163(h)(4) is taken as AGI — the §911/§931/§933
+ *   foreign-income add-backs are not modeled (no input exists for them).
+ * - The SSN requirement (§224(e)/§225(d)), the Treasury tipped-occupation
+ *   list, the non-SSTB employer test, and the SE-income tips limit
+ *   (§224(c)) are NOT verified — the user attests the amount is qualified.
+ * - Car-loan interest: new-vehicle/original-use, US final assembly, and the
+ *   VIN reporting requirement are NOT verified — user attests qualification.
+ * - "Joint return" doubled amounts apply to MFJ only; QSS is not a joint
+ *   return and gets the single-filer figures (same reading as
+ *   additionalMedicareThreshold).
+ * - §170(p) requires CASH gifts to non-DAF/non-supporting-org charities;
+ *   the single charitable input is assumed to qualify. §170(q) floored
+ *   amounts and §170(d) carryovers are not tracked across years.
+ * - §68: the itemize-vs-standard election is made BEFORE the 2/37 reduction;
+ *   measure (b) uses taxable income computed with the unreduced itemized
+ *   deduction (two-pass, no fixed-point iteration on the QBI limit).
+ *
  * §199A (qualified business income) SIMPLIFICATIONS — see computeQbiDeduction:
  * - Only the BELOW-THRESHOLD case is modeled: 20% of QBI, limited to 20% of
  *   (taxable income before QBI − net capital gain). The SSTB phase-out and the
@@ -204,6 +243,37 @@ const NIIT_RATE = 0.038;
 const ADDL_MEDICARE_RATE = 0.009;
 const MEDICAL_AGI_FLOOR = 0.075;
 
+/* --- OBBBA individual provisions (P.L. 119-21) — statutory, not indexed --- */
+/** §224/§225 first and last applicable tax years. */
+const TIPS_OT_CAR_FIRST_YEAR = 2025;
+const TIPS_OT_CAR_LAST_YEAR = 2028;
+/** §224(b)(1): tips deduction cap, per return (not doubled for joint). */
+const TIPS_DEDUCTION_CAP = 25_000;
+/** §225(b)(1): overtime deduction cap ($25,000 in the case of a joint return). */
+const OVERTIME_DEDUCTION_CAP = 12_500;
+const OVERTIME_DEDUCTION_CAP_JOINT = 25_000;
+/** §224(b)(2)/§225(b)(2): MAGI phase-out start ($300,000 joint). */
+const TIPS_OT_PHASE_OUT_START = 150_000;
+const TIPS_OT_PHASE_OUT_START_JOINT = 300_000;
+/** Reduction per full $1,000 of excess MAGI (no "fraction thereof" — floor). */
+const TIPS_OT_PHASE_OUT_PER_1000 = 100;
+/** §163(h)(4): car-loan interest cap, per return (not doubled for joint). */
+const CAR_LOAN_INTEREST_CAP = 10_000;
+/** §163(h)(4) MAGI phase-out start ($200,000 joint). */
+const CAR_LOAN_PHASE_OUT_START = 100_000;
+const CAR_LOAN_PHASE_OUT_START_JOINT = 200_000;
+/** Reduction per $1,000 "or portion thereof" of excess MAGI (ceiling). */
+const CAR_LOAN_PHASE_OUT_PER_1000 = 200;
+/** First year of the §170(p)/(q) charitable rules and the §68 limitation. */
+const CHARITY_AND_SECTION_68_FIRST_YEAR = 2026;
+/** §170(q): itemized charitable floor as a fraction of AGI. */
+const CHARITABLE_FLOOR_RATE = 0.005;
+/** §170(p): non-itemizer cash charitable cap ($2,000 in a joint return). */
+const NON_ITEMIZER_CHARITABLE_CAP = 1_000;
+const NON_ITEMIZER_CHARITABLE_CAP_JOINT = 2_000;
+/** §68(a): itemized deductions reduced by 2/37 of the lesser-of measure. */
+const ITEMIZED_LIMITATION_FRACTION = 2 / 37;
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /* ------------------------------------------------------------------ */
@@ -363,6 +433,85 @@ export function netCapitalGains(
 }
 
 /* ------------------------------------------------------------------ */
+/* OBBBA individual deductions (§224 tips, §225 overtime, §163(h)(4))  */
+/* ------------------------------------------------------------------ */
+
+/** "In the case of a joint return" — MFJ only; QSS is not a joint return. */
+function isJointReturn(filingStatus: FilingStatus): boolean {
+  return filingStatus === 'mfj';
+}
+
+/**
+ * §224 qualified tips deduction (2025-2028): min(tips, $25,000) reduced by
+ * $100 for each FULL $1,000 of MAGI over $150,000 ($300,000 joint) —
+ * Schedule 1-A rounds the quotient down. Married-filing-separately is
+ * statutorily excluded (§224(f) requires a joint return when married).
+ */
+export function computeTipsDeduction(
+  qualifiedTipIncome: number,
+  magi: number,
+  filingStatus: FilingStatus,
+  year: TaxYear,
+): number {
+  if (year < TIPS_OT_CAR_FIRST_YEAR || year > TIPS_OT_CAR_LAST_YEAR) return 0;
+  if (filingStatus === 'mfs') return 0;
+  const capped = Math.min(Math.max(0, qualifiedTipIncome), TIPS_DEDUCTION_CAP);
+  if (capped <= 0) return 0;
+  const start = isJointReturn(filingStatus)
+    ? TIPS_OT_PHASE_OUT_START_JOINT
+    : TIPS_OT_PHASE_OUT_START;
+  const reduction = Math.floor(Math.max(0, magi - start) / 1_000) * TIPS_OT_PHASE_OUT_PER_1000;
+  return round2(Math.max(0, capped - reduction));
+}
+
+/**
+ * §225 qualified overtime deduction (2025-2028): min(overtime premium,
+ * $12,500 / $25,000 joint) with the same MAGI phase-out and MFS exclusion
+ * as §224. The input must be the FLSA §7 HALF-TIME PREMIUM portion only.
+ */
+export function computeOvertimeDeduction(
+  qualifiedOvertimeCompensation: number,
+  magi: number,
+  filingStatus: FilingStatus,
+  year: TaxYear,
+): number {
+  if (year < TIPS_OT_CAR_FIRST_YEAR || year > TIPS_OT_CAR_LAST_YEAR) return 0;
+  if (filingStatus === 'mfs') return 0;
+  const cap = isJointReturn(filingStatus)
+    ? OVERTIME_DEDUCTION_CAP_JOINT
+    : OVERTIME_DEDUCTION_CAP;
+  const capped = Math.min(Math.max(0, qualifiedOvertimeCompensation), cap);
+  if (capped <= 0) return 0;
+  const start = isJointReturn(filingStatus)
+    ? TIPS_OT_PHASE_OUT_START_JOINT
+    : TIPS_OT_PHASE_OUT_START;
+  const reduction = Math.floor(Math.max(0, magi - start) / 1_000) * TIPS_OT_PHASE_OUT_PER_1000;
+  return round2(Math.max(0, capped - reduction));
+}
+
+/**
+ * §163(h)(4) qualified passenger vehicle loan interest (2025-2028):
+ * min(interest, $10,000 per return) reduced by $200 for each $1,000 "or
+ * portion thereof" (ceiling) of MAGI over $100,000 ($200,000 joint). No
+ * joint-filing requirement — MFS is allowed at the $100,000 threshold.
+ */
+export function computeCarLoanInterestDeduction(
+  qualifiedCarLoanInterest: number,
+  magi: number,
+  filingStatus: FilingStatus,
+  year: TaxYear,
+): number {
+  if (year < TIPS_OT_CAR_FIRST_YEAR || year > TIPS_OT_CAR_LAST_YEAR) return 0;
+  const capped = Math.min(Math.max(0, qualifiedCarLoanInterest), CAR_LOAN_INTEREST_CAP);
+  if (capped <= 0) return 0;
+  const start = isJointReturn(filingStatus)
+    ? CAR_LOAN_PHASE_OUT_START_JOINT
+    : CAR_LOAN_PHASE_OUT_START;
+  const reduction = Math.ceil(Math.max(0, magi - start) / 1_000) * CAR_LOAN_PHASE_OUT_PER_1000;
+  return round2(Math.max(0, capped - reduction));
+}
+
+/* ------------------------------------------------------------------ */
 /* §199A qualified business income deduction                           */
 /* ------------------------------------------------------------------ */
 
@@ -466,11 +615,19 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
   }
   const saltAllowed = Math.min(Math.max(0, inputs.stateLocalTaxesPaid), saltCap);
   const medicalAllowed = Math.max(0, inputs.medicalExpenses - MEDICAL_AGI_FLOOR * Math.max(0, agi));
+  // §170(q) (2026+): itemized charitable allowed only above 0.5% of AGI.
+  // The floored amount would carry forward under §170(d) — not tracked here.
+  const charitableGross = Math.max(0, inputs.charitableDonations);
+  const charitableFloorDisallowed =
+    inputs.year >= CHARITY_AND_SECTION_68_FIRST_YEAR
+      ? round2(Math.min(charitableGross, CHARITABLE_FLOOR_RATE * Math.max(0, agi)))
+      : 0;
   const itemizedBreakdown = {
     saltAllowed: round2(saltAllowed),
     saltCap: round2(saltCap),
     mortgageInterest: round2(Math.max(0, inputs.mortgageInterest)),
-    charitable: round2(Math.max(0, inputs.charitableDonations)),
+    charitable: round2(charitableGross - charitableFloorDisallowed),
+    charitableFloorDisallowed,
     medicalAllowed: round2(medicalAllowed),
     other: round2(Math.max(0, inputs.otherDeductions)),
   };
@@ -481,8 +638,9 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     itemizedBreakdown.medicalAllowed +
     itemizedBreakdown.other;
 
+  // Simplification: the itemize-vs-standard election is made before the §68
+  // 2/37 limitation is applied (see header).
   const usedItemized = itemizedDeduction > standardDeduction;
-  const deductionTaken = usedItemized ? itemizedDeduction : standardDeduction;
 
   /* --- OBBBA senior deduction (2025-2028), applies on top of either --- */
   let seniorDeduction = 0;
@@ -492,20 +650,74 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     seniorDeduction = Math.max(0, gross - phaseOut);
   }
 
-  const taxableIncomeBeforeQbi = Math.max(0, agi - deductionTaken - seniorDeduction);
+  /* --- OBBBA §224/§225/§163(h)(4) deductions (2025-2028) ---
+   * Below the line, available whether or not itemizing (§63(b)). MAGI is
+   * taken as AGI (no §911/931/933 add-backs — see header).
+   */
+  const magiForObbba = agi;
+  const tipsDeduction = computeTipsDeduction(
+    inputs.qualifiedTipIncome ?? 0, magiForObbba, inputs.filingStatus, inputs.year,
+  );
+  const overtimeDeduction = computeOvertimeDeduction(
+    inputs.qualifiedOvertimeCompensation ?? 0, magiForObbba, inputs.filingStatus, inputs.year,
+  );
+  const carLoanInterestDeduction = computeCarLoanInterestDeduction(
+    inputs.qualifiedCarLoanInterest ?? 0, magiForObbba, inputs.filingStatus, inputs.year,
+  );
+
+  /* --- §170(p) non-itemizer charitable deduction (2026+) ---
+   * Cash gifts assumed (see header); unavailable when itemizing.
+   */
+  const nonItemizerCharitableDeduction =
+    !usedItemized && inputs.year >= CHARITY_AND_SECTION_68_FIRST_YEAR
+      ? round2(Math.min(
+          charitableGross,
+          isJointReturn(inputs.filingStatus)
+            ? NON_ITEMIZER_CHARITABLE_CAP_JOINT
+            : NON_ITEMIZER_CHARITABLE_CAP,
+        ))
+      : 0;
+
+  const otherBelowLineDeductions =
+    seniorDeduction + tipsDeduction + overtimeDeduction +
+    carLoanInterestDeduction + nonItemizerCharitableDeduction;
 
   /* --- §199A qualified business income deduction (below-threshold model) --- */
   // QBI = Schedule C/F net profit less the deductible half of SE tax.
   const qualifiedBusinessIncome = Math.max(0, inputs.selfEmploymentIncome - se.halfDeduction);
   // Form 8995 line 12: net capital gain = net LTCG + qualified dividends.
   const netCapitalGainForQbi = Math.max(0, cg.preferentialLtcg) + qualifiedDividends;
-  const qbiDeduction = computeQbiDeduction(
-    qualifiedBusinessIncome,
-    taxableIncomeBeforeQbi,
-    netCapitalGainForQbi,
-  );
+  /** Taxable-income pipeline for a given standard/itemized deduction amount. */
+  const taxBaseFor = (deduction: number) => {
+    const beforeQbi = Math.max(0, agi - deduction - otherBelowLineDeductions);
+    const qbi = computeQbiDeduction(qualifiedBusinessIncome, beforeQbi, netCapitalGainForQbi);
+    return { beforeQbi, qbi, taxable: Math.max(0, beforeQbi - qbi) };
+  };
 
-  const taxableIncome = Math.max(0, taxableIncomeBeforeQbi - qbiDeduction);
+  /* --- §68 2/37 overall limitation on itemized deductions (2026+) ---
+   * Reduction = 2/37 × min(itemized deductions, taxable income (computed
+   * WITHOUT §68, increased by those itemized deductions) − 37%-bracket
+   * start). Two-pass: measure (b) uses the unreduced-itemized taxable
+   * income, then the reduced deduction feeds the real pipeline.
+   */
+  let itemizedLimitationReduction = 0;
+  if (usedItemized && inputs.year >= CHARITY_AND_SECTION_68_FIRST_YEAR) {
+    const idx37 = p.brackets.findIndex(b => b.rate === 0.37);
+    const bracket37Start = idx37 > 0 ? p.brackets[idx37 - 1].upTo : Infinity;
+    const pass1 = taxBaseFor(itemizedDeduction);
+    const incomeMeasure = Math.max(0, pass1.taxable + itemizedDeduction - bracket37Start);
+    if (incomeMeasure > 0) {
+      itemizedLimitationReduction = round2(
+        ITEMIZED_LIMITATION_FRACTION * Math.min(itemizedDeduction, incomeMeasure),
+      );
+    }
+  }
+
+  const deductionTaken = usedItemized
+    ? Math.max(0, itemizedDeduction - itemizedLimitationReduction)
+    : standardDeduction;
+
+  const { qbi: qbiDeduction, taxable: taxableIncome } = taxBaseFor(deductionTaken);
 
   /* --- Ordinary vs preferential split --- */
   const preferentialIncome = Math.min(taxableIncome, cg.preferentialLtcg + qualifiedDividends);
@@ -604,7 +816,12 @@ export function computeFederalTax(inputs: FederalTaxInputs): FederalTaxResult {
     capitalLossCarryoverToNextYear: round2(cg.carryoverToNextYear),
     usedItemized,
     deductionTaken: round2(deductionTaken),
+    itemizedLimitationReduction,
     seniorDeduction: round2(seniorDeduction),
+    tipsDeduction,
+    overtimeDeduction,
+    carLoanInterestDeduction,
+    nonItemizerCharitableDeduction,
     qbiDeduction,
     taxableIncome: round2(taxableIncome),
     ordinaryTaxableIncome: round2(ordinaryTaxableIncome),
@@ -739,5 +956,8 @@ export function emptyFederalInputs(year: TaxYear, filingStatus: FilingStatus): F
     medicalExpenses: 0,
     otherDeductions: 0,
     filersAge65Plus: 0,
+    qualifiedTipIncome: 0,
+    qualifiedOvertimeCompensation: 0,
+    qualifiedCarLoanInterest: 0,
   };
 }
